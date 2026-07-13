@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash",
+      "Bash(echo *)",
+      "Bash(grep *)",
+      "Bash(python3 _bmad/scripts/resolve_customization.py --skill .claude/skills/bmad-market-research --key workflow)",
+      "Read",
+      "Grep",
+      "WebSearch"
+    ],
+    "deny": [
+      "Bash(rm -rf *)"
+    ],
+    "ask": [
+      "Bash(git push *)"
+    ]
+  }
+}

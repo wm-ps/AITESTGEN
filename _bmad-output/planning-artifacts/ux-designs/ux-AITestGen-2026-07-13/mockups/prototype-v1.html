@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Application Intelligence Platform — Prototype</title>
+<style>
+/* ============================================================
+   DESIGN PLAN (v2 — extended from the 3-page prototype)
+   Color   — --paper (pure white ground: precision instrument, not mood)
+             --surface (faint cool-violet-grey panel ground)
+             --border (hairline, same hue family)
+             --ink / --ink-muted (near-black + grey text, violet whisper)
+             --signal (one accent: indigo — "the signal found in app noise")
+             semantic: --good / --danger / --warn, kept separate from --signal
+   Type    — system-ui stack for headings + body (native console feel);
+             ui-monospace stack reserved ONLY for raw captured evidence
+             (routes, API calls, timestamps, generated code) — marks
+             "this is truth, not paraphrase."
+   Layout  — fixed left app-rail (grouped product nav + application
+             switcher), top bar (breadcrumb + current Application), main
+             content switched between eleven real product pages via a
+             radio-driven CSS switcher (no JS). Login is a twelfth radio
+             state that hides the whole app shell and shows a bare
+             centered card instead — it is pre-authentication.
+   v2 additions — wizard stepper, run-meta/progress/live-feed, code
+             viewer + native <details> disclosure, provider picker cards,
+             option cards (radio-styled), toggle switch, form fields,
+             login card. All reuse existing tokens/radius/type scale.
+   ============================================================ */
+:root{
+  --paper:#FFFFFF;
+  --surface:#F7F7FA;
+  --surface-hover:#EFEFF4;
+  --border:#E4E4EC;
+  --border-strong:#D3D3DE;
+  --ink:#17171C;
+  --ink-muted:#6E6E7A;
+  --ink-faint:#A4A4AF;
+  --signal:#4F5BD5;
+  --signal-ink:#FFFFFF;
+  --signal-wash:#EEF0FC;
+  --good:#1A7F5A;
+  --good-wash:#E7F5EF;
+  --danger:#C4342F;
+  --danger-wash:#FBEBEA;
+  --warn:#B5750C;
+  --warn-wash:#FBF1DF;
+  --font-ui: -apple-system, "Segoe UI", ui-sans-serif, system-ui, Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --radius: 6px;
+  --radius-lg: 10px;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --paper:#0F0F13;
+    --surface:#17171D;
+    --surface-hover:#1D1D24;
+    --border:#27272F;
+    --border-strong:#34343E;
+    --ink:#EDEDF2;
+    --ink-muted:#95959F;
+    --ink-faint:#5B5B66;
+    --signal:#8791F5;
+    --signal-ink:#0F0F13;
+    --signal-wash:#1C1E33;
+    --good:#3FCE96;
+    --good-wash:#12281F;
+    --danger:#F17872;
+    --danger-wash:#2E1717;
+    --warn:#E3A63C;
+    --warn-wash:#2E2411;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0F0F13; --surface:#17171D; --surface-hover:#1D1D24; --border:#27272F; --border-strong:#34343E;
+  --ink:#EDEDF2; --ink-muted:#95959F; --ink-faint:#5B5B66;
+  --signal:#8791F5; --signal-ink:#0F0F13; --signal-wash:#1C1E33;
+  --good:#3FCE96; --good-wash:#12281F; --danger:#F17872; --danger-wash:#2E1717; --warn:#E3A63C; --warn-wash:#2E2411;
+  color-scheme: dark;
+}
+:root[data-theme="light"]{
+  --paper:#FFFFFF; --surface:#F7F7FA; --surface-hover:#EFEFF4; --border:#E4E4EC; --border-strong:#D3D3DE;
+  --ink:#17171C; --ink-muted:#6E6E7A; --ink-faint:#A4A4AF;
+  --signal:#4F5BD5; --signal-ink:#FFFFFF; --signal-wash:#EEF0FC;
+  --good:#1A7F5A; --good-wash:#E7F5EF; --danger:#C4342F; --danger-wash:#FBEBEA; --warn:#B5750C; --warn-wash:#FBF1DF;
+  color-scheme: light;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:var(--font-ui);
+  background:var(--paper);
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  font-size:14px;
+  line-height:1.5;
+}
+@media (prefers-reduced-motion: reduce){
+  *{animation:none !important; transition:none !important;}
+}
+a{color:inherit;}
+button{font-family:inherit;}
+
+/* ---- app shell ---- */
+.shell{
+  display:grid;
+  grid-template-columns:236px 1fr;
+  min-height:100vh;
+}
+.rail{
+  background:var(--surface);
+  border-right:1px solid var(--border);
+  padding:16px 12px;
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+}
+.rail-brand{
+  display:flex; align-items:center; gap:8px;
+  padding:4px 6px 12px;
+  border-bottom:1px solid var(--border);
+}
+.rail-mark{
+  width:24px;height:24px;border-radius:7px;
+  background:linear-gradient(155deg, var(--signal) 0%, #2F2F9E 100%);
+  display:grid;place-items:center;
+  flex-shrink:0;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.16);
+}
+.rail-mark svg{width:13px;height:13px;}
+.rail-brand-text{font-weight:650;font-size:13.5px;letter-spacing:-0.01em;}
+
+.env-dot{width:6px;height:6px;border-radius:50%;background:var(--good);flex-shrink:0;}
+
+nav.rail-nav{display:flex;flex-direction:column;gap:1px;}
+.rail-section-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-muted);padding:10px 8px 4px;}
+.rail-link{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:6px 8px;border-radius:var(--radius);
+  font-size:13px;color:var(--ink-muted);cursor:pointer;
+  border:1px solid transparent;
+}
+.rail-link .rail-link-main{display:flex;align-items:center;gap:8px;}
+.rail-link svg{width:15px;height:15px;flex-shrink:0;opacity:.8;}
+.rail-link:hover{background:var(--surface-hover);color:var(--ink);}
+.rail-link .count{font-size:11px;color:var(--ink-muted);font-variant-numeric:tabular-nums;}
+.rail-link.active{background:var(--signal-wash);color:var(--signal);font-weight:600;}
+.rail-link.active svg{opacity:1;}
+.rail-link.active .count{color:var(--signal);}
+
+.rail-foot{margin-top:auto;padding-top:12px;border-top:1px solid var(--border);display:flex;flex-direction:column;gap:2px;}
+.rail-user{display:flex;align-items:center;gap:8px;padding:4px 6px;font-size:12.5px;color:var(--ink-muted);}
+.avatar{width:22px;height:22px;border-radius:50%;background:var(--border-strong);flex-shrink:0;display:grid;place-items:center;font-size:10px;font-weight:700;color:var(--ink);}
+.rail-signout{font-size:11px;color:var(--ink-muted);padding:2px 6px 0;cursor:pointer;display:block;width:fit-content;}
+.rail-signout:hover{color:var(--ink-muted);text-decoration:underline;}
+
+/* ---- main ---- */
+.main{display:flex;flex-direction:column;min-width:0;}
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 28px;border-bottom:1px solid var(--border);
+  background:var(--paper);
+}
+.crumb{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-muted);}
+.crumb b{color:var(--ink);font-weight:650;}
+.crumb .sep{color:var(--ink-muted);}
+.topbar-actions{display:flex;gap:8px;align-items:center;}
+
+.btn{
+  font-size:12.5px;font-weight:600;padding:6px 12px;border-radius:var(--radius);
+  border:1px solid var(--border-strong);background:var(--paper);color:var(--ink);
+  cursor:pointer;line-height:1.2;
+  transition:background .12s ease, border-color .12s ease, filter .12s ease;
+}
+.btn:hover{background:var(--surface-hover);}
+.btn.primary{background:var(--signal);border-color:var(--signal);color:var(--signal-ink);}
+.btn.primary:hover{filter:brightness(1.06);}
+.btn:focus-visible, .rail-link:focus-visible, a:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible, summary:focus-visible{
+  outline:2px solid var(--signal); outline-offset:2px;
+}
+
+.content{padding:26px 28px 60px;max-width:1180px;}
+.page-head{margin-bottom:20px;}
+.page-head-row{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:20px;}
+.page-head-row .page-head{margin-bottom:0;}
+.page-title{font-size:19px;font-weight:650;letter-spacing:-0.01em;margin:0 0 4px;text-wrap:balance;}
+.page-sub{font-size:13px;color:var(--ink-muted);margin:0;max-width:64ch;}
+
+/* radio-driven page switch (no JS needed) */
+.page-radio{position:absolute;opacity:0;pointer-events:none;}
+.page{display:none;}
+
+#page-apps:checked ~ .shell-body .page-apps,
+#page-wizard:checked ~ .shell-body .page-wizard,
+#page-discovery:checked ~ .shell-body .page-discovery,
+#page-map:checked ~ .shell-body .page-map,
+#page-journeys:checked ~ .shell-body .page-journeys,
+#page-scenarios:checked ~ .shell-body .page-scenarios,
+#page-tests:checked ~ .shell-body .page-tests,
+#page-cicd:checked ~ .shell-body .page-cicd,
+#page-dash:checked ~ .shell-body .page-dash,
+#page-settings:checked ~ .shell-body .page-settings{display:block;}
+
+#page-apps:checked ~ .shell-body .rail-link[for="page-apps"],
+#page-wizard:checked ~ .shell-body .rail-link[for="page-wizard"],
+#page-discovery:checked ~ .shell-body .rail-link[for="page-discovery"],
+#page-map:checked ~ .shell-body .rail-link[for="page-map"],
+#page-journeys:checked ~ .shell-body .rail-link[for="page-journeys"],
+#page-scenarios:checked ~ .shell-body .rail-link[for="page-scenarios"],
+#page-tests:checked ~ .shell-body .rail-link[for="page-tests"],
+#page-cicd:checked ~ .shell-body .rail-link[for="page-cicd"],
+#page-dash:checked ~ .shell-body .rail-link[for="page-dash"],
+#page-settings:checked ~ .shell-body .rail-link[for="page-settings"]{
+  background:var(--signal-wash);color:var(--signal);font-weight:600;
+}
+#page-apps:checked ~ .shell-body .rail-link[for="page-apps"] svg,
+#page-wizard:checked ~ .shell-body .rail-link[for="page-wizard"] svg,
+#page-discovery:checked ~ .shell-body .rail-link[for="page-discovery"] svg,
+#page-map:checked ~ .shell-body .rail-link[for="page-map"] svg,
+#page-journeys:checked ~ .shell-body .rail-link[for="page-journeys"] svg,
+#page-scenarios:checked ~ .shell-body .rail-link[for="page-scenarios"] svg,
+#page-tests:checked ~ .shell-body .rail-link[for="page-tests"] svg,
+#page-cicd:checked ~ .shell-body .rail-link[for="page-cicd"] svg,
+#page-dash:checked ~ .shell-body .rail-link[for="page-dash"] svg,
+#page-settings:checked ~ .shell-body .rail-link[for="page-settings"] svg{opacity:1;}
+
+#page-apps:checked ~ .shell-body .crumb .page-name-apps,
+#page-wizard:checked ~ .shell-body .crumb .page-name-wizard,
+#page-discovery:checked ~ .shell-body .crumb .page-name-discovery,
+#page-map:checked ~ .shell-body .crumb .page-name-map,
+#page-journeys:checked ~ .shell-body .crumb .page-name-journeys,
+#page-scenarios:checked ~ .shell-body .crumb .page-name-scenarios,
+#page-tests:checked ~ .shell-body .crumb .page-name-tests,
+#page-cicd:checked ~ .shell-body .crumb .page-name-cicd,
+#page-dash:checked ~ .shell-body .crumb .page-name-dash,
+#page-settings:checked ~ .shell-body .crumb .page-name-settings{display:inline;}
+
+.crumb .page-name-apps, .crumb .page-name-wizard, .crumb .page-name-discovery,
+.crumb .page-name-map, .crumb .page-name-journeys, .crumb .page-name-scenarios,
+.crumb .page-name-tests, .crumb .page-name-cicd, .crumb .page-name-dash,
+.crumb .page-name-settings{display:none;}
+
+/* Applications and Dashboard are cross-application views — no single app to name in the crumb */
+#page-apps:checked ~ .shell-body .crumb .app-context,
+#page-dash:checked ~ .shell-body .crumb .app-context,
+#page-wizard:checked ~ .shell-body .crumb .app-context{display:none;}
+
+.rail-link{transition:background .12s ease;}
+label.rail-link{display:flex;}
+
+/* ---- login (no shell) ---- */
+.shell-body{display:block;}
+.login-page{display:none;min-height:100vh;background:var(--paper);}
+#page-login:checked ~ .shell-body{display:none;}
+#page-login:checked ~ .login-page{display:grid;grid-template-columns:1fr 428px;}
+
+.login-intro{
+  background:linear-gradient(160deg, #10112C 0%, #22246E 58%, #4750D6 100%);
+  color:#F3F3FA;padding:56px 60px;display:flex;flex-direction:column;justify-content:space-between;
+  min-height:100vh;
+}
+.login-intro-top .rail-mark{width:26px;height:26px;}
+.login-intro-brand{display:flex;align-items:center;gap:9px;}
+.login-intro-brand-text{font-weight:650;font-size:14px;letter-spacing:-0.01em;color:#fff;}
+.login-headline{font-size:32px;font-weight:650;letter-spacing:-0.02em;line-height:1.18;text-wrap:balance;margin:0 0 14px;max-width:15ch;color:#fff;}
+.login-sub{font-size:14.5px;color:rgba(243,243,250,.72);line-height:1.6;max-width:38ch;margin:0;}
+.login-pillars{display:flex;flex-direction:column;gap:18px;margin-top:40px;}
+.login-pillar{display:flex;gap:12px;align-items:flex-start;}
+.login-pillar-icon{
+  width:26px;height:26px;border-radius:7px;background:rgba(255,255,255,.1);
+  border:1px solid rgba(255,255,255,.14);display:grid;place-items:center;flex-shrink:0;color:#fff;
+}
+.login-pillar-icon svg{width:13px;height:13px;}
+.login-pillar-title{font-size:13px;font-weight:650;color:#fff;margin-bottom:2px;}
+.login-pillar-desc{font-size:12px;color:rgba(243,243,250,.62);line-height:1.5;max-width:36ch;}
+.login-quote{font-size:12.5px;color:rgba(243,243,250,.68);line-height:1.55;max-width:34ch;border-left:2px solid rgba(255,255,255,.25);padding-left:12px;}
+.login-quote cite{display:block;margin-top:6px;font-style:normal;font-size:11.5px;color:rgba(243,243,250,.5);}
+
+.login-form-side{display:flex;align-items:center;justify-content:center;padding:20px;}
+.login-card{width:100%;max-width:330px;}
+.login-title{font-size:19px;font-weight:650;letter-spacing:-0.01em;margin:0 0 6px;}
+.login-title-sub{font-size:12.5px;color:var(--ink-muted);margin:0 0 24px;}
+.login-foot{text-align:center;margin-top:16px;}
+.login-link{font-size:12px;color:var(--signal);font-weight:600;cursor:default;}
+
+/* ---- form fields (wizard, login, settings) ---- */
+.field{display:flex;flex-direction:column;gap:5px;margin-bottom:14px;}
+.field:last-child{margin-bottom:0;}
+.field label{font-size:12px;font-weight:600;color:var(--ink-muted);}
+.field .hint{font-size:11.5px;color:var(--ink-muted);margin:2px 0 0;line-height:1.5;}
+.field input[type="text"], .field input[type="email"], .field input[type="password"],
+.field input[type="url"], .field select, .field textarea{
+  font-family:inherit;font-size:13px;color:var(--ink);
+  background:var(--paper);border:1px solid var(--border-strong);border-radius:var(--radius);
+  padding:8px 10px;width:100%;
+}
+.field textarea{font-family:var(--font-mono);font-size:11.5px;resize:vertical;}
+
+/* ---- review queue / journey explorer: two-pane ---- */
+.queue-layout{display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start;}
+.queue-list{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:var(--paper);}
+.queue-row{
+  display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;
+  padding:13px 16px;border-bottom:1px solid var(--border);
+  transition:background .12s ease;
+}
+.queue-row:last-child{border-bottom:none;}
+.queue-row.selected{background:var(--signal-wash);}
+.queue-row:hover{background:var(--surface-hover);}
+.queue-row.selected:hover{background:var(--signal-wash);}
+.queue-main{min-width:0;}
+.queue-title-row{display:flex;align-items:center;gap:8px;margin-bottom:3px;}
+.queue-name{font-size:14px;font-weight:600;color:var(--ink);}
+.badge{
+  font-size:10.5px;font-weight:650;text-transform:uppercase;letter-spacing:.04em;
+  padding:2px 6px;border-radius:4px;line-height:1.4;
+}
+.badge.new{background:var(--signal-wash);color:var(--signal);}
+.badge.dupe{background:var(--warn-wash);color:var(--warn);}
+.badge.approved{background:var(--good-wash);color:var(--good);}
+.badge.rejected{background:var(--danger-wash);color:var(--danger);}
+.badge.type-happy{background:var(--signal-wash);color:var(--signal);}
+.badge.type-negative{background:var(--warn-wash);color:var(--warn);}
+.badge.generated{background:var(--good-wash);color:var(--good);}
+.queue-meta{font-size:12px;color:var(--ink-muted);display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+.queue-meta .cap-tag{color:var(--ink-muted);}
+.queue-meta code{font-family:var(--font-mono);font-size:11px;background:var(--surface);border:1px solid var(--border);padding:1px 5px;border-radius:4px;color:var(--ink-muted);}
+.queue-actions{display:flex;gap:6px;flex-shrink:0;}
+.iconbtn{
+  width:28px;height:28px;border-radius:var(--radius);border:1px solid var(--border-strong);
+  background:var(--paper);display:grid;place-items:center;cursor:pointer;color:var(--ink-muted);
+  transition:background .12s ease, border-color .12s ease, color .12s ease;
+}
+.iconbtn:hover{background:var(--surface-hover);color:var(--ink);}
+.iconbtn.approve:hover{background:var(--good-wash);border-color:var(--good);color:var(--good);}
+.iconbtn.reject:hover{background:var(--danger-wash);border-color:var(--danger);color:var(--danger);}
+.iconbtn svg{width:14px;height:14px;}
+.queue-row.done .queue-name{color:var(--ink-muted);}
+.queue-row.done{opacity:.75;}
+
+.evidence{
+  border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);
+  padding:16px;position:sticky;top:20px;
+}
+.evidence-head{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink-muted);margin-bottom:2px;}
+.evidence-title{font-size:14.5px;font-weight:650;margin-bottom:10px;}
+.evidence-note{font-size:12.5px;color:var(--ink-muted);margin-bottom:14px;line-height:1.55;}
+.evidence-group{margin-bottom:14px;}
+.evidence-group:last-child{margin-bottom:0;}
+.evidence-group-label{font-size:11px;font-weight:650;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px;}
+.evidence-item{
+  font-family:var(--font-mono);font-size:11.5px;color:var(--ink);
+  background:var(--paper);border:1px solid var(--border);border-radius:4px;
+  padding:6px 8px;margin-bottom:5px;display:flex;justify-content:space-between;gap:8px;
+}
+.evidence-item .verb{color:var(--signal);font-weight:600;flex-shrink:0;}
+.evidence-item:last-child{margin-bottom:0;}
+
+.section-divider{display:flex;align-items:center;gap:10px;margin:26px 0 14px;}
+.section-divider span{font-size:11.5px;font-weight:650;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap;}
+.section-divider .line{height:1px;background:var(--border);flex:1;}
+
+.empty-state{
+  border:1px dashed var(--border-strong);border-radius:var(--radius-lg);
+  padding:30px 24px;text-align:center;background:var(--surface);
+}
+.empty-check{width:34px;height:34px;border-radius:50%;background:var(--good-wash);color:var(--good);display:grid;place-items:center;margin:0 auto 12px;}
+.empty-check svg{width:18px;height:18px;}
+.empty-title{font-size:14px;font-weight:650;margin-bottom:4px;}
+.empty-sub{font-size:12.5px;color:var(--ink-muted);margin-bottom:14px;}
+.empty-stats{display:flex;gap:22px;justify-content:center;}
+.empty-stat b{display:block;font-size:17px;font-variant-numeric:tabular-nums;}
+.empty-stat span{font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;}
+.empty-stat.approve b{color:var(--good);}
+.empty-stat.reject b{color:var(--danger);}
+
+/* ---- capability map ---- */
+.cap-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;}
+.cap-card{border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--paper);padding:18px;}
+.cap-card-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;}
+.cap-name{font-size:15px;font-weight:650;}
+.cap-count{font-size:11.5px;color:var(--ink-muted);background:var(--surface);border:1px solid var(--border);padding:2px 7px;border-radius:12px;flex-shrink:0;}
+.cap-desc{font-size:12.5px;color:var(--ink-muted);margin:2px 0 14px;line-height:1.5;}
+.cap-journeys{display:flex;flex-direction:column;gap:1px;}
+.cap-journey{
+  display:flex;align-items:center;justify-content:space-between;gap:8px;
+  padding:8px 10px;border-radius:6px;font-size:12.5px;
+  transition:background .12s ease;
+}
+.cap-journey:hover{background:var(--surface-hover);}
+.cap-journey-name{display:flex;align-items:center;gap:7px;color:var(--ink);}
+.dot{width:5px;height:5px;border-radius:50%;background:var(--good);flex-shrink:0;}
+.cap-journey-tests{font-family:var(--font-mono);font-size:11px;color:var(--ink-muted);}
+
+/* ---- dashboard ---- */
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px;}
+.kpi{border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--paper);padding:16px;}
+.kpi-label{font-size:11.5px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:8px;}
+.kpi-value{font-size:24px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-0.01em;}
+.kpi-value .unit{font-size:13px;color:var(--ink-muted);font-weight:500;margin-left:2px;}
+.kpi-bar{height:5px;border-radius:3px;background:var(--surface);margin-top:10px;overflow:hidden;}
+.kpi-bar > i{display:block;height:100%;background:var(--signal);border-radius:3px;}
+
+.app-table{width:100%;border-collapse:collapse;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;}
+.app-table thead th{
+  text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-muted);
+  padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);font-weight:650;
+}
+.app-table td{padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle;}
+.app-table tr:last-child td{border-bottom:none;}
+.app-table .app-name{font-weight:600;display:flex;align-items:center;gap:8px;}
+.app-table tbody tr.app-row{transition:background .12s ease;}
+.app-table tbody tr.app-row:hover{background:var(--surface-hover);cursor:pointer;}
+.cov-bar{width:120px;height:6px;border-radius:3px;background:var(--surface);overflow:hidden;display:inline-block;vertical-align:middle;margin-right:8px;}
+.cov-bar > i{display:block;height:100%;background:var(--good);}
+.cov-cell{display:flex;align-items:center;}
+.cov-num{font-size:12px;color:var(--ink-muted);font-variant-numeric:tabular-nums;}
+.flag{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--warn);font-weight:600;}
+.flag svg{width:13px;height:13px;}
+.overflow-wrap{overflow-x:auto;}
+
+/* ============================================================
+   v2 NEW COMPONENTS
+   ============================================================ */
+
+/* ---- wizard stepper (Add Application) ---- */
+.stepper{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:var(--paper);max-width:620px;}
+.step{padding:16px 20px;border-bottom:1px solid var(--border);}
+.step:last-child{border-bottom:none;}
+.step-head{display:flex;align-items:center;gap:10px;}
+.step-num{width:22px;height:22px;border-radius:50%;background:var(--surface);border:1px solid var(--border-strong);color:var(--ink-muted);font-size:11.5px;font-weight:700;display:grid;place-items:center;flex-shrink:0;}
+.step.done .step-num{background:var(--good-wash);border-color:var(--good);color:var(--good);}
+.step.active .step-num{background:var(--signal);border-color:var(--signal);color:var(--signal-ink);}
+.step-title{font-size:13.5px;font-weight:650;}
+.step.done .step-title{color:var(--ink-muted);}
+.step-summary{font-size:12px;color:var(--ink-muted);margin:3px 0 0 32px;}
+.step-body{margin:14px 0 2px 32px;max-width:520px;}
+.step-note{font-size:11.5px;color:var(--ink-muted);border-left:2px solid var(--border-strong);padding:1px 0 1px 10px;margin-top:6px;display:block;line-height:1.55;}
+.step-note.critical{color:var(--warn);border-left-color:var(--warn);}
+.wizard-actions{display:flex;gap:8px;margin-top:18px;}
+
+/* ---- option cards (radio-styled choice, reused for auth method + export mode) ---- */
+.option-list{display:flex;flex-direction:column;gap:10px;}
+.option-card{display:block;border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;background:var(--paper);cursor:pointer;transition:border-color .12s ease, background .12s ease;}
+.option-card.selected{border-color:var(--signal);background:var(--signal-wash);}
+.option-card:focus-within{outline:2px solid var(--signal);outline-offset:2px;}
+.option-card-head{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:650;}
+.option-card-head input[type="radio"]{accent-color:var(--signal);width:15px;height:15px;flex-shrink:0;}
+.option-card-desc{font-size:12px;color:var(--ink-muted);margin:4px 0 0 24px;line-height:1.5;}
+.option-card-body{margin:12px 0 2px 24px;}
+
+/* ---- discovery run: metadata / stats / progress / live feed ---- */
+.run-meta-row{display:flex;gap:28px;flex-wrap:wrap;margin-bottom:20px;padding:14px 18px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);}
+.run-meta-item{display:flex;flex-direction:column;gap:3px;}
+.run-meta-label{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-muted);}
+.run-meta-value{font-size:13px;font-weight:600;}
+.progress-track{height:6px;border-radius:3px;background:var(--surface);overflow:hidden;margin:0 0 20px;max-width:620px;}
+.progress-track > i{display:block;height:100%;background:var(--signal);}
+.discovery-stats{display:flex;gap:16px;margin-bottom:24px;max-width:620px;}
+.discovery-stat{flex:1;border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;background:var(--paper);}
+.discovery-stat b{display:block;font-size:24px;font-variant-numeric:tabular-nums;letter-spacing:-0.01em;}
+.discovery-stat span{font-size:11px;color:var(--ink-muted);text-transform:uppercase;letter-spacing:.04em;}
+.status-pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:650;padding:3px 9px;border-radius:12px;background:var(--signal-wash);color:var(--signal);white-space:nowrap;}
+.status-pill .pulse-dot{width:6px;height:6px;border-radius:50%;background:var(--signal);flex-shrink:0;}
+.live-feed{max-width:560px;}
+
+/* ---- code viewer + native disclosure (Generated Tests, CI/CD) ---- */
+.code-viewer{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:14px 16px;font-family:var(--font-mono);font-size:12px;line-height:1.7;overflow-x:auto;white-space:pre;color:var(--ink);}
+.code-viewer .kw{color:var(--signal);}
+.code-viewer .str{color:var(--good);}
+.code-viewer .cmt{color:var(--ink-muted);}
+.code-disclosure{margin-top:12px;}
+.code-disclosure summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--signal);list-style:none;user-select:none;border-radius:4px;}
+.code-disclosure summary::-webkit-details-marker{display:none;}
+.code-disclosure summary::before{content:"▸ ";}
+.code-disclosure[open] summary::before{content:"▾ ";}
+.code-disclosure .code-viewer{margin-top:10px;}
+
+/* ---- test explorer ---- */
+.test-asset-list{display:flex;flex-direction:column;gap:14px;}
+.test-asset{border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 18px;background:var(--paper);}
+.test-asset-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;}
+.test-asset-journey{font-size:14px;font-weight:650;}
+.test-asset-file{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-muted);margin-top:2px;}
+.test-asset-hint{font-size:11.5px;color:var(--ink-muted);margin:8px 0 0;}
+
+/* ---- scenario explorer (view-only) ---- */
+.scn-group{margin-bottom:22px;}
+.scn-group:last-child{margin-bottom:0;}
+.scn-group-head{font-size:13px;font-weight:650;margin-bottom:8px;display:flex;align-items:center;gap:8px;}
+.scn-list{border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;background:var(--paper);}
+.scn-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 16px;border-bottom:1px solid var(--border);}
+.scn-row:last-child{border-bottom:none;}
+.scn-title{font-size:13px;color:var(--ink);}
+.scn-badges{display:flex;gap:8px;flex-shrink:0;}
+
+/* ---- provider picker (Connect to CI/CD) ---- */
+.provider-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;max-width:620px;}
+.provider-card{position:relative;display:block;border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 14px 14px;background:var(--paper);text-align:center;cursor:pointer;transition:border-color .12s ease, background .12s ease;}
+.provider-card:hover{border-color:var(--border-strong);}
+.provider-card.selected{border-color:var(--signal);background:var(--signal-wash);}
+.provider-card:focus-within{outline:2px solid var(--signal);outline-offset:2px;}
+.provider-card input[type="radio"]{position:absolute;top:10px;right:10px;accent-color:var(--signal);width:14px;height:14px;}
+.provider-icon{width:30px;height:30px;border-radius:7px;background:var(--surface);border:1px solid var(--border);display:grid;place-items:center;margin:0 auto 8px;font-size:10px;font-weight:700;color:var(--ink-muted);}
+.provider-card.selected .provider-icon{background:var(--signal);color:var(--signal-ink);border-color:var(--signal);}
+.provider-name{font-size:12.5px;font-weight:650;}
+.provider-status{font-size:10.5px;color:var(--signal);font-weight:650;text-transform:uppercase;letter-spacing:.04em;margin-top:4px;}
+
+/* ---- applications hero strip ---- */
+.hero-strip{
+  display:flex;gap:40px;flex-wrap:wrap;
+  padding:22px 0 26px;margin-bottom:22px;border-bottom:1px solid var(--border);
+}
+.hero-stat{display:flex;flex-direction:column;gap:4px;}
+.hero-stat b{font-size:34px;font-weight:650;letter-spacing:-0.02em;font-variant-numeric:tabular-nums;line-height:1;}
+.hero-stat b .of{font-size:18px;font-weight:500;color:var(--ink-muted);}
+.hero-stat span{font-size:12px;color:var(--ink-muted);}
+.hero-stat.attn b{color:var(--signal);}
+
+/* ---- settings ---- */
+.settings-panels{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.settings-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:12.5px;}
+.settings-row:last-child{border-bottom:none;}
+.settings-row .k{color:var(--ink-muted);}
+.settings-row .v{font-weight:600;font-family:var(--font-mono);font-size:12px;}
+.check-row{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:12.5px;cursor:pointer;}
+.check-row input[type="checkbox"]{accent-color:var(--signal);width:14px;height:14px;flex-shrink:0;}
+.toggle-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 0;border-bottom:1px solid var(--border);}
+.toggle-row:last-child{border-bottom:none;}
+.toggle-label{font-size:13px;font-weight:600;}
+.toggle-sub{font-size:11.5px;color:var(--ink-muted);margin-top:1px;}
+.toggle{position:relative;display:inline-block;width:34px;height:20px;flex-shrink:0;cursor:pointer;}
+.toggle input{position:absolute;opacity:0;width:100%;height:100%;margin:0;cursor:pointer;}
+.toggle .track{position:absolute;inset:0;background:var(--border-strong);border-radius:10px;transition:background .12s;}
+.toggle .thumb{position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:var(--paper);transition:left .12s;box-shadow:0 1px 2px rgba(0,0,0,.25);}
+.toggle input:checked ~ .track{background:var(--signal);}
+.toggle input:checked ~ .thumb{left:16px;}
+.toggle input:focus-visible ~ .track{outline:2px solid var(--signal);outline-offset:2px;}
+</style>
+</head>
+<body>
+
+<input type="radio" name="page" id="page-login" class="page-radio">
+<input type="radio" name="page" id="page-apps" class="page-radio" checked>
+<input type="radio" name="page" id="page-wizard" class="page-radio">
+<input type="radio" name="page" id="page-discovery" class="page-radio">
+<input type="radio" name="page" id="page-map" class="page-radio">
+<input type="radio" name="page" id="page-journeys" class="page-radio">
+<input type="radio" name="page" id="page-scenarios" class="page-radio">
+<input type="radio" name="page" id="page-tests" class="page-radio">
+<input type="radio" name="page" id="page-cicd" class="page-radio">
+<input type="radio" name="page" id="page-dash" class="page-radio">
+<input type="radio" name="page" id="page-settings" class="page-radio">
+
+<!-- ================= LOGIN (no app shell — pre-authentication) ================= -->
+<div class="login-page">
+  <div class="login-intro">
+    <div class="login-intro-top">
+      <div class="login-intro-brand">
+        <div class="rail-mark"><svg viewBox="0 0 16 16" fill="none"><path d="M2 8L6 4L10 8L14 4M2 8L6 12L10 8L14 12" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <div class="login-intro-brand-text">Application Intelligence</div>
+      </div>
+
+      <h1 class="login-headline">Know what your application actually does.</h1>
+      <p class="login-sub">Autonomous discovery maps your app's real business Journeys, a human approves what's true, and approved Journeys become running Playwright tests.</p>
+
+      <div class="login-pillars">
+        <div class="login-pillar">
+          <div class="login-pillar-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7" cy="7" r="4.3"/><path d="M10.2 10.2L14 14"/></svg></div>
+          <div>
+            <div class="login-pillar-title">Autonomous discovery</div>
+            <div class="login-pillar-desc">Explores a staging environment the way a thorough tester would — no source code access required.</div>
+          </div>
+        </div>
+        <div class="login-pillar">
+          <div class="login-pillar-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 8l3.5 3.5L13 4.5"/></svg></div>
+          <div>
+            <div class="login-pillar-title">Human-approved Journeys</div>
+            <div class="login-pillar-desc">Nothing enters your Trusted Knowledge Model without a reviewer confirming it first.</div>
+          </div>
+        </div>
+        <div class="login-pillar">
+          <div class="login-pillar-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4.5l1 1 2-2M3 9l1 1 2-2M7.5 4.5H13M7.5 9H13M3 13.5h10"/></svg></div>
+          <div>
+            <div class="login-pillar-title">Generated Playwright tests</div>
+            <div class="login-pillar-desc">Approved Journeys ship as executable tests, delivered straight into your own CI/CD pipeline.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <blockquote class="login-quote">
+      "A trustworthy, living map of what we actually ship — and a running test suite we didn't have to author from scratch."
+      <cite>— QA Director, insurance pilot customer</cite>
+    </blockquote>
+  </div>
+
+  <div class="login-form-side">
+    <div class="login-card">
+      <h1 class="login-title">Sign in</h1>
+      <p class="login-title-sub">Continue to your Applications.</p>
+      <div class="field">
+        <label for="li-email">Email</label>
+        <input type="email" id="li-email" value="maria.colon@acmeinsurance.com">
+      </div>
+      <div class="field" style="margin-bottom:20px;">
+        <label for="li-pass">Password</label>
+        <input type="password" id="li-pass" value="••••••••••••">
+      </div>
+      <label class="btn primary" for="page-apps" tabindex="0" style="display:block;text-align:center;">Sign in</label>
+      <div class="login-foot"><span class="login-link">Use SSO instead</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="shell-body">
+<div class="shell">
+  <aside class="rail">
+    <div class="rail-brand">
+      <div class="rail-mark"><svg viewBox="0 0 16 16" fill="none"><path d="M2 8L6 4L10 8L14 4M2 8L6 12L10 8L14 12" stroke="white" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="rail-brand-text">Application Intelligence</div>
+    </div>
+
+    <nav class="rail-nav">
+      <div class="rail-section-label">Workspace</div>
+      <label class="rail-link" for="page-apps">
+        <span class="rail-link-main"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 7.5L8 2.5l6 5M3.5 6.5V13h9V6.5"/></svg>Applications</span>
+      </label>
+
+      <div class="rail-section-label">Onboard</div>
+      <label class="rail-link" for="page-wizard">
+        <span class="rail-link-main"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 3v3M3 9v4M8 3v6M8 12v1M13 3v1M13 7v6M1.5 6h3M6.5 9h3M11.5 7h3"/></svg>Add Application</span>
+      </label>
+      <label class="rail-link" for="page-discovery">
+        <span class="rail-link-main"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="6.5" cy="6.5" r="4.3"/><path d="M9.7 9.7L14 14"/></svg>Discovery Progress</span>
+      </label>
+
+      <div class="rail-section-label">Understand</div>
+      <label class="rail-link" for="page-map">
+        <span class="rail-link-main"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/><rect x="2" y="9" width="5" height="5" rx="1"/><rect x="9" y="9" width="5" height="5" rx="1"/></svg>App Overview</span>
+      </label>
+      <label class="rail-link" for="page-journeys">
+        <span class="rail-link-main"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 8h3l2-5 3 10 2-5h2"/></svg>Review Journeys</span>
+        <span class="count">6</span>
+      </label>
+
+      <div class="rail-section-label">Automate</div>
+      <label class="rail-link" for="page-scenarios">
+        <span class="rail-link-main"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5 2v3.5c0 1.5 1.3 2 3 2s3-.5 3-2V2M8 7.5V14"/></svg>Generated Scenarios</span>
+      </label>
+      <label class="rail-link" for="page-tests">
+        <span class="rail-link-main"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 4.5l1 1 2-2M3 9l1 1 2-2M7.5 4.5H13M7.5 9H13M3 13.5h10"/></svg>Generated Tests</span>
+      </label>
+      <label class="rail-link" for="page-cicd">
+        <span class="rail-link-main"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.3"/><path d="M8 2v1.6M8 12.4V14M14 8h-1.6M3.6 8H2M12.1 3.9l-1.1 1.1M5 10l-1.1 1.1M12.1 12.1L11 11M5 6L3.9 4.9"/></svg>Connect to CI/CD</span>
+      </label>
+
+      <div class="rail-section-label">Prove</div>
+      <label class="rail-link" for="page-dash">
+        <span class="rail-link-main"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2 13V7M6.5 13V3M11 13v-5M15 13H1"/></svg>Dashboard</span>
+      </label>
+    </nav>
+
+    <div class="rail-foot">
+      <label class="rail-link" for="page-settings">
+        <span class="rail-link-main"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="4" cy="8" r="1.3"/><circle cx="8" cy="8" r="1.3"/><circle cx="12" cy="8" r="1.3"/></svg>Settings</span>
+      </label>
+      <div class="rail-user">
+        <div class="avatar">MC</div>
+        Maria Colón · QA Director
+      </div>
+      <label class="rail-signout" for="page-login">Sign out</label>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <div class="crumb">
+        <span class="app-context"><b>Claims Processing App</b><span class="sep">/</span></span>
+        <span class="page-name-apps">Applications</span>
+        <span class="page-name-wizard">Add Application</span>
+        <span class="page-name-discovery">Discovery Progress</span>
+        <span class="page-name-map">App Overview</span>
+        <span class="page-name-journeys">Review Journeys</span>
+        <span class="page-name-scenarios">Generated Scenarios</span>
+        <span class="page-name-tests">Generated Tests</span>
+        <span class="page-name-cicd">Connect to CI/CD</span>
+        <span class="page-name-dash">Dashboard</span>
+        <span class="page-name-settings">Settings</span>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn">Discovery run: Jul 12, 6:41pm</button>
+        <button class="btn primary">Run Discovery</button>
+      </div>
+    </div>
+
+    <div class="content">
+
+      <!-- ================= APPLICATIONS (landing) ================= -->
+      <section class="page page-apps">
+        <div class="page-head-row">
+          <div class="page-head">
+            <h1 class="page-title">Applications</h1>
+            <p class="page-sub">Every Application onboarded for autonomous discovery. Open one to review Journeys, browse generated tests, or check coverage.</p>
+          </div>
+          <label class="btn primary" for="page-wizard" tabindex="0">+ Add Application</label>
+        </div>
+
+        <div class="hero-strip">
+          <div class="hero-stat"><b>3</b><span>Applications onboarded</span></div>
+          <div class="hero-stat"><b>27</b><span>Journeys approved</span></div>
+          <div class="hero-stat"><b>24<span class="of">/27</span></b><span>Tests generated</span></div>
+          <div class="hero-stat attn"><b>6</b><span>Awaiting your review</span></div>
+        </div>
+
+        <div class="overflow-wrap">
+        <table class="app-table">
+          <thead>
+            <tr><th>Application</th><th>Journeys</th><th>Coverage</th><th>Status</th><th>Last activity</th></tr>
+          </thead>
+          <tbody>
+            <tr class="app-row">
+              <td class="app-name"><span class="env-dot"></span>Claims Processing App</td>
+              <td>17</td>
+              <td class="cov-cell"><span class="cov-bar"><i style="width:88%"></i></span><span class="cov-num">15 / 17</span></td>
+              <td><span class="badge approved">Up to date</span></td>
+              <td><span style="color:var(--ink-muted)">Jul 12, 6:41pm</span></td>
+            </tr>
+            <tr class="app-row">
+              <td class="app-name"><span class="env-dot"></span>Agent Portal</td>
+              <td>10</td>
+              <td class="cov-cell"><span class="cov-bar"><i style="width:90%"></i></span><span class="cov-num">9 / 10</span></td>
+              <td><span class="badge approved">Up to date</span></td>
+              <td><span style="color:var(--ink-muted)">Jul 9, 2:05pm</span></td>
+            </tr>
+            <tr class="app-row">
+              <td class="app-name"><span class="env-dot" style="background:var(--signal)"></span>Underwriting Portal</td>
+              <td><span style="color:var(--ink-muted)">—</span></td>
+              <td><span style="color:var(--ink-muted)">—</span></td>
+              <td><span class="status-pill"><span class="pulse-dot"></span>Discovery in progress</span></td>
+              <td><span style="color:var(--ink-muted)">Started 47m ago</span></td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+      </section>
+
+      <!-- ================= APPLICATION SETUP WIZARD ================= -->
+      <section class="page page-wizard">
+        <div class="page-head">
+          <h1 class="page-title">Add Application</h1>
+          <p class="page-sub">Onboard a new Application for autonomous discovery. Nothing is explored until you complete all three steps.</p>
+        </div>
+
+        <div class="stepper">
+          <div class="step done">
+            <div class="step-head"><span class="step-num">1</span><span class="step-title">Connect</span></div>
+            <div class="step-summary">https://staging.underwriting.internal · Staging environment</div>
+            <div class="step-note" style="margin-left:32px;max-width:460px;">Discovery only targets non-production environments — production URLs are blocked at setup.</div>
+          </div>
+
+          <div class="step active">
+            <div class="step-head"><span class="step-num">2</span><span class="step-title">Authenticate</span></div>
+            <div class="step-body">
+              <div class="option-list">
+                <label class="option-card">
+                  <div class="option-card-head"><input type="radio" name="authmethod"><span>Standard login</span></div>
+                  <p class="option-card-desc">Platform submits a username and password directly into the target app's login form.</p>
+                </label>
+                <label class="option-card selected">
+                  <div class="option-card-head"><input type="radio" name="authmethod" checked><span>Reusable session (SSO/MFA)</span></div>
+                  <p class="option-card-desc">For apps behind SSO or MFA, the platform does not perform the handshake itself — provide a pre-authenticated session for it to reuse.</p>
+                  <div class="option-card-body">
+                    <div class="field">
+                      <label for="session-file">Session state file</label>
+                      <input type="text" id="session-file" value="storageState.json" readonly>
+                    </div>
+                    <div class="field">
+                      <label for="session-paste">…or paste session state (JSON)</label>
+                      <textarea id="session-paste" rows="3" placeholder='{"cookies": [ ... ], "origins": [ ... ]}'></textarea>
+                    </div>
+                    <p class="hint">Session state expires per your identity provider's policy — re-upload when a discovery run reports an authentication failure.</p>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-head"><span class="step-num">3</span><span class="step-title">Discovery scope &amp; budget</span></div>
+            <div class="step-summary">Full application · 4h time budget</div>
+            <div class="step-note" style="margin-left:32px;max-width:460px;">Time budget is a hard safety cap — discovery stops and the run is marked incomplete if it's reached before finishing.</div>
+          </div>
+        </div>
+
+        <div class="wizard-actions">
+          <button class="btn">Back</button>
+          <button class="btn primary">Continue</button>
+        </div>
+      </section>
+
+      <!-- ================= DISCOVERY RUN ================= -->
+      <section class="page page-discovery">
+        <div class="page-head">
+          <h1 class="page-title">Discovery Progress</h1>
+          <p class="page-sub">Live status for the active discovery run against Underwriting Portal.</p>
+        </div>
+
+        <div class="run-meta-row">
+          <div class="run-meta-item"><span class="run-meta-label">Application</span><span class="run-meta-value">Underwriting Portal</span></div>
+          <div class="run-meta-item"><span class="run-meta-label">Started</span><span class="run-meta-value">Jul 13, 2026 · 3:12pm</span></div>
+          <div class="run-meta-item"><span class="run-meta-label">Elapsed</span><span class="run-meta-value">47m of 4h budget</span></div>
+          <div class="run-meta-item"><span class="run-meta-label">Scope</span><span class="run-meta-value">Full application</span></div>
+          <div class="run-meta-item"><span class="run-meta-label">Status</span><span class="status-pill"><span class="pulse-dot"></span>Running</span></div>
+        </div>
+
+        <div class="progress-track"><i style="width:20%"></i></div>
+
+        <div class="discovery-stats">
+          <div class="discovery-stat"><b>142</b><span>Pages found</span></div>
+          <div class="discovery-stat"><b>38</b><span>Actions found</span></div>
+          <div class="discovery-stat"><b>61</b><span>API calls found</span></div>
+        </div>
+
+        <div class="section-divider"><span>Latest discovered</span><div class="line"></div></div>
+
+        <div class="evidence-group live-feed">
+          <div class="evidence-item"><span class="verb">GET</span><span>/underwriting/:id/risk-summary</span></div>
+          <div class="evidence-item"><span class="verb">CLICK</span><span>"Request Additional Documents"</span></div>
+          <div class="evidence-item"><span class="verb">POST</span><span>/api/underwriting/{id}/decision</span></div>
+          <div class="evidence-item"><span class="verb">GET</span><span>/api/policies/{id}/rating-factors</span></div>
+          <div class="evidence-item"><span class="verb">CLICK</span><span>"Submit for Review"</span></div>
+        </div>
+
+        <p class="step-note" style="max-width:560px;margin-top:20px;display:block;">If the 4-hour time budget is reached before discovery finishes exploring the application, this run will automatically be marked <b>Incomplete</b> — Journeys captured up to that point remain usable and enter the review queue as normal.</p>
+      </section>
+
+      <!-- ================= CAPABILITY MAP ================= -->
+      <section class="page page-map">
+        <div class="page-head">
+          <h1 class="page-title">App Overview</h1>
+          <p class="page-sub">Approved Capabilities for Claims Processing App, in business language — this is what a reviewer hands to their Engineering Leader.</p>
+        </div>
+
+        <div class="cap-grid">
+          <div class="cap-card">
+            <div class="cap-card-head">
+              <div class="cap-name">Claims Processing</div>
+              <div class="cap-count">4 journeys</div>
+            </div>
+            <p class="cap-desc">Intake through adjuster approval for a filed claim.</p>
+            <div class="cap-journeys">
+              <div class="cap-journey"><span class="cap-journey-name"><span class="dot"></span>Claims Intake</span><span class="cap-journey-tests">3 tests</span></div>
+              <div class="cap-journey"><span class="cap-journey-name"><span class="dot"></span>Claims Approval</span><span class="cap-journey-tests">4 tests</span></div>
+              <div class="cap-journey"><span class="cap-journey-name"><span class="dot"></span>Adjuster Reassignment</span><span class="cap-journey-tests">2 tests</span></div>
+              <div class="cap-journey"><span class="cap-journey-name"><span class="dot"></span>Claim Denial &amp; Appeal</span><span class="cap-journey-tests">3 tests</span></div>
+            </div>
+          </div>
+
+          <div class="cap-card">
+            <div class="cap-card-head">
+              <div class="cap-name">Policy Administration</div>
+              <div class="cap-count">3 journeys</div>
+            </div>
+            <p class="cap-desc">Issuing, renewing, and amending policy records.</p>
+            <div class="cap-journeys">
+              <div class="cap-journey"><span class="cap-journey-name"><span class="dot"></span>Policy Issuance</span><span class="cap-journey-tests">5 tests</span></div>
+              <div class="cap-journey"><span class="cap-journey-name"><span class="dot"></span>Policy Renewal</span><span class="cap-journey-tests">3 tests</span></div>
+              <div class="cap-journey"><span class="cap-journey-name"><span class="dot"></span>Coverage Amendment</span><span class="cap-journey-tests">2 tests</span></div>
+            </div>
+          </div>
+
+          <div class="cap-card">
+            <div class="cap-card-head">
+              <div class="cap-name">Billing &amp; Payments</div>
+              <div class="cap-count">3 journeys</div>
+            </div>
+            <p class="cap-desc">Premium collection and payment-method management.</p>
+            <div class="cap-journeys">
+              <div class="cap-journey"><span class="cap-journey-name"><span class="dot"></span>Premium Payment</span><span class="cap-journey-tests">3 tests</span></div>
+              <div class="cap-journey"><span class="cap-journey-name"><span class="dot"></span>Autopay Enrollment</span><span class="cap-journey-tests">2 tests</span></div>
+              <div class="cap-journey"><span class="cap-journey-name"><span class="dot"></span>Refund Processing</span><span class="cap-journey-tests">1 test</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= JOURNEY EXPLORER (was Review Queue) ================= -->
+      <section class="page page-journeys">
+        <div class="page-head">
+          <h1 class="page-title">Review Journeys</h1>
+          <p class="page-sub">6 candidate Journeys from the Jul 12 discovery run. Approve, rename, or reject each before it enters the Trusted Knowledge Model — V1 does not support merging or splitting Journeys, so reject redundant ones instead.</p>
+        </div>
+
+        <div class="queue-layout">
+          <div class="queue-list">
+            <div class="queue-row selected">
+              <div class="queue-main">
+                <div class="queue-title-row">
+                  <span class="queue-name">Claims Approval</span>
+                  <span class="badge new">New</span>
+                </div>
+                <div class="queue-meta"><span class="cap-tag">Claims Processing</span>·<span>18 pages · 6 API calls</span></div>
+              </div>
+              <div class="queue-actions">
+                <button class="iconbtn approve" title="Approve" aria-label="Approve Claims Approval"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 8l3.5 3.5L13 4.5"/></svg></button>
+                <button class="iconbtn" title="Rename" aria-label="Rename Claims Approval"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 2l3 3-8 8-3.5 1 1-3.5z"/></svg></button>
+                <button class="iconbtn reject" title="Reject" aria-label="Reject Claims Approval"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+                <button class="iconbtn" title="Delete" aria-label="Delete Claims Approval"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4.5h10M6 4.5V3h4v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5"/></svg></button>
+              </div>
+            </div>
+
+            <div class="queue-row">
+              <div class="queue-main">
+                <div class="queue-title-row">
+                  <span class="queue-name">Policy Issuance</span>
+                  <span class="badge new">New</span>
+                </div>
+                <div class="queue-meta"><span class="cap-tag">Policy Administration</span>·<span>22 pages · 9 API calls</span></div>
+              </div>
+              <div class="queue-actions">
+                <button class="iconbtn approve" title="Approve" aria-label="Approve Policy Issuance"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 8l3.5 3.5L13 4.5"/></svg></button>
+                <button class="iconbtn" title="Rename" aria-label="Rename Policy Issuance"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 2l3 3-8 8-3.5 1 1-3.5z"/></svg></button>
+                <button class="iconbtn reject" title="Reject" aria-label="Reject Policy Issuance"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+                <button class="iconbtn" title="Delete" aria-label="Delete Policy Issuance"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4.5h10M6 4.5V3h4v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5"/></svg></button>
+              </div>
+            </div>
+
+            <div class="queue-row">
+              <div class="queue-main">
+                <div class="queue-title-row">
+                  <span class="queue-name">Claims Intake</span>
+                  <span class="badge new">New</span>
+                </div>
+                <div class="queue-meta"><span class="cap-tag">Claims Processing</span>·<span>11 pages · 4 API calls</span></div>
+              </div>
+              <div class="queue-actions">
+                <button class="iconbtn approve" title="Approve" aria-label="Approve Claims Intake"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 8l3.5 3.5L13 4.5"/></svg></button>
+                <button class="iconbtn" title="Rename" aria-label="Rename Claims Intake"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 2l3 3-8 8-3.5 1 1-3.5z"/></svg></button>
+                <button class="iconbtn reject" title="Reject" aria-label="Reject Claims Intake"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+                <button class="iconbtn" title="Delete" aria-label="Delete Claims Intake"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4.5h10M6 4.5V3h4v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5"/></svg></button>
+              </div>
+            </div>
+
+            <div class="queue-row">
+              <div class="queue-main">
+                <div class="queue-title-row">
+                  <span class="queue-name">Page_Flow_7</span>
+                  <span class="badge dupe">Overlaps Claims Approval</span>
+                </div>
+                <div class="queue-meta"><span class="cap-tag">Claims Processing</span>·<span>16 pages · 5 API calls</span></div>
+              </div>
+              <div class="queue-actions">
+                <button class="iconbtn approve" title="Approve" aria-label="Approve Page_Flow_7"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M3 8l3.5 3.5L13 4.5"/></svg></button>
+                <button class="iconbtn" title="Rename" aria-label="Rename Page_Flow_7"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 2l3 3-8 8-3.5 1 1-3.5z"/></svg></button>
+                <button class="iconbtn reject" title="Reject" aria-label="Reject Page_Flow_7"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4l8 8M12 4l-8 8"/></svg></button>
+                <button class="iconbtn" title="Delete" aria-label="Delete Page_Flow_7"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4.5h10M6 4.5V3h4v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5"/></svg></button>
+              </div>
+            </div>
+
+            <div class="queue-row done">
+              <div class="queue-main">
+                <div class="queue-title-row">
+                  <span class="queue-name">Premium Payment</span>
+                  <span class="badge approved">Approved</span>
+                </div>
+                <div class="queue-meta"><span class="cap-tag">Billing &amp; Payments</span>·<span>9 pages · 3 API calls</span></div>
+              </div>
+            </div>
+
+            <div class="queue-row done">
+              <div class="queue-main">
+                <div class="queue-title-row">
+                  <span class="queue-name">Agent Portal Login</span>
+                  <span class="badge rejected">Rejected</span>
+                </div>
+                <div class="queue-meta"><span class="cap-tag">Uncategorized</span>·<span>3 pages · 1 API call</span></div>
+              </div>
+            </div>
+          </div>
+
+          <aside class="evidence">
+            <div class="evidence-head">Evidence trail</div>
+            <div class="evidence-title">Claims Approval</div>
+            <p class="evidence-note">Every candidate traces back to what discovery actually captured — nothing here is inferred without a source action.</p>
+            <div class="evidence-group">
+              <div class="evidence-group-label">Pages visited</div>
+              <div class="evidence-item"><span>/claims/:id/review</span></div>
+              <div class="evidence-item"><span>/claims/:id/adjuster-notes</span></div>
+              <div class="evidence-item"><span>/claims/:id/approve</span></div>
+            </div>
+            <div class="evidence-group">
+              <div class="evidence-group-label">Actions</div>
+              <div class="evidence-item"><span class="verb">CLICK</span><span>"Approve Claim"</span></div>
+              <div class="evidence-item"><span class="verb">SUBMIT</span><span>Adjuster notes form</span></div>
+            </div>
+            <div class="evidence-group">
+              <div class="evidence-group-label">API calls</div>
+              <div class="evidence-item"><span class="verb">POST</span><span>/api/claims/{id}/approve</span></div>
+              <div class="evidence-item"><span class="verb">GET</span><span>/api/claims/{id}/history</span></div>
+            </div>
+          </aside>
+        </div>
+
+        <div class="section-divider"><span>Once queue is clear</span><div class="line"></div></div>
+
+        <div class="empty-state">
+          <div class="empty-check"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 8.5l3.2 3.2L13 4.8"/></svg></div>
+          <div class="empty-title">Review queue cleared</div>
+          <div class="empty-sub">All candidates from the Jul 12 run have been triaged. Scenario and test generation has started for approved Journeys.</div>
+          <div class="empty-stats">
+            <div class="empty-stat approve"><b>5</b><span>Approved</span></div>
+            <div class="empty-stat reject"><b>1</b><span>Rejected</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= SCENARIO EXPLORER (view-only) ================= -->
+      <section class="page page-scenarios">
+        <div class="page-head">
+          <h1 class="page-title">Generated Scenarios</h1>
+          <p class="page-sub">Reference only. Scenarios are generated automatically once their parent Journey is approved — there is no separate selection or approval step in V1.</p>
+        </div>
+
+        <div class="scn-group">
+          <div class="scn-group-head">Claims Approval <span class="cap-count">3 scenarios</span></div>
+          <div class="scn-list">
+            <div class="scn-row">
+              <span class="scn-title">Happy path: adjuster approves claim with complete documentation</span>
+              <span class="scn-badges"><span class="badge type-happy">Happy path</span><span class="badge generated">Generated</span></span>
+            </div>
+            <div class="scn-row">
+              <span class="scn-title">Negative: approve claim missing required adjuster notes</span>
+              <span class="scn-badges"><span class="badge type-negative">Negative</span><span class="badge generated">Generated</span></span>
+            </div>
+            <div class="scn-row">
+              <span class="scn-title">Happy path: adjuster reassigns claim before approval</span>
+              <span class="scn-badges"><span class="badge type-happy">Happy path</span><span class="badge generated">Generated</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="scn-group">
+          <div class="scn-group-head">Policy Issuance <span class="cap-count">2 scenarios</span></div>
+          <div class="scn-list">
+            <div class="scn-row">
+              <span class="scn-title">Happy path: agent issues a new policy with valid underwriting data</span>
+              <span class="scn-badges"><span class="badge type-happy">Happy path</span><span class="badge generated">Generated</span></span>
+            </div>
+            <div class="scn-row">
+              <span class="scn-title">Negative: issuance blocked by incomplete rating factors</span>
+              <span class="scn-badges"><span class="badge type-negative">Negative</span><span class="badge generated">Generated</span></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="scn-group">
+          <div class="scn-group-head">Premium Payment <span class="cap-count">2 scenarios</span></div>
+          <div class="scn-list">
+            <div class="scn-row">
+              <span class="scn-title">Happy path: policyholder pays premium with a saved card</span>
+              <span class="scn-badges"><span class="badge type-happy">Happy path</span><span class="badge generated">Generated</span></span>
+            </div>
+            <div class="scn-row">
+              <span class="scn-title">Negative: payment is declined and policyholder is prompted to retry</span>
+              <span class="scn-badges"><span class="badge type-negative">Negative</span><span class="badge generated">Generated</span></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= TEST EXPLORER ================= -->
+      <section class="page page-tests">
+        <div class="page-head">
+          <h1 class="page-title">Generated Tests</h1>
+          <p class="page-sub">Generated Playwright Test Assets, one per approved Journey. Regenerating replaces a Test Asset from scratch — there is no diff/patch mode.</p>
+        </div>
+
+        <div class="test-asset-list">
+          <div class="test-asset">
+            <div class="test-asset-head">
+              <div>
+                <div class="test-asset-journey">Claims Approval</div>
+                <div class="test-asset-file">claims-approval.spec.ts</div>
+              </div>
+              <button class="btn">Regenerate</button>
+            </div>
+            <p class="test-asset-hint">Regenerates from scratch — not a diff/patch.</p>
+            <details class="code-disclosure" open>
+              <summary>View code</summary>
+              <div class="code-viewer"><span class="kw">import</span> { test, expect } <span class="kw">from</span> <span class="str">'@playwright/test'</span>;
+
+<span class="kw">test</span>(<span class="str">'Claims Approval - adjuster approves claim with complete documentation'</span>, <span class="kw">async</span> ({ page }) => {
+  <span class="cmt">// Navigate to the claim under review</span>
+  <span class="kw">await</span> page.goto(<span class="str">'/claims/CLM-10492/review'</span>);
+  <span class="kw">await</span> page.click(<span class="str">'text=Adjuster Notes'</span>);
+  <span class="kw">await</span> page.fill(<span class="str">'#adjuster-notes'</span>, <span class="str">'Documentation complete. Approving per policy guidelines.'</span>);
+  <span class="kw">await</span> page.click(<span class="str">'button:has-text("Approve Claim")'</span>);
+
+  <span class="kw">await</span> expect(page.locator(<span class="str">'.claim-status'</span>)).toHaveText(<span class="str">'Approved'</span>);
+  <span class="kw">await</span> expect(page).toHaveURL(<span class="str">/\/claims\/CLM-10492\/approve/</span>);
+});</div>
+            </details>
+          </div>
+
+          <div class="test-asset">
+            <div class="test-asset-head">
+              <div>
+                <div class="test-asset-journey">Policy Issuance</div>
+                <div class="test-asset-file">policy-issuance.spec.ts</div>
+              </div>
+              <button class="btn">Regenerate</button>
+            </div>
+            <p class="test-asset-hint">Regenerates from scratch — not a diff/patch.</p>
+            <details class="code-disclosure">
+              <summary>View code</summary>
+              <div class="code-viewer"><span class="kw">test</span>(<span class="str">'Policy Issuance - agent issues new policy'</span>, <span class="kw">async</span> ({ page }) => {
+  <span class="kw">await</span> page.goto(<span class="str">'/policies/new'</span>);
+  <span class="kw">await</span> page.fill(<span class="str">'#applicant-name'</span>, <span class="str">'J. Alvarez'</span>);
+  <span class="kw">await</span> page.click(<span class="str">'button:has-text("Issue Policy")'</span>);
+  <span class="kw">await</span> expect(page.locator(<span class="str">'.policy-status'</span>)).toHaveText(<span class="str">'Issued'</span>);
+});</div>
+            </details>
+          </div>
+
+          <div class="test-asset">
+            <div class="test-asset-head">
+              <div>
+                <div class="test-asset-journey">Claims Intake</div>
+                <div class="test-asset-file">claims-intake.spec.ts</div>
+              </div>
+              <button class="btn">Regenerate</button>
+            </div>
+            <p class="test-asset-hint">Regenerates from scratch — not a diff/patch.</p>
+            <details class="code-disclosure">
+              <summary>View code</summary>
+              <div class="code-viewer"><span class="kw">test</span>(<span class="str">'Claims Intake - first notice of loss submitted'</span>, <span class="kw">async</span> ({ page }) => {
+  <span class="kw">await</span> page.goto(<span class="str">'/claims/new'</span>);
+  <span class="kw">await</span> page.fill(<span class="str">'#loss-description'</span>, <span class="str">'Rear-end collision, minor damage.'</span>);
+  <span class="kw">await</span> page.click(<span class="str">'button:has-text("Submit Claim")'</span>);
+  <span class="kw">await</span> expect(page.locator(<span class="str">'.confirmation-banner'</span>)).toBeVisible();
+});</div>
+            </details>
+          </div>
+
+          <div class="test-asset">
+            <div class="test-asset-head">
+              <div>
+                <div class="test-asset-journey">Premium Payment</div>
+                <div class="test-asset-file">premium-payment.spec.ts</div>
+              </div>
+              <button class="btn">Regenerate</button>
+            </div>
+            <p class="test-asset-hint">Regenerates from scratch — not a diff/patch.</p>
+            <details class="code-disclosure">
+              <summary>View code</summary>
+              <div class="code-viewer"><span class="kw">test</span>(<span class="str">'Premium Payment - policyholder pays with saved card'</span>, <span class="kw">async</span> ({ page }) => {
+  <span class="kw">await</span> page.goto(<span class="str">'/billing/pay'</span>);
+  <span class="kw">await</span> page.click(<span class="str">'text=Use saved card'</span>);
+  <span class="kw">await</span> page.click(<span class="str">'button:has-text("Pay Now")'</span>);
+  <span class="kw">await</span> expect(page.locator(<span class="str">'.payment-status'</span>)).toHaveText(<span class="str">'Paid'</span>);
+});</div>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= CI/CD INTEGRATION ================= -->
+      <section class="page page-cicd">
+        <div class="page-head">
+          <h1 class="page-title">Connect to CI/CD</h1>
+          <p class="page-sub">Configure how generated Test Assets reach your pipeline for Claims Processing App.</p>
+        </div>
+
+        <div class="section-divider"><span>Provider</span><div class="line"></div></div>
+        <div class="provider-grid">
+          <label class="provider-card selected">
+            <input type="radio" name="cicd-provider" checked aria-label="GitHub Actions">
+            <div class="provider-icon">GH</div>
+            <div class="provider-name">GitHub Actions</div>
+            <div class="provider-status">Connected</div>
+          </label>
+          <label class="provider-card">
+            <input type="radio" name="cicd-provider" aria-label="GitLab CI">
+            <div class="provider-icon">GL</div>
+            <div class="provider-name">GitLab CI</div>
+          </label>
+          <label class="provider-card">
+            <input type="radio" name="cicd-provider" aria-label="Jenkins">
+            <div class="provider-icon">JK</div>
+            <div class="provider-name">Jenkins</div>
+          </label>
+          <label class="provider-card">
+            <input type="radio" name="cicd-provider" aria-label="Azure DevOps">
+            <div class="provider-icon">AD</div>
+            <div class="provider-name">Azure DevOps</div>
+          </label>
+        </div>
+
+        <div class="section-divider"><span>Export mode</span><div class="line"></div></div>
+        <div class="option-list" style="max-width:520px;">
+          <label class="option-card selected">
+            <div class="option-card-head"><input type="radio" name="export-mode" checked><span>Pull request</span></div>
+            <p class="option-card-desc">Generated and regenerated tests are opened as a pull request against your default branch for review before merge.</p>
+          </label>
+          <label class="option-card">
+            <div class="option-card-head"><input type="radio" name="export-mode"><span>Direct commit</span></div>
+            <p class="option-card-desc">Tests are committed straight to the target branch. Export mode is mutually exclusive and set once per Application.</p>
+          </label>
+        </div>
+
+        <div class="section-divider"><span>Manual pipeline wiring</span><div class="line"></div></div>
+        <p class="page-sub" style="margin-bottom:2px;max-width:72ch;">The platform opens pull requests into <code style="font-family:var(--font-mono);font-size:11.5px;background:var(--surface);border:1px solid var(--border);padding:1px 5px;border-radius:4px;">tests/generated/</code> — wire this workflow into your existing pipeline so those tests actually run.</p>
+        <details class="code-disclosure">
+          <summary>View GitHub Actions workflow snippet</summary>
+          <div class="code-viewer">name: Application Intelligence Tests
+
+on:
+  pull_request:
+    paths:
+      - 'tests/generated/**'
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npx playwright install --with-deps
+      - run: npx playwright test tests/generated/</div>
+          <button class="btn" style="margin-top:10px;" title="Copy pipeline snippet" aria-label="Copy pipeline snippet">Copy</button>
+        </details>
+      </section>
+
+      <!-- ================= ANALYTICS DASHBOARD ================= -->
+      <section class="page page-dash">
+        <div class="page-head">
+          <h1 class="page-title">Dashboard</h1>
+          <p class="page-sub">Roll-up across every onboarded Application — what's understood, and what's actually got a generated test.</p>
+        </div>
+
+        <div class="kpi-row">
+          <div class="kpi">
+            <div class="kpi-label">Approved Journeys</div>
+            <div class="kpi-value">27</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Test Assets generated</div>
+            <div class="kpi-value">24<span class="unit">/ 27</span></div>
+            <div class="kpi-bar"><i style="width:89%"></i></div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Awaiting review</div>
+            <div class="kpi-value">6</div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-label">Applications onboarded</div>
+            <div class="kpi-value">3</div>
+          </div>
+        </div>
+
+        <div class="section-divider"><span>By application</span><div class="line"></div></div>
+
+        <div class="overflow-wrap">
+        <table class="app-table">
+          <thead>
+            <tr><th>Application</th><th>Approved journeys</th><th>Test coverage</th><th>Last discovery</th><th></th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="app-name"><span class="env-dot"></span>Claims Processing App</td>
+              <td>17</td>
+              <td class="cov-cell"><span class="cov-bar"><i style="width:88%"></i></span><span class="cov-num">15 / 17</span></td>
+              <td><span style="color:var(--ink-muted)">Jul 12, 6:41pm</span></td>
+              <td><span class="flag"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 5v4M8 11h.01"/><circle cx="8" cy="8" r="6.3"/></svg>1 pending test</span></td>
+            </tr>
+            <tr>
+              <td class="app-name"><span class="env-dot"></span>Agent Portal</td>
+              <td>10</td>
+              <td class="cov-cell"><span class="cov-bar"><i style="width:90%"></i></span><span class="cov-num">9 / 10</span></td>
+              <td><span style="color:var(--ink-muted)">Jul 9, 2:05pm</span></td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+      </section>
+
+      <!-- ================= SETTINGS ================= -->
+      <section class="page page-settings">
+        <div class="page-head">
+          <h1 class="page-title">Settings</h1>
+          <p class="page-sub">Configuration for Claims Processing App.</p>
+        </div>
+
+        <div class="settings-panels">
+          <div class="cap-card">
+            <div class="cap-card-head"><div class="cap-name" style="font-size:13.5px;">Application configuration</div></div>
+            <div class="settings-row"><span class="k">URL</span><span class="v">staging.claims.internal</span></div>
+            <div class="settings-row"><span class="k">Environment</span><span class="v">Staging</span></div>
+            <div class="settings-row"><span class="k">Credentials</span><span class="v">••••••••••</span></div>
+          </div>
+
+          <div class="cap-card">
+            <div class="cap-card-head"><div class="cap-name" style="font-size:13.5px;">AI provider</div></div>
+            <div class="toggle-row">
+              <div><div class="toggle-label">Hosted (managed)</div><div class="toggle-sub">Default. No additional infrastructure required.</div></div>
+              <label class="toggle"><input type="checkbox" checked><span class="track"></span><span class="thumb"></span></label>
+            </div>
+            <div class="toggle-row">
+              <div><div class="toggle-label">On-prem inference</div><div class="toggle-sub">Route discovery analysis through your own model deployment.</div></div>
+              <label class="toggle"><input type="checkbox"><span class="track"></span><span class="thumb"></span></label>
+            </div>
+          </div>
+
+          <div class="cap-card">
+            <div class="cap-card-head"><div class="cap-name" style="font-size:13.5px;">Notifications</div></div>
+            <label class="check-row"><input type="checkbox" checked>Email me when a discovery run finishes</label>
+            <label class="check-row"><input type="checkbox" checked>Email me when the review queue exceeds 10 items</label>
+            <label class="check-row"><input type="checkbox">Slack digest of weekly coverage</label>
+          </div>
+
+          <div class="cap-card">
+            <div class="cap-card-head"><div class="cap-name" style="font-size:13.5px;">CI/CD connections</div></div>
+            <div class="settings-row"><span class="k">GitHub Actions · Claims Processing App</span><button class="btn" title="Disconnect GitHub Actions" aria-label="Disconnect GitHub Actions">Disconnect</button></div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+</div>
+</div>
+</body>
+</html>
