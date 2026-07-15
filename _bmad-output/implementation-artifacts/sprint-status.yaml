@@ -1,7 +1,16 @@
 # generated: 2026-07-13
-# last_updated: 2026-07-15 — Epic 5, most of Epic 6 (6-1, 6-3, 6-4), and Epic 7 moved to backlog/deferred
-#   per sprint-change-proposal-2026-07-15.md (new prototype cut their supporting screens).
-#   Story 6-2 relocated into Story 3-1 (Journey Explorer folded into Discover Journeys).
+# last_updated: 2026-07-15 — Story 6-2 relocated into Story 3-1 (Journey Explorer folded into
+#   Discover Journeys). Follow-up same day: Stories 3-2 (Approve) and 3-3 (Reject) cut — no more
+#   approval gate, every discovered Journey enters the Trusted Knowledge Model and generates
+#   immediately (FR-14). GenerationWorkflow-start logic moved to Story 2-5.
+#   Final follow-up same day: Epic 5 (CI/CD Delivery), Epic 6's remaining stories (6-1, 6-3, 6-4),
+#   and Epic 7 (Deployment) removed in full — none had any supporting screen in the current UX.
+#   Additional cleanup same day: FR-4 (discovery scope) and FR-5 (time budget) removed in full —
+#   Story 1.5 deleted, its submit/navigate behavior absorbed into Story 1.3; Story 2.1's trigger
+#   changed to automatic (on Application creation, not a manual action); Story 2.3 renamed
+#   "Discovery Completion" and simplified to drop the `incomplete` status entirely (accepted risk,
+#   no time-budget safety cap — see PRD §12 Risk item 7).
+#   See sprint-change-proposal-2026-07-15.md and epics.md for the full history.
 # project: AITestGen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -51,27 +60,29 @@ story_location: _bmad-output/implementation-artifacts
 
 development_status:
   epic-1: in-progress
+  # Story 1-5 (Discovery Scope & Time Budget) removed 2026-07-15 — FR-4/FR-5 confirmed removed
+  #   concepts. Its submit/navigate behavior absorbed into 1-3.
   1-1-repository-service-scaffold: ready-for-dev
   1-2-sign-in-organization-scoped-workspace: ready-for-dev
   1-3-onboard-an-application-basic-details: ready-for-dev
   1-4-configure-application-authentication-method: ready-for-dev
-  1-5-configure-discovery-scope-time-budget: ready-for-dev
   epic-1-retrospective: optional
 
   epic-2: in-progress
-  2-1-start-a-discovery-run: ready-for-dev
+  2-1-start-a-discovery-run: ready-for-dev  # trigger changed 2026-07-15: automatic on Application creation, not manual
   2-2-autonomous-exploration-captures-evidence: ready-for-dev
-  2-3-discovery-stop-conditions-completeness-status: ready-for-dev
+  2-3-discovery-stop-conditions-completeness-status: ready-for-dev  # renamed "Discovery Completion" 2026-07-15; incomplete status removed
   2-4-session-expiry-handling: ready-for-dev
   2-5-ai-journey-capability-inference-from-evidence: ready-for-dev
   epic-2-retrospective: optional
 
   epic-3: in-progress
+  # Stories 3-2 (Approve) and 3-3 (Reject) removed 2026-07-15 — no approval gate exists;
+  #   GenerationWorkflow-start moved to 2-5, Delete (3-4) is the sole exclusion mechanism.
+  #   Journey Explorer (formerly Epic 6 Story 6-2) lives here too, folded into 3-1.
   3-1-review-queue-candidate-list-evidence-panel: ready-for-dev
-  3-2-approve-a-journey-capability: ready-for-dev
-  3-3-reject-a-journey-capability: ready-for-dev
-  3-4-rename-delete-a-journey-capability: ready-for-dev
-  3-5-review-queue-empty-state-new-journey-flagging-on-re-discovery: ready-for-dev
+  3-4-rename-delete-a-journey-capability: ready-for-dev  # Edit (FR-28) added then cut same day; reverted to Rename & Delete
+  3-5-review-queue-empty-state-new-journey-flagging-on-re-discovery: ready-for-dev  # empty-state half cut 2026-07-15; dedup-only now
   epic-3-retrospective: optional
 
   epic-4: in-progress
@@ -80,20 +91,7 @@ development_status:
   4-3-full-regeneration-of-test-assets-on-request: ready-for-dev
   epic-4-retrospective: optional
 
-  epic-5: backlog  # deferred post-V1, 2026-07-15 — see sprint-change-proposal-2026-07-15.md
-  5-1-configure-git-host-export-mode-per-application: backlog
-  5-2-deliver-test-assets-via-pull-request-or-direct-commit: backlog
-  5-3-select-ci-system-receive-manual-wiring-instructions: backlog
-  epic-5-retrospective: optional
-
-  epic-6: in-progress  # 6-2 relocated to Story 3-1; 6-1/6-3/6-4 deferred post-V1, 2026-07-15
-  6-1-capability-map: backlog
-  6-2-journey-explorer: backlog  # superseded — see 3-1-review-queue-candidate-list-evidence-panel.md
-  6-3-coverage-analytics: backlog
-  6-4-multi-application-executive-dashboard: backlog
-  epic-6-retrospective: optional
-
-  epic-7: backlog  # deferred post-V1, 2026-07-15 — flagged for PM reconfirmation (compliance NFR, see proposal)
-  7-1-configure-ai-provider-mode: backlog
-  7-2-enforce-in-network-ai-processing-for-on-prem-mode: backlog
-  epic-7-retrospective: optional
+  # Epic 5 (CI/CD Delivery), Epic 6 (Analytics & Executive Dashboards), and Epic 7 (Deployment &
+  #   AI Provider Configuration) removed in full 2026-07-15 — no supporting screen in current UX
+  #   for any of them (Epic 7's on-prem deployment is additionally a confirmed parked-for-later-
+  #   release product decision). No tracking entries retained; see epics.md for history.

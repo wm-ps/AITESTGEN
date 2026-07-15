@@ -5,7 +5,7 @@ inputDocuments:
   - "_bmad-output/planning-artifacts/architecture/architecture-AITestGen-2026-07-13/ARCHITECTURE-SPINE.md"
   - "_bmad-output/planning-artifacts/ux-designs/ux-AITestGen-2026-07-13/DESIGN.md"
   - "_bmad-output/planning-artifacts/ux-designs/ux-AITestGen-2026-07-13/EXPERIENCE.md"
-updated: "2026-07-15 — see sprint-change-proposal-2026-07-15.md: Epic 5, most of Epic 6, and Epic 7 deferred post-V1; Epic 3/4 gain edit/remove actions (FR-28/29); Story 6.2 relocated into Story 3.1."
+updated: "2026-07-15 — see sprint-change-proposal-2026-07-15.md: Story 6.2 relocated into Story 3.1. Follow-up same day: FR-28 (Journey edit) cut; FR-10/FR-11 (Approve/Reject) cut and FR-14 rewritten — generation now starts immediately on discovery, with no approval gate. Final follow-up same day: Epic 5 (CI/CD Delivery), Epic 6's cut stories (6.1/6.3/6.4), and Epic 7 (Deployment) removed in full — none had any supporting screen in the current UX, and Epic 7's on-prem deployment is confirmed parked for a later release, not a current-scope item. Stories 3.2/3.3, 5.1-5.3, 6.1 files deleted; Story 3.5 trimmed to re-discovery dedup only."
 ---
 
 # Application Intelligence Platform - Epic Breakdown
@@ -21,41 +21,32 @@ This document provides the complete epic and story breakdown for the Application
 FR-1: User can onboard an Application by providing its URL, environment designation, and access credentials.
 FR-2: Access credentials must correspond to a Dedicated Test Account provisioned by the customer, not a real end-user identity.
 FR-3: Platform establishes a session prior to discovery either by (a) performing a standard/manual username-password login flow itself, or (b) reusing a pre-authenticated session (storage state) supplied by the customer for SSO/MFA-protected Applications; a Discovery Run whose session has expired fails gracefully and surfaces a re-authentication prompt.
-FR-4: User can define a Discovery Scope (e.g., limit to specific sections/paths) rather than defaulting to full-Application discovery.
-FR-5: User can configure a maximum time budget for a Discovery Run, as a safety cap against unbounded exploration.
-FR-6: Platform autonomously navigates pages, exercises UI actions and forms, and invokes APIs within the configured Discovery Scope, capturing pages, navigation paths, actions, forms, API calls, and state transitions.
-FR-7: A Discovery Run terminates when either (a) no new pages/actions/state transitions are found (exhaustive traversal), or (b) the configured maximum time budget is reached; a time-budget termination produces a partial result set clearly marked incomplete.
+*(FR-4 "Configurable discovery scope" and FR-5 "Discovery time budget" removed 2026-07-15 — confirmed removed concepts, not a missing-UI gap. Discovery Runs always cover the full Application with no time-budget cap; accepted-risk tradeoff, see PRD §12 Risk item 7.)*
+FR-6: `[UPDATED 2026-07-15]` Platform autonomously navigates pages, exercises UI actions and forms, and invokes APIs across the entire Application (no configurable scope), capturing pages, navigation paths, actions, forms, API calls, and state transitions.
+FR-7: `[UPDATED 2026-07-15]` A Discovery Run terminates when no new pages/actions/state transitions are found (exhaustive traversal) — no time-budget stop condition exists.
 FR-8: Platform uses AI to transform captured discovery signals into candidate Business Capabilities and Journeys expressed in business language; every candidate Journey is associated with the specific pages/actions/API calls that produced it.
-FR-9: Discovered Journeys and Capabilities are presented to a human reviewer before being treated as part of the Trusted Knowledge Model.
-FR-10: Reviewer can approve a discovered Journey/Capability, adding it to the Trusted Knowledge Model.
-FR-11: Reviewer can reject a discovered Journey/Capability, excluding it from the Trusted Knowledge Model.
+FR-9: `[UPDATED 2026-07-15]` Discovered Journeys and Capabilities are presented to a human reviewer for curation (rename, delete) — presentation is not a gate; a Journey is already in the Trusted Knowledge Model and feeding Scenario Generation (FR-14) before a reviewer looks at it.
+FR-10: `[CUT 2026-07-15]` Previously: reviewer can approve a discovered Journey/Capability, adding it to the Trusted Knowledge Model. Cut — there is no gate to approve past; every discovered Journey is in the Trusted Knowledge Model immediately (FR-14).
+FR-11: `[CUT 2026-07-15]` Previously: reviewer can reject a discovered Journey/Capability, excluding it from the Trusted Knowledge Model. Cut as redundant with Delete (FR-13), now the sole exclusion mechanism.
 FR-12: Reviewer can rename a discovered Journey/Capability.
-FR-13: Reviewer can delete a discovered Journey/Capability. Out-of-scope note narrowed 2026-07-15: merging/splitting remain unsupported; editing is now supported (FR-28).
-FR-14: Only approved Journeys/Capabilities enter the Trusted Knowledge Model and feed Scenario Generation and Analytics.
-FR-15: Re-running discovery on a previously discovered Application flags only newly-discovered Journeys/Capabilities (existence check only, not change detection) for human review; already-approved Journeys are not automatically re-surfaced.
-FR-16: Platform generates integration test Scenarios for each approved Journey, covering both happy-path and negative/edge-case scenarios.
+FR-13: Reviewer can delete a discovered Journey/Capability — the sole way a Journey/Capability is excluded from the Trusted Knowledge Model as of 2026-07-15. Out-of-scope note: merging/splitting/editing remain unsupported (FR-28 cut same day it was added).
+FR-14: `[REWRITTEN 2026-07-15]` Every discovered, non-deleted Journey/Capability automatically enters the Trusted Knowledge Model and feeds Scenario Generation and Analytics immediately upon discovery — no separate approval step; deletion (FR-13) is the only exclusion mechanism.
+FR-15: Re-running discovery on a previously discovered Application flags only newly-discovered Journeys/Capabilities (existence check only, not change detection) for human review; already-known Journeys are not automatically re-surfaced.
+FR-16: Platform generates integration test Scenarios for each discovered Journey, covering both happy-path and negative/edge-case scenarios. `[UPDATED 2026-07-15]` Generation starts immediately upon discovery, not gated on approval.
 FR-17: Platform converts generated Scenarios into executable Playwright Test Assets.
 FR-18: When a customer triggers regeneration of Test Assets for a Journey, platform regenerates Scenarios and Test Assets from scratch (full regeneration only, not incremental). Updated 2026-07-15: Scenarios are now editable/removable pre-generation (FR-29).
-FR-28 `[ADDED 2026-07-15]`: Reviewer can edit a discovered Journey via a per-row action menu, in addition to approve/reject/rename/delete. `[GAP]` exact edit surface unconfirmed.
+FR-28 `[ADDED then CUT 2026-07-15]`: Reviewer can edit a discovered Journey via a per-row action menu, in addition to rename/delete. Cut the same day it was added — its exact edit surface (name/description vs. constituent steps) was never confirmed in the UX review, and product decided not to build it.
 FR-29 `[ADDED 2026-07-15]`: Reviewer can rename, edit, or remove a generated Scenario before Playwright generation. `[GAP]` whether edits feed generation or are display-only is unconfirmed.
 
-**`[DEFERRED POST-V1 — 2026-07-15]`** FR-19 through FR-27 below are deferred out of V1 scope — no supporting screen exists in the current reference prototype's IA for any of them. Retained verbatim as a record of original intent; see `sprint-change-proposal-2026-07-15.md`. FR-23 is the one exception: retained and relocated (see its entry).
+**`[REMOVED 2026-07-15]`** FR-19–22 and FR-24–27 are removed in full — no supporting screen exists in the current reference prototype's IA for any of them, and (for FR-26/27) on-prem deployment is confirmed parked for a later release. See `sprint-change-proposal-2026-07-15.md` for the original history. FR-23 is the one exception: retained and relocated (see its entry).
 
-FR-19: Platform can export generated Playwright Test Assets to the customer's source repository via either (a) creating a pull/merge request, or (b) direct commit to a branch — chosen per Application, mutually exclusive modes.
-FR-20: Platform supports repository/pipeline targets for GitHub Actions, GitLab CI, Jenkins, and Azure DevOps.
-FR-21: Platform provides instructions/a template, specific to the Application's configured CI/CD provider, for the customer to manually wire generated tests into their CI pipeline's test-run step.
-FR-22: Platform provides a Capability Map view — a business-language map of approved Capabilities; rejected/deleted candidates never appear.
 FR-23: `[RETAINED, RELOCATED 2026-07-15]` Platform provides Journey-detail — a view of a Journey's screens, actions, and API calls captured during discovery. As of 2026-07-15, served inline in the discovery-review screen's detail panel (selecting a candidate), not a standalone Journey Explorer screen.
-FR-24: Platform provides coverage analytics showing which approved Journeys have a generated Test Asset and which do not (generated-vs-not only, no live CI pass/fail read-back).
-FR-25: Platform provides an executive dashboard rolling up Capability, coverage, and Journey views across multiple Applications, supporting multi-application onboarding from V1 launch.
-FR-26: Platform supports hosted SaaS and on-premises/VPN-based deployment.
-FR-27: In on-premises deployment, the entire platform — including AI/LLM processing — runs inside the customer's network, using AI provider API keys/endpoints supplied by the customer.
 
 ### NonFunctional Requirements
 
 NFR-1 (Security): Standard enterprise-grade secret handling for stored discovery credentials — encryption at rest and in transit, least-privilege service accounts. No bespoke certification requirement specified for V1.
-NFR-2 (Reliability): A Discovery Run must complete or fail gracefully within its configured time budget; partial results are retained and clearly marked incomplete on timeout.
-NFR-3 (Data locality, on-prem): On-prem deployment must keep all data and AI processing inside the customer's network (ties to FR-27).
+NFR-2 (Reliability): `[UPDATED 2026-07-15]` A Discovery Run must complete (exhaustive traversal) or fail gracefully (e.g., session expiry) — no time-budget timeout state exists.
+NFR-3: `[REMOVED 2026-07-15]` Previously "Data locality (on-prem)," tied to FR-27 (removed — on-prem deployment parked for a later release).
 NFR-4 (Accessibility): WCAG 2.1/2.2 AA is the accessibility floor across the entire desktop surface — behavioral commitments (focus visibility, keyboard operability, contrast), not a compliance badge.
 NFR-5 (Platform scope): Desktop web app only — no mobile or tablet form factor / responsive parity in V1.
 
@@ -64,50 +55,50 @@ NFR-5 (Platform scope): Desktop web app only — no mobile or tablet form factor
 - No starter/greenfield template is specified by Architecture; instead a structural seed (`apps/web`, `apps/api`, `apps/workers/discovery`, `apps/workers/generation`, `packages/domain`, `packages/workflows`, `packages/ai_provider`, `packages/delivery_adapters`, `packages/ci_instructions`, `packages/secrets_client`, `migrations/`) is fixed — Epic 1 Story 1 should scaffold this structure directly rather than starting from an external template.
 - Paradigm: Durable Orchestrated Pipeline with Ports & Adapters — Temporal Workflows carry coordination only (no I/O); Temporal Activities are the only place side effects (browser automation, LLM calls, DB writes, Git operations) happen (AD-1, AD-2).
 - `DiscoveryWorkflow` is bounded and terminates by writing candidate Journeys/Capabilities to Postgres with `status=candidate`; human review is ordinary CRUD via `apps/api`, never a Temporal Signal/Update on a long-lived workflow (AD-1).
-- Each Journey approval starts an independent `GenerationWorkflow` with workflow ID `generation-{journey_id}-{attempt}`, where `attempt` is incremented transactionally by `apps/api` in the same write that sets `status=approved` (AD-1, AD-9).
+- `[UPDATED 2026-07-15]` `InferenceActivity` starting an independent `GenerationWorkflow` per candidate Journey it creates, with workflow ID `generation-{journey_id}-1` — immediately upon discovery, with no human approval gate (AD-1, AD-9).
 - All AI/LLM calls must go through one `AIProvider` port (`packages/ai_provider`); no Activity may import a vendor AI SDK directly (AD-3).
-- CI/CD delivery must go through one `DeliveryAdapter` port keyed by the Application's configured Git host (GitHub, GitLab, Azure Repos) — never by CI system; manual pipeline-wiring instructions are a separate concern owned by `packages/ci_instructions`, keyed by CI system (GitHub Actions/GitLab CI/Jenkins/Azure Pipelines), independent of Git host (AD-4).
+- `[NOT CURRENTLY ACTIVE — 2026-07-15]` The `DeliveryAdapter`/`packages/ci_instructions` port design (AD-4) is retained in the Structural Seed as a forward-compatible architectural seam, but CI/CD Delivery (Epic 5) is removed — no story builds against this port in the current scope.
 - Discovery credentials and SSO/MFA session state must never touch primary storage in plaintext — read/written only via `packages/secrets_client`, backed by Vault or cloud KMS envelope encryption; `packages/domain` models store only a secret reference (AD-5).
 - The API's generated OpenAPI spec is the only contract between `apps/web` and `apps/api` — frontend TypeScript types are generated from the FastAPI/Pydantic OpenAPI spec; no hand-written duplicate request/response shape is permitted (AD-6).
-- The Trusted Knowledge Model has exactly one writer path: only `apps/api`'s review endpoints may transition a Journey/Capability's status to `approved`/`rejected`; workers may only write `candidate` or downstream generation status (AD-7).
+- `[UPDATED 2026-07-15]` The Trusted Knowledge Model has exactly one deletion path: only `apps/api`'s delete endpoint may transition a Journey/Capability's status to `deleted`; workers may only write `candidate` or downstream generation status (AD-7). There is no more `approved`/`rejected` state — every non-deleted Journey/Capability is part of the Trusted Knowledge Model from the moment it's discovered.
 - Every inferred artifact keeps a live pointer back to its evidence at the right granularity: `Evidence` rows are tagged `discovery_run_id` at capture and attributed `journey_id` by `InferenceActivity`; `Journey.discovery_run_id` is immutable; `Scenario`/`TestAsset` rows carry `generation_run_id` plus a `current: bool` flag, with prior attempts soft-superseded (never deleted) on regeneration (AD-8).
 - Large binary evidence artifacts (screenshots, DOM snapshots) are never stored inline in Postgres — `Evidence` holds an object-storage key/reference; structured metadata lives in Postgres (AD-8).
-- Every side-effecting Activity (form submission, PR/commit creation) must be idempotent under Temporal's at-least-once retry, using a deterministic check-before-acting key derived from its inputs; the approve endpoint's `status=approved` write and `GenerationWorkflow` start happen in the same request, with a startup reconciliation sweep for orphaned approvals (AD-9).
-- `DiscoveryRun.status` must be a first-class, queryable field (`running | complete | incomplete | failed`) — completeness is never inferred from presence/absence of other data (AD-10).
-- Session expiry mid-crawl must be detected as a distinct condition from a normal stop condition, terminating the run with `status=failed`, `failure_reason=session_expired`, surfaced by `apps/api` as a re-authentication prompt distinguishable from `incomplete` or other failures (AD-11).
+- Every side-effecting Activity (form submission, PR/commit creation) must be idempotent under Temporal's at-least-once retry, using a deterministic check-before-acting key derived from its inputs. `[UPDATED 2026-07-15]` `InferenceActivity`'s candidate-creation step is keyed by the same `identity_key` used for re-discovery dedup (AD-13); its `GenerationWorkflow`-start is naturally idempotent via Temporal's duplicate-workflow-ID rejection, with no separate reconciliation sweep needed (AD-9).
+- `[UPDATED 2026-07-15]` `DiscoveryRun.status` must be a first-class, queryable field (`running | complete | failed`) — completeness is never inferred from presence/absence of other data (AD-10). No `incomplete` value exists — there is no time-budget stop condition to produce one (FR-7).
+- Session expiry mid-crawl must be detected as a distinct condition from a normal stop condition, terminating the run with `status=failed`, `failure_reason=session_expired`, surfaced by `apps/api` as a re-authentication prompt distinguishable from other `failed` causes (AD-11).
 - `Organization` is a first-class tenant-boundary entity; every `apps/api` query must be scoped by the authenticated user's Organization through one central mechanism, never left to individual endpoints (AD-12).
 - Each candidate Journey needs a deterministic `identity_key` computed from its underlying evidence shape (not its AI-generated display name); re-discovery dedup/suppression for FR-15 compares against this key and never alters existing attribution (AD-13).
 - Stack versions to build against: Python 3.14.6, FastAPI (current stable), SQLModel (current stable), Alembic (current stable), PostgreSQL 18.4, Temporal Python SDK (current GA), Playwright Python 1.57+, React 19.x, Vite 8.1.x, TypeScript 7.0 GA (verify AD-6's OpenAPI→TS codegen tooling supports it before adopting, else pin TypeScript 5.9 as fallback).
 - Platform's own CI (build/test/lint of this codebase) runs on GitHub Actions; every `apps/*` service ships as its own container image; traces/metrics use OpenTelemetry, correlated by Temporal `workflow_id` (matching structured-log correlation).
 - Deferred by explicit architecture decision (not to be designed against in V1 stories): SaaS vs. on-prem deployment topology and where Temporal itself runs; the object-storage backend provider; direct-commit regeneration conflict handling; a non-production technical safeguard; confidence/risk-scoring reintroduction; reviewer prioritization/importance-marking; tenant billing/plan model.
 - Blocking dependency: the SSO/MFA session-state capture mechanism (PRD Open Question 8) is unresolved and blocks detailed design/build of the Onboarding flow's auth step (FR-3) — stories touching this step must treat the mechanism as a placeholder pending that decision.
-- Implementation-only choice, no architectural constraint either way: whether the nav rail's live pending-review count badge is delivered via client-side refetch/decrement or a push channel (WebSocket/SSE) is left to the implementer.
+- `[CUT 2026-07-15]` The live pending-review count indicator and New/Dupe candidate-row badges are confirmed cut — the nav rail they depended on is retired, and neither was confirmed present in the current reference prototype. See Story 3.1.
 
 ### UX Design Requirements
 
 UX-DR1: Implement the full design-token system (color, typography, spacing, radius) as CSS custom properties with true light/dark parity — `:root` sets light values + `color-scheme: light`, a `@media (prefers-color-scheme: dark)` block overrides for OS dark preference, and explicit `:root[data-theme="dark"]`/`[data-theme="light"]` attribute selectors let an in-app toggle override the OS preference. No component may hardcode a color outside the token layer.
-UX-DR2: Build the persistent app shell — fixed-width (236px) nav rail plus fluid main column (content capped at 1180px) — with links grouped under five section labels (Workspace, Onboard, Understand, Automate, Prove), active-link highlighting, and Settings/sign-out pinned to the rail foot below a divider.
-UX-DR3: Add a live pending-review count badge to the Review Journeys nav-rail link only, updating as items are triaged.
+UX-DR2: `[SUPERSEDED 2026-07-15 — see Story 1.2]` Originally: build a persistent app shell — fixed-width (236px) nav rail plus fluid main column — with links grouped under five section labels, and Settings/sign-out pinned to the rail foot. No nav rail exists in the current IA; replaced by a top bar (brand mark, avatar menu) plus a pipeline stepper (Story 2.1). Settings itself is removed (Epic 7 cut).
+UX-DR3: `[CUT 2026-07-15]` Live pending-review count badge — was tied to the now-retired nav rail; no on-screen replacement is being built. See `sprint-change-proposal-2026-07-15.md` and Story 3.1.
 UX-DR4: Build the two-pane Review Journeys pattern — a scannable queue-row list plus a sticky (340px, sticky on scroll) evidence panel that loads the selected row's full evidence trail (pages/actions/API calls) rendered in monospace.
-UX-DR5: Build the review-row component with exactly four actions for undecided rows — Approve, Rename, Reject, Delete; a decided row (approved/rejected) removes all four action buttons entirely (not disabled) and mutes/dims its title.
-UX-DR6: Build the badge component with variants `new`, `dupe`, `approved`, `rejected`, `type-happy`, `type-negative`, `generated` — every variant is a tinted-wash background plus saturated text of the same hue, never a solid fill.
-UX-DR7: Build the status-pill component with a pulsing dot for in-progress states; on Discovery Progress, it must automatically transition from "Running" to an amber "Incomplete" state the moment a Discovery Run's time budget is reached (FR-7), without a separate visual pattern. `[UPDATED 2026-07-15: dropped "Applications table row" — no Application-list view is confirmed in the current IA.]`
-UX-DR8: Build the Capability card component (App Overview) — bordered static rollup showing Capability name, journey-count pill, one-line description, and a nested list of approved Journeys with a status dot and test-count in monospace; clicking a nested Journey name is not an interaction in V1.
-UX-DR9: Build KPI tile and hero-stat strip components (Dashboard, Applications) using tabular-nums numeric formatting; a hero-stat strip may color at most one number with the signal accent (the item most deserving first attention), all others in default ink color.
-UX-DR10: Build the Add Application stepper — only the active step renders its full form body; completed steps collapse to a one-line summary, pending steps show only their title; a completed step is not clickable to jump back to.
-UX-DR11: Build the option-card/provider-card selection control (real `<input type="radio">` under a styled card) for: Add Application's auth-method choice, and Connect to CI/CD's export-mode and provider choices — exactly one selection per group, selecting a new option deselects the previous one.
-UX-DR12: Build the code-viewer + native `<details>`/`<summary>` disclosure component for generated Playwright code and CI/CD pipeline snippets, with light syntax tinting (keywords/strings/comments) — closed by default for every block except the first/most-relevant one per screen; opening one disclosure never closes others.
-UX-DR13: Build the toggle-switch component for genuine binary settings only (e.g., AI-provider mode, notification preferences) — immediate on/off, no confirmation step, never repurposed as a selection control.
-UX-DR14: Build the empty-state component (dashed-border panel, circular check icon, one-line factual confirmation) shown only when a queue/list is fully triaged; on Review Journeys specifically, include an Approved/Rejected count summary.
-UX-DR15: Implement the 11-screen information architecture with function-first screen names — Login (pre-shell); Applications, Add Application, Discovery Progress, App Overview, Review Journeys, Generated Scenarios, Generated Tests, Connect to CI/CD, Dashboard, Settings (in-shell) — and the primary linear flow Applications → Add Application → Discovery Progress → App Overview → Review Journeys → Generated Scenarios → Generated Tests → Connect to CI/CD → Dashboard.
-UX-DR16: Implement the breadcrumb/app-name context rule — show the current Application's name in the top-bar crumb only on Application-scoped screens (Discovery Progress, App Overview, Review Journeys, Generated Scenarios, Generated Tests, Connect to CI/CD, Settings); suppress it on Applications, Add Application, and Dashboard.
-UX-DR17: Implement state-pattern behavior for: Discovery running (live-feed list, newest first) vs. time-budget-incomplete; review-queue in-progress vs. resolved-row (muted, badge-only) vs. cleared (empty state); CI/CD provider connected ("Connected" label); and Dashboard coverage-gap (inline "N pending test" warning flag per PRD UJ-2).
-UX-DR18: Enforce the accessibility floor across every new screen/component — WCAG 2.1/2.2 AA; visible focus ring on every interactive element (buttons, nav-rail links, inputs, selects, textareas, `<summary>` triggers); real keyboard-operable `<input type="radio">` under styled option/provider cards (never a `<div onclick>` substitute); tab order matches visual order (list before evidence panel on Review Journeys).
+UX-DR5: `[UPDATED 2026-07-15]` Build the Discover Journeys row component with two curation actions — Rename, Delete. `[CUT 2026-07-15]` Approve/Reject are cut (no gate — see epics.md Epic 3); there is no "decided row" state to mute/dim, since nothing requires a per-row decision anymore.
+UX-DR6: Build the badge component with variants `approved`, `rejected`, `type-happy`, `type-negative`, `generated` — every variant is a tinted-wash background plus saturated text of the same hue, never a solid fill. `[CUT 2026-07-15]` `new`/`dupe` variants are not built — see Story 3.1.
+UX-DR7: `[TRIMMED 2026-07-15]` Build the status-pill component with a pulsing dot for in-progress states. (Originally also specified an amber "Incomplete" transition on time-budget cutoff — removed, no time-budget concept exists; FR-7's only outcome is "Running" → "Complete." Also previously dropped an "Applications table row" variant — no Application-list view is confirmed in the current IA.)
+UX-DR8: `[REMOVED 2026-07-15]` Capability card component (App Overview) — the App Overview screen is cut (Epic 6 removed), no replacement.
+UX-DR9: `[REMOVED 2026-07-15]` KPI tile and hero-stat strip components (Dashboard, Applications) — both screens are cut (Epic 6/Applications-list removed), no replacement.
+UX-DR10: Build the Add Application stepper — only the active step renders its full form body; completed steps collapse to a one-line summary, pending steps show only their title; a completed step is not clickable to jump back to. `[GAP — flagged 2026-07-15, see Story 1.3]` This stepper pattern was itself superseded by a single consolidated Connect App form; re-verify whether any of this UX-DR still applies to a real screen.
+UX-DR11: `[REMOVED 2026-07-15]` Originally: option-card/provider-card selection control for Add Application's auth-method choice, and Connect to CI/CD's export-mode/provider choices. Both are gone — auth-method is now a plain `<select>` (Story 1.4's 2026-07-15 update), and Connect to CI/CD is cut (Epic 5 removed).
+UX-DR12: `[TRIMMED 2026-07-15]` Build the code-viewer + native `<details>`/`<summary>` disclosure component for generated Playwright code, with light syntax tinting (keywords/strings/comments) — closed by default for every block except the first/most-relevant one per screen; opening one disclosure never closes others. (Originally also covered CI/CD pipeline snippets — removed, Epic 5 cut.)
+UX-DR13: `[TRIMMED 2026-07-15]` Build the toggle-switch component for genuine binary settings only (e.g., notification preferences) — immediate on/off, no confirmation step, never repurposed as a selection control. (Originally cited AI-provider mode as an example use — removed, Epic 7 cut; no Settings screen exists for this control to live on regardless.)
+UX-DR14: `[SUPERSEDED 2026-07-15 — see Story 3.5]` Originally: build an empty-state component (dashed-border panel, circular check icon, one-line factual confirmation) shown only when a queue/list is fully triaged, with an Approved/Rejected count summary on Review Journeys specifically. No longer applicable to Discover Journeys — there is no forced per-row decision to "fully triage" (Approve/Reject cut), so no empty-state trigger condition exists there. Retained as a general-purpose component definition in case another screen needs a true empty state later.
+UX-DR15: `[SUPERSEDED 2026-07-15]` Originally: an 11-screen IA — Login; Applications, Add Application, Discovery Progress, App Overview, Review Journeys, Generated Scenarios, Generated Tests, Connect to CI/CD, Dashboard, Settings — linear flow through all of them. Replaced by the current 6-screen IA: Sign In → Home (3 action cards) → Connect App → Discover Journeys → Review Scenarios → Generate Suite (a single-Application 4-step guided pipeline, per Story 1.2/2.1's 2026-07-15 updates). Applications, App Overview, Generated Tests (as a standalone screen), Connect to CI/CD, Dashboard, and Settings have no current-IA equivalent.
+UX-DR16: `[UPDATED 2026-07-15]` Implement the breadcrumb/app-name context rule — show the current Application's name (plus environment badge) in the top bar on all four pipeline-step screens (Connect App, Discover Journeys, Review Scenarios, Generate Suite), since each is inherently scoped to a single Application; suppress it on Sign In and Home, the only pre-/cross-Application screens. (Originally listed Discovery Progress, App Overview, Generated Tests, Connect to CI/CD, Settings, Applications, and Dashboard — most of those screens no longer exist; see UX-DR15.)
+UX-DR17: `[TRIMMED 2026-07-15]` Implement state-pattern behavior for: Discovery running (live-feed list, newest first) vs. complete; review-queue in-progress vs. resolved-row (muted, badge-only) vs. cleared (empty state) `[largely superseded, see UX-DR14/Story 3.5]`. (Originally also covered time-budget-incomplete — removed, no time-budget concept exists, see Story 2.3 — and CI/CD provider "Connected" label and Dashboard coverage-gap flag — both removed, Epic 5/6 cut.)
+UX-DR18: `[UPDATED 2026-07-15]` Enforce the accessibility floor across every new screen/component — WCAG 2.1/2.2 AA; visible focus ring on every interactive element (buttons, top-bar/pipeline-stepper links, inputs, selects, textareas, `<summary>` triggers); tab order matches visual order (list before detail panel on Discover Journeys). (Originally also cited nav-rail links and option/provider cards — both removed; see UX-DR2, UX-DR11.)
 UX-DR19: Enforce the label/caption contrast rule everywhere new text is added — all real label/caption/metadata text routes through the `ink-muted` token (~5:1 AA contrast); the `ink-faint` token is reserved exclusively for decorative, non-text marks (disabled affordances, placeholder dashes) and must never carry real copy.
 UX-DR20: Enforce voice-and-tone constraints in all authored UI copy — no exclamation points, emoji, or celebratory language anywhere; capitalize Application, Capability, Journey, Scenario, Test Asset, and Trusted Knowledge Model as proper nouns consistently; state errors/hints/constraints as fact + why, never apology-only or unexplained.
 UX-DR21: Enforce the hard product constraint that no AI confidence, risk, or importance signal (score, percentage, star rating, priority flag) may appear anywhere near discovered/inferred content (Journeys, Capabilities, Scenarios) — this applies to every new screen, not just the ones in the approved prototype.
-UX-DR22: Enforce the "no merge/split/composition-edit" constraint — no future Journey-review screen or component may offer a merge, split, or inline edit of what pages/actions/API calls compose a Journey; duplicate candidates are flagged with a `dupe` badge and rejected, never merged.
-UX-DR23: Enforce that Generated Scenarios remain view-only — no checkbox selection, per-scenario approval, or action buttons on a scenario row; the only approval gate is at the Journey level.
+UX-DR22: Enforce the "no merge/split/composition-edit" constraint — no future Journey-review screen or component may offer a merge, split, or inline edit of what pages/actions/API calls compose a Journey; a reviewer resolves a duplicate candidate by deleting it, never by merging or editing it (no `dupe` badge is built — see Story 3.1; edit is cut — see Story 3.4).
+UX-DR23: `[SUPERSEDED — see Story 4.1's 2026-07-15 update]` Originally: Generated Scenarios remain view-only, no checkbox selection, per-scenario approval, or action buttons on a scenario row, since the only approval gate was at the Journey level. No longer holds: per-scenario rename/edit/remove is supported (FR-29), and there is no more Journey-level approval gate at all (FR-10/FR-11 cut) — generation starts immediately on discovery.
 UX-DR24: Reserve monospace typography (`font-mono`) exclusively for raw captured evidence and generated code (routes, API call signatures, timestamps, file paths, Playwright code) — never for authored UI copy (labels, headings, hints, empty-state text), even where a technical look might seem appropriate.
 
 ### FR Coverage Map
@@ -115,72 +106,54 @@ UX-DR24: Reserve monospace typography (`font-mono`) exclusively for raw captured
 FR-1: Epic 1 - Application onboarding (URL, environment, credentials)
 FR-2: Epic 1 - Dedicated Test Account credential requirement
 FR-3: Epic 1 - Authentication via login flow or storage-state reuse
-FR-4: Epic 1 - Configurable discovery scope
-FR-5: Epic 1 - Discovery time budget
-FR-6: Epic 2 - Autonomous exploration capturing pages/actions/APIs/state
-FR-7: Epic 2 - Discovery stop conditions (exhaustive vs. time-budget incomplete)
+*(FR-4 and FR-5 — removed 2026-07-15, confirmed removed concepts, not deferred. See Story 1.5's removal below.)*
+FR-6: Epic 2 - Autonomous exploration capturing pages/actions/APIs/state, always full-Application
+FR-7: Epic 2 - Discovery stop condition (exhaustive traversal only, no time-budget branch)
 FR-8: Epic 2 - AI journey/capability inference with evidence association
-FR-9: Epic 3 - Review queue presentation
-FR-10: Epic 3 - Approve action
-FR-11: Epic 3 - Reject action
+FR-9: Epic 3 - Discover Journeys curation presentation
+FR-10: `[CUT 2026-07-15]` Approve action — no longer built
+FR-11: `[CUT 2026-07-15]` Reject action — no longer built
 FR-12: Epic 3 - Rename action
-FR-13: Epic 3 - Delete action
-FR-14: Epic 3 - Approval gates downstream use (Trusted Knowledge Model)
+FR-13: Epic 3 - Delete action (sole exclusion mechanism as of 2026-07-15)
+FR-14: Epic 2 - Discovery gates downstream use (Trusted Knowledge Model) — `GenerationWorkflow` starts immediately per candidate (moved from Epic 3's former Approve action)
 FR-15: Epic 3 - New-journey flagging on re-discovery
-FR-16: Epic 4 - Scenario generation (happy-path + negative)
+FR-16: Epic 4 - Scenario generation (happy-path + negative), starts immediately on discovery
 FR-17: Epic 4 - Playwright Test Asset generation
 FR-18: Epic 4 - Full regeneration on request
-FR-28: Epic 3 - Edit a discovered Journey `[ADDED 2026-07-15]`
+FR-28: `[ADDED then CUT 2026-07-15]` Edit a discovered Journey — no longer built
 FR-29: Epic 4 - Edit/remove a generated Scenario `[ADDED 2026-07-15]`
-FR-19: Epic 5 `[DEFERRED POST-V1]` - Export mode choice (PR vs. direct commit)
-FR-20: Epic 5 `[DEFERRED POST-V1]` - CI/CD provider support (GitHub Actions, GitLab CI, Jenkins, Azure DevOps)
-FR-21: Epic 5 `[DEFERRED POST-V1]` - Manual pipeline wiring instructions
-FR-22: Epic 6 `[DEFERRED POST-V1]` - Capability Map view
 FR-23: Epic 3 `[RETAINED, RELOCATED]` - Journey step/evidence detail, now inline in the discovery-review screen (was Epic 6 - Journey Explorer)
-FR-24: Epic 6 `[DEFERRED POST-V1]` - Coverage analytics
-FR-25: Epic 6 `[DEFERRED POST-V1]` - Multi-application executive dashboard
-FR-26: Epic 7 `[DEFERRED POST-V1]` - Two deployment models (SaaS + on-prem)
-FR-27: Epic 7 `[DEFERRED POST-V1]` - On-prem data locality / customer-supplied AI endpoint
+
+*(FR-19–22 and FR-24–27 — removed 2026-07-15 along with Epics 5, 6 [partially], and 7. See `sprint-change-proposal-2026-07-15.md` for history.)*
 
 NFR-1 (Security): Epic 1 - Secret handling for stored discovery credentials
-NFR-2 (Reliability): Epic 2 - Graceful completion/failure within time budget
-NFR-3 (Data locality): Epic 7 - On-prem data/AI processing stays in-network
+NFR-2 (Reliability): Epic 2 - Graceful completion (exhaustive traversal) or failure (e.g., session expiry)
 NFR-4 (Accessibility): Cross-cutting - WCAG 2.1/2.2 AA applied within every epic's UI stories
 NFR-5 (Platform scope): Cross-cutting - Desktop-only constraint applied within every epic's UI stories
 
 ## Epic List
 
 ### Epic 1: Foundation, Auth & Application Onboarding
-A user can sign in, and onboard an Application (URL, environment, Dedicated Test Account credentials, discovery scope, time budget) — ready for its first Discovery Run. Establishes the structural seed scaffold, Organization tenancy, credential handling via SecretsClient, and the app shell/design-token foundation everything else builds on.
-**FRs covered:** FR-1, FR-2, FR-3, FR-4, FR-5
+A user can sign in, and onboard an Application (URL, environment, Dedicated Test Account credentials) — ready for its first Discovery Run. Establishes the structural seed scaffold, Organization tenancy, credential handling via SecretsClient, and the app shell/design-token foundation everything else builds on. `[UPDATED 2026-07-15]` No discovery scope or time-budget configuration — both removed (FR-4/FR-5); Discovery Runs always cover the full Application.
+**FRs covered:** FR-1, FR-2, FR-3
 
 ### Epic 2: Runtime Discovery & AI Journey Inference
-A user can start a Discovery Run, watch live progress (running/incomplete/failed-session-expired), and see AI-inferred candidate Journeys/Capabilities, each traceable to captured evidence.
-**FRs covered:** FR-6, FR-7, FR-8
+A user can start a Discovery Run, watch live progress (running/complete/failed-session-expired), and see AI-inferred candidate Journeys/Capabilities, each traceable to captured evidence. `[UPDATED 2026-07-15]` Every candidate Journey immediately enters the Trusted Knowledge Model and starts Scenario/Playwright generation as soon as it's created — no approval gate (FR-14, moved from the former Approve action). No `incomplete` status — a Discovery Run only ever completes (exhaustive traversal) or fails, since no time-budget cap exists.
+**FRs covered:** FR-6, FR-7, FR-8, FR-14
 
-### Epic 3: Human Review & Trusted Knowledge Model
-A reviewer can approve/reject/rename/edit/delete candidates in the Review queue, and inspect any candidate's discovered step/evidence detail inline; approved items enter the Trusted Knowledge Model; re-running discovery only flags genuinely new Journeys.
-**FRs covered:** FR-9, FR-10, FR-11, FR-12, FR-13, FR-14, FR-15, FR-23 (relocated 2026-07-15), FR-28 (added 2026-07-15)
+### Epic 3: Human Curation & Trusted Knowledge Model `[RENAMED 2026-07-15, was "Human Review & Trusted Knowledge Model"]`
+`[REWRITTEN 2026-07-15]` A reviewer curates discovered candidates — rename what's mislabeled, delete what doesn't belong — and inspects any candidate's discovered step/evidence detail inline. There is no approve/reject gate: every discovered Journey is already in the Trusted Knowledge Model and generating coverage before a reviewer looks at it (see Epic 2); deletion is the only exclusion mechanism. Re-running discovery only flags genuinely new Journeys.
+**FRs covered:** FR-9, FR-12, FR-13, FR-15, FR-23 (relocated 2026-07-15). `[CUT 2026-07-15]` FR-10 (Approve), FR-11 (Reject) — no story files retained (removed 2026-07-15); FR-28 (Edit) — see Story 3.4.
 
 ### Epic 4: Scenario & Playwright Test Generation
-Approving a Journey automatically produces happy-path/negative Scenarios (rename/edit/removable pre-generation as of 2026-07-15) and executable Playwright Test Assets, generated as a named Test Suite, regenerable from scratch on request.
+`[UPDATED 2026-07-15]` Every discovered Journey automatically produces happy-path/negative Scenarios (rename/edit/removable pre-generation as of 2026-07-15) and executable Playwright Test Assets, generated as a named Test Suite, regenerable from scratch on request — generation starts immediately on discovery, not on approval.
 **FRs covered:** FR-16, FR-17, FR-18, FR-29 (added 2026-07-15)
 
-### Epic 5: CI/CD Delivery `[DEFERRED POST-V1 — 2026-07-15]`
-A user configures a Git host and CI system per Application and gets generated tests delivered via PR or direct commit, plus provider-specific manual wiring instructions. Deferred: no supporting screen in current scope, real delivery/execution mechanism undecided — see `sprint-change-proposal-2026-07-15.md`.
-**FRs covered:** FR-19, FR-20, FR-21
-
-### Epic 6: Analytics & Executive Dashboards `[MOSTLY DEFERRED POST-V1 — 2026-07-15]`
-Capability Map, coverage analytics, and a multi-application executive dashboard are deferred — no supporting screen in current scope. Journey Explorer (FR-23) moved to Epic 3, relocated inline.
-**FRs covered:** FR-22, FR-24, FR-25 (all deferred)
-
-### Epic 7: Deployment & AI Provider Configuration `[DEFERRED POST-V1 — 2026-07-15]`
-An organization can run hosted SaaS or configure the platform to use its own AI provider endpoint/keys for on-prem, in-network processing. Deferred: Settings, the only confirmed UI entry point, is cut from current scope — flagged for explicit reconfirmation given these are compliance/data-residency NFRs, not a convenience feature.
-**FRs covered:** FR-26, FR-27
+*(Epic 5 "CI/CD Delivery," Epic 6 "Analytics & Executive Dashboards," and Epic 7 "Deployment & AI Provider Configuration" removed in full 2026-07-15 — none had any supporting screen in the current UX, and Epic 7's on-prem deployment is a confirmed parked-for-later-release decision, not current scope. Epic 6's Journey Explorer (FR-23) survives, relocated into Epic 3's Story 3.1. See `sprint-change-proposal-2026-07-15.md` for the original history.)*
 
 ## Epic 1: Foundation, Auth & Application Onboarding
 
-A user can sign in, and onboard an Application (URL, environment, Dedicated Test Account credentials, discovery scope, time budget) — ready for its first Discovery Run.
+A user can sign in, and onboard an Application (URL, environment, Dedicated Test Account credentials) — ready for its first Discovery Run.
 
 ### Story 1.1: Repository & Service Scaffold
 
@@ -231,10 +204,11 @@ So that it becomes available for discovery configuration.
 **Acceptance Criteria:**
 
 **Given** a signed-in user on Home
-**When** they choose "Start a New Project" (or "Managed Applications") and submit Application name, Base URL, environment, and credentials on the single Connect App form
+**When** they choose "Start a New Project" (or "Managed Applications") and submit Application name, Base URL, environment, credentials, and authentication method (Story 1.4) on the single Connect App form
 **Then** an `Application` record is created, scoped to their Organization, and the submitted credentials are written only through `packages/secrets_client` (Vault/KMS-backed), never stored in plaintext in Postgres or logs (FR-2, AD-5, NFR-1)
 **And** the credentials field is explicitly labeled as requiring a Dedicated Test Account, not a real end-user identity (FR-2)
 **And** the Connect App screen shows the current Application's name and environment badge in the top bar once submitted, per the (2026-07-15) breadcrumb rule
+**And** `[ABSORBED FROM REMOVED STORY 1.5, 2026-07-15]` submitting returns the user to the pipeline's Discover Journeys step, where discovery begins immediately against the full Application — no scope/time-budget configuration exists (FR-4/FR-5 removed)
 
 *(Superseded 2026-07-15: the prior AC described a multi-step wizard stepper where only the active step's form renders. Connect App is now one consolidated form with a single "Connect Application" submit — no internal stepper.)*
 
@@ -258,67 +232,56 @@ So that SSO/MFA-protected apps can still be discovered.
 
 **`[GAP — flagged 2026-07-15]`** The current reference prototype's Connect App form shows only a generic Authentication method `<select>` with no visible SSO/MFA session-handoff option or field. PRD Open Question 8 remains unresolved — do not read this absence as "SSO/MFA support was cut." Needs explicit confirmation (from a fuller prototype export or direct product decision) before this story is built, specifically for the SSO/MFA branch of the AC above.
 
-### Story 1.5: Configure Discovery Scope & Time Budget
-
-**`[GAP — flagged 2026-07-15]`** The current reference prototype's Connect App form does not show Discovery Scope or Time Budget fields anywhere. Unlike the confirmed-cut screens (Applications list, App Overview, Dashboard, CI/CD, Settings), these fields were never explicitly identified as cut — they may simply be below the fold, in a later-added "Advanced" section, or genuinely dropped. **Do not build or drop this story on the current evidence** — re-verify against a fuller prototype export first. AC below is retained unchanged from the prior revision as the last-confirmed spec pending that check.
-
-As a user onboarding an Application,
-I want to set a discovery scope and a maximum time budget,
-So that discovery stays bounded to what I intend and within a safety cap.
-
-**Acceptance Criteria:**
-
-**Given** a user on the Connect App form
-**When** they optionally restrict scope to specific sections/paths, and set a maximum time budget
-**Then** those values are saved on the `Application` record, defaulting to full-Application scope if left unspecified (FR-4, FR-5)
-**And** submitting returns the user to the pipeline's Discover Journeys step, where the new Application's discovery begins
-**And** the breadcrumb/context rule is honored: Connect App carries no Application-name breadcrumb until submission (no Application exists yet)
+*(Story 1.5 "Configure Discovery Scope & Time Budget" removed in full 2026-07-15 — FR-4/FR-5 confirmed removed concepts, not a UI gap; see PRD §9. Its remaining substance — submitting the Connect App form navigates to Discover Journeys and starts discovery on the full Application — is absorbed into Story 1.3's AC, the story that already owns form submission.)*
 
 ## Epic 2: Runtime Discovery & AI Journey Inference
 
-A user can start a Discovery Run, watch live progress, and see AI-inferred candidate Journeys/Capabilities, each traceable to captured evidence.
+A Discovery Run starts automatically on Application creation; the user watches live progress and sees AI-inferred candidate Journeys/Capabilities, each traceable to captured evidence.
 
-### Story 2.1: Start a Discovery Run
+### Story 2.1: Start a Discovery Run `[UPDATED 2026-07-15]`
+
+*Trigger changed 2026-07-15 — Discovery now starts automatically when the Connect App form is submitted (Story 1.3), not via a separate manual "Start Discovery Run" action. There is no confirmed Applications/Discovery Progress screen with its own start button (see Story 1.5's removal and Story 1.3's absorbed AC).*
 
 As a user,
-I want to start a Discovery Run against an onboarded Application,
-So that the platform begins mapping its business journeys.
+I want a Discovery Run to start as soon as I've onboarded an Application,
+So that the platform begins mapping its business journeys without an extra step.
 
 **Acceptance Criteria:**
 
-**Given** an onboarded Application
-**When** the user starts a Discovery Run from the Applications or Discovery Progress screen
+**Given** an Application was just created (Story 1.3's Connect App submission)
+**When** the creation request completes
 **Then** a `DiscoveryRun` record is created with `status=running`, and a bounded `DiscoveryWorkflow` is started for it (AD-1) — the workflow contains no direct I/O, only calls to Activities (AD-2)
 **And** the Discovery Progress screen shows a status pill reading "Running" with a pulsing dot
 
 ### Story 2.2: Autonomous Exploration Captures Evidence
 
+*Updated 2026-07-15 — no configurable scope; Discovery always explores the entire Application (FR-4 removed).*
+
 As a user,
-I want the platform to autonomously explore my Application within its configured scope,
+I want the platform to autonomously explore my Application,
 So that raw discovery signal is captured as the basis for journey mapping.
 
 **Acceptance Criteria:**
 
-**Given** a running Discovery Run with a configured scope
-**When** `DiscoveryActivity` navigates pages, exercises UI actions and forms, and invokes APIs within that scope
+**Given** a running Discovery Run
+**When** `DiscoveryActivity` navigates pages, exercises UI actions and forms, and invokes APIs across the entire Application
 **Then** each captured page, action, form, API call, and state transition is written as an `Evidence` row tagged with `discovery_run_id` (FR-6, AD-8)
 **And** large binary artifacts (screenshots, DOM snapshots) are referenced via an object-storage key, never stored inline in Postgres
 **And** the Discovery Progress screen's live-feed list shows the most recently captured pages/actions/API calls, newest first, in monospace, appended as discovery proceeds
 
-### Story 2.3: Discovery Stop Conditions & Completeness Status
+### Story 2.3: Discovery Completion `[RENAMED 2026-07-15, was "Discovery Stop Conditions & Completeness Status"]`
+
+*Rewritten 2026-07-15 — FR-5 (time budget) removed; there is no time-budget stop condition, no `incomplete` status, and no accompanying amber status-pill state. A Discovery Run only ever completes via exhaustive traversal or fails (Story 2.4). This is an accepted-risk tradeoff — see PRD §12 Risk item 7 (no safety cap against unbounded exploration).*
 
 As a user,
-I want a Discovery Run to stop when exploration is exhaustive or its time budget is reached, and to see clearly whether the result is complete,
-So that I never mistake a partial map for a finished one.
+I want a Discovery Run to stop once exploration is exhaustive,
+So that I know the map reflects everything discovery found.
 
 **Acceptance Criteria:**
 
 **Given** a running Discovery Run
 **When** no new pages, actions, or state transitions are found
 **Then** `DiscoveryRun.status` is set to `complete` (FR-7, AD-10)
-**Given** a running Discovery Run instead reaches its configured time budget before exhaustive traversal
-**When** the time budget elapses
-**Then** `DiscoveryRun.status` is set to `incomplete`, and the status pill automatically transitions from "Running" to an amber "Incomplete" state — the same status-pill component, not a separate visual pattern
 **And** completeness is read directly from `DiscoveryRun.status` everywhere it's shown, never inferred from the presence or absence of other data
 
 ### Story 2.4: Session Expiry Handling
@@ -332,7 +295,7 @@ So that I can re-authenticate rather than mistake it for a normal, if small, res
 **Given** a running Discovery Run whose session has expired mid-crawl (detected via an auth-redirect)
 **When** `DiscoveryActivity` detects this condition
 **Then** it terminates the run with `DiscoveryRun.status=failed`, `failure_reason=session_expired` — a condition distinct from a normal stop condition (AD-11)
-**And** the platform surfaces a re-authentication prompt keyed specifically off `session_expired`, visually distinguishable from an `incomplete` (time-budget) run and from any other `failed` cause (FR-3)
+**And** the platform surfaces a re-authentication prompt keyed specifically off `session_expired`, visually distinguishable from any other `failed` cause (FR-3). `[UPDATED 2026-07-15]` No longer needs to be distinguished from `incomplete` — that status no longer exists (FR-5 removed).
 
 ### Story 2.5: AI Journey/Capability Inference from Evidence
 
@@ -342,16 +305,16 @@ So that I have something meaningful to review instead of a raw crawl log.
 
 **Acceptance Criteria:**
 
-**Given** a Discovery Run that has completed or gone incomplete, with captured Evidence
+**Given** a Discovery Run that has completed, with captured Evidence
 **When** `InferenceActivity` runs, calling the AI provider exclusively through the `AIProvider` port (AD-3, no direct vendor SDK import)
 **Then** candidate `Journey`/`Capability` rows are written with `status=candidate` and a business-language name — never a raw route/page identifier (FR-8)
 **And** each candidate Journey's supporting `Evidence` rows are attributed to it via `journey_id`, set by `InferenceActivity` (AD-8)
 **And** each candidate Journey gets a deterministic `identity_key` computed from its evidence shape, not its AI-generated name (AD-13)
 **And** `Journey.discovery_run_id` is set once, at creation, and is immutable
 
-## Epic 3: Human Review & Trusted Knowledge Model
+## Epic 3: Human Curation & Trusted Knowledge Model `[RENAMED 2026-07-15, was "Human Review & Trusted Knowledge Model"]`
 
-A reviewer can approve/reject/rename/delete candidates in the Review queue; approved items enter the Trusted Knowledge Model; re-running discovery only flags genuinely new Journeys.
+`[REWRITTEN 2026-07-15]` A reviewer curates discovered candidates (rename, delete) in the Discover Journeys screen; every discovered Journey is already in the Trusted Knowledge Model and generating coverage before the reviewer looks at it (Epic 2) — deletion is the only exclusion mechanism, not a gate. Re-running discovery only flags genuinely new Journeys.
 
 ### Story 3.1: Discover Journeys — Candidate List & Detail Panel
 
@@ -369,87 +332,56 @@ So that I can judge each inference against what discovery actually captured.
 **And** selecting a row loads that Journey's discovered step-by-step detail — each step's route, method, and stage badge (e.g. "Login," "MFA Verification") — into a detail panel on the right, replacing any prior selection (FR-23, relocated)
 **And** no confidence, risk, or importance score/percentage/star/flag appears anywhere on a candidate row or in the detail panel
 
-**`[GAP — flagged 2026-07-15]`** `New`/`Dupe` badges, a live pending-count indicator, and sticky-on-scroll behavior for the detail panel were part of the prior revision's spec but were not confirmed present in the current reference prototype. Retained as last-confirmed spec pending re-verification — do not assume they're gone, but don't assume they survived unchanged either.
+**`[RESOLVED 2026-07-15]`** Three items previously flagged as gaps are now settled: **`New`/`Dupe` badges are cut** (not built), the **live pending-count indicator is cut** (its only home, the nav rail, is retired — no on-screen replacement is being built), and the **detail panel is sticky on scroll**, retaining its 340px width; its content changes only when the reviewer selects a different candidate row, never as a side effect of scrolling.
 
-### Story 3.2: Approve a Journey/Capability
+*(Stories 3.2 "Approve" and 3.3 "Reject" removed 2026-07-15 — no approval gate exists; every discovered Journey enters the Trusted Knowledge Model and starts generation immediately (FR-14). `GenerationWorkflow`-start logic lives in Story 2.5; Delete (Story 3.4) is the sole exclusion mechanism.)*
+
+### Story 3.4: Rename & Delete a Journey/Capability
+
+*Updated 2026-07-15 — Edit (FR-28) was added, then cut the same day: its exact editable surface was never confirmed in the UX review, and product decided not to build it. Reverted to Rename & Delete only.*
 
 As a reviewer,
-I want to approve a discovered Journey/Capability,
-So that it enters the Trusted Knowledge Model and downstream generation can begin.
+I want to rename or delete a discovered Journey/Capability,
+So that the Trusted Knowledge Model reflects names I trust and excludes what doesn't belong.
 
 **Acceptance Criteria:**
 
-**Given** an undecided candidate Journey/Capability
-**When** the reviewer clicks Approve
-**Then** only `apps/api`'s review endpoint transitions its status to `approved` — no worker or other code path may perform this transition (FR-10, FR-14, AD-7)
-**And** in the same request, the endpoint increments the Journey's `attempt` counter and starts an independent `GenerationWorkflow` with workflow ID `generation-{journey_id}-{attempt}` (AD-1) — a duplicate/double-click approval is a no-op because Temporal rejects the duplicate workflow ID (AD-9)
-**And** the row immediately drops its four action buttons (not disabled — removed) and its title mutes, reflecting its new `Approved` badge
-
-### Story 3.3: Reject a Journey/Capability
-
-As a reviewer,
-I want to reject a discovered Journey/Capability — including a duplicate flagged by the platform,
-So that redundant or invalid candidates never enter the Trusted Knowledge Model.
-
-**Acceptance Criteria:**
-
-**Given** an undecided candidate Journey/Capability, including one carrying a `Dupe` badge
-**When** the reviewer clicks Reject
-**Then** its status transitions to `rejected` via the same single review-endpoint writer path (FR-11, AD-7), and it is excluded from the Trusted Knowledge Model
-**And** no merge or split action is offered anywhere in this flow — a duplicate is resolved by rejecting or editing it (FR-28), never by combining it with another Journey
-
-### Story 3.4: Rename, Edit & Delete a Journey/Capability
-
-*Updated 2026-07-15 — adds Edit (FR-28), previously out of scope.*
-
-As a reviewer,
-I want to rename, edit, or delete a discovered Journey/Capability,
-So that the Trusted Knowledge Model reflects names and content I trust.
-
-**Acceptance Criteria:**
-
-**Given** an undecided candidate Journey/Capability
+**Given** a candidate Journey/Capability
 **When** the reviewer renames it via the row's `⋯` menu
 **Then** the new name is saved and displayed everywhere the Journey/Capability appears (FR-12)
-**Given** an undecided candidate Journey/Capability
-**When** the reviewer chooses Edit from the `⋯` menu
-**Then** they can modify it and the change is saved (FR-28) — **`[GAP]`** the exact editable surface (name/description only, vs. constituent steps) is unconfirmed; do not build against an assumed field set without a follow-up UX pass
-**Given** an undecided candidate Journey/Capability
+**Given** a candidate Journey/Capability
 **When** the reviewer deletes it (via the `⋯` menu)
-**Then** it is removed from the review queue and never enters the Trusted Knowledge Model (FR-13)
+**Then** it is excluded from the Trusted Knowledge Model — along with any Scenarios/Test Assets already generated for it — from Generate Suite compilation and Analytics (FR-13); this does not cancel an in-flight or completed `GenerationWorkflow`, consistent with FR-18's regeneration being the only way to redo generation for a kept Journey
 
-### Story 3.5: Discover Journeys Empty State & New-Journey Flagging on Re-Discovery
+### Story 3.5: New-Journey Flagging on Re-Discovery `[RENAMED 2026-07-15, was "Discover Journeys Empty State & New-Journey Flagging on Re-Discovery"]`
 
-**`[GAP — flagged 2026-07-15]`** The empty-state treatment below is retained unchanged from the prior revision as last-confirmed spec — it was not reachable in the current reference prototype (never seen with zero remaining candidates). Re-verify before treating as final.
+**`[CUT 2026-07-15]`** This story's empty-state half is cut — it existed only because the old approve/reject model forced a decision on every row before the queue could "clear." With no forced per-row decision, there is no zero-undecided state to trigger an empty-state screen; a reviewer can delete what they don't want and move on whenever they're satisfied. Only the re-discovery dedup logic below survives.
 
 As a reviewer,
-I want a clear confirmation once I've triaged every candidate, and to see only genuinely new Journeys on a re-discovery run,
-So that I never have to re-review something I've already decided on.
+I want to see only genuinely new Journeys on a re-discovery run,
+So that I never have to re-review something I've already seen before.
 
 **Acceptance Criteria:**
 
-**Given** the reviewer has decided on every candidate in the queue
-**When** the last undecided row is resolved
-**Then** the queue's list is replaced by an empty-state panel showing a factual confirmation line plus an Approved/Rejected count pair (FR-9, UX-DR14)
 **Given** discovery is re-run on a previously discovered Application
 **When** `InferenceActivity` produces new candidates
-**Then** only candidates whose `identity_key` does not match any existing Journey in the Application are surfaced in the review queue (FR-15, AD-13) — already-approved Journeys are never automatically re-surfaced, and a suppressed match does not alter the existing Journey's `discovery_run_id` or evidence attribution
+**Then** only candidates whose `identity_key` does not match any existing Journey in the Application are surfaced (FR-15, AD-13) — already-known Journeys are never automatically re-surfaced, and a suppressed match does not alter the existing Journey's `discovery_run_id` or evidence attribution
 
 ## Epic 4: Scenario & Playwright Test Generation
 
-Approving a Journey automatically produces happy-path/negative Scenarios and executable Playwright Test Assets, viewable, and regenerable from scratch on request.
+`[UPDATED 2026-07-15]` Every discovered Journey automatically produces happy-path/negative Scenarios and executable Playwright Test Assets, viewable, and regenerable from scratch on request — generation starts immediately on discovery (Epic 2), not on approval.
 
-### Story 4.1: Generate Scenarios for an Approved Journey
+### Story 4.1: Generate Scenarios for a Discovered Journey `[RENAMED 2026-07-15, was "...for an Approved Journey"]`
 
-*Updated 2026-07-15 — Scenarios are no longer view-only; adds FR-29 (edit/remove).*
+*Updated 2026-07-15 — Scenarios are no longer view-only; adds FR-29 (edit/remove). Trigger updated same day: generation starts on discovery, not approval (FR-10/FR-11 cut — see Epic 3).*
 
 As a user,
-I want an approved Journey to automatically get integration test Scenarios covering both happy-path and negative cases,
+I want a discovered Journey to automatically get integration test Scenarios covering both happy-path and negative cases,
 So that the map becomes actionable test coverage, not just documentation.
 
 **Acceptance Criteria:**
 
-**Given** a Journey whose approval started a `GenerationWorkflow`
+**Given** a Journey for which `InferenceActivity` started a `GenerationWorkflow` at creation (AD-1)
 **When** `ScenarioGenerationActivity` runs, calling the AI provider only through the `AIProvider` port
 **Then** `Scenario` rows are created for the Journey, covering both happy-path and negative/edge-case scenarios (FR-16)
 **And** the Review Scenarios screen lists them with `Happy Path`/`Negative Path`/`Edge Case` badges, each with a `⋯` menu offering rename/edit/remove (FR-29)
@@ -484,143 +416,10 @@ So that I get fresh coverage after the Journey or my understanding of it has cha
 
 **Acceptance Criteria:**
 
-**Given** an approved Journey with existing, `current=true` Scenarios and Test Assets
+**Given** a discovered Journey with existing, `current=true` Scenarios and Test Assets
 **When** the user triggers regeneration
 **Then** a new `GenerationWorkflow` attempt runs `ScenarioGenerationActivity` and `PlaywrightGenerationActivity` from scratch — never as an incremental diff/patch (FR-18)
 **And** the new attempt's `Scenario`/`TestAsset` rows are written with `current=true`, while the prior attempt's rows flip to `current=false` (soft-superseded, retained for audit, never deleted) (AD-8)
 **And** the regeneration Activity is idempotent under Temporal's at-least-once retry — a retried attempt does not produce duplicate current rows (AD-9)
 
-## Epic 5: CI/CD Delivery `[DEFERRED POST-V1 — 2026-07-15]`
-
-**Deferred out of V1 scope as of 2026-07-15** — the Connect to CI/CD screen this epic depended on is cut from the current reference prototype's IA; Generate Suite's replacement "Execution" control is a confirmed placeholder with no real mechanism yet. Do not schedule these stories for dev-story until the real delivery/execution mechanism is designed. Stories below are retained verbatim as a record of V1's original intent. See `sprint-change-proposal-2026-07-15.md`.
-
-A user configures a Git host and CI system per Application and gets generated tests delivered via PR or direct commit, plus provider-specific manual wiring instructions.
-
-### Story 5.1: Configure Git Host & Export Mode per Application
-
-As a user,
-I want to choose my Application's Git host and export mode (pull request vs. direct commit),
-So that generated tests land in my repository the way my team actually works.
-
-**Acceptance Criteria:**
-
-**Given** a user on the Connect to CI/CD screen
-**When** they select a Git host (GitHub, GitLab, or Azure Repos) and an export mode via provider/option cards
-**Then** the choice is saved on the Application's `CIConfig`, with exactly one Git host and one export mode selected at a time (FR-19)
-**And** an Application configured for PR mode never receives a direct commit, and vice versa — the two modes are mutually exclusive per Application
-
-### Story 5.2: Deliver Test Assets via Pull Request or Direct Commit
-
-As a user,
-I want generated Test Assets automatically delivered to my configured Git host,
-So that the tests reach my real repository without manual copy-paste.
-
-**Acceptance Criteria:**
-
-**Given** a `TestAsset` ready for delivery and an Application with a configured Git host and export mode
-**When** `CIDeliveryActivity` runs
-**Then** it calls only the `DeliveryAdapter` interface, selected by the Application's configured Git host — never by its CI system (FR-19, AD-4)
-**And** it checks for an existing PR/commit using a deterministic key derived from `journey_id` + `attempt` before acting, so a retried delivery reuses its own prior effect instead of duplicating it (AD-9)
-**And** once delivered, the Connect to CI/CD screen's provider card shows a "Connected" status label
-
-### Story 5.3: Select CI System & Receive Manual Wiring Instructions
-
-As a user,
-I want instructions specific to my CI system for wiring generated tests into my pipeline's test-run step,
-So that I can complete the last mile into my real regression process myself.
-
-**Acceptance Criteria:**
-
-**Given** a user selects a CI system (GitHub Actions, GitLab CI, Jenkins, or Azure Pipelines) for their Application
-**When** they view the wiring instructions
-**Then** `CIInstructionsGenerator` renders a template specific to that CI system, independent of which Git host the Application delivers to (FR-20, FR-21, AD-4) — e.g., a Jenkins-on-GitHub Application gets the GitHub `DeliveryAdapter` plus Jenkins-flavored instructions
-**And** the instructions render inside a `<details>` disclosure, closed by default unless it is the first/most-relevant block on the screen
-
-## Epic 6: Analytics & Executive Dashboards `[MOSTLY DEFERRED POST-V1 — 2026-07-15]`
-
-Capability Map, coverage analytics, and a multi-application executive dashboard let QA/Engineering leadership see what's understood, tested, and gapped. **Story 6.2 (Journey Explorer) has moved to Epic 3** (Story 3.1), relocated inline into the discovery-review flow — it is not deferred. Stories 6.1, 6.3, 6.4 are deferred out of V1 scope as of 2026-07-15: no supporting screen exists in the current reference prototype's IA for any of them, and PRD UJ-2 (which 6.4 realized) is deferred alongside. Retained verbatim as a record of V1's original intent. See `sprint-change-proposal-2026-07-15.md`.
-
-### Story 6.1: Capability Map `[DEFERRED POST-V1]`
-
-As a QA Director or Engineering Leader,
-I want a business-language map of an Application's approved Capabilities,
-So that I can show what the application actually does without anyone having had to document it by hand.
-
-**Acceptance Criteria:**
-
-**Given** an Application with approved Capabilities
-**When** the user opens App Overview
-**Then** every approved Capability appears as a card showing its name, a journey-count pill, a one-line description, and a nested list of its approved Journeys with a status dot and test-count in monospace (FR-22)
-**And** rejected or deleted candidates never appear in this view
-
-### Story 6.2: Journey Explorer — `[MOVED to Story 3.1, 2026-07-15]`
-
-Superseded — see Story 3.1 ("Discover Journeys — Candidate List & Detail Panel") in Epic 3, which now delivers FR-23 inline rather than as a standalone explorer screen. Original AC retained below for history only.
-
-As a QA Director or Engineering Leader,
-I want to open any approved Journey and see the exact screens, actions, and API calls that back it,
-So that I can trust the map traces back to real, observed behavior.
-
-**Acceptance Criteria (superseded):**
-
-**Given** an approved Journey
-**When** the user selects it in the Journey Explorer
-**Then** the specific pages, actions, and API calls captured for it during discovery are shown (FR-23)
-
-### Story 6.3: Coverage Analytics `[DEFERRED POST-V1]`
-
-As an Engineering Leader,
-I want to see which approved Journeys have a generated Test Asset and which don't,
-So that I know what's covered before a release.
-
-**Acceptance Criteria:**
-
-**Given** an Application with approved Journeys, some with and some without a current Test Asset
-**When** the user views coverage analytics
-**Then** each Journey shows whether a `current=true` Test Asset exists for it — never a live pass/fail status from the customer's CI, since the platform has no read-back channel from it (FR-24)
-
-### Story 6.4: Multi-Application Executive Dashboard `[DEFERRED POST-V1]`
-
-As an Engineering Leader,
-I want a single dashboard rolling up Capability, coverage, and Journey views across all my Applications,
-So that I can make a release decision backed by evidence rather than a gut call.
-
-**Acceptance Criteria:**
-
-**Given** an Organization with one or more onboarded Applications
-**When** the user opens Dashboard
-**Then** KPI tiles and a hero-stat strip show portfolio-level counts (approved Journeys, Test Assets generated, Applications onboarded), with tabular-nums formatting and at most one number accent-colored as the item most deserving attention
-**And** an Application row with at least one approved Journey lacking a generated Test Asset shows an inline warning flag (e.g., "N pending test") next to its coverage figures (FR-25)
-**And** the Dashboard screen omits the top-bar Application-name breadcrumb, since it is inherently cross-Application
-
-## Epic 7: Deployment & AI Provider Configuration `[DEFERRED POST-V1 — 2026-07-15]`
-
-**Deferred out of V1 scope as of 2026-07-15** — Settings, the only confirmed UI entry point for Story 7.1, is cut from the current reference prototype's IA. Flagged explicitly (not silently folded into the general deferral pattern) because FR-26/27 are compliance/data-residency NFRs, not a convenience dashboard — reconfirm with product ownership before treating the underlying on-prem/data-locality *requirement* (not just its UI) as deferred, especially if any on-prem commitment has already been made externally. See `sprint-change-proposal-2026-07-15.md`.
-
-An organization can run hosted SaaS or configure the platform to use its own AI provider endpoint/keys for on-prem, in-network processing.
-
-### Story 7.1: Configure AI Provider Mode `[DEFERRED POST-V1 — no confirmed UI home]`
-
-As an organization administrator,
-I want to switch the platform between hosted AI processing and my own AI provider endpoint/keys,
-So that I can meet my organization's data-residency requirements.
-
-**Acceptance Criteria:**
-
-**Given** an administrator on the Settings screen
-**When** they toggle AI-provider mode between hosted and customer-supplied
-**Then** the setting is saved per Organization, and all subsequent AI calls resolve through the existing `AIProvider` port — no Inference or Generation Activity code changes when the mode changes (FR-26, FR-27, AD-3)
-**And** the toggle behaves as an immediate on/off setting, with no confirmation step, using the standard toggle-switch component
-
-### Story 7.2: Enforce In-Network AI Processing for On-Prem Mode `[DEFERRED POST-V1 — depends on 7.1]`
-
-As an organization running on-prem,
-I want every AI/LLM call to stay inside my network when customer-supplied mode is active,
-So that no customer data or AI processing leaves my network.
-
-**Acceptance Criteria:**
-
-**Given** an Organization configured for customer-supplied AI provider mode
-**When** any Inference, Scenario Generation, or Playwright Generation Activity runs
-**Then** it resolves the `AIProvider` port to the customer-endpoint implementation exclusively — no call is routed to the hosted vendor endpoint (FR-27, NFR-3)
-**And** this holds regardless of the deferred SaaS/on-prem infrastructure topology decision — the enforcement is at the port-selection level, not the deployment-infra level
+*(Epic 5 "CI/CD Delivery" [Stories 5.1-5.3], Epic 6 "Analytics & Executive Dashboards" [Stories 6.1, 6.3, 6.4 — 6.2 relocated into Story 3.1], and Epic 7 "Deployment & AI Provider Configuration" [Stories 7.1-7.2] removed in full 2026-07-15. None had any supporting screen in the current UX; Epic 7's on-prem deployment is additionally a confirmed parked-for-later-release product decision. See `sprint-change-proposal-2026-07-15.md` for the original history and rationale.)*

@@ -47,7 +47,7 @@ so that I have real, runnable regression coverage for the Journey.
   - [ ] Each row carries a `generated` badge (`{colors.good-wash}`/`{colors.good}` — an already-documented variant)
   - [ ] **Unlike Story 4.1's Review Scenarios screen, this display's `<details>` disclosure toggle is expected and correct** — this was never a view-only screen to begin with; no rule to over-apply here
 - [ ] Task 5: Verify end-to-end and record evidence (AC: 1, 2)
-  - [ ] Each Scenario for an approved Journey (Story 4.1) gets exactly one corresponding `TestAsset` row, `current=true`, sharing the same `generation_run_id`
+  - [ ] Each Scenario for a discovered Journey (Story 4.1) gets exactly one corresponding `TestAsset` row, `current=true`, sharing the same `generation_run_id`
   - [ ] The Generate Suite form captures suite name/target environment and shows the correct journey/scenario count summary before generating
   - [ ] The Execution radio options render but trigger no execution/scheduling behavior on selection or submit
   - [ ] If Task 4a's post-generation display is built, it shows one code block open by default, the rest closed, and opening a second block leaves the first open too
@@ -56,7 +56,7 @@ so that I have real, runnable regression coverage for the Journey.
 ## Dev Notes
 
 - **Read Story 4.1's Dev Notes on `generation_run_id`'s meaning before starting Task 1** — this story's `TestAsset` field must match that convention exactly, since Story 4.3's regeneration/superseding logic depends on `Scenario` and `TestAsset` from the same attempt carrying the same value.
-- **The fan-out from one `ScenarioGenerationActivity` result to N `PlaywrightGenerationActivity` calls is new to this workflow** — Story 4.1 only ever dispatched a single Activity. Get the Temporal pattern right here (e.g. `asyncio.gather` over multiple Activity futures within the workflow, still orchestration-only) since Epic 5's `CIDeliveryActivity` dispatch will likely follow a similar per-TestAsset fan-out.
+- **The fan-out from one `ScenarioGenerationActivity` result to N `PlaywrightGenerationActivity` calls is new to this workflow** — Story 4.1 only ever dispatched a single Activity. Get the Temporal pattern right here (e.g. `asyncio.gather` over multiple Activity futures within the workflow, still orchestration-only). `[UPDATED 2026-07-15]` The `CIDeliveryActivity` dispatch this was originally compared against belonged to Epic 5 (CI/CD Delivery), now removed — no story builds that fan-out.
 - **2026-07-15 reframing: "Generated Tests" (standalone code-review screen) is now "Generate Suite" (pipeline step 4)** — the underlying `TestAsset`/`PlaywrightGenerationActivity` generation logic (Tasks 1-3) is unchanged; only the screen this story builds is different (a name/target-environment/summary form, not a code-viewer landing screen). Story 4.1's Review Scenarios note about UX-DR23 being superseded is unrelated to this story — don't conflate the two.
 - **The Execution placeholder (Run immediately/Schedule for later/Save without running) is explicitly not a real feature** — treat it exactly like Story 1.4's SSO/MFA placeholder in spirit (a named, deliberately inert UI element), except here there is no unresolved product question to eventually resolve; it is confirmed placeholder-only per the user and the architecture Deferred section, and building real behavior behind it would introduce an architecture commitment (live test execution) nobody has actually decided on.
 
@@ -72,7 +72,7 @@ so that I have real, runnable regression coverage for the Journey.
 - [Source: _bmad-output/planning-artifacts/architecture/architecture-AITestGen-2026-07-13/ARCHITECTURE-SPINE.md#AD-2, #AD-3, #AD-8, #Module Contracts, #Deferred — test-suite execution mechanism placeholder]
 - [Source: _bmad-output/planning-artifacts/ux-designs/ux-AITestGen-2026-07-13/DESIGN.md#Components — code-viewer, badge]
 - [Source: _bmad-output/planning-artifacts/ux-designs/ux-AITestGen-2026-07-13/EXPERIENCE.md#Component Patterns — Code disclosure]
-- [Source: _bmad-output/implementation-artifacts/4-1-generate-scenarios-for-an-approved-journey.md — `generation_run_id` convention and `GenerationWorkflow`'s current shape this story extends]
+- [Source: _bmad-output/implementation-artifacts/4-1-generate-scenarios-for-an-approved-journey.md — `generation_run_id` convention and `GenerationWorkflow`'s current shape this story extends (Story 4.1 itself was renamed "...for a Discovered Journey" 2026-07-15; filename retained for continuity)]
 - [Source: _bmad-output/planning-artifacts/sprint-change-proposal-2026-07-15.md]
 
 ## Previous Story Intelligence
