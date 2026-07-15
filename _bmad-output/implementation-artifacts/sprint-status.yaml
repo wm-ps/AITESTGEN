@@ -1,5 +1,7 @@
 # generated: 2026-07-13
-# last_updated: 2026-07-13
+# last_updated: 2026-07-15 — Epic 5, most of Epic 6 (6-1, 6-3, 6-4), and Epic 7 moved to backlog/deferred
+#   per sprint-change-proposal-2026-07-15.md (new prototype cut their supporting screens).
+#   Story 6-2 relocated into Story 3-1 (Journey Explorer folded into Discover Journeys).
 # project: AITestGen
 # project_key: NOKEY
 # tracking_system: file-system
@@ -41,57 +43,57 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-13
+last_updated: 2026-07-14
 project: AITestGen
 project_key: NOKEY
 tracking_system: file-system
 story_location: _bmad-output/implementation-artifacts
 
 development_status:
-  epic-1: backlog
-  1-1-repository-service-scaffold: backlog
-  1-2-sign-in-organization-scoped-workspace: backlog
-  1-3-onboard-an-application-basic-details: backlog
-  1-4-configure-application-authentication-method: backlog
-  1-5-configure-discovery-scope-time-budget: backlog
+  epic-1: in-progress
+  1-1-repository-service-scaffold: ready-for-dev
+  1-2-sign-in-organization-scoped-workspace: ready-for-dev
+  1-3-onboard-an-application-basic-details: ready-for-dev
+  1-4-configure-application-authentication-method: ready-for-dev
+  1-5-configure-discovery-scope-time-budget: ready-for-dev
   epic-1-retrospective: optional
 
-  epic-2: backlog
-  2-1-start-a-discovery-run: backlog
-  2-2-autonomous-exploration-captures-evidence: backlog
-  2-3-discovery-stop-conditions-completeness-status: backlog
-  2-4-session-expiry-handling: backlog
-  2-5-ai-journey-capability-inference-from-evidence: backlog
+  epic-2: in-progress
+  2-1-start-a-discovery-run: ready-for-dev
+  2-2-autonomous-exploration-captures-evidence: ready-for-dev
+  2-3-discovery-stop-conditions-completeness-status: ready-for-dev
+  2-4-session-expiry-handling: ready-for-dev
+  2-5-ai-journey-capability-inference-from-evidence: ready-for-dev
   epic-2-retrospective: optional
 
-  epic-3: backlog
-  3-1-review-queue-candidate-list-evidence-panel: backlog
-  3-2-approve-a-journey-capability: backlog
-  3-3-reject-a-journey-capability: backlog
-  3-4-rename-delete-a-journey-capability: backlog
-  3-5-review-queue-empty-state-new-journey-flagging-on-re-discovery: backlog
+  epic-3: in-progress
+  3-1-review-queue-candidate-list-evidence-panel: ready-for-dev
+  3-2-approve-a-journey-capability: ready-for-dev
+  3-3-reject-a-journey-capability: ready-for-dev
+  3-4-rename-delete-a-journey-capability: ready-for-dev
+  3-5-review-queue-empty-state-new-journey-flagging-on-re-discovery: ready-for-dev
   epic-3-retrospective: optional
 
-  epic-4: backlog
-  4-1-generate-scenarios-for-an-approved-journey: backlog
-  4-2-generate-playwright-test-assets-from-scenarios: backlog
-  4-3-full-regeneration-of-test-assets-on-request: backlog
+  epic-4: in-progress
+  4-1-generate-scenarios-for-an-approved-journey: ready-for-dev
+  4-2-generate-playwright-test-assets-from-scenarios: ready-for-dev
+  4-3-full-regeneration-of-test-assets-on-request: ready-for-dev
   epic-4-retrospective: optional
 
-  epic-5: backlog
+  epic-5: backlog  # deferred post-V1, 2026-07-15 — see sprint-change-proposal-2026-07-15.md
   5-1-configure-git-host-export-mode-per-application: backlog
   5-2-deliver-test-assets-via-pull-request-or-direct-commit: backlog
   5-3-select-ci-system-receive-manual-wiring-instructions: backlog
   epic-5-retrospective: optional
 
-  epic-6: backlog
+  epic-6: in-progress  # 6-2 relocated to Story 3-1; 6-1/6-3/6-4 deferred post-V1, 2026-07-15
   6-1-capability-map: backlog
-  6-2-journey-explorer: backlog
+  6-2-journey-explorer: backlog  # superseded — see 3-1-review-queue-candidate-list-evidence-panel.md
   6-3-coverage-analytics: backlog
   6-4-multi-application-executive-dashboard: backlog
   epic-6-retrospective: optional
 
-  epic-7: backlog
+  epic-7: backlog  # deferred post-V1, 2026-07-15 — flagged for PM reconfirmation (compliance NFR, see proposal)
   7-1-configure-ai-provider-mode: backlog
   7-2-enforce-in-network-ai-processing-for-on-prem-mode: backlog
   epic-7-retrospective: optional

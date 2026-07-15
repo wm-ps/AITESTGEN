@@ -2,7 +2,7 @@
 title: "Application Intelligence Platform — V1 PRD"
 status: final
 created: 2026-07-13
-updated: 2026-07-13
+updated: 2026-07-15
 ---
 
 # PRD: Application Intelligence Platform (V1)
@@ -18,7 +18,7 @@ This PRD scopes **V1** of the Application Intelligence Platform for engineering,
 
 The Application Intelligence Platform turns a running web application into a business-language map of what it actually does — discovered automatically, confirmed by a human, and converted into running regression coverage. Where existing test-automation tools execute journeys someone already told them about, V1 answers the prior question: *what are all the business journeys this application supports, right now, as built?*
 
-Given only a URL and dedicated test credentials — no source code or repository access — V1 explores a non-production instance of a customer's application the way a thorough tester would, infers candidate business capabilities and journeys from what it observes, and hands them to a human reviewer (typically a QA Director or Engineering Leader) to approve, rename, reject, or delete — V1's review toolset is deliberately simple (§4.4); it doesn't yet support merging, splitting, or editing what makes up a Journey. Approved journeys become the trusted basis for generated integration test scenarios and executable Playwright tests, delivered into the customer's own repository and CI/CD pipeline. Above that sits a set of views — Capability Map, Journey Explorer, coverage analytics, and a multi-application executive dashboard — that let engineering and QA leadership see what's understood, what's tested, and what isn't, without anyone having had to remember to document it.
+Given only a URL and dedicated test credentials — no source code or repository access — V1 explores a non-production instance of a customer's application the way a thorough tester would, infers candidate business capabilities and journeys from what it observes, and hands them to a human reviewer (typically a QA Director or Engineering Leader) to approve, rename, reject, delete, or edit — V1's review toolset (§4.4) doesn't support merging or splitting what makes up a Journey. Approved journeys become the trusted basis for generated integration test scenarios and executable Playwright tests. A per-Journey detail view lets a reviewer inspect the screens, actions, and API calls behind any candidate. `[NOTE FOR PM — 2026-07-15]` The Capability Map, coverage analytics, multi-application executive dashboard, and CI/CD delivery views described in earlier planning are **deferred post-V1** as of this revision — see §6, §9, and `sprint-change-proposal-2026-07-15.md` for the full rationale.
 
 V1 does not claim technical discovery superiority (see brief's *What Makes This Different*); it wins pilots on the strength of the business-journey framing, the human-in-the-loop trust mechanism, and a credible roadmap. The deeper technical moat — source-code correlation and change-impact prediction — arrives in V2 and V3.
 
@@ -48,7 +48,7 @@ V1 is built and sold around the **Engineering Leader + QA Director** relationshi
   - **Resolution:** She leaves the review queue empty (all triaged) and opens the Capability Map to see the approved Journeys rendered as a business-language view she can show her Engineering Leader.
   - **Edge case:** If discovery hit its time budget before finishing (per FR-5/FR-7) mid-application, Maria sees a partial map clearly marked as incomplete, not presented as a finished result.
 
-- **UJ-2. Devon checks release readiness before a Friday deploy.**
+- **UJ-2. Devon checks release readiness before a Friday deploy.** `[DEFERRED POST-V1 — 2026-07-15]` This journey depended entirely on the multi-application executive dashboard (FR-25), which is cut from V1 scope as of this revision (see `sprint-change-proposal-2026-07-15.md`). Preserved below as a record of intent for whichever future release picks the dashboard back up, not as a V1 commitment.
   - **Persona + context:** Devon, an Engineering Leader, is deciding whether to approve a release.
   - **Entry state:** Authenticated, opens the executive dashboard for the application in question.
   - **Path:** Reviews coverage analytics — which approved Journeys have a generated test and which don't (V1 shows generated-vs-not, not live pass/fail status from CI) — across the two Applications his org has onboarded.
@@ -152,7 +152,15 @@ Reviewer can rename a discovered Journey/Capability.
 #### FR-13: Delete
 Reviewer can delete a discovered Journey/Capability.
 
-**Out of Scope:** `[NON-GOAL for MVP]` Merging two discovered Journeys, splitting one into two, or editing which pages/actions belong to a Journey are not supported in V1. The brief's Solution narrative describes a reviewer who "merges duplicates" — that specific capability is cut for V1 to keep the review workflow to four simple actions; a reviewer facing duplicate Journeys must instead reject the redundant one(s) rather than merge them.
+**Out of Scope:** `[NON-GOAL for MVP]` Merging two discovered Journeys or splitting one into two are not supported in V1 (updated 2026-07-15 — editing is now supported, see FR-28). The brief's Solution narrative describes a reviewer who "merges duplicates" — that specific capability is cut for V1 to keep the review workflow free of composition-combining actions; a reviewer facing duplicate Journeys must instead reject or edit the redundant one(s) rather than merge them.
+
+#### FR-28: Edit a discovered Journey `[ADDED 2026-07-15]`
+Reviewer can edit a discovered Journey via a per-row action menu, in addition to approve/reject/rename/delete.
+
+**Consequences (testable):**
+- Editing a Journey does not constitute merging or splitting (FR-13 Out of Scope, unchanged).
+
+**Notes:** `[GAP]` The exact edit surface (which composition fields — name, description, constituent steps — are actually editable) is unconfirmed against the current reference prototype; the `⋯` menu's edit affordance wasn't reachable during UX review. Needs a follow-up UX pass before implementation.
 
 #### FR-14: Approval gates downstream use
 Only approved Journeys/Capabilities enter the Trusted Knowledge Model and feed Scenario Generation and Analytics (§4.5, §4.7).
@@ -175,13 +183,20 @@ Platform generates integration test Scenarios for each approved Journey, coverin
 Platform converts generated Scenarios into executable Playwright Test Assets.
 
 #### FR-18: Full regeneration on request
-When a customer triggers regeneration of Test Assets for a Journey, platform regenerates Scenarios and Test Assets from scratch. Individual Scenarios are not manually editable prior to Playwright generation in V1 — the approval gate is at the Journey level (§4.4) only.
+When a customer triggers regeneration of Test Assets for a Journey, platform regenerates Scenarios and Test Assets from scratch. The approval gate for generation remains at the Journey level (§4.4); individual Scenarios can additionally be edited/removed pre-generation as of 2026-07-15 — see FR-29.
 
 **Out of Scope:** V1 has no capability to detect *what* changed in a Journey and regenerate incrementally — regeneration is always full, not a diff/patch. See §5 Non-Goals.
 
-### 4.6 CI/CD Delivery
+#### FR-29: Edit or remove an individual Scenario `[ADDED 2026-07-15]`
+Reviewer can rename, edit, or remove a generated Scenario before Playwright generation, via a per-row action menu on the scenario review screen.
+
+**Notes:** `[GAP]` Whether an edited Scenario's test data/steps actually feed Playwright generation, or the edit is display-only, is unconfirmed against the current reference prototype. Needs a follow-up UX/engineering pass before implementation.
+
+### 4.6 CI/CD Delivery `[DEFERRED POST-V1 — 2026-07-15]`
 
 **Description:** Gets generated tests out of the platform and into the customer's real regression process — without that step, the map is interesting but the tests are shelfware.
+
+`[NOTE FOR PM]` As of 2026-07-15, FR-19–21 are deferred to post-V1. The Connect to CI/CD screen this feature depended on is cut from the current reference prototype's IA. Generate Suite's replacement Execution control (`Run immediately`/`Schedule for later`/`Save without running`) is an explicit UI placeholder with no confirmed underlying delivery mechanism — do not build FR-19–21 against the spec below; it is retained here as a record of V1's original intent, to revisit once the real mechanism is designed. See `sprint-change-proposal-2026-07-15.md`.
 
 **Functional Requirements:**
 
@@ -202,38 +217,32 @@ Platform provides instructions/a template for the customer to manually wire gene
 
 **Notes:** `[NON-GOAL for MVP]` Automated pipeline wiring (platform directly modifies the customer's CI config) is deferred — candidate fast-follow, not V1-blocking, per explicit product decision to keep V1 simple here. `[NOTE FOR PM: the brief's Scope section commits to tests running "automatically as part of standard regression" once integrated — V1's manual-wiring-only approach means that automation is customer-executed, not platform-delivered, until the pipeline step is wired in by hand. This is a real deviation from the brief's phrasing, not just an implementation detail — flagging for the same explicit sign-off the confidence-scoring cut (§5) got.]`
 
-### 4.7 Analytics & Dashboards
+### 4.7 Analytics & Dashboards `[LARGELY DEFERRED POST-V1 — 2026-07-15]`
 
-**Description:** The views that make the Trusted Knowledge Model and generated coverage legible to each audience — realizes UJ-2.
+**Description:** The views that make the Trusted Knowledge Model and generated coverage legible to each audience — previously realized UJ-2, now deferred alongside it (§2.3).
 
 **Functional Requirements:**
 
-#### FR-22: Capability Map
-Platform provides a Capability Map view — a business-language map of approved Capabilities.
+#### FR-22: Capability Map `[DEFERRED POST-V1]`
+Platform provides a Capability Map view — a business-language map of approved Capabilities. No screen in the current reference prototype's IA serves this; retained as a record of intent.
+
+#### FR-23: Journey Explorer `[RETAINED, RELOCATED]`
+Platform provides Journey-explorer detail — a view of a Journey's screens, actions, and API calls. As of 2026-07-15 this is satisfied inline: selecting a candidate on the discovery-review screen loads its step-by-step detail (route, method, stage) in a detail panel, rather than via a standalone explorer screen.
 
 **Consequences (testable):**
-- Every approved Capability (FR-14) appears in the Capability Map; rejected or deleted candidates do not.
+- Selecting any candidate Journey shows the specific pages, actions, and API calls captured for it during discovery (FR-6).
 
-#### FR-23: Journey Explorer
-Platform provides a Journey Explorer — a detail view of a Journey's screens, actions, and API calls.
+#### FR-24: Coverage analytics `[DEFERRED POST-V1]`
+Platform provides coverage analytics showing which approved Journeys have a generated Test Asset, and which do not. No screen in the current reference prototype's IA serves this; retained as a record of intent. (Consequence preserved for whenever this is rebuilt: never live pass/fail from the customer's CI — V1 has no read-back channel.)
 
-**Consequences (testable):**
-- Selecting any approved Journey in the Journey Explorer shows the specific pages, actions, and API calls captured for it during discovery (FR-6).
+#### FR-25: Multi-application executive dashboard `[DEFERRED POST-V1]`
+Platform provides an executive dashboard rolling up Capability, coverage, and Journey views across multiple Applications. No screen in the current reference prototype's IA serves this — the product is now scoped to one Application's guided pipeline at a time. See UJ-2 (§2.3).
 
-#### FR-24: Coverage analytics
-Platform provides coverage analytics showing which approved Journeys have a generated Test Asset, and which do not.
-
-**Consequences (testable):**
-- Coverage analytics reflect whether a Test Asset exists for a Journey (FR-17), not whether it is currently passing in the customer's CI/CD pipeline — V1 has no read-back channel from the customer's CI (per FR-21's manual wiring), so pass/fail status post-delivery is outside what the platform can see or report.
-
-#### FR-25: Multi-application executive dashboard
-Platform provides an executive dashboard rolling up Capability, coverage, and Journey views across multiple Applications, supporting multi-application onboarding from V1 launch — even where a given customer initially onboards only one Application.
-
-**Out of Scope:** No risk/confidence scorecard in V1 — see §5 Non-Goals.
-
-### 4.8 Deployment
+### 4.8 Deployment `[DEFERRED POST-V1 — 2026-07-15]`
 
 **Description:** V1 ships two deployment models to fit enterprise data-residency requirements from day one.
+
+`[NOTE FOR PM]` Settings — the only screen carrying the AI-provider-mode configuration this feature depends on — is cut from the current reference prototype's IA, with no replacement UI shown. Per the same "whatever's missing from the new prototype is intentionally cut" decision applied elsewhere in this revision, FR-26/27 are deferred post-V1 alongside their UI. Flagged explicitly here because these are compliance/data-residency NFRs, not a dashboard convenience — if on-prem/data-locality commitments have already been made externally (sales, contracts), confirm before treating this deferral as final. See `sprint-change-proposal-2026-07-15.md`.
 
 **Functional Requirements:**
 
@@ -248,6 +257,7 @@ In on-premises deployment, the entire platform — including AI/LLM processing �
 
 ## 5. Non-Goals (Explicit)
 
+- **No merging or splitting of Journeys** — the brief named merging duplicates as a V1 outcome; V1 supports editing a Journey (FR-28, added 2026-07-15) but not combining two into one or splitting one into two. A reviewer facing duplicates rejects or edits the redundant one(s).
 - **No source code or repository read access** for discovery, and nothing that depends on it (route/component/permission/feature-flag structure, dependency mapping, code-to-journey traceability). That's V2.
 - **No change intelligence** — predicting which Journeys/tests a specific *code* change affects. That's V3.
 - **No AI confidence or risk scoring of any kind** — neither a per-Journey discovery confidence score nor a risk/confidence scorecard. Cut during PRD discovery: meaningful usage/error-rate signals require a real telemetry feed V1 doesn't have, and the unresolved questions weren't worth V1's complexity budget. `[NOTE FOR PM: the approved brief named risk/confidence scoring as a V1 outcome — this is a deliberate scope deviation, see §9 and memlog.]`
@@ -263,18 +273,23 @@ In on-premises deployment, the entire platform — including AI/LLM processing �
 
 ## 6. MVP Scope
 
-### 6.1 In Scope
-- Application onboarding via URL + Dedicated Test Account credentials, standard login only (FR-1–FR-5).
-- Runtime discovery with configurable scope and time-budget safety cap (FR-6–FR-7).
-- AI-driven Journey/Capability inference (FR-8).
-- Human review, approve/reject/rename/delete workflow (FR-9–FR-15).
-- Scenario generation (happy-path + negative) and Playwright test generation (FR-16–FR-18).
-- CI/CD delivery via PR or direct commit, across GitHub Actions/GitLab CI/Jenkins/Azure DevOps, with manual pipeline-wiring instructions (FR-19–FR-21).
-- Capability Map, Journey Explorer, coverage analytics, multi-application executive dashboard (FR-22–FR-25).
-- Hosted SaaS and on-prem/VPN deployment, with full in-network AI processing for on-prem (FR-26–FR-27).
+*Revised 2026-07-15 — see `sprint-change-proposal-2026-07-15.md` for the full rationale behind this narrowing.*
 
-### 6.2 Out of Scope for MVP
-See §5 Non-Goals — all items there apply to MVP scope directly.
+### 6.1 In Scope
+- Application onboarding via a single connect form: URL + Dedicated Test Account credentials, environment, authentication method (FR-1–FR-3). `[GAP]` Discovery scope and time-budget fields (FR-4–FR-5) are not confirmed present in the current reference form — treated as still in scope pending re-verification, not cut.
+- Runtime discovery with configurable scope and time-budget safety cap (FR-6–FR-7).
+- AI-driven Journey/Capability inference (FR-8), with per-candidate step/evidence detail shown inline (FR-23).
+- Human review, approve/reject/rename/**edit**/delete workflow (FR-9–FR-15, FR-28).
+- Scenario generation (happy-path + negative), with per-scenario rename/**edit**/remove (FR-16, FR-18, FR-29), and Playwright test generation (FR-17) surfaced via a named Test Suite generation step.
+
+### 6.2 Deferred Post-V1 (moved out of MVP, 2026-07-15)
+- CI/CD delivery via PR or direct commit, provider support, and manual pipeline-wiring instructions (FR-19–FR-21) — no supporting screen in current scope; real mechanism undecided.
+- Capability Map, coverage analytics, multi-application executive dashboard (FR-22, FR-24, FR-25) — no supporting screen in current scope.
+- Two deployment models / on-prem data locality (FR-26–FR-27) — Settings, the only UI entry point, is cut; flagged for explicit reconfirmation given these are compliance NFRs (§4.8).
+- UJ-2 (Devon's release-readiness journey, §2.3) — depended entirely on the now-deferred executive dashboard.
+
+### 6.3 Out of Scope for MVP
+See §5 Non-Goals — all items there apply to MVP scope directly, in addition to §6.2's deferrals above.
 
 ## 7. Success Metrics
 
@@ -308,6 +323,8 @@ Per the approved brief, V1 business success is **not** a customer-count or reven
 - **§4.6 FR-21 [NOTE FOR PM]**: The brief commits to tests running "automatically as part of standard regression" once delivered; V1's manual-pipeline-wiring approach means that automation step is customer-executed, not platform-delivered, until wired in by hand — a deviation from the brief's phrasing.
 
 *(SSO/MFA handling and Scenario-editing granularity were open assumptions in an earlier draft; both are now resolved decisions — see FR-3 and FR-18.)*
+
+- **2026-07-15 [Sprint Change Proposal]**: A new reference prototype triggered a confirmed, user-directed MVP narrowing — full detail in `sprint-change-proposal-2026-07-15.md`. Summary: FR-19–FR-22, FR-24–FR-27 moved to deferred post-V1; UJ-2 deferred alongside FR-25; FR-13's Out-of-Scope note narrowed (editing now allowed) and FR-28/FR-29 added for Journey/Scenario edit; FR-23 retained but relocated from a standalone Journey Explorer screen into the discovery-review flow. `DESIGN.md`/`EXPERIENCE.md` (both updated 2026-07-15) are the source of truth for the new IA this revision aligns to.
 
 ## 10. Cross-Cutting NFRs
 

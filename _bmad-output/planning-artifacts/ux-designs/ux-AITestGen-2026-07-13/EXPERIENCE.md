@@ -1,7 +1,7 @@
 ---
 name: Application Intelligence Platform
 status: final
-updated: 2026-07-13
+updated: 2026-07-15
 sources:
   - "../../prds/prd-AITestGen-2026-07-13/prd.md"
   - "../../briefs/brief-AITestGen-2026-07-12/brief.md"
@@ -10,7 +10,9 @@ sources:
 
 # Application Intelligence Platform — Experience Spine
 
-> `DESIGN.md` is the visual identity reference; this spine is the experience — information architecture, behavior, states, and flows. Where this file describes a visual property, `DESIGN.md` wins on conflict. Composition reference: `mockups/prototype-v1.html` (approved v6, 11-screen prototype).
+> `DESIGN.md` is the visual identity reference; this spine is the experience — information architecture, behavior, states, and flows. Where this file describes a visual property, `DESIGN.md` wins on conflict. Composition reference: `mockups/prototype-v2-standalone.html` (current, 2026-07-15 — a single-application guided pipeline; supersedes `mockups/prototype-v1.html`'s 11-screen nav-rail shell, kept in the mockups folder for history only).
+
+> **`[NOTE FOR PM/ENG — 2026-07-15]`** This revision reflects a confirmed, intentional narrowing of V1 scope: the multi-application nav-rail shell (Applications list, App Overview/Capability Map, Dashboard, Settings, Connect to CI/CD) is cut. The product is now a single-application guided pipeline. This is a UX-and-product-level decision made together with the user; the PRD, architecture, and epics/stories are being updated to match via a separate `bmad-correct-course` pass — treat this file as the source of truth for the *new* IA, and treat any remaining PRD/architecture text describing the old shell as stale until that pass lands.
 
 ## Foundation
 
@@ -22,42 +24,38 @@ The product's core entity model — Application → Discovery Run → Capability
 
 ## Information Architecture
 
-Visual reference: `mockups/prototype-v1.html` (approved v6, 11-screen interactive prototype — click through it, it's the fastest way to feel the flows below).
+Visual reference: `mockups/prototype-v2-standalone.html` (current, 2026-07-15 — click through it: sign in, then either card on Home).
 
-Eleven screens, one pre-authentication (Login) and ten inside a persistent app shell (nav rail + top bar). The rail groups links under five section labels that mirror the product's narrative arc — Application Intelligence → Journey Intelligence → Test Intelligence:
+**Six screens** (2026-07-15, confirmed cut from the earlier 11-screen shell): one pre-authentication (Sign In), one cross-application landing (Home), and a 4-step guided pipeline scoped to a single Application. There is no persistent nav rail — top-level navigation *is* the pipeline stepper described in `{DESIGN.md#Components}`.
 
-| Section | Screen | Reached from |
+| Screen | Reached from | Status |
 |---|---|---|
-| — (pre-shell) | Login | App open, unauthenticated |
-| Workspace | Applications | Sign-in; nav rail (default landing) |
-| Onboard | Add Application | "+ Add Application" (Applications) or nav rail |
-| Onboard | Discovery Progress | Wizard completion, or a running/completed Application row |
-| Understand | App Overview | Nav rail, once an Application has approved Capabilities |
-| Understand | Review Journeys | Nav rail (carries a live pending-count badge) |
-| Automate | Generated Scenarios | Nav rail |
-| Automate | Generated Tests | Nav rail |
-| Automate | Connect to CI/CD | Nav rail |
-| Prove | Dashboard | Nav rail |
-| (rail foot) | Settings | Rail foot, below a divider |
-| (rail foot) | Sign out | Rail foot |
+| Sign In | App open, unauthenticated | Confirmed |
+| Home | Sign-in (default landing) | Confirmed — 3 action cards: "Start a New Project," "Managed Applications," "Watch a Product Demo" |
+| Connect App (pipeline step 1) | Home ("Start a New Project" or "Managed Applications") | Confirmed |
+| Discover Journeys (pipeline step 2) | Connect App submission | Confirmed |
+| Review Scenarios (pipeline step 3) | Discover Journeys → "Continue to Scenarios" | Confirmed |
+| Generate Suite (pipeline step 4) | Review Scenarios → "Continue to Generate Suite" | Confirmed up to the generation form; the resulting/post-generation screen was not reachable during UX review — `[GAP]` |
 
-**Primary flow:** Applications → Add Application → Discovery Progress → App Overview → Review Journeys → Generated Scenarios → Generated Tests → Connect to CI/CD → Dashboard. This is a guided linear workflow, not a set of disconnected dashboards — each screen is a checkpoint in "onboard an app, understand it, get it under test," and the rail's section labels exist to make that arc legible even when a user jumps in mid-sequence.
+**Cut entirely, confirmed intentional (2026-07-15):** the multi-application Applications list (with hero-stat strip), App Overview / Capability Map, Generated Tests' standalone code-review screen, Connect to CI/CD, the cross-application Dashboard, and Settings. No replacement screen exists for any of these in the current reference prototype. See the note at the top of this file — PRD/architecture/epics-stories are being updated to match in a separate pass.
 
-**Naming rule — function-first labels.** Every screen name states what a user *does* there, not the internal mechanism or artifact type behind it. This rule, not just its outputs, is the thing to carry forward when naming future screens: a name that describes the underlying data structure or system component ("Journey Explorer," "Capability Map," "Scenario Explorer," "Analytics Dashboard," "Application Setup Wizard") reads as an engineer's mental model; a name that describes the user's task ("Review Journeys," "App Overview," "Generated Scenarios," "Dashboard," "Add Application") reads as the user's mental model. This is why those exact renames happened during Discovery, and why "Discovery Run" became **Discovery Progress** — the screen's job is watching a live status change, not configuring a run (that's the wizard's job).
+**Primary flow:** Home → Connect App → Discover Journeys → Review Scenarios → Generate Suite. Still a guided linear workflow, now collapsed from nine onboarding-through-proof screens into four, with the multi-application "portfolio" layer (list all Applications, roll up coverage across them) removed rather than deferred to a later screen.
 
-**Breadcrumb / app-name context rule.** The top-bar crumb shows the current Application's name (`<b>Claims Processing App</b> /`) only on screens genuinely scoped to one Application: Discovery Progress, App Overview, Review Journeys, Generated Scenarios, Generated Tests, Connect to CI/CD, Settings. It is suppressed on Applications, Add Application, and Dashboard — the three screens that are inherently cross-Application or pre-Application. This was a specific declutter fix during Discovery: showing an app-context breadcrumb on a screen that lists *all* Applications, or on the wizard before an Application exists, was noise, not orientation.
+**Naming rule — function-first labels — still holds.** Every screen name states what a user *does* there: "Connect App," "Discover Journeys," "Review Scenarios," "Generate Suite." This is a continuation of the same discipline that produced "Discovery Progress" over "Discovery Run" in the prior revision, not a new rule.
+
+**Breadcrumb / app-name context rule — narrowed.** The top bar shows the current Application's name plus an environment badge (e.g. "Staging") on all four pipeline-step screens, since every one of them is now inherently scoped to a single Application. It is suppressed on Sign In and Home, the only two screens that are pre-Application or cross-Application.
 
 ## Review & Trust Model
 
-This is the product's central mechanic, and it is intentionally narrow. Two PRD conflicts surfaced during Discovery and were explicitly resolved — both are hard constraints for every future screen and story, not soft suggestions:
+This is the product's central mechanic. Its shape changed on 2026-07-15 — the two-action-set restriction below is **retired**, confirmed as an intentional scope expansion (prototype wins over the prior PRD-level cut; PRD/architecture/epics-stories are being updated to match in a separate `bmad-correct-course` pass):
 
-**1. Journey review has exactly four actions: Approve, Rename, Reject, Delete.** No merge, no split, no inline edit of what pages/actions/API calls compose a Journey. When discovery produces overlapping or duplicate candidates (e.g., a Journey the AI split awkwardly into two), the correct reviewer action is to **reject the redundant one(s)** — never to merge them. The UI signals this directly: a duplicate candidate carries a `dupe` badge (e.g., "Overlaps Claims Approval") precisely so a reviewer recognizes it should be rejected, not combined. Any future feature work proposing a merge/split/composition-edit affordance on a Journey contradicts a deliberate, PRD-level V1 cut (PRD §4.4 Out of Scope) — resolve it as a product decision before it becomes a design decision.
+**1. Journey review now supports rename, edit, and remove via a per-row `⋯` menu** (Discover Journeys screen: "Rename, edit, or remove any journey before generating scenarios"). This supersedes the earlier four-action-only rule (Approve/Rename/Reject/Delete, no composition edit). `[GAP]` the exact edit affordance — what "editing" a Journey's composition actually lets a reviewer change — was not reachable during UX review (the `⋯` menu wasn't opened); needs confirmation before implementation. **Merging two Journeys into one remains out of scope** — nothing in the new prototype suggests combining duplicates, only acting on them individually; a duplicate candidate should still be edited or removed on its own, not merged with another.
 
-**2. Generated Scenarios are view-only.** There is no per-scenario selection, checkbox, or approval gate. The approval gate lives at the Journey level only (PRD FR-18): once a Journey is approved in Review Journeys, all of its Scenarios auto-proceed to Playwright generation. Generated Scenarios exists purely for traceability and visibility — a reviewer or exec can see *what got generated and why* — not as a second review queue. Visually, scenario rows resemble other action-bearing rows in the system (list row + badges), but they must never grow action affordances; that resemblance is a trap for future screens to avoid, not a pattern to extend.
+**2. Generated Scenarios now support the same rename/edit/remove pattern** (Review Scenarios screen: "Rename, edit, or remove scenarios before generating your suite"), superseding the earlier view-only rule. Selecting a scenario shows its full detail — test steps, a Test data table (field/value pairs), and an Expected result — a materially richer per-scenario view than the prior mono-typed evidence-only panel. `[GAP]` whether an edited scenario's Test data/steps are actually used for Playwright generation, or the edit is cosmetic (e.g., renaming/annotation only), was not confirmed.
 
-**Evidence traceability is the mechanism that makes review trustworthy**, not a nice-to-have: every candidate Journey a reviewer sees is backed by the literal pages, actions, and API calls discovery captured for it (PRD FR-8 consequence), surfaced in the evidence panel described in Component Patterns. A reviewer should never have to take an inferred Journey's business-language name on faith — the raw evidence is one click away, in monospace, unparaphrased (`{DESIGN.md#Typography}`).
+**Evidence traceability remains the mechanism that makes review trustworthy.** Every candidate Journey a reviewer sees is backed by the literal pages, actions, and API calls discovery captured for it (PRD FR-8 consequence). In the current prototype this is surfaced as a numbered step list (route, method, and a stage badge like "Login" or "MFA Verification" per step) rather than the prior flat mono-typed evidence panel — a more structured, less raw presentation, but the same underlying commitment: a reviewer should never have to take an inferred Journey's business-language name on faith.
 
-By product decision (PRD §5 Non-Goals), there is **no AI confidence or risk score anywhere in this workflow**, and **no reviewer prioritization or importance-marking** — every approved Journey is treated with equal weight, and reviewers triage a potentially large candidate list with no built-in ranking aid (PRD Risk #3, accepted for V1). Design and copy must not imply otherwise — no "high confidence" language, no subtle visual weighting that reads as a priority signal.
+By product decision (PRD §5 Non-Goals, **not** revisited by this change), there is still **no AI confidence or risk score anywhere in this workflow**, and **no reviewer prioritization or importance-marking** — every approved Journey is treated with equal weight. Nothing in the new prototype contradicts this; design and copy must continue to avoid "high confidence" language or subtle visual weighting that reads as a priority signal.
 
 ## Voice and Tone
 
@@ -81,30 +79,22 @@ Behavioral only — visual specs live in `{DESIGN.md#Components}`.
 
 | Component | Use | Behavioral rules |
 |---|---|---|
-| Nav rail link | Global | Click navigates; the active link highlights per `{DESIGN.md#components.nav-rail-link-active}`. Review Journeys' link additionally shows a live pending-review count that updates as items are triaged. |
-| Review row | Review Journeys | Click/select loads that Journey's evidence trail into the sticky side panel (replacing the previous selection, not stacking). Undecided rows show all four actions (approve/rename/reject/delete); a decided row (approved or rejected) drops its action buttons entirely and its title dims — the row becomes a record, not a control. |
-| Evidence panel | Review Journeys | Sticky on scroll — stays in view while the row list scrolls beneath it, since its job is to stay attached to whatever row is currently selected. Content (pages / actions / API calls) is grouped and always rendered in monospace per `{DESIGN.md#Typography}`. |
-| Capability card | App Overview | Static display — read-only rollup. Each nested Journey row shows a test-asset count; clicking a Journey name is not a defined interaction in V1 (App Overview is a presentation surface for showing an Engineering Leader, not a second review entry point). |
-| KPI tile / hero stat | Dashboard, Applications | Static display. The progress bar beneath a KPI (e.g., tests-generated-of-approved) is non-interactive — a visual ratio, not a control. |
-| Stepper | Add Application | Only the active step renders its full form body; completed steps collapse to a one-line summary, pending steps show only their title. Back/Continue moves the active step; a completed step is not directly clickable to jump back to in this version. |
-| Option card / provider card | Add Application (auth method), Connect to CI/CD (export mode, provider) | Click anywhere on the card selects it (the real `<input type="radio">` underneath makes this keyboard-operable natively). Exactly one selection per group; selecting a new option deselects the previous one. |
-| Code disclosure (`<details>`) | Generated Tests, Connect to CI/CD | Closed by default for every code block except the first/most-relevant one on a screen (e.g., the first Test Asset's code starts open on Generated Tests, the rest start closed). Opening one disclosure does not close others — multiple can be open at once. This is the direct fix for the clutter Discovery flagged on Add Application and Connect to CI/CD: dense technical content is opt-in, not ambient. |
-| Toggle switch | Settings | Immediate on/off, no confirmation step. Used only for genuine binary settings (AI provider mode, notification preferences) — never repurposed as a selection control (that's option/provider cards). |
-| Status pill | Discovery Progress, Applications table | Reflects live run state; see State Patterns for the Running → Incomplete transition. |
+| Pipeline stepper | Global (all 4 pipeline screens) | Click navigates between completed steps; the active step is highlighted per `{DESIGN.md#Components}`. Replaces the retired nav-rail link pattern as primary navigation. `[GAP]` whether a completed step is clickable to jump back was not confirmed. |
+| List row + `⋯` menu | Discover Journeys, Review Scenarios | Click/select loads that item's detail into the right-hand panel (replacing the previous selection, not stacking). Every row — not just "undecided" ones — carries a `⋯` menu for rename/edit/remove; see `{#Review & Trust Model}` for the 2026-07-15 scope change this reflects. `[GAP]` post-decision row treatment (e.g., does an edited/removed row visually mute like the old "decided row" pattern?) was not confirmed. |
+| Detail panel | Discover Journeys, Review Scenarios | Not sticky-confirmed in the new layout (unlike the prior evidence panel) — `[GAP]`, re-verify scroll behavior. Discover Journeys' panel shows a numbered step list (route/method + stage badge per step); Review Scenarios' panel shows Test steps, a Test data table, and Expected result. Content is prose-and-table, not exclusively monospace evidence — narrower than `{DESIGN.md#Typography}`'s original mono-only evidence rule; `{typography.mono-inline}` still applies to any raw route/API text within these panels. |
+| Connect App form | Connect App | A single-page form (no internal wizard/stepper) — Application name, Base URL, Environment select, Authentication method select, credential fields, one submit CTA ("Connect Application"). Authentication method is a plain `<select>`, not the prior option-card/radio pattern. `[GAP]` no SSO/MFA session-handoff step is present — unconfirmed whether PRD Open Question 8 was resolved to "not needed" or is simply absent from this export. |
+| Generate Suite panel | Generate Suite | Form (Suite name, Target environment, Execution radio group) beside a static "Suite summary" card that mirrors the form's current values plus a generate CTA. Execution is a real radio selection (`Run immediately` default-selected) but — per `{DESIGN.md#Components}`'s Generate Suite panel note — its downstream behavior is a placeholder, not a confirmed spec. |
+| Status pill | — | `[GAP]` not reachable in the current reference prototype; retained from the prior revision pending re-verification. See State Patterns. |
 
-`[NOTE FOR PM/ENG — placeholder, not a confirmed decision]` The Add Application wizard's "Authenticate" step shows a specific SSO/MFA session-handoff mechanism (paste session-state JSON, or reference a `storageState.json` file) purely as an illustrative placeholder. PRD Open Question 8 explicitly marks this mechanism as unresolved and states it must be decided *before* onboarding UX proceeds — that decision has not yet been made. Treat the wizard's Step 2 content as a stand-in for "whatever the real handoff mechanism turns out to be," not as the resolved design. Revisit this step once PRD Open Question 8 is answered; it may not change the step's shape (a second auth-method option alongside standard login) but could change its exact fields.
+`[NOTE FOR PM/ENG — 2026-07-15, superseded]` The prior revision's Add Application wizard "Authenticate" step (paste session-state JSON, or reference a `storageState.json` file) no longer exists — Connect App is now a single-page form with a plain Authentication method `<select>` and no visible SSO/MFA session-handoff step at all. PRD Open Question 8 (the SSO/MFA session-handoff mechanism) is **still unresolved**, and it's now unclear whether the new prototype intends "not needed for V1" or simply omitted this step from the exported flow. This must be confirmed explicitly — do not read the absence of the step as an answer to Open Question 8.
 
 ## State Patterns
 
 | State | Surface | Treatment |
 |---|---|---|
-| Discovery running | Discovery Progress, Applications row | Status pill reads "Running" with a pulsing dot; live-feed list shows the most recently discovered pages/actions/API calls, newest first, appended as discovery proceeds. |
-| Discovery hits time budget (PRD FR-7) | Discovery Progress, Applications row | Status pill automatically transitions from "Running" to **"Incomplete"** the moment the configured time budget is reached, even if traversal wasn't exhaustive. This is a real product state transition, not a prototype detail — the run's captured Journeys remain usable and enter the review queue normally, but the run itself must never present as a finished/complete map once it has timed out (PRD FR-7 consequence, realizes PRD UJ-1's edge case). |
-| Review queue in progress | Review Journeys | Undecided rows show badges (`New`, or `Overlaps {other Journey}` for a flagged duplicate) and all four actions. |
-| Review queue item resolved | Review Journeys | Row switches to a muted/reduced-opacity treatment, badge switches to `Approved` or `Rejected`, and the four action buttons are removed (not disabled — removed, since there's nothing left to do with a resolved row). |
-| Review queue cleared | Review Journeys | Empty-state panel replaces the "once queue is clear" section: a confirmation line plus an Approved/Rejected count pair, so the reviewer sees the outcome of the session at a glance rather than just an absence of rows. |
-| CI/CD provider connected | Connect to CI/CD | Selected provider card shows a "Connected" status label beneath its name; unconnected providers show none. |
-| Coverage gap | Dashboard | An application row with at least one approved Journey lacking a generated Test Asset shows an inline warning flag ("N pending test") next to its coverage figures — this is the specific catch that lets an Engineering Leader spot a gap before sign-off (PRD UJ-2 climax). |
+| Discovery running / hits time budget (PRD FR-7) | `[GAP]` no discovery-in-progress screen was reachable in the current reference prototype — the Connect App → Discover Journeys transition happened instantly against pre-seeded demo data. The prior "Running" → "Incomplete" status-pill transition is retained here as the last-confirmed spec (PRD FR-7 is unchanged), but needs re-verification against a real in-progress state once one exists in the prototype or implementation. |
+| Journey/Scenario row before action | Discover Journeys, Review Scenarios | Rows show their name, a step/scenario count or type badge (`Happy Path`/`Negative Path`/`Edge Case` on Review Scenarios), and a `⋯` menu. `[GAP]` post-edit/remove row treatment not confirmed — see Component Patterns. |
+| Discover Journeys / Review Scenarios list cleared | Discover Journeys, Review Scenarios | `[GAP]` not reachable during UX review (both screens were seen mid-list, never at zero remaining items). The prior empty-state pattern (confirmation line + Approved/Rejected count pair) is retained as last-confirmed spec pending re-verification. |
 
 ## Interaction Primitives
 
@@ -112,7 +102,7 @@ Behavioral only — visual specs live in `{DESIGN.md#Components}`.
 - **`<details>` progressive disclosure** for dense technical content — generated code, pipeline snippets — per Component Patterns above. This is a real, intended interaction primitive for this product, not just a prototype convenience.
 - **Sticky evidence panel on scroll** — the Review Journeys evidence panel stays pinned in the viewport as the row list scrolls, so evaluating evidence never requires losing your place in the list.
 - **Row hover** highlights the row background and, on clickable table rows (Applications, Dashboard), switches the cursor to a pointer as an affordance cue. On Review Journeys, the four row actions are **always visible** on any undecided row rather than hidden behind hover — they gate a required decision, so hiding them behind a hover state would work against discoverability and against keyboard/touch users who don't hover at all.
-- **One important non-primitive to flag explicitly:** the approved prototype uses a no-JavaScript, radio-input-driven CSS technique to switch between its eleven "pages" inside one static HTML file. That is a **prototyping technique only**, built so the file could be reviewed and clicked through without a server or build step — it is not a real product interaction pattern and must not be read as a spec for how page navigation, tabs, or steppers should actually be implemented (e.g., "use hidden radio inputs for real app routing" or "use `:checked` CSS selectors for real tab state"). The real primitives are ordinary click-driven navigation and the native, keyboard-operable radio/`<details>` elements described above, wired to real application state rather than a single-file CSS trick.
+- **Prototype fidelity note (2026-07-15):** the current reference prototype (`prototype-v2-standalone.html`) is a real bundled React SPA with client-side state, unlike the prior revision's no-JavaScript radio/CSS trick — its click-driven navigation and form controls are much closer to how the real product would behave, though it runs against pre-seeded demo data with no live backend (submitting Connect App, for instance, always yields the same fixed 15 Journeys). Treat its interaction behavior as a stronger signal than the prior prototype's, but its "Sign in" and "Connect Application" submissions are not proof of real request/response handling.
 
 ## Accessibility Floor
 
@@ -120,8 +110,8 @@ Behavioral commitments; visual contrast lives in `{DESIGN.md#Colors}`.
 
 - **WCAG 2.1/2.2 AA is the floor** across the entire desktop surface — not a stretch goal, and not SOC2/governance-style compliance signaling (see Foundation).
 - **Focus-visible on every interactive element** — buttons, nav-rail links, inputs, selects, textareas, and `<summary>` disclosure triggers all get a visible focus ring. This is a behavioral requirement this file states; the ring's exact color and offset are DESIGN.md's to specify.
-- **Keyboard operability for radio-driven selection patterns.** Option cards, provider cards, and the wizard's auth-method choice are real `<input type="radio">` controls under a styled card — this must stay true in implementation (not become a `<div onclick>` fake), specifically so these patterns remain fully keyboard-operable (arrow-key group navigation, Space/Enter to select) without any extra work.
-- **Tab order matches visual order** on every screen — top bar, then rail, then main content, top to bottom, left to right within the two-pane Review Journeys layout (list before evidence panel).
+- **Keyboard operability for selection controls.** Connect App's Environment and Authentication method are native `<select>` elements (natively keyboard-operable). Generate Suite's Execution choice is a real `<input type="radio">` group. Neither should become a `<div onclick>` fake in implementation. `[GAP]` the prior revision's option-card/provider-card visual pattern (bordered card + radio) is not confirmed to still exist anywhere in the new IA — CI/CD provider selection was one of its two uses and that screen is cut; re-verify if it survives anywhere.
+- **Tab order matches visual order** on every screen — top bar, then pipeline stepper, then main content, top to bottom, left to right within the two-pane Discover Journeys / Review Scenarios layouts (list before detail panel).
 - **Label/caption contrast is a standing requirement, not a one-time fix.** DESIGN.md documents the specific token-level fix (routing all real label/caption text through `{DESIGN.md#colors.ink-muted}`, ~5:1, and reserving the faint tier for decorative-only use) after a real AA-contrast failure was caught during Discovery. This file's requirement is the "why it matters": any new screen or component that introduces new label/caption text must use the AA-passing muted tier, full stop — this is not negotiable per-component judgment.
 
 ## Inspiration & Anti-patterns
@@ -135,24 +125,25 @@ Behavioral commitments; visual contrast lives in `{DESIGN.md#Colors}`.
 
 ## Key Flows
 
-### Flow 1 — Maria reviews her Application's first discovered map (PRD UJ-1)
+### Flow 1 — Maria reviews her Application's discovered journeys (PRD UJ-1, updated 2026-07-15)
 
-Maria Colón, QA Director at a mid-size insurer, has just had her first Discovery Run finish against the Claims Processing App staging environment.
+Maria Colón, QA Director at a mid-size insurer, is connecting the Claims Processing App for the first time.
 
-1. Maria is signed in, and opens **Review Journeys** from the nav rail — its link shows a pending count (6) pulling her attention.
-2. She sees six candidate Journeys: "Claims Approval," "Policy Issuance," "Claims Intake," a few named plainly, and one — `Page_Flow_7` — carrying a `dupe` badge reading "Overlaps Claims Approval."
-3. She selects a row to load its evidence trail in the side panel, confirming the AI's inference against the actual pages/actions/API calls discovery captured, before deciding.
-4. She **renames** a generically-labeled candidate to a real business name, **rejects** the duplicate (`Page_Flow_7`) rather than trying to merge it into "Claims Approval," and **approves** the rest one by one — each approved row loses its action buttons and mutes, dropping out of her remaining attention.
-5. **Climax:** as she approves the last undecided Journey, the queue empties and the empty-state panel confirms: "Review queue cleared. All candidates from the Jul 12 run have been triaged. Scenario and test generation has started for approved Journeys." — with an Approved/Rejected count pair (5 approved, 1 rejected) as visible proof of the session's outcome.
-6. **Resolution:** she navigates to **App Overview**, where her approved Journeys now render grouped under business-language Capabilities (Claims Processing, Policy Administration, Billing & Payments) — the artifact she can put in front of her Engineering Leader.
-7. **Edge case:** if the Discovery Run had hit its time budget before finishing, the Discovery Progress screen (and any Applications-table row referencing that run) would show the status pill as **Incomplete**, not "Running" or a bare completion state — Maria would see a partial map clearly marked as partial, never presented as finished.
+1. Maria signs in, lands on **Home**, and clicks "Start a New Project."
+2. On **Connect App**, she fills in the Application name, Base URL, environment, and credentials, then submits.
+3. On **Discover Journeys**, she sees the discovered candidates (the reference prototype shows 15 for a demo banking app) in a list, each with a step count. Selecting one loads its discovered step-by-step flow (route, method, stage badge) in the detail panel, so she can confirm the AI's inference before deciding.
+4. She uses each row's `⋯` menu to **rename** a generically-labeled candidate and **remove** ones she doesn't want carried forward — see `{#Review & Trust Model}` for the current (2026-07-15) action set, which is broader than the prior four-action-only rule.
+5. She continues to **Review Scenarios**, where generated test scenarios appear grouped by their source Journey, each tagged `Happy Path`/`Negative Path`/`Edge Case`; selecting one shows its test steps, test data, and expected result. She can rename/edit/remove scenarios here too before proceeding.
+6. **Climax:** she continues to **Generate Suite**, names the suite, confirms the target environment, and generates it against the suite summary (journey/scenario counts, estimated runtime).
+7. **Resolution:** `[GAP]` what she sees immediately after clicking "Generate Test Suite" was not reachable during UX review — needs confirmation before this step can be called complete.
+8. **Edge case — no longer confirmed:** the prior revision's "Discovery Run hits its time budget, map marked Incomplete" edge case (PRD FR-7) has no confirmed screen to attach to now that there's no observed in-progress discovery state — see State Patterns.
 
-### Flow 2 — Devon checks release readiness before sign-off (PRD UJ-2)
+### Flow 2 — Devon checks release readiness before sign-off (PRD UJ-2) — `[NOTE FOR PM/ENG — 2026-07-15, BLOCKED]`
 
-Devon, an Engineering Leader, is deciding whether to approve a release.
+**This flow currently has no UI to attach to.** The cross-Application executive Dashboard it depends on — KPI rollups, by-Application coverage table, the "N pending test" gap flag that was this flow's entire climax — is one of the screens confirmed cut from V1 scope on 2026-07-15. PRD UJ-2 (Devon, Engineering Leader, deciding release readiness from a coverage view) is a **named journey in the PRD itself**, not just a nice-to-have screen; cutting its only supporting surface means either (a) this user journey is also being cut from V1 — which the PRD does not yet say — or (b) it needs a new home somewhere in the 4-step pipeline that hasn't been designed yet. This needs explicit product-level resolution via the PRD update, not a UX-only call; the flow's steps below are preserved from the prior revision as a record of the *intent*, not as a current spec:
 
-1. Devon signs in and opens **Dashboard** — the cross-Application executive rollup, reached directly from the nav rail's "Prove" section (no single-Application context needed, matching the breadcrumb-suppression rule).
-2. He scans the KPI row (27 approved Journeys, 24/27 Test Assets generated, 6 awaiting review, 3 Applications onboarded) and then the by-Application table, which shows generated-vs-not coverage per Application — deliberately not live pass/fail from CI, since V1 has no read-back channel from the customer's pipeline (PRD FR-24 consequence).
-3. **Climax:** on the Claims Processing App row, he spots an inline warning flag — "1 pending test" — showing that a recently-approved Journey still has no generated Test Asset (still mid-pipeline). He would have missed this by eyeballing the coverage bar alone; the flag exists specifically to catch it.
-4. **Resolution:** he factors that gap into his release decision — approving with a documented, specific view of what's covered and what isn't, rather than a gut call.
+1. ~~Devon signs in and opens Dashboard...~~
+2. ~~He scans the KPI row and by-Application coverage table...~~
+3. ~~He spots an inline warning flag ("1 pending test")...~~
+4. ~~He factors that gap into his release decision...~~
 

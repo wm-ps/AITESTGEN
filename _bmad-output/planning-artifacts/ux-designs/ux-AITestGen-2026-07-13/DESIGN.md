@@ -1,8 +1,8 @@
 ---
 name: Application Intelligence Platform
-description: A Linear-adjacent, light-default dev-tool interface with full dark-mode parity, one restrained indigo accent, and a monospace vocabulary reserved exclusively for raw captured evidence — built to make AI-inferred output feel auditable, not black-box.
+description: A Linear-adjacent, light-default dev-tool interface with full dark-mode parity, one restrained teal accent, and a monospace vocabulary reserved exclusively for raw captured evidence — built to make AI-inferred output feel auditable, not black-box.
 status: final
-updated: 2026-07-13
+updated: 2026-07-15
 sources:
   - "../../prds/prd-AITestGen-2026-07-13/prd.md"
   - "../../briefs/brief-AITestGen-2026-07-12/brief.md"
@@ -24,12 +24,12 @@ colors:
   ink-muted-dark: '#95959F'
   ink-faint: '#A4A4AF'
   ink-faint-dark: '#5B5B66'
-  signal: '#4F5BD5'
-  signal-dark: '#8791F5'
+  signal: '#0F766E'
+  signal-dark: '#2DD4BF'
   signal-ink: '#FFFFFF'
   signal-ink-dark: '#0F0F13'
-  signal-wash: '#EEF0FC'
-  signal-wash-dark: '#1C1E33'
+  signal-wash: '#E6F5F3'
+  signal-wash-dark: '#112420'
   good: '#1A7F5A'
   good-dark: '#3FCE96'
   good-wash: '#E7F5EF'
@@ -201,14 +201,16 @@ components:
     selected-border: '{colors.signal}'
     selected-background: '{colors.signal-wash}'
   brand-mark:
-    background: 'linear-gradient(155deg, {colors.signal} 0%, #2F2F9E 100%)'
+    background: '{colors.signal}'
     radius: 7px
     size: 24px-26px
-    note: 'one of exactly two places the system uses a gradient'
-  login-hero:
-    background: 'linear-gradient(160deg, #10112C 0%, #22246E 58%, #4750D6 100%)'
-    foreground: '#F3F3FA'
-    note: 'the other of exactly two gradient placements; full-bleed intro panel, pre-authentication only'
+    note: 'flat fill — the system uses no gradients anywhere, including here'
+  login-panel:
+    background: '{colors.paper}'
+    canvas-background: '{colors.surface}'
+    canvas-pattern: 'faint dot-grid, decorative only, {colors.border} at low opacity'
+    foreground: '{colors.ink}'
+    note: 'replaces the former login-hero gradient panel; pre-authentication two-column layout (product intro left, sign-in card right) on a flat dot-grid canvas — [ASSUMPTION] exact dot-grid token values extrapolated from the reference prototype, not yet formalized'
   kpi-tile:
     border: '{colors.border}'
     radius: '{rounded.lg}'
@@ -240,9 +242,9 @@ The tone this system is built to earn is **trustworthy, credible, auditable** �
 - **`{colors.ink}`** (`#17171C` / `#EDEDF2`) — primary text. Near-black/near-white with a whisper of violet, never pure `#000`/`#FFF`.
 - **`{colors.ink-muted}`** (`#6E6E7A` light / `#95959F` dark, ~5:1 contrast on `{colors.paper}`) — **the only grey permitted for real label, caption, and metadata text.** This is a hard rule, not a style preference: during Discovery, a faint grey token was found in use on real microcopy labels at roughly 2.5:1 contrast on white, which fails WCAG AA. The fix was architectural, not a spot-fix — the system now has two distinct grey tiers with two distinct jobs, and nothing routes text through the wrong one. See Do's and Don'ts.
 - **`{colors.ink-faint}`** (`#A4A4AF` / `#5B5B66`) — reserved *exclusively* for non-text, decorative use: disabled-state affordances, placeholder dashes (`—`), and other marks that are not conveying label/caption information a reviewer needs to read. It must never carry real copy again.
-- **`{colors.signal}`** (`#4F5BD5` light / `#8791F5` dark, indigo) — the system's **one accent color.** "The signal found in app noise" is the literal design rationale behind the name. Used only for: primary action buttons, the active nav-rail item, links, the one hero-stat callout that most deserves first-glance attention (e.g. "Awaiting your review" on Applications), and selection state (selected queue row, selected option card, selected provider card). It is never used decoratively and never doubles as a semantic status color.
-- **Semantic colors — `{colors.good}` (green), `{colors.danger}` (red), `{colors.warn}` (amber) — are a deliberately separate palette from `{colors.signal}`.** Green means approved/generated/healthy; red means rejected/failing; amber means duplicate-flagged/attention/incomplete. None of the three is ever substituted for the accent, and the accent is never asked to carry semantic meaning (e.g., it never means "success"). Each ships as a saturated foreground color plus a matching `-wash` background tint (`{colors.good-wash}`, `{colors.danger-wash}`, `{colors.warn-wash}`), used identically to how badges use signal-wash — see Components.
-- **The gradient exception.** Exactly two surfaces in the entire system use a gradient: the brand mark (`{components.brand-mark}`, a 24-26px rounded swatch in the nav rail and login header) and the Login screen's full-bleed intro panel (`{components.login-hero}`, a deeper navy-to-signal wash). Nowhere else. This is the system's one place to "spend boldness" — see Elevation & Depth.
+- **`{colors.signal}`** (`#0F766E` light / `#2DD4BF` dark, teal) — the system's **one accent color.** Re-tinted from an earlier indigo direction to teal as of 2026-07-15, carried over verbatim from the current reference prototype; the accent's job in the system is unchanged. Used only for: primary action buttons, the active nav-rail item, links, the one hero-stat callout that most deserves first-glance attention, and selection state (selected queue row, selected option card, selected provider card). It is never used decoratively and never doubles as a semantic status color. Note green (`{colors.good}`) sits close to teal on the wheel — see the semantic-color note below on keeping the two distinct.
+- **Semantic colors — `{colors.good}` (green), `{colors.danger}` (red), `{colors.warn}` (amber) — are a deliberately separate palette from `{colors.signal}`.** Green means approved/generated/healthy; red means rejected/failing; amber means duplicate-flagged/attention/incomplete. None of the three is ever substituted for the accent, and the accent is never asked to carry semantic meaning (e.g., it never means "success"). Each ships as a saturated foreground color plus a matching `-wash` background tint (`{colors.good-wash}`, `{colors.danger-wash}`, `{colors.warn-wash}`), used identically to how badges use signal-wash — see Components. **This pairing needs deliberate care now that the accent itself is teal**, a hue close to `{colors.good}`'s green — badges and status pills must stay visually distinguishable (a warm, more saturated green vs. the cooler, more muted teal); revisit `{colors.good}` if the two read as confusable at a glance during implementation.
+- **No gradients.** As of 2026-07-15 the system uses zero gradients anywhere, including the brand mark and the Login screen, both now flat fills — see Elevation & Depth. (Previously exactly two surfaces carried a gradient; that exception is retired, not narrowed.)
 
 ## Typography
 
@@ -261,9 +263,7 @@ Grid patterns in use: the App Overview capability grid and Settings panels run 3
 
 ## Elevation & Depth
 
-This system has **no shadow-based elevation.** Cards, panels, the evidence sidebar, tables, code viewers — everything that would be "elevated" in a Material-style system is instead flat, `{colors.paper}` or `{colors.surface}`, with a single 1px `{colors.border}` hairline. This is the GitHub/Linear choice deliberately: depth cues read as decoration in a product whose entire premise is "trust what you're looking at," and a flat, bordered surface reads as more like an instrument panel and less like a stack of floating cards competing for attention.
-
-The one exception is the gradient described in Colors — see "The gradient exception" above. Treat it as a hard constraint: a new screen earning a gradient, a soft shadow, or a glassy surface anywhere outside those two placements would break the "spend boldness in one place" discipline that keeps the rest of the product feeling calm and inspectable.
+This system has **no shadow-based elevation, and (as of 2026-07-15) no gradients.** Cards, panels, the evidence sidebar, tables, code viewers, the brand mark, and the Login screen are all instead flat, `{colors.paper}` or `{colors.surface}`, with a single 1px `{colors.border}` hairline. This is the GitHub/Linear choice deliberately: depth cues read as decoration in a product whose entire premise is "trust what you're looking at," and a flat, bordered surface reads as more like an instrument panel and less like a stack of floating cards competing for attention. The Login screen's canvas may carry a faint decorative dot-grid pattern (`{components.login-panel}`) — this is texture, not elevation, and must not be read as license to reintroduce gradients or shadows elsewhere.
 
 The only other quasi-elevation cues in the system are functional, not decorative: a 1px `inset` highlight on the brand mark (`box-shadow:inset 0 1px 0 rgba(255,255,255,.16)`) that reads as a bevel on the gradient swatch, and a small drop shadow on the toggle-switch thumb (`0 1px 2px rgba(0,0,0,.25)`) that helps it read as a physically-sliding control. Neither is a general-purpose elevation tool; neither should be reused elsewhere.
 
@@ -280,32 +280,30 @@ Circles are reserved for people/identity and progress affordances only: the user
 
 ## Components
 
-- **Nav rail** — fixed-width, `{colors.surface}` background, links grouped under uppercase section labels that mirror the product narrative: *Workspace → Onboard → Understand → Automate → Prove*, with Settings and sign-out pinned to the rail foot below a divider. The active link gets `{components.nav-rail-link-active}` treatment (signal-wash fill, signal text, 600 weight). Review Journeys is the only rail link that carries a live count badge (pending-review count) — reinforcing that it's a queue, not a static page.
+- **`[NOTE FOR PM/ENG — 2026-07-15]`** The persistent left nav rail (`nav-rail`, `nav-rail-link-active`) described in earlier revisions of this file no longer applies — the approved shell it belonged to (Applications/App Overview/Dashboard/Settings/CI-CD, reached via a persistent rail) was replaced wholesale by the single-application guided pipeline below. The `nav-rail-link-active` token remains defined for now in case any future multi-screen surface needs it, but nothing in the current reference prototype uses it.
+- **Top bar** — flush header on every authenticated screen: `{components.brand-mark}` + product name at the left; once inside an application's pipeline, the current Application's name plus an environment badge (e.g. "Staging") appears beside it; a circular user-initials avatar sits at the far right, opening a small menu (name, email, Log out) on click.
+- **Pipeline stepper** — a horizontal 4-step header (Connect App → Discover Journeys → Review Scenarios → Generate Suite) beneath the top bar, scoped to one Application at a time. Each step is a numbered circle (neutral at rest, `{colors.signal}` fill while active, checkmark + `{colors.good}` once done) plus a label; a thin connector line joins them. This replaces the earlier internal wizard-only stepper — it is now the primary top-level navigation for the whole guided flow, not a single screen's substep.
 - **Buttons** — `{components.button-primary}` (solid signal fill, signal-ink text) for the one primary action per screen; `{components.button-secondary}` (bordered, transparent) for everything else. No tertiary/ghost/link-styled button variant exists in the system beyond plain text links.
-- **Icon buttons** (`{components.icon-button}`) — 28px square, bordered, neutral at rest. On hover, approve and reject icon buttons pick up a *semantic* tint (`{colors.good-wash}`/`{colors.good}` for approve, `{colors.danger-wash}`/`{colors.danger}` for reject) — the only place hover state carries meaning beyond "this is clickable."
-- **Badges** (`{components.badge}`) — every badge variant (`new`, `dupe`, `approved`, `rejected`, `type-happy`, `type-negative`, `generated`) follows one pattern without exception: a tinted wash background plus saturated text in the *same* hue, never a solid fill. This keeps every badge legible at small size without visually shouting.
-- **Status pill** (`{components.status-pill}`) — pill-shaped, signal-wash by default, with a small pulsing dot for "in progress" states (Discovery Progress's "Running," the Applications table's "Discovery in progress"). Per PRD FR-7, a Discovery Run that hits its time budget before finishing transitions this same pill to an amber "Incomplete" state — same component, different token pairing, never a separate visual pattern.
-- **Two-pane review row + evidence panel** — Review Journeys' core pattern: a scannable list of `queue-row` items on the left, each with a name, status/type badge, capability tag, and (for undecided rows) four icon-button actions; selecting a row loads its full evidence trail — pages visited, actions taken, API calls made, each rendered in `{typography.mono-inline}` — into the sticky `{components.evidence-panel}` on the right. This pairing (scannable list + detail-on-select sidebar) is the system's canonical "make an AI claim inspectable" pattern.
-- **Capability cards** — bordered `{components.card-panel}` grid cells, each holding a Capability name, a journey-count pill, a one-line description, and a nested list of that Capability's approved Journeys with a small green status dot and a test-count in `{typography.mono-inline}`.
-- **KPI tiles** (`{components.kpi-tile}`) — label, `{typography.numeric-stat}` value, optional signal-colored progress bar beneath. Used on the Dashboard for portfolio-level counts.
-- **Hero-stat strip** (`{components.hero-stat}`) — the Applications landing page's top-of-page callout row: large bold tabular numbers, `{colors.ink}` by default, with exactly one stat (the item most deserving first attention — "Awaiting your review") rendered in `{colors.signal}` instead. Never more than one accent-colored number per strip.
-- **Stepper** (Add Application wizard) — vertically stacked numbered steps; each step's circle is neutral at rest, fills `{colors.signal}` when active, and recolors to `{colors.good-wash}`/`{colors.good}` once done. Step body content only renders for the active step; done and pending steps show a one-line summary instead — this is itself a progressive-disclosure move, keeping a 3-step form from presenting all fields at once.
-- **Option cards / provider cards** — radio-styled selection controls (auth method, CI/CD export mode, CI/CD provider). Visually a bordered card containing a real `<input type="radio">`; selected state adds a signal border and signal-wash fill. Used wherever a user is choosing exactly one option from a small, meaningfully-different set — never used for simple boolean toggles (that's the toggle switch, below).
-- **Code viewer + `<details>` disclosure** — generated Playwright code and CI/CD pipeline snippets render in `{components.code-viewer}` with light syntax tinting (keywords in `{colors.signal}`, strings in `{colors.good}`, comments in `{colors.ink-muted}`), wrapped in a native `<details>`/`<summary>` disclosure. This is a direct, named fix from Discovery: Add Application and Connect to CI/CD were both flagged as cluttered when every code block and secondary field was open by default. The system rule going forward is **disclosure-over-always-open** for any dense technical content that isn't the primary reason the user is on the screen — a Test Asset's code is supporting evidence for "this Journey has a test," not the headline of the row.
-- **Toggle switch** (`{components.toggle}`) — for genuine on/off settings only (Settings' AI-provider mode, notification preferences). Track fills `{colors.signal}` when on.
-- **Empty state** — dashed-border panel, a circular green check icon, a one-line confirmation, and (on Review Journeys specifically) an approve/reject count summary. Used to close a workflow, not to fill dead space — it only appears when a queue or list has been fully triaged.
+- **Row overflow menu (`⋯`)** — replaces the earlier fixed icon-button row actions. Every row in Discover Journeys and Review Scenarios carries a `⋯` trigger opening rename/edit/remove actions for that item — see `{EXPERIENCE.md#Review & Trust Model}` for the current (2026-07-15) behavioral rules, which now permit editing an item, not just approve/reject.
+- **Badges** (`{components.badge}`) — variants seen in the current reference prototype: `Happy Path`, `Negative Path`, `Edge Case` (Review Scenarios), plus the earlier `new`/`dupe`/`approved`/`rejected`/`generated` set where still applicable. All follow one pattern without exception: a tinted wash background plus saturated text in the *same* hue, never a solid fill.
+- **Status pill** (`{components.status-pill}`) — pill-shaped, signal-wash by default, with a small pulsing dot for "in progress" states. Per PRD FR-7, a Discovery Run that hits its time budget before finishing transitions this same pill to an amber "Incomplete" state — same component, different token pairing, never a separate visual pattern. `[GAP]` not confirmed against the new prototype — no in-progress discovery state was reachable during UX review; keep this rule pending confirmation.
+- **List row + detail panel** — Discover Journeys' and Review Scenarios' shared core pattern: a scannable list on the left (name, step/scenario count, `⋯` menu), selecting a row loads its full detail — numbered steps with method/route captions and stage badges (Discover Journeys), or test steps / test data / expected result (Review Scenarios) — into a panel on the right. This pairing (scannable list + detail-on-select) remains the system's canonical "make an AI claim inspectable" pattern, though the right-hand panel is no longer exclusively raw mono-typed evidence — Review Scenarios' panel mixes structured fields (Test data as a labeled table) with prose.
+- **`[NOTE FOR PM/ENG — 2026-07-15]`** Capability cards, KPI tiles, and the hero-stat strip (previously used on App Overview / Dashboard / Applications-landing) are removed along with those screens — see `{EXPERIENCE.md#Information Architecture}`. Definitions are dropped from this file's component tokens rather than kept as dead entries.
+- **Connect App form** — a single consolidated form (Application name, Base URL, Environment select, Authentication method select, credential fields), not the earlier multi-step wizard stepper. Authentication method is now a plain `<select>`, not a radio-styled option card — `[GAP]` the SSO/MFA session-handoff mechanism previously flagged as an unresolved placeholder (PRD Open Question 8) is no longer visible as a distinct step; unclear if it was resolved to "not needed" or simply not shown in this export. Needs explicit confirmation.
+- **Generate Suite panel** — a form (Suite name, Target environment, Execution: Run immediately / Schedule for later / Save without running) paired with a static "Suite summary" card (counts + a generate CTA). `[NOTE FOR PM/ENG — 2026-07-15]` The Execution options are UI placeholders only — the real execution/delivery mechanism (whether the platform runs tests itself, and how results reach a customer's CI) is explicitly undecided and deferred; do not treat "Run immediately" as a confirmed architectural commitment.
+- **Code viewer + `<details>` disclosure** — generated Playwright code render pattern from the earlier revision. `[GAP]` not reachable in the current reference prototype (the flow wasn't taken past "Generate Test Suite"); retained here as the last-confirmed spec pending re-verification.
+- **Empty state** — dashed-border panel, a circular green check icon, a one-line confirmation, and an approve/reject (or similar) count summary. Used to close a workflow, not to fill dead space. `[GAP]` not reachable in the current reference prototype; retained pending re-verification.
 
 ## Do's and Don'ts
 
 | Do | Don't |
 |---|---|
-| Use `{colors.signal}` only for primary actions, active nav/selection, links, and one hero-stat callout | Use `{colors.signal}` for semantic status (success/error/warning) or decoratively |
+| Use `{colors.signal}` only for primary actions, active selection, and links | Use `{colors.signal}` for semantic status (success/error/warning) or decoratively |
 | Route all real label/caption/metadata text through `{colors.ink-muted}` (AA, ~5:1) | Use `{colors.ink-faint}` for any real text a reviewer needs to read — it's decorative-only |
 | Use `{typography.font-mono}` only for discovered evidence and generated code | Use monospace for authored UI copy, even to look "technical" |
-| Keep cards/panels flat with a 1px `{colors.border}` hairline | Add drop shadows or elevation as a hierarchy device anywhere outside the two gradient placements |
-| Spend the system's one gradient only on the brand mark and the Login hero panel | Introduce a second gradient, glassy surface, or shine effect elsewhere |
+| Keep cards/panels flat with a 1px `{colors.border}` hairline | Add drop shadows or elevation as a hierarchy device anywhere |
+| Keep every surface flat — no gradients anywhere, including the brand mark and Login | Introduce a gradient, glassy surface, or shine effect anywhere in the system |
 | Pair every badge as a tinted wash + saturated text of the same hue | Fill a badge as a solid color block |
 | Progressively disclose dense code/technical content via `<details>` | Render all generated code, config, or secondary fields open by default on a setup or integration screen |
-| Give Journey review exactly four actions: Approve, Rename, Reject, Delete | Design or imply a merge, split, or inline-composition-edit affordance for a Journey — cut for V1, duplicates are rejected, not merged |
-| Treat Generated Scenarios as read-only reference chrome | Add checkbox selection, per-scenario approval, or action buttons to a scenario row — the approval gate is the Journey, not the Scenario |
+| Give Journey and Scenario rows a per-item overflow (`⋯`) menu for rename/edit/remove (2026-07-15: expanded from the earlier four-action-only rule — see `{EXPERIENCE.md#Review & Trust Model}`) | Design or imply merging two Journeys into one — rejecting a duplicate is still the correct action, not combining it with another |
 | Keep every AI-inferred item's UI free of any confidence, risk, or importance signal | Add a score, percentage, star rating, or priority flag anywhere near discovered/inferred content — this is a hard product constraint (PRD §5 Non-Goals), not an aesthetic choice deferred for later |
