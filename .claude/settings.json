@@ -1,6 +1,5 @@
 {
   "permissions": {
-    "defaultMode": "dontAsk",
     "allow": [
       "Bash",
       "Bash(echo *)",
@@ -15,6 +14,22 @@
     ],
     "ask": [
       "Bash(git push *)"
+    ],
+    "defaultMode": "dontAsk"
+  },
+  "enabledPlugins": {
+    "ponytail@ponytail": true
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"REMINDER: If this request involves writing, adding, modifying, refactoring, fixing, or reviewing code, or choosing a library or dependency, you MUST invoke the ponytail:ponytail skill via the Skill tool BEFORE generating or editing any code. Do not skip this step.\"}}'"
+          }
+        ]
+      }
     ]
   }
 }

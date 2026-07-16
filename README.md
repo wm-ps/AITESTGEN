@@ -4,6 +4,10 @@ Monorepo scaffolded to the architecture spine's fixed module boundaries
 (see `_bmad-output/planning-artifacts/architecture/`). Story 1.1 wires the
 core stack end-to-end; no product feature is implemented yet.
 
+> 📘 **New to this codebase? Read the [Developer Guide](docs/DEVELOPER_GUIDE.md)** —
+> it explains what each module does, where it deploys, the core architecture rules,
+> and a step-by-step runbook for bringing the whole stack up locally.
+
 ## Layout
 
 ```
