@@ -1,0 +1,49 @@
+[tool.uv.workspace]
+members = [
+    "apps/api",
+    "apps/workers/discovery",
+    "apps/workers/generation",
+    "packages/domain",
+    "packages/workflows",
+    "packages/ai_provider",
+    "packages/delivery_adapters",
+    "packages/ci_instructions",
+    "packages/secrets_client",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx>=0.28",
+    "ruff>=0.8",
+    "pyright>=1.1.390",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["apps", "packages"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+# Lint only this platform's own source — not BMad tooling under .claude/ or _bmad/.
+include = ["apps/**/*.py", "packages/**/*.py", "migrations/**/*.py"]
+extend-exclude = [".claude", "_bmad", "migrations/script.py.mako"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.pyright]
+pythonVersion = "3.14"
+include = [
+    "apps/api",
+    "apps/workers/discovery",
+    "apps/workers/generation",
+    "packages/domain",
+    "packages/workflows",
+    "packages/ai_provider",
+    "packages/delivery_adapters",
+    "packages/ci_instructions",
+    "packages/secrets_client",
+]

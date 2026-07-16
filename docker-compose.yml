@@ -1,0 +1,24 @@
+# Local-dev dependencies only (Story 1.1, Task 4) — dev ergonomics, NOT the
+# deferred SaaS/on-prem Temporal-hosting or production-infra decision
+# (architecture Deferred section).
+services:
+  postgres:
+    image: postgres:18.4
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: aitestgen
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  temporal:
+    image: temporalio/admin-tools:latest
+    command: ["temporal", "server", "start-dev", "--ip", "0.0.0.0"]
+    ports:
+      - "7233:7233"   # gRPC frontend
+      - "8233:8233"   # Web UI

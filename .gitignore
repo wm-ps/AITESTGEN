@@ -18,7 +18,7 @@ $RECYCLE.BIN/
 *.pem
 *.key
 
-# --- Python (api / discovery-worker / generation-worker) ---
+# --- Python (apps/api, apps/workers/*, packages/*) ---
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -27,20 +27,28 @@ venv/
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
+.pyright/
 .coverage
 htmlcov/
-alembic/versions/__pycache__/
+# Note: uv.lock and .python-version are intentionally committed (reproducible
+# installs + pinned Python 3.14.6) — do NOT add them here.
+# Alembic migration scripts live in migrations/versions/ and ARE committed;
+# only their bytecode is ignored (covered by __pycache__/ above).
 
-# --- Node / React / Vite (web) ---
+# --- Node / React / Vite (apps/web) ---
 node_modules/
 dist/
 build/
 .vite/
+coverage/
 *.tsbuildinfo
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+# Note: apps/web/src/api-types.gen.ts is generated from the API's OpenAPI spec
+# but IS committed — the CI drift check (AD-6) compares against the checked-in
+# copy. Do NOT ignore *.gen.ts.
 
 # --- Playwright ---
 test-results/
