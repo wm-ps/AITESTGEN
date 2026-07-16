@@ -13,7 +13,7 @@ table in the repo, so it sets the pattern every later entity follows.
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, text
+from sqlalchemy import Column, DateTime, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -30,4 +30,9 @@ class ScaffoldProbe(SQLModel, table=True):
         ),
     )
     note: str = Field(default="scaffold-ok")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    # tz-aware column so the UTC offset survives the round trip — this is the
+    # first table in the repo, so it sets the timestamp convention 1.2+ copy.
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )

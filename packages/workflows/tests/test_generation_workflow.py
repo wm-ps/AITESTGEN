@@ -1,8 +1,9 @@
 """GenerationWorkflow shell test — runs the no-op workflow against Temporal's
 in-memory time-skipping test environment (no external Temporal server needed).
 
-Also asserts AD-2: the workflow module performs no I/O — this is the
-convention every later workflow depends on being established correctly here.
+AD-2 (workflow performs no I/O) is enforced by Temporal's workflow sandbox at
+runtime, not asserted here; this test only verifies the shell starts and
+completes. Keep the workflow I/O-free as later workflows are built on it.
 """
 
 import uuid

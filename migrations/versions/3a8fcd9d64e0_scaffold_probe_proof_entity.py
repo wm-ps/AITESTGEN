@@ -23,7 +23,7 @@ def upgrade() -> None:
     op.create_table('scaffold_probe',
     sa.Column('id', sa.UUID(), server_default=sa.text('uuidv7()'), nullable=False),
     sa.Column('note', sqlmodel.sql.sqltypes.AutoString(), nullable=False),
-    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('created_at', sa.DateTime(timezone=True), nullable=False),
     sa.PrimaryKeyConstraint('id')
     )
     # ### end Alembic commands ###

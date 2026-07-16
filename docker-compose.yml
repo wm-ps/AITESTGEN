@@ -17,7 +17,7 @@ services:
       retries: 10
 
   temporal:
-    image: temporalio/admin-tools:latest
+    image: temporalio/admin-tools:1.31.2
     command: ["temporal", "server", "start-dev", "--ip", "0.0.0.0"]
     ports:
       - "7233:7233"   # gRPC frontend

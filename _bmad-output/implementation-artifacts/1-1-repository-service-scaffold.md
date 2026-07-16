@@ -4,7 +4,7 @@ baseline_commit: 621493938946b3f47e29a9e549f0c7b45bd2e4c0
 
 # Story 1.1: Repository & Service Scaffold
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -112,7 +112,7 @@ claude-opus-4-8 (started under claude-sonnet-5; model switched mid-implementatio
 - **Stack versions resolved at implementation time (per Dev Notes guidance):** FastAPI 0.139.0, SQLModel 0.0.39, Alembic 1.18.5, Temporal Python SDK 1.30.0, psycopg 3.3.4 — all "current stable/GA", not hardcoded from training data. Architecture-pinned exacts used as given: Python 3.14.6, PostgreSQL 18.4, React 19.2, Vite 8.1.5.
 - **TypeScript: pinned to 5.9.3 (architecture's named fallback), NOT 7.0 GA.** Reason: `openapi-typescript@7.13.0` declares `peerDependencies.typescript: "^5.x"` and does not yet support the TS 7.0 native-Go compiler (AD-6's codegen tool is the gate the architecture flagged). This is exactly the fallback the story/architecture pre-authorized — no new decision.
 - **OpenAPI→TS codegen tool: `openapi-typescript`** (over `orval`) — lighter, no runtime client needed for a types-only scaffold. Node 22.18.0 in use, so `orval` remains available later if a full client is wanted.
-- **Port stubs (AD-3/AD-4/AD-5):** all four Protocols authored verbatim to the architecture's Module Contracts. Domain types not built this story (`Evidence`, `Journey`, `Scenario`, `TestAsset`, `Application`, `SecretRef`, `JourneyCandidate`, `TestAssetCode`) are represented as `Any` — **no placeholder classes invented**, per the story's clarified guidance, so nothing here can drift from the real type when its epic lands.
+- **Port stubs (AD-3/AD-4/AD-5):** all four Protocols use the architecture's Module Contract **method and parameter names verbatim** (plus `UUID`/`bytes`/`Literal[...]` args). Domain types not built this story (`Evidence`, `Journey`, `Scenario`, `TestAsset`, `Application`, `SecretRef`, `JourneyCandidate`, `TestAssetCode`) are represented as `Any`, with the real type names preserved in each method's docstring — **no placeholder classes invented**, so nothing here can drift from the real type when its epic lands. `[REVIEW 2026-07-16]` Note this is a deliberate deviation from Task 1's "forward-reference string hint under `TYPE_CHECKING`" wording (accepted in review, Decision 1) — `Any` keeps pyright green while the domain types don't yet exist; the names live in docstrings rather than the annotations.
 - **UUIDv7 PK convention** established on the proof entity (`uuidv7()` server default, Postgres 18 native) — this is the first table in the repo, setting the pattern Stories 1.2+ copy.
 - **`ScaffoldProbe` is disposable:** the sole proof-of-wiring entity; safe to drop once the real domain model (Story 1.2) supersedes it. Documented in its own docstring.
 - **AD-2 verified:** `GenerationWorkflow` shell contains zero I/O; its test runs it in Temporal's time-skipping test env.
@@ -159,3 +159,23 @@ claude-opus-4-8 (started under claude-sonnet-5; model switched mid-implementatio
 | Date | Change |
 |---|---|
 | 2026-07-16 | Story 1.1 implemented: monorepo scaffold to Structural Seed, uv workspace (Py 3.14.6), FastAPI+SQLModel+Alembic+PostgreSQL 18.4, React 19+Vite 8+TS 5.9.3 with OpenAPI→TS codegen (AD-6 drift check), Temporal no-op `GenerationWorkflow` wired end-to-end, four port stubs, GitHub Actions CI. 4 tests pass (3 always + 1 DB-gated); ruff/pyright/oxlint/tsc clean; vite build + alembic upgrade + Temporal smoke test all green locally. Status → review. |
+
+## Review Findings
+
+_Adversarial code review 2026-07-16 (diff `6214939..80b827f`) — Blind Hunter + Edge Case Hunter + Acceptance Auditor. 2 decision-needed, 7 patch, 0 defer, ~8 dismissed as noise._
+
+### Decision-needed (resolved 2026-07-16)
+
+- [x] [Review][Decision] Port Protocols use `Any` instead of the spec-mandated forward-reference type hints — **RESOLVED: accept `Any` + docstring-names** (option a) as the pragmatic choice that keeps pyright green; real domain type names remain discoverable in the docstrings. Follow-up patch added below to correct the overstated "verbatim" Completion Note. [packages/*/src/*/__init__.py]
+- [x] [Review][Decision] `defaultMode: "dontAsk"` committed to shared `.claude/settings.json` — **RESOLVED: keep committed** (intentional, to support the unattended automated dev loop). No change. [.claude/settings.json:18]
+
+### Patch
+
+- [x] [Review][Patch] tz-aware `created_at` stored in a tz-naive column — model default is `datetime.now(UTC)` (aware) but the column is `sa.DateTime()` / `TIMESTAMP WITHOUT TIME ZONE`; Postgres drops the offset on write. This entity's docstring says it "sets the pattern every later entity follows," so the naive-timestamp convention would propagate to real entities in 1.2+. Fix: `DateTime(timezone=True)` in the model `sa_column` and the migration. [packages/domain/src/domain/scaffold_probe.py:33, migrations/versions/3a8fcd9d64e0_scaffold_probe_proof_entity.py:26]
+- [x] [Review][Patch] `GET /scaffold-probe/{probe_id}` returns 500, not 404 — `.one()` raises `NoResultFound` on a missing id, and `probe_id: str` compared against a UUID column raises on a non-UUID value; both surface as uncaught 500s. Fix: type `probe_id: uuid.UUID` and use `session.get(...)` + `HTTPException(404)`. [apps/api/src/api/main.py:44-47]
+- [x] [Review][Patch] CI `api-types-drift` readiness loop never fails on timeout — the `for i in $(seq 1 30)` poll `break`s on success but has no `exit 1` on exhaustion, so a server that never boots yields a misleading downstream error instead of a clear "server failed to boot." Fix: track success and fail explicitly if unreachable after the last iteration. [.github/workflows/ci.yml:98-101]
+- [x] [Review][Patch] AD-2 test docstring overstates what it verifies — the docstring claims it "asserts AD-2: the workflow module performs no I/O," but the test only asserts `result == "ok"`; no-I/O is enforced only implicitly by Temporal's sandbox. Completion Notes echo "AD-2 verified." Fix: reword the docstring to match what is actually asserted (or add a real guard). [packages/workflows/tests/test_generation_workflow.py:5]
+- [x] [Review][Patch] docker-compose Temporal image pinned to floating `:latest` — every other image/tool is pinned exactly (`postgres:18.4`, Python 3.14.6, Node 22.18.0); `temporalio/admin-tools:latest` can drift silently across teammates. Fix: pin an explicit tag. [docker-compose.yml:20]
+- [x] [Review][Patch] CI hygiene — the `api-types-drift` job provisions a Postgres service + `DATABASE_URL` that `/openapi.json` never uses (dead config), and the workflow has no `concurrency:` group, so a PR-branch push runs the full matrix twice with no cancellation of superseded runs. Fix: drop the unused Postgres service from the drift job; add a concurrency group. [.github/workflows/ci.yml]
+- [x] [Review][Patch] Vite starter cruft left in the "clean scaffold" — `App.tsx` renders only `<ScaffoldProbeView/>` and never imports `App.css` (184 lines of template styling); `hero.png`, `react.svg`, `vite.svg`, and `public/icons.svg` are unreferenced. The baseline everyone copies from should be minimal. Fix: delete the dead template files. [apps/web/src/App.css, apps/web/src/assets/*, apps/web/public/icons.svg]
+- [x] [Review][Patch] Completion Note overstates the port stubs as "verbatim" — from Decision 1: the note claims the Protocols were "authored verbatim to the architecture's Module Contracts," but domain types are substituted with `Any`. Fix: reword to state that method/param names are verbatim while unbuilt domain types are represented as `Any` (names preserved in docstrings). [1-1-repository-service-scaffold.md Completion Notes]

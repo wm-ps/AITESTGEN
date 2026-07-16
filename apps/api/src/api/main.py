@@ -5,12 +5,13 @@ here. Real domain endpoints (Onboarding, Review, Analytics) land in Stories
 1.2+ (architecture Module Map).
 """
 
+import uuid
 from typing import Annotated
 
 from domain import ScaffoldProbe
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from sqlmodel import Session, select
+from sqlmodel import Session
 
 from api.db import get_session
 
@@ -42,6 +43,8 @@ def create_scaffold_probe(session: SessionDep) -> ScaffoldProbe:
 
 
 @app.get("/scaffold-probe/{probe_id}", response_model=ScaffoldProbe)
-def get_scaffold_probe(probe_id: str, session: SessionDep) -> ScaffoldProbe:
-    probe = session.exec(select(ScaffoldProbe).where(ScaffoldProbe.id == probe_id)).one()
+def get_scaffold_probe(probe_id: uuid.UUID, session: SessionDep) -> ScaffoldProbe:
+    probe = session.get(ScaffoldProbe, probe_id)
+    if probe is None:
+        raise HTTPException(status_code=404, detail="scaffold probe not found")
     return probe

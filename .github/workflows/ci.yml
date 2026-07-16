@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+# Cancel superseded runs on the same ref instead of running the full matrix twice.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   python:
     name: Python (api, workers, packages)
@@ -64,22 +69,7 @@ jobs:
   api-types-drift:
     name: API types are not hand-edited (AD-6)
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18.4
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: aitestgen
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/aitestgen
+    # No Postgres service: this job only reads /openapi.json, which touches no DB.
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
@@ -96,9 +86,11 @@ jobs:
         run: |
           uv run --package api uvicorn api.main:app --port 8000 &
           for i in $(seq 1 30); do
-            curl -sf http://localhost:8000/openapi.json > /dev/null && break
+            curl -sf http://localhost:8000/openapi.json > /dev/null && exit 0
             sleep 1
           done
+          echo "API server did not become reachable on :8000 within 30s" >&2
+          exit 1
       - name: Regenerate API types
         working-directory: apps/web
         run: npm run generate:api-types
