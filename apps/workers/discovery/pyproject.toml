@@ -3,7 +3,13 @@ name = "discovery-worker"
 version = "0.1.0"
 description = "apps/workers/discovery — Execution layer for DiscoveryActivity (Playwright) and InferenceActivity (Epic 2)"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "temporalio>=1.9",
+    "workflows",
+]
+
+[tool.uv.sources]
+workflows = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

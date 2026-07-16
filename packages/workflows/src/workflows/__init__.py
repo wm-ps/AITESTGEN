@@ -5,6 +5,12 @@ direct browser/LLM/Git calls — only calls to Activities and Workflow-safe
 primitives. All I/O lives in apps/workers/* Activities.
 """
 
+from workflows.discovery_workflow import DISCOVERY_TASK_QUEUE, DiscoveryWorkflow
 from workflows.generation_workflow import GENERATION_TASK_QUEUE, GenerationWorkflow
 
-__all__ = ["GENERATION_TASK_QUEUE", "GenerationWorkflow"]
+__all__ = [
+    "DISCOVERY_TASK_QUEUE",
+    "GENERATION_TASK_QUEUE",
+    "DiscoveryWorkflow",
+    "GenerationWorkflow",
+]

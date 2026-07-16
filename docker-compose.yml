@@ -22,3 +22,16 @@ services:
     ports:
       - "7233:7233"   # gRPC frontend
       - "8233:8233"   # Web UI
+
+  # Dev-mode only (Story 1.3, Task 2) — in-memory, unsealed, root token fixed
+  # for local/CI convenience. Not the deferred production Vault-vs-cloud-KMS
+  # topology decision.
+  vault:
+    image: hashicorp/vault:1.18
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_DEV_ROOT_TOKEN_ID: dev-only-root-token
+      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    ports:
+      - "8200:8200"

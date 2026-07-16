@@ -12,6 +12,9 @@ dependencies = [
     "temporalio>=1.9",
     "domain",
     "workflows",
+    "secrets-client",
+    "bcrypt>=5.0.0",
+    "itsdangerous>=2.2.0",
 ]
 
 [dependency-groups]
@@ -23,6 +26,7 @@ dev = [
 [tool.uv.sources]
 domain = { workspace = true }
 workflows = { workspace = true }
+secrets-client = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

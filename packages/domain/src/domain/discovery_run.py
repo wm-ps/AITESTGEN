@@ -1,0 +1,46 @@
+"""DiscoveryRun — one bounded execution of the DiscoveryWorkflow (AD-1).
+
+Story 1.3 absorbs the former Story 1.5's job: onboarding an Application
+starts a DiscoveryRun (`status="running"`) in the same request, no separate
+"Start Discovery Run" action. Story 2.1+ owns the run's real lifecycle
+(stop conditions, completeness status); this entity only needs to exist and
+be observable for this story. Follows the same UUIDv7-internal /
+UUIDv4-external split `Application` establishes.
+"""
+
+import uuid
+from datetime import UTC, datetime
+
+from sqlalchemy import Column, DateTime, ForeignKey, text
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlmodel import Field, SQLModel
+
+
+class DiscoveryRun(SQLModel, table=True):
+    __tablename__ = "discovery_run"  # pyright: ignore[reportAssignmentType]
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid7,
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            primary_key=True,
+            server_default=text("uuidv7()"),
+        ),
+    )
+    external_id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        sa_column=Column(PGUUID(as_uuid=True), unique=True, nullable=False, index=True),
+    )
+    application_id: uuid.UUID = Field(
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey("application.id"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    status: str = Field(default="running")
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )

@@ -1,0 +1,114 @@
+/* Design-token system (Story 1.2, Task 4) — copied verbatim from DESIGN.md's
+   frontmatter. :root sets light defaults; @media (prefers-color-scheme:
+   dark) overrides for OS dark preference; :root[data-theme] lets an in-app
+   toggle (see theme.ts) override the OS preference outright. No component
+   may hardcode a color outside this layer. */
+
+:root {
+  --paper: #ffffff;
+  --surface: #f7f7fa;
+  --surface-hover: #efeff4;
+  --border: #e4e4ec;
+  --border-strong: #d3d3de;
+  --ink: #17171c;
+  --ink-muted: #6e6e7a;
+  --ink-faint: #a4a4af;
+  --signal: #0f766e;
+  --signal-ink: #ffffff;
+  --signal-wash: #e6f5f3;
+  --good: #1a7f5a;
+  --good-wash: #e7f5ef;
+  --danger: #c4342f;
+  --danger-wash: #fbebea;
+  --warn: #b5750c;
+  --warn-wash: #fbf1df;
+
+  --font-ui: -apple-system, 'Segoe UI', ui-sans-serif, system-ui, Roboto, Helvetica, Arial,
+    sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+
+  --radius-sm: 4px;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --radius-full: 9999px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --content-max: 1180px;
+  --content-x: 28px;
+  --content-top: 26px;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #0f0f13;
+    --surface: #17171d;
+    --surface-hover: #1d1d24;
+    --border: #27272f;
+    --border-strong: #34343e;
+    --ink: #ededf2;
+    --ink-muted: #95959f;
+    --ink-faint: #5b5b66;
+    --signal: #2dd4bf;
+    --signal-ink: #0f0f13;
+    --signal-wash: #112420;
+    --good: #3fce96;
+    --good-wash: #12281f;
+    --danger: #f17872;
+    --danger-wash: #2e1717;
+    --warn: #e3a63c;
+    --warn-wash: #2e2411;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='light'] {
+  --paper: #ffffff;
+  --surface: #f7f7fa;
+  --surface-hover: #efeff4;
+  --border: #e4e4ec;
+  --border-strong: #d3d3de;
+  --ink: #17171c;
+  --ink-muted: #6e6e7a;
+  --ink-faint: #a4a4af;
+  --signal: #0f766e;
+  --signal-ink: #ffffff;
+  --signal-wash: #e6f5f3;
+  --good: #1a7f5a;
+  --good-wash: #e7f5ef;
+  --danger: #c4342f;
+  --danger-wash: #fbebea;
+  --warn: #b5750c;
+  --warn-wash: #fbf1df;
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --paper: #0f0f13;
+  --surface: #17171d;
+  --surface-hover: #1d1d24;
+  --border: #27272f;
+  --border-strong: #34343e;
+  --ink: #ededf2;
+  --ink-muted: #95959f;
+  --ink-faint: #5b5b66;
+  --signal: #2dd4bf;
+  --signal-ink: #0f0f13;
+  --signal-wash: #112420;
+  --good: #3fce96;
+  --good-wash: #12281f;
+  --danger: #f17872;
+  --danger-wash: #2e1717;
+  --warn: #e3a63c;
+  --warn-wash: #2e2411;
+  color-scheme: dark;
+}

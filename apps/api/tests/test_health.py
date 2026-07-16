@@ -12,7 +12,7 @@ def test_health_returns_ok() -> None:
     assert response.json() == {"status": "ok"}
 
 
-def test_openapi_spec_served_and_includes_probe_schema() -> None:
+def test_openapi_spec_served_and_includes_domain_schema() -> None:
     spec = client.get("/openapi.json").json()
     assert spec["openapi"].startswith("3.")
-    assert "ScaffoldProbe" in spec["components"]["schemas"]
+    assert "ApplicationRead" in spec["components"]["schemas"]

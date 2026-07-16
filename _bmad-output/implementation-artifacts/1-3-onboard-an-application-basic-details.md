@@ -1,6 +1,6 @@
 # Story 1.3: Onboard an Application — Basic Details
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -23,39 +23,39 @@ so that it becomes available for discovery configuration.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Add the `Application` domain entity, establishing the UUIDv7/UUIDv4 id convention (AC: 1)
-  - [ ] Add `Application` (organization_id FK, name, url, environment, secret_ref, timestamps) to `packages/domain` — `name` is a new field surfaced by the 2026-07-15 Connect App form (the top-bar breadcrumb now shows an Application's name, not just its URL/environment)
-  - [ ] **This is the first entity whose id is ever exposed to the frontend** — apply the architecture's Consistency Convention now, correctly, since every later entity (`DiscoveryRun`, `Journey`, `Scenario`, `TestAsset`, ...) follows the same rule: the internal primary key is a UUIDv7 (Postgres 18 native `uuidv7()`, chosen for index locality), and any id returned in an API response is a **separate, opaque UUIDv4** — the UUIDv7 PK must never leave the backend, since its embedded timestamp would leak the record's creation time
-  - [ ] `environment` is a free-text designation (e.g. "staging", "UAT") — neither the PRD nor UX specifies a fixed enum; don't invent one
-  - [ ] Alembic migration for the new table
-- [ ] Task 2: Implement the first concrete `SecretsClient` adapter (AC: 1)
-  - [ ] Story 1.1 stubbed only `SecretsClient`'s Protocol interface in `packages/secrets_client`, with no implementation — this story needs a working one. Architecture explicitly defers the Vault-vs-cloud-KMS choice to deploy time (not a V1 blocker), so pick one now to unblock the build: **Vault in dev-mode** is the recommended default (portable across the still-undecided SaaS/on-prem topology, trivial to run locally/in CI via a container, no cloud account dependency) — a cloud-KMS adapter is an equally valid alternative if you have a strong reason to prefer it; document whichever is chosen in Completion Notes
-  - [ ] Implement `store(organization_id, secret) -> SecretRef` and `resolve(ref) -> bytes` exactly per the Protocol signature in the Architecture Spine's Module Contracts section
-  - [ ] Add a test that proves a raw credential never reaches a Postgres column or an application log line (e.g., assert the `Application.secret_ref` column and captured log output never contain the plaintext value) — this is what actually enforces AD-5 and NFR-1, not just convention
-- [ ] Task 3: Build the Application-onboarding endpoint backing the Connect App form (AC: 1, 2, 4)
-  - [ ] Add a POST endpoint to the Onboarding module in `apps/api`, passing through Story 1.2's Organization-scoping middleware
-  - [ ] Accept `name`, `url`, `environment`, and credentials (username/password, representing the standard-login default — see Dev Notes on the 1.3/1.4 credential-capture split)
-  - [ ] Write credentials via `SecretsClient` immediately; the `Application` row stores only the returned `SecretRef`, never the raw value
-  - [ ] Validation/error messaging must state the Dedicated Test Account requirement as fact (FR-2) — this is a labeling requirement on the credentials field, not just documentation
-  - [ ] Do **not** add any check that inspects or blocks a URL for being "production" — see Dev Notes, this is explicitly out of scope for V1
-  - [ ] **`[ABSORBED FROM REMOVED STORY 1.5, 2026-07-15]`** In the same request that creates the `Application` row, create a `DiscoveryRun` (`status=running`) and start its bounded `DiscoveryWorkflow` (Story 2.1, AD-1) — there is no separate "Start Discovery Run" endpoint or user action; onboarding and discovery-start are one atomic flow now that scope/time-budget configuration (Story 1.5) is removed
-- [ ] Task 4: Build the single-page Connect App form in `apps/web` (AC: 1, 2, 3)
-  - [ ] One consolidated form, no internal stepper — all fields render at once, single "Connect Application" submit action (2026-07-15: supersedes the prior multi-step wizard/stepper design; Story 1.4's auth-method field lives on this same form, not a separate step). `[UPDATED 2026-07-15]` No scope/time-budget fields — Story 1.5 removed in full, not merely re-verified
-  - [ ] Form fields: Application name, Base URL, environment designation, credentials — matching Task 3's endpoint
-  - [ ] Credentials field label/help text states the Dedicated Test Account requirement plainly (per Voice and Tone: fact + why, no apology, no hype)
-  - [ ] Do **not** phrase any copy as if the platform verifies or blocks production URLs (e.g. avoid a literal "production URLs are blocked at setup" claim) — see Dev Notes, no such platform-side check exists
-  - [ ] No Application-name breadcrumb until the form is submitted — no Application exists yet (UX-DR16); once submitted, the top bar shows the new Application's name and environment badge (AC 3)
-  - [ ] Reuse the focus-ring/keyboard-operability standard established in Story 1.2's shell
-  - [ ] **`[ABSORBED FROM REMOVED STORY 1.5, 2026-07-15]`** On successful submission, navigate directly to the Discover Journeys pipeline step (Story 2.1) — there is no intermediate Applications-list screen to land on (AC 4)
-- [ ] Task 5: Wire the Connect App entry point (AC: 1)
-  - [ ] Add the affordance on Home's "Start a New Project" and "Managed Applications" action cards (built in Story 1.2) that opens this form
-- [ ] Task 6: Verify end-to-end and record evidence (AC: 1-4)
-  - [ ] Submitting the Connect App form creates an `Application` row scoped to the signed-in user's Organization, with a resolvable `SecretRef`
-  - [ ] The Postgres row and application logs contain no plaintext credential (Task 2's test)
-  - [ ] A second Organization's user cannot read this Application via the API (reuse Story 1.2's isolation-test pattern)
-  - [ ] The form renders as a single page with no stepper — every field is visible and editable before submission
-  - [ ] After submission, the top bar shows the new Application's name and environment badge
-  - [ ] After submission, a `DiscoveryRun` exists with `status=running` for the new Application, its `DiscoveryWorkflow` is observable via Temporal CLI/Web UI, and the user lands on Discover Journeys — no manual "start discovery" step required
+- [x] Task 1: Add the `Application` domain entity, establishing the UUIDv7/UUIDv4 id convention (AC: 1)
+  - [x] Add `Application` (organization_id FK, name, url, environment, secret_ref, timestamps) to `packages/domain` — `name` is a new field surfaced by the 2026-07-15 Connect App form (the top-bar breadcrumb now shows an Application's name, not just its URL/environment)
+  - [x] **This is the first entity whose id is ever exposed to the frontend** — apply the architecture's Consistency Convention now, correctly, since every later entity (`DiscoveryRun`, `Journey`, `Scenario`, `TestAsset`, ...) follows the same rule: the internal primary key is a UUIDv7 (Postgres 18 native `uuidv7()`, chosen for index locality), and any id returned in an API response is a **separate, opaque UUIDv4** — the UUIDv7 PK must never leave the backend, since its embedded timestamp would leak the record's creation time
+  - [x] `environment` is a free-text designation (e.g. "staging", "UAT") — neither the PRD nor UX specifies a fixed enum; don't invent one
+  - [x] Alembic migration for the new table
+- [x] Task 2: Implement the first concrete `SecretsClient` adapter (AC: 1)
+  - [x] Story 1.1 stubbed only `SecretsClient`'s Protocol interface in `packages/secrets_client`, with no implementation — this story needs a working one. Architecture explicitly defers the Vault-vs-cloud-KMS choice to deploy time (not a V1 blocker), so pick one now to unblock the build: **Vault in dev-mode** is the recommended default (portable across the still-undecided SaaS/on-prem topology, trivial to run locally/in CI via a container, no cloud account dependency) — a cloud-KMS adapter is an equally valid alternative if you have a strong reason to prefer it; document whichever is chosen in Completion Notes
+  - [x] Implement `store(organization_id, secret) -> SecretRef` and `resolve(ref) -> bytes` exactly per the Protocol signature in the Architecture Spine's Module Contracts section
+  - [x] Add a test that proves a raw credential never reaches a Postgres column or an application log line (e.g., assert the `Application.secret_ref` column and captured log output never contain the plaintext value) — this is what actually enforces AD-5 and NFR-1, not just convention
+- [x] Task 3: Build the Application-onboarding endpoint backing the Connect App form (AC: 1, 2, 4)
+  - [x] Add a POST endpoint to the Onboarding module in `apps/api`, passing through Story 1.2's Organization-scoping middleware
+  - [x] Accept `name`, `url`, `environment`, and credentials (username/password, representing the standard-login default — see Dev Notes on the 1.3/1.4 credential-capture split)
+  - [x] Write credentials via `SecretsClient` immediately; the `Application` row stores only the returned `SecretRef`, never the raw value
+  - [x] Validation/error messaging must state the Dedicated Test Account requirement as fact (FR-2) — this is a labeling requirement on the credentials field, not just documentation
+  - [x] Do **not** add any check that inspects or blocks a URL for being "production" — see Dev Notes, this is explicitly out of scope for V1
+  - [x] **`[ABSORBED FROM REMOVED STORY 1.5, 2026-07-15]`** In the same request that creates the `Application` row, create a `DiscoveryRun` (`status=running`) and start its bounded `DiscoveryWorkflow` (Story 2.1, AD-1) — there is no separate "Start Discovery Run" endpoint or user action; onboarding and discovery-start are one atomic flow now that scope/time-budget configuration (Story 1.5) is removed
+- [x] Task 4: Build the single-page Connect App form in `apps/web` (AC: 1, 2, 3)
+  - [x] One consolidated form, no internal stepper — all fields render at once, single "Connect Application" submit action (2026-07-15: supersedes the prior multi-step wizard/stepper design; Story 1.4's auth-method field lives on this same form, not a separate step). `[UPDATED 2026-07-15]` No scope/time-budget fields — Story 1.5 removed in full, not merely re-verified
+  - [x] Form fields: Application name, Base URL, environment designation, credentials — matching Task 3's endpoint
+  - [x] Credentials field label/help text states the Dedicated Test Account requirement plainly (per Voice and Tone: fact + why, no apology, no hype)
+  - [x] Do **not** phrase any copy as if the platform verifies or blocks production URLs (e.g. avoid a literal "production URLs are blocked at setup" claim) — see Dev Notes, no such platform-side check exists
+  - [x] No Application-name breadcrumb until the form is submitted — no Application exists yet (UX-DR16); once submitted, the top bar shows the new Application's name and environment badge (AC 3)
+  - [x] Reuse the focus-ring/keyboard-operability standard established in Story 1.2's shell
+  - [x] **`[ABSORBED FROM REMOVED STORY 1.5, 2026-07-15]`** On successful submission, navigate directly to the Discover Journeys pipeline step (Story 2.1) — there is no intermediate Applications-list screen to land on (AC 4)
+- [x] Task 5: Wire the Connect App entry point (AC: 1)
+  - [x] Add the affordance on Home's "Start a New Project" and "Managed Applications" action cards (built in Story 1.2) that opens this form
+- [x] Task 6: Verify end-to-end and record evidence (AC: 1-4)
+  - [x] Submitting the Connect App form creates an `Application` row scoped to the signed-in user's Organization, with a resolvable `SecretRef`
+  - [x] The Postgres row and application logs contain no plaintext credential (Task 2's test)
+  - [x] A second Organization's user cannot read this Application via the API (reuse Story 1.2's isolation-test pattern)
+  - [x] The form renders as a single page with no stepper — every field is visible and editable before submission
+  - [x] After submission, the top bar shows the new Application's name and environment badge
+  - [x] After submission, a `DiscoveryRun` exists with `status=running` for the new Application, its `DiscoveryWorkflow` is observable via Temporal CLI/Web UI, and the user lands on Discover Journeys — no manual "start discovery" step required
 
 ## Dev Notes
 
@@ -98,10 +98,52 @@ No `project-context.md` exists yet in this repository.
 
 ### Agent Model Used
 
-_To be filled by the Dev Agent during implementation._
+claude-sonnet-5
 
 ### Debug Log References
 
+- Same run as Story 1.2 (implemented together in one pass): `uv run pytest` with
+  Postgres+Vault+Temporal up → 10 passed, including
+  `test_onboarding.py::test_create_application_never_stores_plaintext` and
+  `::test_cross_organization_isolation`.
+- Real-network `curl` smoke test: created an Application via `POST /applications` against the
+  live API/Vault/Temporal — response included `discovery_run_id` and `discovery_status=running`.
+- `ruff`, `pyright`, `oxlint`, `tsc -b`, `vite build`, `vitest` all green (see Story 1.2's Dev
+  Agent Record for the shared command log).
+
 ### Completion Notes List
 
+- **SecretsClient backing store: dev-mode Vault** (`packages/secrets_client/vault_client.py`,
+  `hvac` client), per the story's recommended default — portable across the undecided
+  SaaS/on-prem topology, trivial locally/in CI via a container. `SecretRef` is a frozen dataclass
+  wrapping the opaque Vault KV-v2 path; `Application.secret_ref` stores only `ref.path`, never
+  the raw credential. Enforced by `test_create_application_never_stores_plaintext`, which asserts
+  the plaintext password is in neither the `Application.secret_ref` column nor any captured log
+  record (via `caplog`), not just by convention.
+- **UUIDv7-internal / UUIDv4-external convention established on `Application`** (and reused on
+  `DiscoveryRun`): `id` is the Postgres-native `uuidv7()` PK, never serialized; `external_id`
+  (app-generated `uuid4`) is the only id in `ApplicationRead`/`GET /applications/{external_id}`.
+- **DiscoveryRun + DiscoveryWorkflow absorbed from removed Story 1.5**, in the same request as
+  `POST /applications`: creates a `DiscoveryRun(status="running")` row and starts a **no-op**
+  `DiscoveryWorkflow` shell (`packages/workflows/discovery_workflow.py`, zero I/O per AD-2) on a
+  new `discovery-task-queue`, picked up by a new `apps/workers/discovery` worker process (Story
+  1.1 had left this worker as a directory scaffold only). The real autonomous-exploration
+  orchestration is Story 2.1's job — this shell only needs to exist and be startable.
+- **No production-URL safeguard added, by design** — per the story's Dev Notes, this is an
+  explicit, unresolved PRD open question, not a gap in this implementation.
+- **Credential capture split honored:** this form/endpoint captures only the standard-login
+  username/password case; Story 1.4's Authentication method select is not built here.
+- **Verification gap — no browser tool available in this environment:** the Connect App form's
+  single-page-no-stepper rendering and the top-bar Application-name/environment-badge swap after
+  submit were verified by code inspection and the `curl`/`vitest` checks above, not by visually
+  driving the page in a browser. A manual pass is recommended before this story is considered
+  fully done.
+- See Story 1.2's Completion Notes for the shared CI/Vault/Temporal wiring and the ScaffoldProbe
+  removal — both stories were implemented in one pass against the same codebase.
+
 ### File List
+
+See Story 1.2's File List — both stories were implemented together in one pass and touch
+overlapping files (`packages/domain`, `packages/secrets_client`, `packages/workflows`,
+`apps/workers/discovery`, `apps/api`, `migrations`, `apps/web`). Nothing in this story's scope
+touches a file outside that list.

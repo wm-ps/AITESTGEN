@@ -9,7 +9,12 @@ import os
 from logging.config import fileConfig
 
 from alembic import context
-from domain import ScaffoldProbe  # noqa: F401 — registers metadata
+from domain import (  # noqa: F401 — registers metadata
+    Application,
+    DiscoveryRun,
+    Organization,
+    PlatformUser,
+)
 from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
 
