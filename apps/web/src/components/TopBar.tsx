@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import type { UserRead } from '../api'
+import { Logo } from './Logo'
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/)
@@ -24,42 +25,35 @@ export function TopBar({
   return (
     <header
       style={{
+        height: 64,
+        boxSizing: 'border-box',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: `var(--space-3) var(--content-x)`,
+        padding: '0 32px',
+        background: 'var(--paper)',
         borderBottom: '1px solid var(--border)',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-        <span
-          aria-hidden="true"
-          style={{
-            width: 26,
-            height: 26,
-            borderRadius: 7,
-            background: 'var(--signal)',
-            display: 'inline-block',
-          }}
-        />
-        <span style={{ fontWeight: 650, fontSize: 15 }}>Application Intelligence Platform</span>
+        <Logo size={32} />
+        <span style={{ fontWeight: 700, fontSize: 16 }}>AITestGen</span>
         {applicationBadge && (
           <>
-            <span className="caption" aria-hidden="true">
-              /
-            </span>
-            <span style={{ fontWeight: 650, fontSize: 13 }}>{applicationBadge.name}</span>
+            <span style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} aria-hidden="true" />
+            <span style={{ fontWeight: 650, fontSize: 15 }}>{applicationBadge.name}</span>
             <span
-              className="caption"
               style={{
+                display: 'inline-block',
                 textTransform: 'uppercase',
-                fontSize: '10.5px',
+                fontSize: 11,
                 fontWeight: 650,
                 letterSpacing: '0.04em',
-                background: 'var(--surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '2px 6px',
+                background: 'var(--signal-wash)',
+                color: 'var(--signal)',
+                borderRadius: 'var(--radius-full)',
+                padding: '3px 9px',
+                whiteSpace: 'nowrap',
               }}
             >
               {applicationBadge.environment}
@@ -74,16 +68,18 @@ export function TopBar({
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen((open) => !open)}
+          className="avatar-button"
           style={{
-            width: 28,
-            height: 28,
+            width: 32,
+            height: 32,
             borderRadius: 'var(--radius-full)',
-            background: 'var(--signal)',
-            color: 'var(--signal-ink)',
-            border: 'none',
-            fontWeight: 650,
-            fontSize: 12,
+            background: 'var(--surface-hover)',
+            border: '1px solid var(--border)',
+            color: 'var(--ink-muted)',
+            fontWeight: 600,
+            fontSize: 13,
             cursor: 'pointer',
+            flexShrink: 0,
           }}
         >
           {initials(user.name)}
@@ -95,23 +91,36 @@ export function TopBar({
             style={{
               position: 'absolute',
               right: 0,
-              top: '100%',
-              marginTop: 'var(--space-2)',
-              padding: 'var(--space-3)',
-              minWidth: 200,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 'var(--space-2)',
+              top: 40,
+              minWidth: 180,
+              boxShadow: '0 12px 28px rgba(15,23,42,0.14)',
+              overflow: 'hidden',
               zIndex: 10,
             }}
           >
-            <div style={{ fontWeight: 650 }}>{user.name}</div>
-            <div className="caption">{user.email}</div>
+            <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--surface-hover)' }}>
+              <div style={{ fontSize: 13, fontWeight: 650 }}>{user.name}</div>
+              <div className="caption" style={{ fontSize: 12, marginTop: 1 }}>
+                {user.email}
+              </div>
+            </div>
             <button
               type="button"
               role="menuitem"
-              className="button-secondary"
               onClick={onLogout}
+              className="menu-item-danger"
+              style={{
+                display: 'block',
+                width: '100%',
+                textAlign: 'left',
+                padding: '10px 14px',
+                background: 'none',
+                border: 'none',
+                fontSize: 13,
+                color: 'var(--danger)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
             >
               Log out
             </button>

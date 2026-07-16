@@ -93,3 +93,111 @@ input:focus-visible,
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
 }
+
+.card-clickable {
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.card-clickable:hover {
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  border-color: var(--signal);
+}
+
+.avatar-button {
+  transition: background-color 0.15s ease;
+}
+
+.avatar-button:hover {
+  background: var(--border);
+}
+
+.menu-item-danger {
+  transition: background-color 0.15s ease;
+}
+
+.menu-item-danger:hover {
+  background: var(--danger-wash);
+}
+
+.button-primary:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+@keyframes aitg-materialize {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes aitg-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes aitg-drift {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(-16px, 18px);
+  }
+}
+
+@keyframes aitg-path-travel {
+  0% {
+    transform: translate(11px, 5px);
+  }
+  33% {
+    transform: translate(4px, 21px);
+  }
+  66% {
+    transform: translate(19px, 21px);
+  }
+  100% {
+    transform: translate(11px, 5px);
+  }
+}
+
+@keyframes aitg-shimmer-sweep {
+  0% {
+    transform: translateX(-140%) rotate(10deg);
+  }
+  55%,
+  100% {
+    transform: translateX(240%) rotate(10deg);
+  }
+}
+
+@keyframes aitg-crossfade-a {
+  0%,
+  45% {
+    opacity: 1;
+  }
+  55%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes aitg-crossfade-b {
+  0%,
+  45% {
+    opacity: 0;
+  }
+  55%,
+  100% {
+    opacity: 1;
+  }
+}

@@ -1,6 +1,6 @@
 # Story 1.3: Onboard an Application — Basic Details
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -140,6 +140,21 @@ claude-sonnet-5
   fully done.
 - See Story 1.2's Completion Notes for the shared CI/Vault/Temporal wiring and the ScaffoldProbe
   removal — both stories were implemented in one pass against the same codebase.
+- **2026-07-16 — full stack validated live, closing the prior browser-tool gap:** created
+  Applications through the real running API (not `TestClient`), confirmed the `secret_ref`
+  written to Postgres resolves to the exact submitted credential in Vault's KV v2 engine, and
+  confirmed via `temporal workflow list` that each request's `DiscoveryWorkflow` actually reaches
+  `Completed`. Re-ran the AD-12 isolation case live (see Story 1.2's note) against `/applications`
+  specifically. Also caught and fixed two regressions in in-progress, uncommitted frontend polish
+  found during this pass, before they were committed: (1) `ConnectAppForm.tsx` had grown an
+  `environment` `<select>` restricted to three fixed values, directly contradicting this story's
+  Task 1 instruction that `environment` stay free-text with no invented enum — reverted to a text
+  input; (2) the same file had grown an "Authentication method" dropdown (Story 1.4's job, not
+  built here) whose "OAuth Client Credentials" option rendered no input fields yet was fully
+  submittable, silently creating an Application with a blank Vault-stored credential — removed,
+  restoring the plain username/password fields this story's endpoint actually supports. Full
+  Python + web health checklist re-run clean after the fix (see Story 1.2's note for the command
+  list); `git diff --exit-code` on `api-types.gen.ts` confirmed no contract drift.
 
 ### File List
 

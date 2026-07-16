@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ApiError, api, type ApplicationRead } from '../api'
+import { Stepper } from './Stepper'
 
 export function ConnectAppForm({ onConnected }: { onConnected: (application: ApplicationRead) => void }) {
   const [name, setName] = useState('')
@@ -25,68 +26,72 @@ export function ConnectAppForm({ onConnected }: { onConnected: (application: App
   }
 
   return (
-    <main
-      style={{
-        maxWidth: 560,
-        margin: '0 auto',
-        padding: `var(--content-top) var(--content-x)`,
-      }}
-    >
-      <h1 style={{ fontSize: 19, fontWeight: 650, margin: '0 0 20px' }}>Connect Application</h1>
-
-      <form
-        onSubmit={handleSubmit}
-        className="card-panel"
-        style={{
-          padding: 'var(--space-6)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--space-4)',
-        }}
-      >
-        <label className="field">
-          <span className="label">Application name</span>
-          <input required value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
-
-        <label className="field">
-          <span className="label">Base URL</span>
-          <input
-            type="url"
-            required
-            placeholder="https://staging.example.com"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-          />
-        </label>
-
-        <label className="field">
-          <span className="label">Environment</span>
-          <input
-            required
-            placeholder="staging, UAT, ..."
-            value={environment}
-            onChange={(e) => setEnvironment(e.target.value)}
-          />
-        </label>
-
-        <fieldset
-          style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: 'var(--space-4)' }}
+    <>
+      <Stepper current="connect-app" />
+      <main style={{ maxWidth: 720, margin: '0 auto', padding: '48px var(--content-x)' }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px' }}>Connect to your live application</h1>
+        <p className="caption" style={{ maxWidth: 560, fontSize: 14, margin: '0 0 14px' }}>
+          AITestGen connects to your deployed application over the network — not your source code —
+          then turns its critical workflows into a structured library of test scenarios, ready to
+          review in minutes.
+        </p>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-2)',
+            fontSize: 12.5,
+            color: 'var(--ink-faint)',
+            margin: '0 0 32px',
+          }}
         >
-          <legend className="label">Credentials</legend>
-          <p className="caption" style={{ margin: '0 0 12px' }}>
-            Use a Dedicated Test Account for this Application, not a real end-user identity.
-            Credentials are written directly to the secrets store and never stored in plaintext.
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
+          <span>Read-only connection</span>
+          <span>→</span>
+          <span>Workflows mapped</span>
+          <span>→</span>
+          <span>Scenarios ready to review</span>
+        </div>
+
+        <form
+          onSubmit={handleSubmit}
+          className="card-panel"
+          style={{
+            padding: 'var(--space-8)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 'var(--space-5)',
+          }}
+        >
+          <label className="field">
+            <span className="label">Application name</span>
+            <input required value={name} onChange={(e) => setName(e.target.value)} />
+          </label>
+
+          <label className="field">
+            <span className="label">Base URL</span>
+            <input
+              type="url"
+              required
+              placeholder="https://staging.example.com"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+          </label>
+
+          <label className="field">
+            <span className="label">Environment</span>
+            <input
+              required
+              placeholder="staging, UAT, ..."
+              value={environment}
+              onChange={(e) => setEnvironment(e.target.value)}
+            />
+          </label>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-5)' }}>
             <label className="field">
               <span className="label">Username</span>
-              <input
-                required
-                autoComplete="off"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-              />
+              <input required autoComplete="off" value={username} onChange={(e) => setUsername(e.target.value)} />
             </label>
             <label className="field">
               <span className="label">Password</span>
@@ -99,18 +104,35 @@ export function ConnectAppForm({ onConnected }: { onConnected: (application: App
               />
             </label>
           </div>
-        </fieldset>
 
-        {error && (
-          <div style={{ color: 'var(--danger)', fontSize: 13 }} role="alert">
-            {error}
+          <p
+            className="caption"
+            style={{
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)',
+              padding: 'var(--space-3)',
+              margin: 0,
+              lineHeight: 1.5,
+            }}
+          >
+            Use a Dedicated Test Account for this Application, not a real end-user identity.
+            Credentials are written directly to the secrets store and never stored in plaintext.
+          </p>
+
+          {error && (
+            <div style={{ color: 'var(--danger)', fontSize: 13 }} role="alert">
+              {error}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button type="submit" className="button-primary" disabled={submitting} style={{ padding: '11px 22px' }}>
+              {submitting ? 'Connecting…' : 'Connect Application →'}
+            </button>
           </div>
-        )}
-
-        <button type="submit" className="button-primary" disabled={submitting}>
-          {submitting ? 'Connecting…' : 'Connect Application'}
-        </button>
-      </form>
-    </main>
+        </form>
+      </main>
+    </>
   )
 }

@@ -1,6 +1,6 @@
 # Story 1.2: Sign In & Organization-Scoped Workspace
 
-Status: review
+Status: done
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -155,6 +155,14 @@ claude-sonnet-5
 - **ScaffoldProbe removed** (backend entity/endpoints, frontend view, migration to drop the
   table) now that the real domain model supersedes it, per its own docstring's explicit
   permission to do so.
+- **2026-07-16 — full stack validated live, closing the prior browser-tool gap:** brought up
+  Postgres/Temporal/Vault + API + discovery worker + web via the Developer Guide runbook and
+  drove real HTTP traffic (not just `TestClient`). Confirmed live: login/logout, `/auth/me`
+  401 with no cookie and with a tampered cookie, wrong-password and unknown-email both 401,
+  and — the AD-12 load-bearing case — a second seeded Organization's user gets a live 404
+  reading the first Organization's Application while creating their own succeeds normally.
+  Full `pytest`/`ruff`/`pyright` (Python) and `oxlint`/`tsc -b`/`vitest`/`vite build` (web) all
+  green; `api-types.gen.ts` regenerated with zero drift against the running API (AD-6).
 
 ### File List
 

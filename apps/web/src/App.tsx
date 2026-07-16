@@ -48,7 +48,7 @@ function App() {
         }
         onLogout={handleLogout}
       />
-      {view === 'home' && <Home onConnectApp={() => setView('connect-app')} />}
+      {view === 'home' && <Home user={user} onConnectApp={() => setView('connect-app')} />}
       {view === 'connect-app' && (
         <ConnectAppForm
           onConnected={(app) => {

@@ -32,7 +32,7 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Home' })).toBeTruthy()
+      expect(screen.getByRole('heading', { name: 'Welcome back, Ada' })).toBeTruthy()
     })
     expect(screen.getByText('Start a New Project')).toBeTruthy()
 
