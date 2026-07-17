@@ -108,6 +108,21 @@ textarea:focus-visible,
   border-color: var(--signal);
 }
 
+/* status-pill's in-progress pulse dot (Story 2.1, DESIGN.md#Components) */
+@keyframes status-pill-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.status-pill-pulse-dot {
+  animation: status-pill-pulse 1.4s ease-in-out infinite;
+}
+
 .avatar-button {
   transition: background-color 0.15s ease;
 }

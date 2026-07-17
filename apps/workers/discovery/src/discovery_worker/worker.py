@@ -1,8 +1,8 @@
-"""Discovery worker process — Story 1.3 scaffold.
+"""Discovery worker process — Story 1.3 scaffold; Story 2.1/2.2 add the real
+`DiscoveryActivity`; Story 2.5 adds `InferenceActivity`.
 
-Registers and runs only the no-op `DiscoveryWorkflow` shell against a local
-Temporal server. Zero Activities are registered yet — DiscoveryActivity
-(Playwright exploration) lands in Epic 2.
+Registers `DiscoveryWorkflow` and both Activities against a local Temporal
+server.
 
 Run with: uv run --package discovery-worker python -m discovery_worker.worker
 """
@@ -14,6 +14,8 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 from workflows import DISCOVERY_TASK_QUEUE, DiscoveryWorkflow
 
+from discovery_worker.activities import discovery_activity, inference_activity
+
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 
 
@@ -23,7 +25,7 @@ async def main() -> None:
         client,
         task_queue=DISCOVERY_TASK_QUEUE,
         workflows=[DiscoveryWorkflow],
-        activities=[],
+        activities=[discovery_activity, inference_activity],
     )
     print(f"Discovery worker polling task queue '{DISCOVERY_TASK_QUEUE}' at {TEMPORAL_ADDRESS}")
     await worker.run()

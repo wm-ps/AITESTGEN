@@ -52,7 +52,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-17  # Story 1-4 (Configure Application Authentication Method) implemented → review
+last_updated: 2026-07-17  # Stories 2-2 through 2-5 implemented → review
 project: AITestGen
 project_key: NOKEY
 tracking_system: file-system
@@ -69,11 +69,11 @@ development_status:
   epic-1-retrospective: optional
 
   epic-2: in-progress
-  2-1-start-a-discovery-run: ready-for-dev  # trigger changed 2026-07-15: automatic on Application creation, not manual
-  2-2-autonomous-exploration-captures-evidence: ready-for-dev
-  2-3-discovery-stop-conditions-completeness-status: ready-for-dev  # renamed "Discovery Completion" 2026-07-15; incomplete status removed
-  2-4-session-expiry-handling: ready-for-dev
-  2-5-ai-journey-capability-inference-from-evidence: ready-for-dev
+  2-1-start-a-discovery-run: review  # trigger changed 2026-07-15: automatic on Application creation, not manual
+  2-2-autonomous-exploration-captures-evidence: review
+  2-3-discovery-stop-conditions-completeness-status: review  # renamed "Discovery Completion" 2026-07-15; incomplete status removed
+  2-4-session-expiry-handling: review
+  2-5-ai-journey-capability-inference-from-evidence: review
   epic-2-retrospective: optional
 
   epic-3: in-progress

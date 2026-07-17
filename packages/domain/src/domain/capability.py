@@ -1,24 +1,24 @@
-"""DiscoveryRun — one bounded execution of the DiscoveryWorkflow (AD-1).
+"""Capability — groups related Journeys for one Application (Story 2.5).
 
-Story 1.3 absorbs the former Story 1.5's job: onboarding an Application
-starts a DiscoveryRun (`status="running"`) in the same request, no separate
-"Start Discovery Run" action. Story 2.3 adds the `complete` transition;
-Story 2.4 adds `failed`/`failure_reason` (AD-11) — `session_expired` is the
-one value the Architecture Spine names explicitly, meaningful only when
-`status="failed"`. Follows the same UUIDv7-internal / UUIDv4-external split
-`Application` establishes.
+Scoped to `Application` per the Core-Entity ERD. `status` mirrors `Journey`'s
+shape (`"candidate" | "deleted"`) — Capability curation isn't Epic 3's
+explicit focus, but nothing else in the planning artifacts gives it a
+different shape, so this is a deliberate inference, not a literal schema.
 """
 
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 from sqlalchemy import Column, DateTime, ForeignKey, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
+CapabilityStatus = Literal["candidate", "deleted"]
 
-class DiscoveryRun(SQLModel, table=True):
-    __tablename__ = "discovery_run"  # pyright: ignore[reportAssignmentType]
+
+class Capability(SQLModel, table=True):
+    __tablename__ = "capability"  # pyright: ignore[reportAssignmentType]
 
     id: uuid.UUID = Field(
         default_factory=uuid.uuid7,
@@ -40,8 +40,9 @@ class DiscoveryRun(SQLModel, table=True):
             index=True,
         ),
     )
-    status: str = Field(default="running")
-    failure_reason: str | None = Field(default=None)
+    status: str = Field(default="candidate")
+    name: str
+    description: str = Field(default="")
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

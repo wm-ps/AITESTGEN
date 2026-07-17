@@ -10,13 +10,12 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from domain import Application, AuthMethod, DiscoveryRun, PlatformUser
+from domain import Application, AuthMethod, DiscoveryRun, Evidence, PlatformUser
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 from secrets_client import VaultSecretsClient
 from sqlmodel import Session, select
-from workflows import DISCOVERY_TASK_QUEUE, DiscoveryWorkflow
 
 from api.auth import (
     CurrentOrgIdDep,
@@ -26,7 +25,7 @@ from api.auth import (
     verify_password,
 )
 from api.db import get_session
-from api.temporal_client import get_temporal_client
+from api.discovery import start_discovery_run
 
 app = FastAPI(title="Application Intelligence Platform API")
 
@@ -118,6 +117,7 @@ class ApplicationRead(BaseModel):
     created_at: datetime
     discovery_run_id: uuid.UUID
     discovery_status: str
+    discovery_failure_reason: str | None
 
 
 def _to_application_read(application: Application, discovery_run: DiscoveryRun) -> ApplicationRead:
@@ -130,6 +130,7 @@ def _to_application_read(application: Application, discovery_run: DiscoveryRun) 
         created_at=application.created_at,
         discovery_run_id=discovery_run.external_id,
         discovery_status=discovery_run.status,
+        discovery_failure_reason=discovery_run.failure_reason,
     )
 
 
@@ -162,20 +163,9 @@ async def create_application(
     session.flush()
 
     # Absorbed from removed Story 1.5: start a DiscoveryRun immediately, in
-    # the same request — no separate "start discovery" action (AC 4).
-    discovery_run = DiscoveryRun(application_id=application.id, status="running")
-    session.add(discovery_run)
-    session.commit()
-    session.refresh(application)
-    session.refresh(discovery_run)
-
-    client = await get_temporal_client()
-    await client.start_workflow(
-        DiscoveryWorkflow.run,
-        str(application.external_id),
-        id=f"discovery-{discovery_run.external_id}",
-        task_queue=DISCOVERY_TASK_QUEUE,
-    )
+    # the same request — no separate "start discovery" action (AC 4). The
+    # DiscoveryRun-creation logic itself is Story 2.1's (api.discovery).
+    discovery_run = await start_discovery_run(session, application)
 
     return _to_application_read(application, discovery_run)
 
@@ -199,3 +189,38 @@ def get_application(
     ).first()
     assert discovery_run is not None
     return _to_application_read(application, discovery_run)
+
+
+class EvidenceRead(BaseModel):
+    type: str
+    details: dict
+    captured_at: datetime
+
+
+@app.get("/discovery-runs/{external_id}/evidence", response_model=list[EvidenceRead])
+def list_evidence(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[EvidenceRead]:
+    discovery_run = session.exec(
+        select(DiscoveryRun).where(DiscoveryRun.external_id == external_id)
+    ).first()
+    application = session.get(Application, discovery_run.application_id) if discovery_run else None
+    if (
+        discovery_run is None
+        or application is None
+        or application.organization_id != organization_id
+    ):
+        raise HTTPException(status_code=404, detail="discovery run not found")
+
+    rows = session.exec(
+        select(Evidence)
+        .where(Evidence.discovery_run_id == discovery_run.id)
+        .order_by(Evidence.captured_at.desc())  # type: ignore[attr-defined]
+        .limit(50)
+    ).all()
+    return [
+        EvidenceRead(type=row.type, details=row.details, captured_at=row.captured_at)
+        for row in rows
+    ]

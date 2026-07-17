@@ -1,6 +1,10 @@
+---
+baseline_commit: 48b6499e08423320a0156e02720f1e8e2ba7d66c
+---
+
 # Story 2.3: Discovery Completion `[RENAMED 2026-07-15, was "Discovery Stop Conditions & Completeness Status"]`
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -19,20 +23,20 @@ so that I know the map reflects everything discovery found.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Replace Story 2.2's placeholder stopping cap with the real FR-7 rule (AC: 1)
-  - [ ] Track, per exploration iteration, whether any new page/action/state-transition was found (i.e. not already represented by an existing `Evidence` row for this run). When an iteration finds nothing new, that's exhaustive traversal — the only stop condition
-  - [ ] **Keep this inside the same `DiscoveryActivity` Story 2.2 built** — there's no need for a second Activity call. `DiscoveryActivity` already owns I/O (AD-2); it can check this stop condition each loop iteration and write the final `DiscoveryRun.status` itself before returning, exactly as it already writes `Evidence` rows incrementally
-  - [ ] On exhaustive stop, set `DiscoveryRun.status = "complete"` — this is the one and only place that value gets written
-  - [ ] **`[RESOLVED 2026-07-15]` No time-budget cutoff exists.** An earlier draft of this story computed a deadline from `Application.time_budget_minutes` and wrote `status="incomplete"` on timeout — both the field and the status value are gone (FR-5 removed). Do not build a deadline check of any kind here; Story 2.2's placeholder iteration-cap is test-only scaffolding, not a product feature to formalize
-- [ ] Task 2: Audit every completeness read-path to use `DiscoveryRun.status` directly (AC: 2)
-  - [ ] Discovery Progress and any other surface referencing this run's completeness must query `status` directly — never infer completeness from `Evidence` row counts, elapsed time, or any other proxy. This is the literal enforcement of AD-10 ("completeness is never inferred from the presence/absence of other data")
-- [ ] Task 3: Wire the status-pill's `Complete` state (AC: 1)
-  - [ ] **`Complete` has no documented pill variant in `DESIGN.md`** — only `Running` (signal, pulsing) is named. Resolved here: use `{colors.good-wash}`/`{colors.good}` (green) for `Complete`, consistent with `DESIGN.md`'s stated semantic-color rule ("Green means approved/generated/healthy"), with the pulsing dot removed once no longer "in progress." Treat this as a filled UX gap, not a literal DESIGN.md spec — flag it if a future design pass wants to formalize it
-  - [ ] **`[RESOLVED 2026-07-15]` No `Incomplete` state to build.** An earlier draft specified a `Running` → `Incomplete` (amber) transition on time-budget cutoff, reusing `DESIGN.md`'s documented amber note — that note describes a state this pill no longer has. The only transition is `Running` → `Complete`
-- [ ] Task 4: Verify end-to-end and record evidence (AC: 1, 2)
-  - [ ] A Discovery Run against a small, fully-crawlable target reaches `status=complete` when no new evidence is found, with the pill showing the (gap-filled) `Complete` treatment
-  - [ ] Every surface showing run completeness reads `DiscoveryRun.status` directly (code-review-checkable, not just a runtime test)
-  - [ ] No code path anywhere computes or displays an `incomplete` state — a deliberate negative check, not just a positive functional test
+- [x] Task 1: Replace Story 2.2's placeholder stopping cap with the real FR-7 rule (AC: 1)
+  - [x] Track, per exploration iteration, whether any new page/action/state-transition was found (i.e. not already represented by an existing `Evidence` row for this run). When an iteration finds nothing new, that's exhaustive traversal — the only stop condition
+  - [x] **Keep this inside the same `DiscoveryActivity` Story 2.2 built** — there's no need for a second Activity call. `DiscoveryActivity` already owns I/O (AD-2); it can check this stop condition each loop iteration and write the final `DiscoveryRun.status` itself before returning, exactly as it already writes `Evidence` rows incrementally
+  - [x] On exhaustive stop, set `DiscoveryRun.status = "complete"` — this is the one and only place that value gets written
+  - [x] **`[RESOLVED 2026-07-15]` No time-budget cutoff exists.** An earlier draft of this story computed a deadline from `Application.time_budget_minutes` and wrote `status="incomplete"` on timeout — both the field and the status value are gone (FR-5 removed). Do not build a deadline check of any kind here; Story 2.2's placeholder iteration-cap is test-only scaffolding, not a product feature to formalize
+- [x] Task 2: Audit every completeness read-path to use `DiscoveryRun.status` directly (AC: 2)
+  - [x] Discovery Progress and any other surface referencing this run's completeness must query `status` directly — never infer completeness from `Evidence` row counts, elapsed time, or any other proxy. This is the literal enforcement of AD-10 ("completeness is never inferred from the presence/absence of other data")
+- [x] Task 3: Wire the status-pill's `Complete` state (AC: 1)
+  - [x] **`Complete` has no documented pill variant in `DESIGN.md`** — only `Running` (signal, pulsing) is named. Resolved here: use `{colors.good-wash}`/`{colors.good}` (green) for `Complete`, consistent with `DESIGN.md`'s stated semantic-color rule ("Green means approved/generated/healthy"), with the pulsing dot removed once no longer "in progress." Treat this as a filled UX gap, not a literal DESIGN.md spec — flag it if a future design pass wants to formalize it
+  - [x] **`[RESOLVED 2026-07-15]` No `Incomplete` state to build.** An earlier draft specified a `Running` → `Incomplete` (amber) transition on time-budget cutoff, reusing `DESIGN.md`'s documented amber note — that note describes a state this pill no longer has. The only transition is `Running` → `Complete`
+- [x] Task 4: Verify end-to-end and record evidence (AC: 1, 2)
+  - [x] A Discovery Run against a small, fully-crawlable target reaches `status=complete` when no new evidence is found, with the pill showing the (gap-filled) `Complete` treatment
+  - [x] Every surface showing run completeness reads `DiscoveryRun.status` directly (code-review-checkable, not just a runtime test)
+  - [x] No code path anywhere computes or displays an `incomplete` state — a deliberate negative check, not just a positive functional test
 
 ## Dev Notes
 
@@ -71,10 +75,72 @@ No `project-context.md` exists yet in this repository.
 
 ### Agent Model Used
 
-_To be filled by the Dev Agent during implementation._
+claude-sonnet-5
 
 ### Debug Log References
 
+- `uv run pytest apps/ packages/ -q` (same throwaway Postgres/Vault/MinIO/Temporal stack as Story
+  2.2) → **19 passed** — `test_discovery_activity_integration.py` now also asserts
+  `DiscoveryRun.status == "complete"` after a full crawl against the live local target.
+- `uv run ruff check` / `uv run pyright` → all clean.
+- `npx vitest run` → **13 passed** (11 pre-existing + 2 new `StatusPill` tests: `Running`
+  signal-colored with a pulsing dot, `Complete` good/green-colored with no dot). `tsc -b` /
+  `oxlint` clean.
+- `grep -rniE "\bincomplete\b" apps/ packages/ --include="*.py" --include="*.ts" --include="*.tsx"`
+  (excluding `node_modules`) → zero hits in product source, satisfying Task 4's negative check
+  that no code path computes or displays an `incomplete` state.
+
 ### Completion Notes List
 
+- **Story 2.2's `MAX_ITERATIONS` placeholder removed entirely, not tightened** — the crawl loop
+  (`crawler.py`) now runs `while page_queue:` with no cap at all, per this story's explicit,
+  repeated instruction that no safety cap exists by product decision (PRD §12 Risk item 7,
+  accepted risk). The natural termination condition — the page queue empties because no new
+  same-origin links were found to enqueue — **is** the exhaustive-traversal signal; forms and
+  standalone-button actions are already exercised exhaustively per page in the same pass Story 2.2
+  built, so "the queue is empty" already means "no new page, form, or action was found."
+- **`DiscoveryRun.status = "complete"` written in exactly one place**: `discovery_activity`
+  (`activities.py`), immediately after `run_discovery_crawl` returns, in the same DB session/commit
+  as the `Evidence` rows. No second Activity call, per Task 1's explicit instruction — the same
+  `DiscoveryActivity` Story 2.2 built owns this write.
+- **Audit (Task 2) confirmed clean, no changes needed**: `GET /applications/{id}` already returned
+  `discovery_status=discovery_run.status` directly (Story 1.3), and the new
+  `GET /discovery-runs/{id}/evidence` endpoint (Story 2.2) never touches completeness at all — it
+  only lists `Evidence` rows. Neither endpoint nor the frontend (`DiscoverJourneysPlaceholder`,
+  `StatusPill`) infers completeness from row counts, elapsed time, or any other proxy.
+- **`StatusPill`'s `Complete` variant**: `{colors.good-wash}`/`{colors.good}` (green), pulsing dot
+  suppressed (the dot only renders for `status === "running"`, unchanged from Story 2.1/2.2). A
+  small `COLORS` lookup keyed by status replaces the previously-hardcoded signal-only styling —
+  deliberately just `running`/`complete` for now, not pre-building a `failed` entry (Story 2.4's
+  job).
+- **No `Incomplete` state anywhere** — verified by both code inspection (no `time_budget`,
+  `deadline`, or `incomplete` identifiers anywhere in `DiscoveryActivity`/`DiscoveryRun`/the
+  frontend) and the `grep` check in Debug Log References.
+- **Verification gap — no browser tool available in this environment**: the pill's green
+  color/no-dot rendering was verified via `vitest`/DOM style assertions and a real end-to-end
+  crawl-to-`complete` run, not by visually confirming the Discovery Progress screen in a live
+  browser.
+- Per the operator's instruction for this session, **no git commits were created**.
+
 ### File List
+
+- `apps/workers/discovery/src/discovery_worker/crawler.py` — removed `MAX_ITERATIONS`; loop is now
+  `while page_queue:`, terminating on genuine exhaustion only.
+- `apps/workers/discovery/src/discovery_worker/activities.py` — writes
+  `DiscoveryRun.status = "complete"` after a successful crawl.
+- `apps/workers/discovery/tests/test_discovery_activity_integration.py` — added the
+  `status == "complete"` assertion.
+- `apps/web/src/components/StatusPill.tsx` — added the `Complete` (green) color variant via a
+  `COLORS` lookup; pulsing-dot color now derives from the resolved variant instead of being
+  hardcoded to signal.
+- `apps/web/src/components/StatusPill.test.tsx` — new: `Running` vs. `Complete` variant tests.
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — status tracking only.
+
+## Change Log
+
+- 2026-07-17 — Implemented all 4 tasks (AC 1–2): replaced Story 2.2's placeholder iteration cap
+  with the real exhaustive-traversal stop condition (no safety cap, by explicit product decision),
+  confirmed every completeness read-path already used `DiscoveryRun.status` directly, and added the
+  gap-filled `Complete` (green) status-pill variant. Verified against a live local target reaching
+  real `status=complete`, and a `grep`-based negative check that no `incomplete` state exists
+  anywhere in source. Status moved to `review`.

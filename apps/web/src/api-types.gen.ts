@@ -106,6 +106,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/discovery-runs/{external_id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Evidence */
+        get: operations["list_evidence_discovery_runs__external_id__evidence_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -170,6 +187,22 @@ export interface components {
             discovery_run_id: string;
             /** Discovery Status */
             discovery_status: string;
+            /** Discovery Failure Reason */
+            discovery_failure_reason: string | null;
+        };
+        /** EvidenceRead */
+        EvidenceRead: {
+            /** Type */
+            type: string;
+            /** Details */
+            details: {
+                [key: string]: unknown;
+            };
+            /**
+             * Captured At
+             * Format: date-time
+             */
+            captured_at: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -375,6 +408,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApplicationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_evidence_discovery_runs__external_id__evidence_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvidenceRead"][];
                 };
             };
             /** @description Validation Error */
