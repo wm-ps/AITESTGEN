@@ -5,6 +5,7 @@ skip-cleanly convention as `test_scaffold_probe_db.py`.
 """
 
 import asyncio
+import json
 import logging
 import uuid
 
@@ -57,6 +58,7 @@ pytestmark = pytest.mark.skipif(
 )
 
 PLAINTEXT_PASSWORD = "s3cr3t-credential-value"
+PLAINTEXT_SESSION_TOKEN = "s3cr3t-session-token-value"
 
 
 def _signed_in_client(org_name: str) -> TestClient:
@@ -97,6 +99,94 @@ def test_create_application_never_stores_plaintext(caplog: pytest.LogCaptureFixt
 
     for record in caplog.records:
         assert PLAINTEXT_PASSWORD not in record.getMessage()
+
+
+def test_create_application_defaults_to_standard_login() -> None:
+    init_db()
+    client = _signed_in_client("Org Auth Method Default")
+
+    response = client.post(
+        "/applications",
+        json={
+            "name": "Default Auth App",
+            "url": "https://staging.example.com",
+            "environment": "staging",
+            "username": "qa-test-account",
+            "password": PLAINTEXT_PASSWORD,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["auth_method"] == "standard_login"
+
+
+def test_create_application_standard_login_requires_credentials() -> None:
+    init_db()
+    client = _signed_in_client("Org Auth Method Missing Creds")
+
+    response = client.post(
+        "/applications",
+        json={
+            "name": "Missing Creds App",
+            "url": "https://staging.example.com",
+            "environment": "staging",
+            "auth_method": "standard_login",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_create_application_sso_session_reuse_stores_session_state_never_plaintext(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    init_db()
+    client = _signed_in_client("Org SSO Session Reuse")
+    session_state = json.dumps({"cookies": [{"name": "sid", "value": PLAINTEXT_SESSION_TOKEN}]})
+
+    response = client.post(
+        "/applications",
+        json={
+            "name": "SSO App",
+            "url": "https://sso.example.com",
+            "environment": "staging",
+            "auth_method": "sso_session_reuse",
+            "session_state": session_state,
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["auth_method"] == "sso_session_reuse"
+
+    with Session(engine) as session:
+        app_row = session.exec(
+            select(Application).where(Application.external_id == uuid.UUID(body["id"]))
+        ).first()
+        assert app_row is not None
+        assert app_row.auth_method == "sso_session_reuse"
+        assert PLAINTEXT_SESSION_TOKEN not in app_row.secret_ref
+
+    for record in caplog.records:
+        assert PLAINTEXT_SESSION_TOKEN not in record.getMessage()
+
+
+def test_create_application_sso_session_reuse_requires_session_state() -> None:
+    init_db()
+    client = _signed_in_client("Org SSO Missing Session State")
+
+    response = client.post(
+        "/applications",
+        json={
+            "name": "SSO App Missing State",
+            "url": "https://sso.example.com",
+            "environment": "staging",
+            "auth_method": "sso_session_reuse",
+        },
+    )
+
+    assert response.status_code == 422
 
 
 def test_cross_organization_isolation() -> None:

@@ -10,10 +10,10 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from domain import Application, DiscoveryRun, PlatformUser
+from domain import Application, AuthMethod, DiscoveryRun, PlatformUser
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from secrets_client import VaultSecretsClient
 from sqlmodel import Session, select
 from workflows import DISCOVERY_TASK_QUEUE, DiscoveryWorkflow
@@ -81,12 +81,32 @@ class ApplicationCreate(BaseModel):
     name: str
     url: str
     environment: str
-    username: str = Field(
-        description="Dedicated Test Account username — not a real end-user identity."
+    auth_method: AuthMethod = "standard_login"
+    username: str | None = Field(
+        default=None,
+        description="Dedicated Test Account username — not a real end-user identity. "
+        "Required when auth_method is 'standard_login'.",
     )
-    password: str = Field(
-        description="Dedicated Test Account password — not a real end-user identity."
+    password: str | None = Field(
+        default=None,
+        description="Dedicated Test Account password — not a real end-user identity. "
+        "Required when auth_method is 'standard_login'.",
     )
+    session_state: str | None = Field(
+        default=None,
+        description="A previously-authenticated session the customer already produced "
+        "(e.g. Playwright storageState.json contents), pasted as-is. Required when "
+        "auth_method is 'sso_session_reuse'. The platform never performs the SSO/MFA "
+        "handshake itself — it only reuses a session the customer supplies.",
+    )
+
+    @model_validator(mode="after")
+    def _credentials_match_auth_method(self) -> ApplicationCreate:
+        if self.auth_method == "standard_login" and not (self.username and self.password):
+            raise ValueError("username and password are required for standard_login")
+        if self.auth_method == "sso_session_reuse" and not self.session_state:
+            raise ValueError("session_state is required for sso_session_reuse")
+        return self
 
 
 class ApplicationRead(BaseModel):
@@ -94,6 +114,7 @@ class ApplicationRead(BaseModel):
     name: str
     url: str
     environment: str
+    auth_method: AuthMethod
     created_at: datetime
     discovery_run_id: uuid.UUID
     discovery_status: str
@@ -105,6 +126,7 @@ def _to_application_read(application: Application, discovery_run: DiscoveryRun) 
         name=application.name,
         url=application.url,
         environment=application.environment,
+        auth_method=application.auth_method,  # type: ignore[arg-type]
         created_at=application.created_at,
         discovery_run_id=discovery_run.external_id,
         discovery_status=discovery_run.status,
@@ -119,7 +141,13 @@ async def create_application(
 ) -> ApplicationRead:
     # Credentials are written via SecretsClient immediately; the Application
     # row below stores only the returned opaque SecretRef.path (AD-5/NFR-1).
-    credential = json.dumps({"username": payload.username, "password": payload.password}).encode()
+    # Exactly one of the two credential shapes is stored, matching the
+    # Authentication method select's "one selected at a time" rule (Story 1.4).
+    if payload.auth_method == "standard_login":
+        creds = {"username": payload.username, "password": payload.password}
+        credential = json.dumps(creds).encode()
+    else:
+        credential = payload.session_state.encode()  # type: ignore[union-attr]
     secret_ref = VaultSecretsClient().store(organization_id, credential)
 
     application = Application(
@@ -127,6 +155,7 @@ async def create_application(
         name=payload.name,
         url=payload.url,
         environment=payload.environment,
+        auth_method=payload.auth_method,
         secret_ref=secret_ref.path,
     )
     session.add(application)

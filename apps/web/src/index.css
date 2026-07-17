@@ -32,6 +32,8 @@ select {
 a:focus-visible,
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
 [tabindex]:focus-visible {
   outline: 2px solid var(--signal);
   outline-offset: 2px;
@@ -80,12 +82,15 @@ input:focus-visible,
 }
 
 .field input,
-.field select {
+.field select,
+.field textarea {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   padding: var(--space-2) var(--space-3);
   background: var(--paper);
   color: var(--ink);
+  font-family: inherit;
+  font-size: inherit;
 }
 
 .card-panel {

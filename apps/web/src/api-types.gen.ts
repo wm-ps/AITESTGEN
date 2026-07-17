@@ -119,15 +119,26 @@ export interface components {
             /** Environment */
             environment: string;
             /**
-             * Username
-             * @description Dedicated Test Account username — not a real end-user identity.
+             * Auth Method
+             * @default standard_login
+             * @enum {string}
              */
-            username: string;
+            auth_method: "standard_login" | "sso_session_reuse";
+            /**
+             * Username
+             * @description Dedicated Test Account username — not a real end-user identity. Required when auth_method is 'standard_login'.
+             */
+            username?: string | null;
             /**
              * Password
-             * @description Dedicated Test Account password — not a real end-user identity.
+             * @description Dedicated Test Account password — not a real end-user identity. Required when auth_method is 'standard_login'.
              */
-            password: string;
+            password?: string | null;
+            /**
+             * Session State
+             * @description A previously-authenticated session the customer already produced (e.g. Playwright storageState.json contents), pasted as-is. Required when auth_method is 'sso_session_reuse'. The platform never performs the SSO/MFA handshake itself — it only reuses a session the customer supplies.
+             */
+            session_state?: string | null;
         };
         /** ApplicationRead */
         ApplicationRead: {
@@ -142,6 +153,11 @@ export interface components {
             url: string;
             /** Environment */
             environment: string;
+            /**
+             * Auth Method
+             * @enum {string}
+             */
+            auth_method: "standard_login" | "sso_session_reuse";
             /**
              * Created At
              * Format: date-time
