@@ -1,13 +1,17 @@
 import { useState } from 'react'
-import { ApiError, api, type ApplicationRead } from '../api'
+import { ApiError, api, type ApplicationCreate, type ApplicationRead } from '../api'
 import { Stepper } from './Stepper'
+
+type AuthMethod = ApplicationCreate['auth_method']
 
 export function ConnectAppForm({ onConnected }: { onConnected: (application: ApplicationRead) => void }) {
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
   const [environment, setEnvironment] = useState('')
+  const [authMethod, setAuthMethod] = useState<AuthMethod>('standard_login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [sessionState, setSessionState] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -16,7 +20,11 @@ export function ConnectAppForm({ onConnected }: { onConnected: (application: App
     setError(null)
     setSubmitting(true)
     try {
-      const application = await api.createApplication({ name, url, environment, username, password })
+      const application = await api.createApplication(
+        authMethod === 'standard_login'
+          ? { name, url, environment, auth_method: authMethod, username, password }
+          : { name, url, environment, auth_method: authMethod, session_state: sessionState },
+      )
       onConnected(application)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Connecting the Application failed.')
@@ -88,22 +96,52 @@ export function ConnectAppForm({ onConnected }: { onConnected: (application: App
             />
           </label>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-5)' }}>
-            <label className="field">
-              <span className="label">Username</span>
-              <input required autoComplete="off" value={username} onChange={(e) => setUsername(e.target.value)} />
-            </label>
-            <label className="field">
-              <span className="label">Password</span>
-              <input
-                type="password"
-                required
-                autoComplete="off"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </label>
-          </div>
+          <label className="field">
+            <span className="label">Authentication method</span>
+            <select
+              value={authMethod}
+              onChange={(e) => setAuthMethod(e.target.value as AuthMethod)}
+            >
+              <option value="standard_login">Username &amp; Password</option>
+              <option value="sso_session_reuse">SSO / MFA session reuse</option>
+            </select>
+          </label>
+
+          {authMethod === 'standard_login' ? (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-5)' }}>
+              <label className="field">
+                <span className="label">Username</span>
+                <input required autoComplete="off" value={username} onChange={(e) => setUsername(e.target.value)} />
+              </label>
+              <label className="field">
+                <span className="label">Password</span>
+                <input
+                  type="password"
+                  required
+                  autoComplete="off"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </label>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
+              <label className="field">
+                <span className="label">Session state (JSON)</span>
+                <textarea
+                  required
+                  rows={4}
+                  placeholder="Paste the contents of a previously-exported storageState.json"
+                  value={sessionState}
+                  onChange={(e) => setSessionState(e.target.value)}
+                />
+              </label>
+              <span className="caption" style={{ fontSize: 12.5 }}>
+                AITestGen doesn't perform your sign-in for SSO/MFA-protected Applications — provide
+                a session your identity provider already authenticated, and discovery will reuse it.
+              </span>
+            </div>
+          )}
 
           <p
             className="caption"

@@ -52,7 +52,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-16  # Stories 1-2, 1-3 fully validated (happy + negative paths, live cross-org isolation, Vault/Temporal wiring) → done
+last_updated: 2026-07-17  # Story 1-4 (Configure Application Authentication Method) implemented → review
 project: AITestGen
 project_key: NOKEY
 tracking_system: file-system
@@ -65,7 +65,7 @@ development_status:
   1-1-repository-service-scaffold: done
   1-2-sign-in-organization-scoped-workspace: done
   1-3-onboard-an-application-basic-details: done
-  1-4-configure-application-authentication-method: ready-for-dev
+  1-4-configure-application-authentication-method: review
   epic-1-retrospective: optional
 
   epic-2: in-progress

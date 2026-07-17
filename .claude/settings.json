@@ -19,9 +19,6 @@
     ],
     "defaultMode": "dontAsk"
   },
-  "enabledPlugins": {
-    "ponytail@ponytail": true
-  },
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -33,5 +30,8 @@
         ]
       }
     ]
+  },
+  "enabledPlugins": {
+    "ponytail@ponytail": true
   }
 }
