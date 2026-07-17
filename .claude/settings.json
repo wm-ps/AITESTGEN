@@ -8,7 +8,8 @@
       "LS",
       "WebSearch",
       "WebFetch",
-      "TodoWrite"
+      "TodoWrite",
+      "Write(.claude/skills/**)"
     ],
     "deny": [
       "Bash(rm -rf *)"
