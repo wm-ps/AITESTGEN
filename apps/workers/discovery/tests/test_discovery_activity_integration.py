@@ -13,7 +13,7 @@ import pytest
 from discovery_worker.activities import discovery_activity
 from discovery_worker.db import engine, init_db
 from discovery_worker.object_store import MINIO_ENDPOINT, ObjectStore
-from domain import Application, DiscoveryRun, Evidence, Organization
+from domain import Application, DiscoveryRun, Form, Organization, Page
 from fixtures.target_app import configure
 from secrets_client.vault_client import VAULT_ADDR, VAULT_TOKEN, VaultSecretsClient
 from sqlalchemy import text
@@ -90,7 +90,7 @@ def _seed_application(target_app_url: str) -> tuple[str, uuid.UUID, uuid.UUID, u
 
 
 @pytest.mark.asyncio
-async def test_discovery_activity_captures_evidence_against_live_target(
+async def test_discovery_activity_captures_the_application_model_against_live_target(
     target_app_url: str,
 ) -> None:
     init_db()
@@ -106,30 +106,26 @@ async def test_discovery_activity_captures_evidence_against_live_target(
         )
     )
     assert result.status == "complete"
-    assert result.evidence_count > 0
+    assert result.page_count > 0
 
     with Session(engine) as session:
-        rows = session.exec(
-            select(Evidence).where(Evidence.discovery_run_id == discovery_run_id)
-        ).all()
+        pages = session.exec(select(Page).where(Page.discovery_run_id == discovery_run_id)).all()
+        forms = session.exec(select(Form).where(Form.discovery_run_id == discovery_run_id)).all()
         completed_run = session.get(DiscoveryRun, discovery_run_id)
 
     assert completed_run is not None
     assert completed_run.status == "complete"
 
-    assert rows, "expected at least one Evidence row"
-    types_seen = {row.type for row in rows}
-    assert "page" in types_seen
-    assert "form" in types_seen
-    assert all(row.discovery_run_id == discovery_run_id for row in rows)
-    assert all(row.journey_id is None for row in rows)
+    assert pages, "expected at least one Page row"
+    assert forms, "expected at least one Form row"
+    assert all(page.discovery_run_id == discovery_run_id for page in pages)
+    assert all(page.merged_into_id is None for page in pages)
+    assert all(page.journey_id is None for page in pages)
 
     object_store = ObjectStore()
-    page_rows = [row for row in rows if row.type == "page"]
-    assert page_rows
-    for row in page_rows:
-        assert row.object_storage_key is not None
-        blob = object_store.get(row.object_storage_key)
+    for page in pages:
+        assert page.object_storage_key is not None
+        blob = object_store.get(page.object_storage_key)
         assert len(blob) > 0
 
 
@@ -186,10 +182,10 @@ async def test_discovery_activity_marks_failed_without_reason_on_crash(
 
 
 @pytest.mark.asyncio
-async def test_evidence_captured_before_a_mid_crawl_crash_is_not_lost(
+async def test_pages_captured_before_a_mid_crawl_crash_are_not_lost(
     monkeypatch: pytest.MonkeyPatch, target_app_url: str
 ) -> None:
-    """The fix for evidence being written only at the very end: a crash
+    """The fix for captures being written only at the very end: a crash
     partway through must not discard whatever was already captured — it
     should already be committed to Postgres by that point."""
     init_db()
@@ -223,8 +219,6 @@ async def test_evidence_captured_before_a_mid_crawl_crash_is_not_lost(
     assert result.status == "failed"
 
     with Session(engine) as session:
-        rows = session.exec(
-            select(Evidence).where(Evidence.discovery_run_id == discovery_run_id)
-        ).all()
+        pages = session.exec(select(Page).where(Page.discovery_run_id == discovery_run_id)).all()
 
-    assert rows, "evidence captured before the crash must survive it, not be discarded"
+    assert pages, "pages captured before the crash must survive it, not be discarded"

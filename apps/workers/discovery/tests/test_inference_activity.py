@@ -1,4 +1,4 @@
-"""InferenceActivity end-to-end (Story 2.5, Task 6) — Postgres + Temporal, a
+"""InferenceActivity end-to-end (Story 2.6, Task 6) — Postgres + Temporal, a
 fake `AIProvider` injected via monkeypatch (no real LLM/API key needed; that
 would only exercise `HostedAIProvider` itself, covered separately and
 skip-cleanly in `packages/ai_provider/tests/test_hosted.py`).
@@ -11,7 +11,7 @@ import pytest
 from ai_provider.journey_candidate import JourneyCandidate
 from discovery_worker.db import engine, init_db
 from discovery_worker.temporal_client import get_temporal_client
-from domain import Application, Capability, DiscoveryRun, Evidence, Journey, Organization
+from domain import ApiEndpoint, Application, Capability, DiscoveryRun, Journey, Organization, Page
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
@@ -51,16 +51,17 @@ class _FakeAIProvider:
     def __init__(self, candidates: list[JourneyCandidate]) -> None:
         self._candidates = candidates
 
-    def infer_journeys(self, evidence: list[Evidence]) -> list[JourneyCandidate]:
+    def infer_journeys(self, pages: list[Page]) -> list[JourneyCandidate]:
         return self._candidates
 
 
-def _seed_completed_run() -> tuple[uuid.UUID, uuid.UUID, list[Evidence]]:
-    """Returns (application_id, discovery_run_external_id, evidence_rows).
+def _seed_completed_run() -> tuple[uuid.UUID, uuid.UUID, list[Page], ApiEndpoint]:
+    """Returns (application_id, discovery_run_external_id, pages, checkout_api).
 
-    The 4th row (`unrelated_page`) is deliberately not referenced by any
-    candidate in the tests below — it proves unrelated Evidence for the same
-    run stays unattributed (Task 6).
+    `pages` is [cart_page, about_page, unrelated_page]. `unrelated_page` is
+    deliberately not referenced by any candidate in the tests below — it
+    proves an unrelated canonical Page for the same run stays unattributed
+    (Task 6).
     """
     with Session(engine) as session:
         org = Organization(name=f"Org {uuid.uuid4()}")
@@ -82,62 +83,70 @@ def _seed_completed_run() -> tuple[uuid.UUID, uuid.UUID, list[Evidence]]:
         session.add(discovery_run)
         session.flush()
 
-        cart_page = Evidence(
+        cart_page = Page(
+            application_id=application.id,
             discovery_run_id=discovery_run.id,
-            type="page",
-            details={"url": "https://app.example.com/cart"},
+            url="https://app.example.com/cart",
+            title="Cart",
         )
-        checkout_api = Evidence(
+        about_page = Page(
+            application_id=application.id,
             discovery_run_id=discovery_run.id,
-            type="api_call",
-            details={"url": "https://app.example.com/api/checkout", "method": "POST"},
+            url="https://app.example.com/about",
+            title="About",
         )
-        about_page = Evidence(
+        unrelated_page = Page(
+            application_id=application.id,
             discovery_run_id=discovery_run.id,
-            type="page",
-            details={"url": "https://app.example.com/about"},
-        )
-        unrelated_page = Evidence(
-            discovery_run_id=discovery_run.id,
-            type="page",
-            details={"url": "https://app.example.com/unrelated"},
+            url="https://app.example.com/unrelated",
+            title="Unrelated",
         )
         session.add(cart_page)
-        session.add(checkout_api)
         session.add(about_page)
         session.add(unrelated_page)
+        session.flush()
+
+        checkout_api = ApiEndpoint(
+            application_id=application.id,
+            discovery_run_id=discovery_run.id,
+            page_id=cart_page.id,
+            method="POST",
+            path="/api/checkout",
+        )
+        session.add(checkout_api)
         session.commit()
         session.refresh(discovery_run)
         session.refresh(cart_page)
-        session.refresh(checkout_api)
         session.refresh(about_page)
         session.refresh(unrelated_page)
+        session.refresh(checkout_api)
 
         return (
             application.id,
             discovery_run.external_id,
-            [cart_page, checkout_api, about_page, unrelated_page],
+            [cart_page, about_page, unrelated_page],
+            checkout_api,
         )
 
 
 @pytest.mark.asyncio
-async def test_inference_activity_creates_journeys_attributes_evidence_and_starts_generation(
+async def test_inference_activity_creates_journeys_attributes_pages_and_starts_generation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     init_db()
-    application_id, discovery_run_external_id, evidence_rows = _seed_completed_run()
-    cart_page, checkout_api, about_page, unrelated_page = evidence_rows
+    application_id, discovery_run_external_id, pages, checkout_api = _seed_completed_run()
+    cart_page, about_page, unrelated_page = pages
 
     candidates = [
         JourneyCandidate(
             name="Checkout from cart",
             capability_name="Purchasing",
-            evidence_external_ids=[str(cart_page.external_id), str(checkout_api.external_id)],
+            page_ids=[str(cart_page.id)],
         ),
         JourneyCandidate(
             name="View about page",
             capability_name="Marketing",
-            evidence_external_ids=[str(about_page.external_id)],
+            page_ids=[str(about_page.id)],
         ),
     ]
     monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: _FakeAIProvider(candidates))
@@ -164,22 +173,23 @@ async def test_inference_activity_creates_journeys_attributes_evidence_and_start
         ).all()
         assert {c.name for c in capabilities} == {"Purchasing", "Marketing"}
 
-        refreshed_cart = session.get(Evidence, cart_page.id)
-        refreshed_checkout = session.get(Evidence, checkout_api.id)
-        refreshed_about = session.get(Evidence, about_page.id)
-        refreshed_unrelated = session.get(Evidence, unrelated_page.id)
+        refreshed_cart = session.get(Page, cart_page.id)
+        refreshed_about = session.get(Page, about_page.id)
+        refreshed_unrelated = session.get(Page, unrelated_page.id)
+        refreshed_checkout_api = session.get(ApiEndpoint, checkout_api.id)
         assert refreshed_cart is not None
-        assert refreshed_checkout is not None
         assert refreshed_about is not None
         assert refreshed_unrelated is not None
         checkout_journey = next(j for j in journeys if j.name == "Checkout from cart")
         about_journey = next(j for j in journeys if j.name == "View about page")
 
         assert refreshed_cart.journey_id == checkout_journey.id
-        assert refreshed_checkout.journey_id == checkout_journey.id
         assert refreshed_about.journey_id == about_journey.id
-        # Task 6: unrelated Evidence for the same run stays unattributed.
+        # Task 6: unrelated Page for the same run stays unattributed.
         assert refreshed_unrelated.journey_id is None
+        # ApiEndpoint on the cart page is attributed through the same Journey.
+        assert refreshed_checkout_api is not None
+        assert refreshed_checkout_api.journey_id == checkout_journey.id
 
     client = await get_temporal_client()
     for journey_external_id in journey_external_ids:
@@ -193,24 +203,23 @@ async def test_inference_activity_retry_is_idempotent_on_identity_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     init_db()
-    _, discovery_run_external_id, evidence_rows = _seed_completed_run()
-    cart_page, checkout_api, _about_page, _unrelated_page = evidence_rows
+    _, discovery_run_external_id, pages, _checkout_api = _seed_completed_run()
+    cart_page, _about_page, _unrelated_page = pages
 
-    # Second call uses a *different* AI-generated name for the same evidence
-    # shape — AD-13 says identity_key must depend only on the evidence, so
-    # this must still resolve to the same Journey, not a duplicate.
+    # Second call uses a *different* AI-generated name for the same page
+    # shape — AD-13 says identity_key must depend only on the canonical
+    # Application Model, so this must still resolve to the same Journey,
+    # not a duplicate.
     first_candidates = [
         JourneyCandidate(
-            name="Checkout from cart",
-            capability_name="Purchasing",
-            evidence_external_ids=[str(cart_page.external_id), str(checkout_api.external_id)],
+            name="Checkout from cart", capability_name="Purchasing", page_ids=[str(cart_page.id)]
         ),
     ]
     second_candidates = [
         JourneyCandidate(
             name="Complete a purchase",
             capability_name="Purchasing",
-            evidence_external_ids=[str(cart_page.external_id), str(checkout_api.external_id)],
+            page_ids=[str(cart_page.id)],
         ),
     ]
 

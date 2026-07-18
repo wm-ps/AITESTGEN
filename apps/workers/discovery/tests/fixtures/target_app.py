@@ -16,16 +16,23 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 app = FastAPI()
 
 _valid_sessions: set[str] = set()
-_items: list[str] = ["Sample item"]
+_items: list[str] = ["Sample item", "Second item"]
 _request_count = 0
 _expire_after: int | None = None
 
 
 def configure(expire_after: int | None) -> None:
-    """Test-only: force session expiry after N authenticated requests."""
-    global _expire_after, _request_count
+    """Test-only: force session expiry after N authenticated requests. Also
+    resets `_items`/`_valid_sessions` — this module is imported once and
+    shared across the whole pytest session (a fresh uvicorn server per test
+    still closes over the same globals), so without this reset, an earlier
+    test's "Add item" submissions would silently leak into a later test's
+    request-count-sensitive assertions."""
+    global _expire_after, _request_count, _items, _valid_sessions
     _expire_after = expire_after
     _request_count = 0
+    _items = ["Sample item", "Second item"]
+    _valid_sessions = set()
 
 
 def _authenticated(request: Request) -> bool:
@@ -63,16 +70,25 @@ def home(request: Request) -> str:
         """
     return f"""
     <html><body>
+    <nav><button id="nav-menu">Menu</button></nav>
     {_HEADER}
     <h1>Dashboard</h1>
     <a href="/items">Items</a>
     <a href="/about">About</a>
     <a href="/settings">Settings</a>
+    <form id="newsletter" onsubmit="return false;">
+      <input type="email" name="newsletter_email">
+      <button type="submit">Subscribe</button>
+    </form>
+    <a href="/broken">Broken Link</a>
     <form method="post" action="/items">
       <input type="text" name="name">
+      <input type="text" name="quantity">
       <button type="submit">Add item</button>
     </form>
     <button id="load-items" onclick="fetch('/api/items')">Load items (API)</button>
+    <button id="wishlist">Wishlist</button>
+    <button id="recently-viewed">Recently viewed</button>
     </body></html>
     """
 
@@ -90,12 +106,21 @@ def login(username: str = Form(...), password: str = Form(...)) -> RedirectRespo
 def items(request: Request) -> Response:
     if not _authenticated(request):
         return RedirectResponse(url="/")
-    rows = "".join(f"<li>{item}</li>" for item in _items)
-    return HTMLResponse(f"<html><body>{_HEADER}<ul>{rows}</ul><a href='/'>Home</a></body></html>")
+    # One "Edit" button per row (Story 2.2 AC 6, representative-action
+    # sampling) — a repeated identical action pattern the crawler must
+    # exercise once, not once per grid row.
+    rows = "".join(f"<li>{item} <button>Edit</button></li>" for item in _items)
+    return HTMLResponse(
+        f"""<html><body>{_HEADER}<ul>{rows}</ul>
+        <button onclick="window.location='/cart'">View Cart</button>
+        <a href='/'>Home</a></body></html>"""
+    )
 
 
 @app.post("/items")
-def create_item(request: Request, name: str = Form(...)) -> RedirectResponse:
+def create_item(
+    request: Request, name: str = Form(...), quantity: str = Form("1")
+) -> RedirectResponse:
     if _authenticated(request):
         _items.append(name)
     return RedirectResponse(url="/items", status_code=303)
@@ -131,8 +156,29 @@ def settings(request: Request) -> Response:
     )
 
 
+@app.get("/cart", response_class=HTMLResponse)
+def cart(request: Request) -> Response:
+    """Reachable only via the /items page's "View Cart" button
+    (`window.location`, not an `<a href>`) — proves button-triggered
+    navigation gets crawled further, not just captured as a dead-end click."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/")
+    return HTMLResponse(f"<html><body>{_HEADER}<h1>Cart</h1><a href='/'>Home</a></body></html>")
+
+
 @app.get("/api/items")
 def api_items(request: Request) -> dict:
     if not _authenticated(request):
         return {"detail": "not authenticated"}
     return {"items": _items}
+
+
+@app.get("/broken")
+def broken(request: Request) -> Response:
+    """A dead link reachable from the dashboard nav — reproduces a real site's
+    stale/broken link (or a GET against a POST-only route, e.g. Shopbit's
+    `/register` returning 405) so the crawler must prove it never persists an
+    error-status destination as a real Page."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/")
+    return Response(status_code=404, content="Not Found")

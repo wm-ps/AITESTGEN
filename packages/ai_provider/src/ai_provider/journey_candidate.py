@@ -1,10 +1,12 @@
-"""JourneyCandidate — HostedAIProvider.infer_journeys' output shape (Story 2.5).
+"""JourneyCandidate — HostedAIProvider.infer_journeys' output shape (Story 2.6).
 
-Not a `packages/domain` entity — this is the AI's raw grouping of Evidence
-before `InferenceActivity` persists it as a `Journey` row. `evidence_external_ids`
-lets `InferenceActivity` attribute exactly the right `Evidence` rows
-(`journey_id`) and compute `identity_key` from their actual shape (AD-13) —
-never from `name`, which the AI may phrase slightly differently run to run.
+Not a `packages/domain` entity — this is the AI's raw grouping of canonical
+Pages before `InferenceActivity` persists it as a `Journey` row. `page_ids`
+holds `str(Page.id)` (Page has no `external_id` — it's never exposed to the
+frontend directly) so `InferenceActivity` can attribute exactly the right
+canonical Page (and, through it, Form/ApiEndpoint/Component) rows and
+compute `identity_key` from their actual shape (AD-13) — never from `name`,
+which the AI may phrase slightly differently run to run.
 """
 
 from dataclasses import dataclass
@@ -14,4 +16,4 @@ from dataclasses import dataclass
 class JourneyCandidate:
     name: str
     capability_name: str
-    evidence_external_ids: list[str]
+    page_ids: list[str]

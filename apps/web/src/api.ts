@@ -4,7 +4,7 @@ export type UserRead = components['schemas']['UserRead']
 export type LoginRequest = components['schemas']['LoginRequest']
 export type ApplicationCreate = components['schemas']['ApplicationCreate']
 export type ApplicationRead = components['schemas']['ApplicationRead']
-export type EvidenceRead = components['schemas']['EvidenceRead']
+export type CaptureRead = components['schemas']['CaptureRead']
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
@@ -38,8 +38,8 @@ export const api = {
   me: () => request<UserRead>('/auth/me'),
   createApplication: (payload: ApplicationCreate) =>
     request<ApplicationRead>('/applications', { method: 'POST', body: JSON.stringify(payload) }),
-  listEvidence: (discoveryRunId: string) =>
-    request<EvidenceRead[]>(`/discovery-runs/${discoveryRunId}/evidence`),
+  listCaptures: (discoveryRunId: string) =>
+    request<CaptureRead[]>(`/discovery-runs/${discoveryRunId}/captures`),
 }
 
 export { ApiError }

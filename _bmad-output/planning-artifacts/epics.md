@@ -5,7 +5,11 @@ inputDocuments:
   - "_bmad-output/planning-artifacts/architecture/architecture-AITestGen-2026-07-13/ARCHITECTURE-SPINE.md"
   - "_bmad-output/planning-artifacts/ux-designs/ux-AITestGen-2026-07-13/DESIGN.md"
   - "_bmad-output/planning-artifacts/ux-designs/ux-AITestGen-2026-07-13/EXPERIENCE.md"
-updated: "2026-07-15 — see sprint-change-proposal-2026-07-15.md: Story 6.2 relocated into Story 3.1. Follow-up same day: FR-28 (Journey edit) cut; FR-10/FR-11 (Approve/Reject) cut and FR-14 rewritten — generation now starts immediately on discovery, with no approval gate. Final follow-up same day: Epic 5 (CI/CD Delivery), Epic 6's cut stories (6.1/6.3/6.4), and Epic 7 (Deployment) removed in full — none had any supporting screen in the current UX, and Epic 7's on-prem deployment is confirmed parked for a later release, not a current-scope item. Stories 3.2/3.3, 5.1-5.3, 6.1 files deleted; Story 3.5 trimmed to re-discovery dedup only."
+updated: "2026-07-15 — see sprint-change-proposal-2026-07-15.md: Story 6.2 relocated into Story 3.1. Follow-up same day: FR-28 (Journey edit) cut; FR-10/FR-11 (Approve/Reject) cut and FR-14 rewritten — generation now starts immediately on discovery, with no approval gate. Final follow-up same day: Epic 5 (CI/CD Delivery), Epic 6's cut stories (6.1/6.3/6.4), and Epic 7 (Deployment) removed in full — none had any supporting screen in the current UX, and Epic 7's on-prem deployment is confirmed parked for a later release, not a current-scope item. Stories 3.2/3.3, 5.1-5.3, 6.1 files deleted; Story 3.5 trimmed to re-discovery dedup only.
+  2026-07-18 — see sprint-change-proposal-2026-07-18.md: Application Model Builder introduced (new FR-30). Story 2.2 gains crawl-optimization ACs (page-fingerprint dedup, navigation-first, representative-action sampling); new Story 2.5 (Application Model Builder) added; AI Journey/Capability Inference renumbered 2.5 → 2.6 and rewired to read the new Application Model instead of raw Evidence. Stories 4.1/4.2 gain a one-line AI-context note, no AC rewrite. sprint-status.yaml: 2-2 reverted review → in-progress for rework; 2-5 renumbered/renamed to 2-6 and reverted to in-progress.
+  2026-07-18 [correction] — initial numbering had Application Model Builder as Story 2.6, after the AI Inference story (2.5) that depends on it, backwards from the actual pipeline order (Discovery → Model Builder → Inference). Corrected: Application Model Builder is Story 2.5, AI Inference is Story 2.6.
+  2026-07-18 [follow-up, same day] — the generic `Evidence` table concept is removed in full: Story 2.2 now writes typed rows directly (`Page`/`Form`/`FormField`/`ValidationRule`/`Action`/`ApiEndpoint`/`PageTransition`), each scoped by `application_id` (making the model genuinely reusable across re-discovery, not just per-run) plus `discovery_run_id` (provenance). Story 2.5 resolves duplicates via a self-referencing `merged_into_id` and derives `Component`/`ComponentLocator`/`Assertion`. PRD FR-6/FR-30, Architecture AD-8/AD-13/AD-14, and Stories 2.2/2.5/2.6 updated to match.
+  2026-07-19 [crawl engine follow-up] — Story 2.2 gains ACs 7-9, all within FR-6's existing scope: button-triggered navigation is now followed onward instead of dead-ending at the click; forms with an identical shape/starting values (hidden fields included) are sampled representatively across pages; a broken/error (network failure or 4xx/5xx) destination is skipped rather than captured; and AC 6's representative-action sampling is bounded to a small number of distinct labels per page, page-body content before nav/header/footer chrome. PRD FR-6/FR-7/§12 item 7 and Architecture AD-15 updated to match."
 ---
 
 # Application Intelligence Platform - Epic Breakdown
@@ -22,9 +26,10 @@ FR-1: User can onboard an Application by providing its URL, environment designat
 FR-2: Access credentials must correspond to a Dedicated Test Account provisioned by the customer, not a real end-user identity.
 FR-3: Platform establishes a session prior to discovery either by (a) performing a standard/manual username-password login flow itself, or (b) reusing a pre-authenticated session (storage state) supplied by the customer for SSO/MFA-protected Applications; a Discovery Run whose session has expired fails gracefully and surfaces a re-authentication prompt.
 *(FR-4 "Configurable discovery scope" and FR-5 "Discovery time budget" removed 2026-07-15 — confirmed removed concepts, not a missing-UI gap. Discovery Runs always cover the full Application with no time-budget cap; accepted-risk tradeoff, see PRD §12 Risk item 7.)*
-FR-6: `[UPDATED 2026-07-15]` Platform autonomously navigates pages, exercises UI actions and forms, and invokes APIs across the entire Application (no configurable scope), capturing pages, navigation paths, actions, forms, API calls, and state transitions.
-FR-7: `[UPDATED 2026-07-15]` A Discovery Run terminates when no new pages/actions/state transitions are found (exhaustive traversal) — no time-budget stop condition exists.
-FR-8: Platform uses AI to transform captured discovery signals into candidate Business Capabilities and Journeys expressed in business language; every candidate Journey is associated with the specific pages/actions/API calls that produced it.
+FR-6: `[UPDATED 2026-07-15]` Platform autonomously navigates pages, exercises UI actions and forms, and invokes APIs across the entire Application (no configurable scope), capturing pages, navigation paths, actions, forms, API calls, and state transitions. `[UPDATED 2026-07-18]` Applies page-fingerprint dedup, navigation-first prioritization, and representative-action sampling (see FR-30).
+FR-7: `[UPDATED 2026-07-15]` A Discovery Run terminates when no new pages/actions/state transitions are found (exhaustive traversal) — no time-budget stop condition exists. `[CLARIFIED 2026-07-18]` "Exhaustive" is at the level of distinct pages/action patterns, not every repeated DOM instance (FR-6's representative-action sampling).
+FR-8: Platform uses AI to transform captured discovery signals into candidate Business Capabilities and Journeys expressed in business language; every candidate Journey is associated with the specific pages/actions/API calls that produced it. `[UPDATED 2026-07-18]` Reads canonical Application Model rows (FR-30) — never a superseded/duplicate one.
+FR-30 `[ADDED 2026-07-18]`: Platform normalizes captured discovery signal into a structured Application Model — Pages, Components, Forms, Actions, APIs, Assertions, Page Transitions — with per-component locator metadata (preferred + fallback locators, target page). Both AI inference (FR-8) and Playwright generation (FR-17) consume this model. See `sprint-change-proposal-2026-07-18.md`.
 FR-9: `[UPDATED 2026-07-15]` Discovered Journeys and Capabilities are presented to a human reviewer for curation (rename, delete) — presentation is not a gate; a Journey is already in the Trusted Knowledge Model and feeding Scenario Generation (FR-14) before a reviewer looks at it.
 FR-10: `[CUT 2026-07-15]` Previously: reviewer can approve a discovered Journey/Capability, adding it to the Trusted Knowledge Model. Cut — there is no gate to approve past; every discovered Journey is in the Trusted Knowledge Model immediately (FR-14).
 FR-11: `[CUT 2026-07-15]` Previously: reviewer can reject a discovered Journey/Capability, excluding it from the Trusted Knowledge Model. Cut as redundant with Delete (FR-13), now the sole exclusion mechanism.
@@ -61,8 +66,8 @@ NFR-5 (Platform scope): Desktop web app only — no mobile or tablet form factor
 - Discovery credentials and SSO/MFA session state must never touch primary storage in plaintext — read/written only via `packages/secrets_client`, backed by Vault or cloud KMS envelope encryption; `packages/domain` models store only a secret reference (AD-5).
 - The API's generated OpenAPI spec is the only contract between `apps/web` and `apps/api` — frontend TypeScript types are generated from the FastAPI/Pydantic OpenAPI spec; no hand-written duplicate request/response shape is permitted (AD-6).
 - `[UPDATED 2026-07-15]` The Trusted Knowledge Model has exactly one deletion path: only `apps/api`'s delete endpoint may transition a Journey/Capability's status to `deleted`; workers may only write `candidate` or downstream generation status (AD-7). There is no more `approved`/`rejected` state — every non-deleted Journey/Capability is part of the Trusted Knowledge Model from the moment it's discovered.
-- Every inferred artifact keeps a live pointer back to its evidence at the right granularity: `Evidence` rows are tagged `discovery_run_id` at capture and attributed `journey_id` by `InferenceActivity`; `Journey.discovery_run_id` is immutable; `Scenario`/`TestAsset` rows carry `generation_run_id` plus a `current: bool` flag, with prior attempts soft-superseded (never deleted) on regeneration (AD-8).
-- Large binary evidence artifacts (screenshots, DOM snapshots) are never stored inline in Postgres — `Evidence` holds an object-storage key/reference; structured metadata lives in Postgres (AD-8).
+- `[UPDATED 2026-07-18]` There is no generic `Evidence` table. `DiscoveryActivity` writes typed rows directly (`Page`, `Form`/`FormField`/`ValidationRule`, `Action`, `ApiEndpoint`, `PageTransition`), each tagged `application_id` + `discovery_run_id`; `ApplicationModelBuilderActivity` merges duplicates (within and across Discovery Runs) via a self-referencing `merged_into_id`, and derives `Component`/`ComponentLocator`/`Assertion` from canonical rows; `InferenceActivity` attributes `journey_id` only onto canonical rows. `Journey.discovery_run_id` is immutable; `Scenario`/`TestAsset` rows carry `generation_run_id` plus a `current: bool` flag, with prior attempts soft-superseded (never deleted) on regeneration (AD-8).
+- Large binary artifacts (screenshots) are never stored inline in Postgres — `Page.object_storage_key` holds an object-storage key/reference; structured metadata lives directly as typed columns in Postgres (AD-8).
 - Every side-effecting Activity (form submission, PR/commit creation) must be idempotent under Temporal's at-least-once retry, using a deterministic check-before-acting key derived from its inputs. `[UPDATED 2026-07-15]` `InferenceActivity`'s candidate-creation step is keyed by the same `identity_key` used for re-discovery dedup (AD-13); its `GenerationWorkflow`-start is naturally idempotent via Temporal's duplicate-workflow-ID rejection, with no separate reconciliation sweep needed (AD-9).
 - `[UPDATED 2026-07-15]` `DiscoveryRun.status` must be a first-class, queryable field (`running | complete | failed`) — completeness is never inferred from presence/absence of other data (AD-10). No `incomplete` value exists — there is no time-budget stop condition to produce one (FR-7).
 - Session expiry mid-crawl must be detected as a distinct condition from a normal stop condition, terminating the run with `status=failed`, `failure_reason=session_expired`, surfaced by `apps/api` as a re-authentication prompt distinguishable from other `failed` causes (AD-11).
@@ -107,9 +112,10 @@ FR-1: Epic 1 - Application onboarding (URL, environment, credentials)
 FR-2: Epic 1 - Dedicated Test Account credential requirement
 FR-3: Epic 1 - Authentication via login flow or storage-state reuse
 *(FR-4 and FR-5 — removed 2026-07-15, confirmed removed concepts, not deferred. See Story 1.5's removal below.)*
-FR-6: Epic 2 - Autonomous exploration capturing pages/actions/APIs/state, always full-Application
+FR-6: Epic 2 - Autonomous exploration capturing pages/actions/APIs/state, always full-Application, with crawl-optimization rules (2026-07-18)
 FR-7: Epic 2 - Discovery stop condition (exhaustive traversal only, no time-budget branch)
-FR-8: Epic 2 - AI journey/capability inference with evidence association
+FR-8: Epic 2 - AI journey/capability inference with evidence association, now via the Application Model (FR-30)
+FR-30: Epic 2 - Application Model Builder `[ADDED 2026-07-18]` — Story 2.5
 FR-9: Epic 3 - Discover Journeys curation presentation
 FR-10: `[CUT 2026-07-15]` Approve action — no longer built
 FR-11: `[CUT 2026-07-15]` Reject action — no longer built
@@ -138,8 +144,8 @@ A user can sign in, and onboard an Application (URL, environment, Dedicated Test
 **FRs covered:** FR-1, FR-2, FR-3
 
 ### Epic 2: Runtime Discovery & AI Journey Inference
-A user can start a Discovery Run, watch live progress (running/complete/failed-session-expired), and see AI-inferred candidate Journeys/Capabilities, each traceable to captured evidence. `[UPDATED 2026-07-15]` Every candidate Journey immediately enters the Trusted Knowledge Model and starts Scenario/Playwright generation as soon as it's created — no approval gate (FR-14, moved from the former Approve action). No `incomplete` status — a Discovery Run only ever completes (exhaustive traversal) or fails, since no time-budget cap exists.
-**FRs covered:** FR-6, FR-7, FR-8, FR-14
+A user can start a Discovery Run, watch live progress (running/complete/failed-session-expired), and see AI-inferred candidate Journeys/Capabilities, each traceable to captured evidence. `[UPDATED 2026-07-15]` Every candidate Journey immediately enters the Trusted Knowledge Model and starts Scenario/Playwright generation as soon as it's created — no approval gate (FR-14, moved from the former Approve action). No `incomplete` status — a Discovery Run only ever completes (exhaustive traversal) or fails, since no time-budget cap exists. `[UPDATED 2026-07-18]` Raw discovery signal is normalized into a structured Application Model (Story 2.5, FR-30) before AI inference (Story 2.6) reads it — see `sprint-change-proposal-2026-07-18.md`.
+**FRs covered:** FR-6, FR-7, FR-8, FR-14, FR-30
 
 ### Epic 3: Human Curation & Trusted Knowledge Model `[RENAMED 2026-07-15, was "Human Review & Trusted Knowledge Model"]`
 `[REWRITTEN 2026-07-15]` A reviewer curates discovered candidates — rename what's mislabeled, delete what doesn't belong — and inspects any candidate's discovered step/evidence detail inline. There is no approve/reject gate: every discovered Journey is already in the Trusted Knowledge Model and generating coverage before a reviewer looks at it (see Epic 2); deletion is the only exclusion mechanism. Re-running discovery only flags genuinely new Journeys.
@@ -253,21 +259,25 @@ So that the platform begins mapping its business journeys without an extra step.
 **Then** a `DiscoveryRun` record is created with `status=running`, and a bounded `DiscoveryWorkflow` is started for it (AD-1) — the workflow contains no direct I/O, only calls to Activities (AD-2)
 **And** the Discovery Progress screen shows a status pill reading "Running" with a pulsing dot
 
-### Story 2.2: Autonomous Exploration Captures Evidence
+### Story 2.2: Autonomous Exploration Captures the Application Model `[RENAMED 2026-07-18, was "...Captures Evidence"]`
 
-*Updated 2026-07-15 — no configurable scope; Discovery always explores the entire Application (FR-4 removed).*
+*Updated 2026-07-15 — no configurable scope; Discovery always explores the entire Application (FR-4 removed). Rewritten 2026-07-18 — reworked (reverted from `review` to `in-progress`): writes typed rows (`Page`/`Form`/`FormField`/`ValidationRule`/`Action`/`ApiEndpoint`/`PageTransition`) directly, not a generic `Evidence` record — the flat capture concept is removed in full, not merely renamed. Adds crawl-optimization ACs. See `sprint-change-proposal-2026-07-18.md`; Story 2.5 merges/derives from what this story captures. Extended 2026-07-19 — three further crawl-engine refinements (ACs 7-9): button-triggered navigation is now followed onward instead of dead-ending, forms with an identical shape/starting values are sampled representatively across pages, and broken/error destinations are skipped rather than captured.*
 
 As a user,
 I want the platform to autonomously explore my Application,
-So that raw discovery signal is captured as the basis for journey mapping.
+So that a structured record of it is captured as the basis for journey mapping.
 
 **Acceptance Criteria:**
 
-**Given** a running Discovery Run
-**When** `DiscoveryActivity` navigates pages, exercises UI actions and forms, and invokes APIs across the entire Application
-**Then** each captured page, action, form, API call, and state transition is written as an `Evidence` row tagged with `discovery_run_id` (FR-6, AD-8)
-**And** large binary artifacts (screenshots, DOM snapshots) are referenced via an object-storage key, never stored inline in Postgres
-**And** the Discovery Progress screen's live-feed list shows the most recently captured pages/actions/API calls, newest first, in monospace, appended as discovery proceeds
+1. **`[REWRITTEN 2026-07-18]` Given** a running Discovery Run, **when** `DiscoveryActivity` navigates pages, exercises UI actions and forms, and invokes APIs across the entire Application, **then** each observation is written directly as a typed row — a page visit as `Page`, a form as `Form` (+ `FormField`/`ValidationRule`), a UI action as `Action`, an API call as `ApiEndpoint`, a navigation as `PageTransition` — every row tagged with both `application_id` and `discovery_run_id`, and (where the column exists) `merged_into_id = null` (FR-6, FR-30, AD-8, AD-14). There is no intermediate generic capture record.
+2. Large binary artifacts (screenshots) are referenced via `Page.object_storage_key` (an object-storage key), never stored inline in Postgres.
+3. The Discovery Progress screen's live-feed list shows the most recently captured pages/actions/API calls, newest first, in monospace, appended as discovery proceeds.
+4. **`[ADDED 2026-07-18]`** **Given** the same logical page is reachable via more than one navigation path, **when** the crawler computes a page fingerprint, **then** that page is explored and captured once, not once per path (page-fingerprint deduplication) — a crawl-time optimization, distinct from Story 2.5's cross-run `merged_into_id` resolution (FR-6, AD-15).
+5. **`[ADDED 2026-07-18]`** **Given** a page exposes both unexplored navigation links and already-explored interaction targets, **when** the crawler chooses what to do next, **then** it prioritizes unexplored navigation paths before repeating interactions on an already-visited page (navigation-first) (FR-6, AD-15).
+6. **`[ADDED 2026-07-18]`** **Given** a page contains a repeated identical action pattern (e.g., an "Edit" button repeated once per grid row), **when** the crawler encounters it, **then** it exercises one representative instance of that action pattern, not every individual instance (representative-action sampling) — consistent with FR-7/AD-15's clarification that "exhaustive" applies at the level of distinct pages/action patterns (FR-7, AD-15). **`[UPDATED 2026-07-19]`** Bounded to a small number of distinct action labels per page, page-body content before nav/header/footer chrome.
+7. **`[ADDED 2026-07-19]`** **Given** a page is reachable only via a non-link action, **when** that action navigates to a same-origin destination, **then** the destination is enqueued for further crawling and the navigation recorded as a `PageTransition` — previously such destinations were captured but never explored further (FR-6, AD-15).
+8. **`[ADDED 2026-07-19]`** **Given** a `Form` with an identical shape and starting field values (hidden fields included) is reachable identically from more than one page, **when** the crawler encounters it again, **then** it is captured once (representative-form sampling, mirrors AC 6) (FR-6, AD-15).
+9. **`[ADDED 2026-07-19]`** **Given** a destination fails to load or responds 4xx/5xx, **when** the crawler reaches it, **then** it is marked visited and skipped — no `Page` row, no further exploration (FR-6, FR-7, AD-15).
 
 ### Story 2.3: Discovery Completion `[RENAMED 2026-07-15, was "Discovery Stop Conditions & Completeness Status"]`
 
@@ -297,7 +307,26 @@ So that I can re-authenticate rather than mistake it for a normal, if small, res
 **Then** it terminates the run with `DiscoveryRun.status=failed`, `failure_reason=session_expired` — a condition distinct from a normal stop condition (AD-11)
 **And** the platform surfaces a re-authentication prompt keyed specifically off `session_expired`, visually distinguishable from any other `failed` cause (FR-3). `[UPDATED 2026-07-15]` No longer needs to be distinguished from `incomplete` — that status no longer exists (FR-5 removed).
 
-### Story 2.5: AI Journey/Capability Inference from Evidence
+### Story 2.5: Application Model Builder `[ADDED 2026-07-18]` `[RENUMBERED 2026-07-18, was Story 2.6]`
+
+*Renumbered ahead of AI Journey/Capability Inference (now Story 2.6) — this story must run first in the actual pipeline (Discovery → Model Builder → Inference), and the original 2.5/2.6 assignment had that backwards. See `sprint-change-proposal-2026-07-18.md`.*
+
+As a user,
+I want the platform to merge duplicate captures into one reusable, canonical Application Model,
+So that journey inference and test generation work from reliable, deduplicated structure — and re-discovering an Application I've already mapped doesn't produce a pile of duplicates.
+
+**Acceptance Criteria:**
+
+1. **`[REWRITTEN 2026-07-18]` Given** typed rows captured by Story 2.2 (`Page`/`Form`/`Action`/`ApiEndpoint`/`PageTransition`, `merged_into_id = null`), **when** `ApplicationModelBuilderActivity` runs after `DiscoveryActivity` completes and before `InferenceActivity` starts (AD-1, AD-14), **then** rows representing the same logical page/form/API — whether captured in this run or an earlier Discovery Run against the same Application — are resolved to one canonical row per Application: every duplicate's `merged_into_id` is set to point at the canonical row, and the canonical row itself keeps `merged_into_id = null`.
+2. `Component` and `ComponentLocator` rows are derived (never raw-captured) for **every automatable element, not only clickable ones** — grouping canonical `Action` rows on the same canonical `Page` by label/selector shape for buttons/links, *and* one `Component` per canonical `FormField` for form inputs — each `Component` carrying a preferred locator plus one or more alternative/fallback locators, and its target page where applicable. `FormField` gets a nullable `component_id` back-reference to its derived `Component`.
+3. `Assertion` rows are derived from canonical `PageTransition`/`ApiEndpoint` outcomes attached to a canonical `Page`, with an optional `component_id` when the assertion targets a specific element rather than a page/API-level outcome.
+4. Only `ApplicationModelBuilderActivity` ever sets an existing row's `merged_into_id`, and only it writes `Component`/`ComponentLocator`/`Assertion` rows — `DiscoveryActivity` never resolves duplicates or writes these three, and `InferenceActivity` only ever reads canonical rows (AD-14).
+
+**`[RESOLVED 2026-07-18]`** The Application Model's page-grouping concept is served by the existing `Capability` entity — no separate `Module` entity is introduced.
+
+### Story 2.6: AI Journey/Capability Inference from the Application Model `[RENUMBERED 2026-07-18, was Story 2.5]`
+
+*Updated 2026-07-18 — reworked (reverted from `review` to `in-progress`) to read the Application Model built by Story 2.5 instead of raw Evidence directly, and renumbered after it (was Story 2.5, incorrectly numbered ahead of its own dependency); see `sprint-change-proposal-2026-07-18.md`.*
 
 As a user,
 I want the platform to turn captured discovery evidence into candidate Business Capabilities and Journeys in business language,
@@ -305,10 +334,10 @@ So that I have something meaningful to review instead of a raw crawl log.
 
 **Acceptance Criteria:**
 
-**Given** a Discovery Run that has completed, with captured Evidence
+**Given** a Discovery Run that has completed, with its Application Model built (Story 2.5)
 **When** `InferenceActivity` runs, calling the AI provider exclusively through the `AIProvider` port (AD-3, no direct vendor SDK import)
 **Then** candidate `Journey`/`Capability` rows are written with `status=candidate` and a business-language name — never a raw route/page identifier (FR-8)
-**And** each candidate Journey's supporting `Evidence` rows are attributed to it via `journey_id`, set by `InferenceActivity` (AD-8)
+**And** each candidate Journey's supporting canonical Application Model rows (Page/Form/ApiEndpoint/Component — never a superseded/merged row) are attributed to it via `journey_id`, set by `InferenceActivity` (AD-8, AD-14)
 **And** each candidate Journey gets a deterministic `identity_key` computed from its evidence shape, not its AI-generated name (AD-13)
 **And** `Journey.discovery_run_id` is set once, at creation, and is immutable
 
@@ -334,7 +363,7 @@ So that I can judge each inference against what discovery actually captured.
 
 **`[RESOLVED 2026-07-15]`** Three items previously flagged as gaps are now settled: **`New`/`Dupe` badges are cut** (not built), the **live pending-count indicator is cut** (its only home, the nav rail, is retired — no on-screen replacement is being built), and the **detail panel is sticky on scroll**, retaining its 340px width; its content changes only when the reviewer selects a different candidate row, never as a side effect of scrolling.
 
-*(Stories 3.2 "Approve" and 3.3 "Reject" removed 2026-07-15 — no approval gate exists; every discovered Journey enters the Trusted Knowledge Model and starts generation immediately (FR-14). `GenerationWorkflow`-start logic lives in Story 2.5; Delete (Story 3.4) is the sole exclusion mechanism.)*
+*(Stories 3.2 "Approve" and 3.3 "Reject" removed 2026-07-15 — no approval gate exists; every discovered Journey enters the Trusted Knowledge Model and starts generation immediately (FR-14). `GenerationWorkflow`-start logic lives in Story 2.6 (renumbered from 2.5, 2026-07-18); Delete (Story 3.4) is the sole exclusion mechanism.)*
 
 ### Story 3.4: Rename & Delete a Journey/Capability
 
@@ -389,6 +418,8 @@ So that the map becomes actionable test coverage, not just documentation.
 
 **`[GAP — flagged 2026-07-15]`** Whether an edited Scenario's Test data/steps actually feed Playwright generation, or the edit is display-only, is unconfirmed — flag for engineering before implementing the edit action's persistence behavior.
 
+**`[NOTE — 2026-07-18]`** `ScenarioGenerationActivity`'s AI context now draws on canonical Application Model rows (Story 2.5) rather than raw Evidence (removed) — no AC change, only richer input to the same `AIProvider` call.
+
 *(Superseded 2026-07-15 — retained for history: the prior AC required Scenarios be strictly view-only with no checkbox/action button on any row (UX-DR23). This rule no longer holds — see FR-29 and `EXPERIENCE.md#Review & Trust Model`.)*
 
 ### Story 4.2: Generate Playwright Test Assets via a Named Test Suite
@@ -405,6 +436,8 @@ So that I have real, runnable regression coverage for the Journey.
 **When** `PlaywrightGenerationActivity` runs
 **Then** a `TestAsset` row is created per Scenario, carrying the generated Playwright code, a `generation_run_id`, and `current=true` (FR-17, AD-8)
 **And** the Generate Suite screen lets the user name the suite and confirm a target environment before generating, showing a summary (journey count, scenario count) alongside the generate action
+
+**`[NOTE — 2026-07-18]`** `PlaywrightGenerationActivity`'s AI context now includes the Application Model's Component locator metadata (preferred + fallback locators) — no AC change, richer input to the same `AIProvider` call.
 
 **`[NOTE FOR PM/ENG — 2026-07-15]`** The Generate Suite screen also shows an "Execution" choice (`Run immediately`/`Schedule for later`/`Save without running`) — this is a confirmed UI placeholder only; do not build execution/scheduling behavior against it (see architecture Deferred section). The screen the user sees immediately after clicking "Generate Test Suite" (i.e., whether the prior code-viewer + `<details>` disclosure pattern survives) was not reachable during UX review — `[GAP]`, retained as last-confirmed spec pending re-verification.
 

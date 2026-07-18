@@ -7,8 +7,8 @@ paradigm: 'Durable Orchestrated Pipeline with Ports & Adapters at the boundaries
 scope: 'Application Intelligence Platform V1 — discovery engine, AI journey/capability inference, human curation, scenario/Playwright test generation. CI/CD delivery, analytics dashboards, and on-prem deployment removed from V1 scope 2026-07-15 (see Module Map/Deferred); Journey-detail analytics retained.'
 status: final
 created: '2026-07-13'
-updated: '2026-07-15'
-binds: [FR-1, FR-2, FR-3, FR-6, FR-7, FR-8, FR-9, FR-12, FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-23]
+updated: '2026-07-18'
+binds: [FR-1, FR-2, FR-3, FR-6, FR-7, FR-8, FR-9, FR-12, FR-13, FR-14, FR-15, FR-16, FR-17, FR-18, FR-23, FR-30]
 sources:
   - '../../prds/prd-AITestGen-2026-07-13/prd.md'
   - '../../briefs/brief-AITestGen-2026-07-12/brief.md'
@@ -50,11 +50,11 @@ flowchart LR
     workersGen --> domain
 ```
 
-### AD-1 — Bounded discovery workflow; generation starts immediately, not gated on human curation `[REWRITTEN 2026-07-15]`
+### AD-1 — Bounded discovery workflow; generation starts immediately, not gated on human curation `[REWRITTEN 2026-07-15]` `[UPDATED 2026-07-18]`
 
-- **Binds:** FR-6, FR-7, FR-8, FR-9, FR-13, FR-14, FR-15
+- **Binds:** FR-6, FR-7, FR-8, FR-9, FR-13, FR-14, FR-15, FR-30
 - **Prevents:** Modeling unbounded human-curation latency inside a workflow's execution history; and, now that generation is no longer gated on a human decision, any ambiguity over whether Discovery → Inference → Generation is one continuous machine-driven pipeline or needs an external trigger.
-- **Rule:** `DiscoveryWorkflow` is bounded: it runs Discovery + Inference, and for each candidate Journey `InferenceActivity` creates, immediately starts an independent, short-lived `GenerationWorkflow` in the same step (see AD-9) — no human action, no API call, no approval status in between. The Temporal workflow ID is `generation-{journey_id}-{attempt}`, `attempt=1` at creation. Human curation (rename via FR-12, delete via FR-13) is ordinary CRUD through `apps/api` against Postgres, entirely decoupled from workflow orchestration — renaming or deleting a Journey never touches its `GenerationWorkflow`. Deleting a Journey (soft-delete, `status=deleted`) excludes it, and anything already generated for it, from downstream reads (Generate Suite compilation, Analytics) but does **not** cancel an in-flight or completed `GenerationWorkflow` — FR-18's full regeneration is the only way to redo generation for a Journey the reviewer keeps. `[NOTE]` This reverses the original design (approval gated generation, an explicit Approve click started `GenerationWorkflow`) — see `sprint-change-proposal-2026-07-15.md` for the rationale (per-item approval doesn't scale to a real discovery run's candidate volume) and the tradeoff it accepts (PRD §12 Risk item 2).
+- **Rule:** `DiscoveryWorkflow` is bounded: it runs Discovery, then Application Model Building (FR-30, AD-14), then Inference, and for each candidate Journey `InferenceActivity` creates, immediately starts an independent, short-lived `GenerationWorkflow` in the same step (see AD-9) — no human action, no API call, no approval status in between. `[UPDATED 2026-07-18]` `InferenceActivity` reads canonical Application Model rows resolved by `ApplicationModelBuilderActivity`, never a raw/superseded capture directly (see AD-8, AD-14). The Temporal workflow ID is `generation-{journey_id}-{attempt}`, `attempt=1` at creation. Human curation (rename via FR-12, delete via FR-13) is ordinary CRUD through `apps/api` against Postgres, entirely decoupled from workflow orchestration — renaming or deleting a Journey never touches its `GenerationWorkflow`. Deleting a Journey (soft-delete, `status=deleted`) excludes it, and anything already generated for it, from downstream reads (Generate Suite compilation, Analytics) but does **not** cancel an in-flight or completed `GenerationWorkflow` — FR-18's full regeneration is the only way to redo generation for a Journey the reviewer keeps. `[NOTE]` This reverses the original design (approval gated generation, an explicit Approve click started `GenerationWorkflow`) — see `sprint-change-proposal-2026-07-15.md` for the rationale (per-item approval doesn't scale to a real discovery run's candidate volume) and the tradeoff it accepts (PRD §12 Risk item 2).
 
 ### AD-2 — Workflows orchestrate only; Activities own all I/O
 
@@ -92,15 +92,18 @@ flowchart LR
 - **Prevents:** A Journey or Capability being excluded from the Trusted Knowledge Model from anywhere other than the reviewer-facing delete endpoint — e.g., a worker silently discarding a candidate it decided was low-quality, which would remove the one lever a human has over what the platform trusts.
 - **Rule:** Only `apps/api`'s delete endpoint may transition a Journey/Capability's status to `deleted`. Workers may only write `candidate` (Discovery/Inference), or downstream generation status (`generated`, `delivered`) — never a deletion. `[NOTE]` There is no more `approved`/`rejected` state (FR-10/FR-11 cut) — every non-`deleted` Journey/Capability is, by definition, part of the Trusted Knowledge Model from the moment it's discovered (FR-14).
 
-### AD-8 — Every inferred artifact keeps a live pointer back to its evidence, at the right granularity
+### AD-8 — Application Model records are captured typed, merged to canonical, and every inferred artifact traces back to one `[REWRITTEN 2026-07-18 — Evidence removed]`
 
-- **Binds:** FR-8, FR-18, FR-23
-- **Prevents:** A Journey/Scenario/TestAsset existing in the database with no traceable path back to the discovery signal that produced it (breaking the "auditable, not black-box" trust mechanic in `DESIGN.md`); and, specifically, a run-level-only pointer that can't answer "which evidence supports *this* Journey" when one Discovery Run yields several Journeys, or "which generation attempt produced *this* Test Asset" when FR-18 regenerates from scratch. `[UPDATED 2026-07-15]` Previously also bound to FR-24 (coverage analytics); that FR is removed, but the `current` flag this AD establishes still does real work for Generate Suite compilation, independent of any analytics screen.
+- **Binds:** FR-6, FR-8, FR-18, FR-23, FR-30
+- **Prevents:** A Journey/Scenario/TestAsset existing in the database with no traceable path back to the discovery signal that produced it (breaking the "auditable, not black-box" trust mechanic in `DESIGN.md`); a run-level-only pointer that can't answer "which capture supports *this* Journey" when one Discovery Run yields several Journeys, or "which generation attempt produced *this* Test Asset" when FR-18 regenerates from scratch; and, as of this revision, a generic flat capture record (`Evidence`) that duplicates what typed records already hold, adding an indirection layer with no benefit. `[UPDATED 2026-07-15]` Previously also bound to FR-24 (coverage analytics); that FR is removed, but the `current` flag this AD establishes still does real work for Generate Suite compilation, independent of any analytics screen.
 - **Rule:**
-  - `Evidence` rows (pages, actions, API calls) are captured during Discovery tagged with `discovery_run_id`. `InferenceActivity` — not `DiscoveryActivity` — is responsible for attributing each Evidence row it used to support a candidate Journey by setting that row's `journey_id`; a Journey's evidence trail (FR-23) is the set of `Evidence` rows where `journey_id` matches, not the whole run's signal.
+  - **There is no generic `Evidence` table.** `DiscoveryActivity` writes directly into five typed tables as it captures each observation — `Page`, `Form` (+ `FormField`, `ValidationRule`), `Action`, `ApiEndpoint`, `PageTransition` — every row scoped by both `application_id` (the Application it belongs to) and `discovery_run_id` (the run that captured it). Every row `DiscoveryActivity` writes has `merged_into_id = null` at write time; it never resolves duplicates itself.
+  - Of those five, **`Page`, `Form`, `Action`, `ApiEndpoint`, and `PageTransition` each carry a nullable, self-referencing `merged_into_id`**: `null` means the row is canonical (authoritative for its Application); non-null means the row has been superseded, merged into the referenced row of the same table. Only `ApplicationModelBuilderActivity` ever sets `merged_into_id` (AD-14) — it groups raw rows by a normalized identity (e.g. a Page's normalized `url_template`) *across all of an Application's Discovery Runs, not just the current one* — this cross-run matching is what makes the Application Model genuinely reusable: a page re-visited on a later re-discovery run resolves to the same canonical `Page`, it doesn't spawn a duplicate.
+  - `Component`, `ComponentLocator`, and `Assertion` are **purely derived** — `DiscoveryActivity` never writes them. `ApplicationModelBuilderActivity` synthesizes a `Component` row for **every automatable element**, not only clickable ones: grouping canonical `Action` rows on the same canonical `Page` by label/selector shape (for buttons/links), *and* one `Component` per canonical `FormField` (for form inputs — `type` reflects the field's `input_type`) — both find-or-create by a stable identity, so re-running against a new Discovery Run updates rather than duplicates. `ComponentLocator` (preferred + fallback) is derived the same way regardless of which kind of `Component` it belongs to — one mechanism for every locator, not a separate one for form fields. `FormField` gains a nullable `component_id` back-reference to its derived `Component`, so `ScenarioGenerationActivity`/`PlaywrightGenerationActivity` can join a field's validation rules with its locator in one step. `Assertion` rows are derived from canonical `PageTransition`/`ApiEndpoint` outcomes, with an optional nullable `component_id` when the assertion targets a specific element (e.g. "success message visible") rather than a page/API-level outcome.
+  - `InferenceActivity` attributes a candidate Journey by setting `journey_id` — **only on canonical rows** (`merged_into_id IS NULL`) of `Page`, `Form`, `ApiEndpoint`, and on `Component` — never on a superseded/duplicate row, and never on raw `Action`/`PageTransition` rows (those stay as unattributed capture detail; `Component` is the attributable, deduped unit a Journey actually references). A Journey's evidence trail (FR-23) is the set of these `journey_id`-matching canonical rows.
   - `Journey.discovery_run_id` is set once, at creation, and is immutable — it identifies which Discovery Run *discovered* the Journey, independent of how many times it's later regenerated.
   - `Scenario` and `TestAsset` rows carry their own `generation_run_id` (the `GenerationWorkflow` attempt — AD-1 — that produced them) plus a `current: bool` flag. A new FR-18 regeneration attempt writes new `Scenario`/`TestAsset` rows with `current=true` and flips the prior attempt's rows to `current=false` (soft-superseded, retained for audit — never deleted). The Journey Explorer and coverage analytics (FR-24) only ever read `current=true` rows; "does this Journey have a Test Asset" is `EXISTS(... current=true)`.
-  - `Evidence` rows store structured metadata (page URL, action type, API call signature, timestamp) in Postgres. Large binary artifacts (screenshots, full DOM snapshots) are never stored inline — `Evidence` holds an object-storage key/reference; the object-storage backend itself is deferred (Operational Envelope), but the split between structured-metadata-in-Postgres and blobs-in-object-storage is decided now.
+  - `Page` stores structured metadata (URL, title) directly as columns, not JSONB — the typed-table model replaces `Evidence.details`'s generic JSON blob. Large binary artifacts (screenshots) are never stored inline — `Page.object_storage_key` holds an object-storage key/reference; the object-storage backend itself is deferred (Operational Envelope), but the split between structured-columns-in-Postgres and blobs-in-object-storage is decided now.
 
 ### AD-9 — Side-effecting Activities must be idempotent under Temporal's at-least-once retry `[UPDATED 2026-07-15]`
 
@@ -130,15 +133,37 @@ flowchart LR
 
 - **Binds:** FR-15
 - **Prevents:** Two engineers implementing FR-15's "is this Journey new?" check against different notions of identity — one comparing AI-generated names (which can vary slightly run to run), another comparing something else — producing inconsistent, unreliable dedup.
-- **Rule:** `InferenceActivity` computes a deterministic `identity_key` for each candidate Journey from its underlying page/action/API-call signature (evidence shape), not from its AI-generated display name. On re-discovery, a new candidate whose `identity_key` matches an existing Journey in the same Application is suppressed from the review queue (FR-15) and does not alter the existing Journey's `discovery_run_id` or evidence attribution (AD-8) — the original attribution is preserved, consistent with FR-15's "existence check," a materially smaller capability than change detection.
+- **Rule:** `InferenceActivity` computes a deterministic `identity_key` for each candidate Journey from its underlying canonical Page/Component/ApiEndpoint signature (AD-8), not from its AI-generated display name. On re-discovery, a new candidate whose `identity_key` matches an existing Journey in the same Application is suppressed from the review queue (FR-15) and does not alter the existing Journey's `discovery_run_id` or Application Model attribution (AD-8) — the original attribution is preserved, consistent with FR-15's "existence check," a materially smaller capability than change detection.
+
+### AD-14 — Application Model Builder owns merge/derivation; each entity has exactly one class of writer `[NEW 2026-07-18]` `[REWRITTEN 2026-07-18 — Evidence removed]`
+
+- **Binds:** FR-6, FR-30
+- **Prevents:** A Journey/Capability row, or any Application Model row, being written or mutated from anywhere other than its one designated Activity — e.g., `DiscoveryActivity` deciding two pages are duplicates and merging them itself, or `InferenceActivity` writing to `Page`/`Component` — which would make it impossible to reason about where a given row's data came from, mirroring the problem AD-7 solves for the Trusted Knowledge Model's deletion path.
+- **Rule:** Three, and only three, classes of writer exist for Application Model data:
+  1. `DiscoveryActivity` (Story 2.2) — the only writer of new `Page`, `Form`, `FormField`, `ValidationRule`, `Action`, `ApiEndpoint`, and `PageTransition` rows. Every row it writes has `merged_into_id = null` (where that column exists) — it never resolves duplicates, only captures.
+  2. `ApplicationModelBuilderActivity` (Story 2.5) — the *only* writer that ever sets an existing `Page`/`Form`/`Action`/`ApiEndpoint`/`PageTransition` row's `merged_into_id`, and the *only* writer of `Component`, `ComponentLocator`, and `Assertion` rows (which `DiscoveryActivity` never writes at all — they have no raw/captured form).
+  3. `InferenceActivity` (Story 2.6) — only writer of `Journey`/`Capability` rows; the only writer of `journey_id` onto canonical (`merged_into_id IS NULL`) `Page`/`Form`/`ApiEndpoint`/`Component` rows (AD-8). Reads the Application Model, never writes to `Page`/`Form`/`Action`/`ApiEndpoint`/`PageTransition`/`Component`/`ComponentLocator`/`Assertion` beyond that one `journey_id` attribution.
+
+  A new merge heuristic or normalization rule is isolated to `ApplicationModelBuilderActivity` and never requires a change to Discovery's crawl code or Inference's AI logic.
+
+### AD-15 — Crawl optimization heuristics are deliberate sampling, not incomplete coverage `[NEW 2026-07-18]` `[UPDATED 2026-07-19]`
+
+- **Binds:** FR-6, FR-7
+- **Prevents:** FR-7's "exhaustive traversal" being misread as "every DOM instance of every action is individually exercised" — which would make page-fingerprint dedup and representative-action sampling look like a completeness regression instead of an intentional design decision.
+- **Rule:** Page-fingerprint deduplication (the same logical page reached via multiple navigation paths is processed once) and representative-action sampling (a repeated identical action pattern, e.g., an "Edit" button repeated per grid row, is exercised once) are AD-level decisions, not implementation shortcuts. `DiscoveryRun.status=complete` (AD-10) means exhaustive traversal of distinct pages and distinct action *patterns* — it does not mean every individual DOM instance of a repeated action was separately exercised. This narrows PRD §12 Risk item 7 (unbounded exploration from repeated actions) without affecting the accepted risk around unbounded *page* growth (infinite pagination, calendar next-links), which is unrelated to action repetition.
+- **`[UPDATED 2026-07-19]`** Four further sampling/robustness rules, same AD-level status as the above (deliberate, not a completeness gap):
+  1. **Representative-form sampling** — a `Form` with an identical shape and starting field values (hidden fields included, since a hidden field can be the only thing distinguishing two otherwise-identical forms, e.g. a per-product "Add to Cart") reachable identically from more than one page is captured once, mirroring representative-action sampling.
+  2. **Bounded per-page action budget** — representative-action sampling additionally caps the number of distinct action *labels* exercised per page (a small constant, page-body content prioritized over shared nav/header/footer chrome), so a site-wide button doesn't crowd out every page-specific call-to-action. This further narrows PRD §12 Risk item 7 beyond repeated-instance dedup: a page with many genuinely distinct actions, not just repeated ones, is now also bounded.
+  3. **Error/broken-destination handling is exclusionary, not exploratory** — a destination that fails to load (network/DNS error) or returns a 4xx/5xx response is marked visited and never persisted as a `Page` or explored further. It was never a real business page, so excluding it isn't a completeness gap against FR-7.
+  4. **Button-triggered navigation is followed onward** — a page reached only via a non-link action (e.g. a client-side "Add to Cart" button) is now enqueued for further traversal like any other discovered page, closing what was previously a structural blind spot: a flow reachable only through such an action was invisible to the crawler past the first click. This is a completeness *fix*, not a new sampling rule — flagged here because it changes what "exhaustive" (AD-10) actually covers.
 
 ## Consistency Conventions
 
 | Concern | Convention |
 | --- | --- |
-| Naming (entities, files, interfaces, events) | Domain models: singular PascalCase (`Application`, `DiscoveryRun`, `Capability`, `Journey`, `Scenario`, `TestAsset`, `Evidence`). DB tables: snake_case plural. API JSON: camelCase (FastAPI field aliasing). Temporal workflows: PascalCase + `Workflow` (`DiscoveryWorkflow`, `GenerationWorkflow`). Activities: PascalCase + `Activity`. Ports: PascalCase + `Provider`/`Adapter`/`Client` (`AIProvider`, `DeliveryAdapter`, `SecretsClient`). |
+| Naming (entities, files, interfaces, events) | Domain models: singular PascalCase (`Application`, `DiscoveryRun`, `Capability`, `Journey`, `Scenario`, `TestAsset`, `Page`, `Component`). DB tables: snake_case plural. API JSON: camelCase (FastAPI field aliasing). Temporal workflows: PascalCase + `Workflow` (`DiscoveryWorkflow`, `GenerationWorkflow`). Activities: PascalCase + `Activity`. Ports: PascalCase + `Provider`/`Adapter`/`Client` (`AIProvider`, `DeliveryAdapter`, `SecretsClient`). |
 | Data & formats (ids, dates, error shapes, envelopes) | Internal primary keys: UUIDv7 (Postgres 18 native `uuidv7()`) for index locality. Any id exposed in an API response is a separate, opaque UUIDv4 — the UUIDv7 PK never leaves the backend, since its timestamp prefix would leak record-creation time. Dates: UTC, ISO 8601, stored as `timestamptz`. API errors: RFC 7807 `application/problem+json` envelope. |
-| State & cross-cutting (mutation, errors, logging, config, auth) | Trusted Knowledge Model single-deletion-path rule (AD-7). Workflows orchestrate only (AD-2). Evidence pointer required on every inferred row, at Journey vs. generation-attempt granularity (AD-8). Side-effecting Activities are idempotent under retry (AD-9). Every query is Organization-scoped (AD-12). Structured JSON logs, correlated by Temporal `workflow_id` across `apps/api` and `apps/workers/*`. Config via environment + secrets-store references only; no hardcoded vendor SDK call or deployment-mode branch outside the port packages (AD-3, AD-4). `packages/secrets_client`'s backing store (Vault vs. cloud KMS) is chosen at deploy time behind the same port — not a V1 blocker. Platform user auth (`apps/web` ↔ `apps/api`) is a distinct namespace from discovery target credentials (Dedicated Test Account) — never conflated. |
+| State & cross-cutting (mutation, errors, logging, config, auth) | Trusted Knowledge Model single-deletion-path rule (AD-7). Workflows orchestrate only (AD-2). Canonical-vs-superseded (`merged_into_id`) required on every mergeable Application Model row, and a traceable path to source capture on every inferred row, at Journey vs. generation-attempt granularity (AD-8). Side-effecting Activities are idempotent under retry (AD-9). Every query is Organization-scoped (AD-12). Structured JSON logs, correlated by Temporal `workflow_id` across `apps/api` and `apps/workers/*`. Config via environment + secrets-store references only; no hardcoded vendor SDK call or deployment-mode branch outside the port packages (AD-3, AD-4). `packages/secrets_client`'s backing store (Vault vs. cloud KMS) is chosen at deploy time behind the same port — not a V1 blocker. Platform user auth (`apps/web` ↔ `apps/api`) is a distinct namespace from discovery target credentials (Dedicated Test Account) — never conflated. |
 
 ## Stack
 
@@ -165,7 +190,9 @@ apps/
     discovery/               # DiscoveryActivity (Playwright), InferenceActivity
     generation/               # ScenarioGenerationActivity, PlaywrightGenerationActivity, CIDeliveryActivity (unbuilt — see below)
 packages/
-  domain/                    # SQLModel entities: Organization, Application, DiscoveryRun, Capability, Journey, Scenario, TestAsset, Evidence
+  domain/                    # SQLModel entities: Organization, Application, DiscoveryRun, Capability, Journey, Scenario, TestAsset,
+                              #   Page, Form, FormField, ValidationRule, Action, ApiEndpoint, PageTransition, Component, ComponentLocator,
+                              #   Assertion (added 2026-07-18, FR-30 — no generic Evidence table; see AD-8/AD-14)
   workflows/                  # DiscoveryWorkflow, GenerationWorkflow — orchestration only (AD-2)
   ai_provider/                 # AIProvider interface + hosted implementation (AD-3); on-prem implementation not built, see Deferred
   delivery_adapters/            # DeliveryAdapter interface — retained as a forward-compatible seam (AD-4); CI/CD Delivery feature removed 2026-07-15, no adapter implementations built
@@ -294,7 +321,7 @@ Container_Boundary(api, "API Service (apps/api)") {
   Component(onboarding, "Onboarding Module", "FastAPI router", "Application registration (FR-1-5)")
   Component(review, "Review Module", "FastAPI router", "Rename/delete curation; sole path that can exclude a Journey from the Trusted Knowledge Model (FR-9, FR-12-14, AD-7)")
   Component(analytics, "Analytics Module", "FastAPI router", "Journey Explorer reads (FR-23) — Capability Map/coverage/dashboard reads removed 2026-07-15, no supporting screen")
-  Component(domainPkg, "packages/domain", "SQLModel", "Entities: Organization, Application, DiscoveryRun, Capability, Journey, Scenario, TestAsset, Evidence")
+  Component(domainPkg, "packages/domain", "SQLModel", "Entities: Organization, Application, DiscoveryRun, Capability, Journey, Scenario, TestAsset, Page, Form, Action, ApiEndpoint, PageTransition, Component, ComponentLocator, Assertion")
 }
 
 ContainerDb(db, "PostgreSQL")
@@ -320,8 +347,8 @@ No implementation exists yet, so a class diagram would be fiction. What *is* fix
 ```text
 # packages/ai_provider
 class AIProvider(Protocol):
-    def infer_journeys(evidence: list[Evidence]) -> list[JourneyCandidate]: ...
-    def generate_scenarios(journey: Journey, evidence: list[Evidence]) -> list[Scenario]: ...
+    def infer_journeys(pages: list[Page]) -> list[JourneyCandidate]: ...  # `[UPDATED 2026-07-18]` canonical Pages (with related Components/Forms/ApiEndpoints loaded), not Evidence — Evidence removed, see AD-8
+    def generate_scenarios(journey: Journey, pages: list[Page]) -> list[Scenario]: ...  # `[UPDATED 2026-07-18]`
     def generate_playwright(scenario: Scenario) -> TestAssetCode: ...
 # Implementations: HostedAIProvider (SaaS), CustomerEndpointAIProvider (on-prem, deferred)
 
@@ -345,7 +372,8 @@ class SecretsClient(Protocol):
 
 ```text
 DiscoveryActivity(application: Application, secret_ref: SecretRef) -> DiscoveryRun
-InferenceActivity(discovery_run: DiscoveryRun, evidence: list[Evidence]) -> list[Journey]
+ApplicationModelBuilderActivity(discovery_run: DiscoveryRun) -> ApplicationModelBuilderOutput  # `[NEW 2026-07-18]` merges duplicate Page/Form/Action/ApiEndpoint/PageTransition rows (this + prior runs, same Application), derives Component/ComponentLocator/Assertion
+InferenceActivity(discovery_run: DiscoveryRun, pages: list[Page]) -> list[Journey]  # `[UPDATED 2026-07-18]` canonical Pages only, not Evidence
 ScenarioGenerationActivity(journey: Journey) -> list[Scenario]
 PlaywrightGenerationActivity(scenario: Scenario) -> TestAsset
 # CIDeliveryActivity(test_asset: TestAsset, application: Application) -> DeliveryResult  — retained signature, unbuilt; CI/CD delivery removed 2026-07-15, see Module Map
@@ -377,13 +405,15 @@ sequenceDiagram
         DW->>DB: DiscoveryRun.status=failed, reason=session_expired (AD-11)
         Note over DW: Workflow ends; API surfaces re-auth prompt
     else exhaustive traversal (FR-7 — only stop condition, no time budget)
-        DW->>DB: Persist raw Evidence (tagged discovery_run_id only)
+        DW->>DB: Persist typed Page/Form/Action/ApiEndpoint/PageTransition rows (merged_into_id=null, tagged discovery_run_id + application_id) [UPDATED 2026-07-18 — no Evidence table]
         DW->>DB: DiscoveryRun.status=complete (AD-10)
+        TMP->>DW: Dispatch ApplicationModelBuilderActivity [NEW 2026-07-18]
+        DW->>DB: Merge duplicate rows (this + prior runs) via merged_into_id; derive Component/ComponentLocator/Assertion (AD-8, AD-14)
         TMP->>DW: Dispatch InferenceActivity
-        DW->>AI: Infer Journeys/Capabilities from Evidence
+        DW->>AI: Infer Journeys/Capabilities from canonical Application Model rows
         AI-->>DW: Candidate Journeys/Capabilities (business language)
         DW->>DB: Write candidate Journeys (status=candidate, identity_key set — AD-13)
-        DW->>DB: Attribute supporting Evidence rows to their Journey (journey_id — AD-8)
+        DW->>DB: Attribute canonical rows to their Journey (journey_id — AD-8)
         Note over DW: For each candidate Journey just created, immediately start GenerationWorkflow(id="generation-{journeyId}-1") — no approval gate (AD-1, AD-9)
         DW->>TMP: Start GenerationWorkflow per candidate Journey
         Note over TMP: DiscoveryWorkflow completes (bounded — AD-1)
@@ -416,15 +446,27 @@ erDiagram
     ORGANIZATION ||--o{ APPLICATION : owns
     APPLICATION ||--o{ DISCOVERY_RUN : has
     APPLICATION ||--o{ CAPABILITY : scopes
+    APPLICATION ||--o{ PAGE : "owns (canonical, application-scoped)"
     DISCOVERY_RUN ||--o{ JOURNEY : discovers
-    DISCOVERY_RUN ||--o{ EVIDENCE : captures
+    DISCOVERY_RUN ||--o{ PAGE : captures
+    DISCOVERY_RUN ||--o{ ACTION : captures
+    DISCOVERY_RUN ||--o{ API_ENDPOINT : captures
+    PAGE ||--o{ PAGE : "merged_into (self-ref, AD-8)"
+    PAGE ||--o{ ACTION : "observed on"
+    PAGE ||--o{ FORM : "observed on"
+    PAGE ||--o{ API_ENDPOINT : "observed on"
+    PAGE ||--o{ COMPONENT : "derives (by Model Builder)"
+    COMPONENT ||--o{ COMPONENT_LOCATOR : has
+    FORM ||--o{ FORM_FIELD : has
+    FORM_FIELD ||--o{ VALIDATION_RULE : has
     CAPABILITY ||--o{ JOURNEY : groups
-    JOURNEY ||--o{ EVIDENCE : "attributed from (by Inference)"
+    JOURNEY ||--o{ PAGE : "attributed from (canonical only, by Inference)"
+    JOURNEY ||--o{ COMPONENT : "attributed from (by Inference)"
     JOURNEY ||--o{ SCENARIO : generates
     SCENARIO ||--o| TEST_ASSET : "compiles to"
 ```
 
-`ORGANIZATION` is the tenant boundary (AD-12) — every query in `apps/api` is scoped by it. `EVIDENCE` is captured against a `DISCOVERY_RUN` first and attributed to a `JOURNEY` second, by `InferenceActivity` (AD-8) — the two relationships above are sequential, not redundant.
+`ORGANIZATION` is the tenant boundary (AD-12) — every query in `apps/api` is scoped by it. `[REWRITTEN 2026-07-18 — Evidence removed]` `PAGE` (and `FORM`/`ACTION`/`API_ENDPOINT`/`PAGE_TRANSITION`, not all shown above for diagram clarity) is captured against a `DISCOVERY_RUN` directly — there is no intermediate generic capture entity. A `PAGE` row may point at another `PAGE` via `merged_into_id` once `ApplicationModelBuilderActivity` resolves it as a duplicate (AD-8); `COMPONENT`/`COMPONENT_LOCATOR`/`ASSERTION` have no raw form at all — the Model Builder derives them directly. `JOURNEY` attribution (by `InferenceActivity`) only ever targets canonical (non-merged) rows.
 
 *(2026-07-15: `CI_CONFIG` entity and its relation removed — no feature configures a Git host/export mode; CI/CD delivery is cut in full, see AD-4/Module Map.)*
 
@@ -435,10 +477,11 @@ Every PRD feature area is one loosely-coupled module: a single Activity, endpoin
 | Module | Responsibility | Enables | Inputs | Outputs (where to observe) | Depends on | Isolation — what a fix/enhancement touches |
 | --- | --- | --- | --- | --- | --- | --- |
 | **Onboarding**<br>`apps/api` Application router, `packages/secrets_client` | Register an Application; capture URL, env, credentials; starts `DiscoveryWorkflow` immediately on submit | FR-1–3 | Form submission from `apps/web` | `Application` row (Postgres); secret reference in SecretsClient | `packages/domain`, `packages/secrets_client` (AD-5) | A new credential type stays inside this module + its SecretsClient implementation. `[UPDATED 2026-07-15]` No scope/time-budget capture — FR-4/FR-5 removed. |
-| **Discovery**<br>`apps/workers/discovery` (`DiscoveryActivity`), `DiscoveryWorkflow` | Autonomously explore the entire target app; detect the exhaustive-traversal stop condition | FR-6–7 | `Application` config + credentials (via SecretsClient) | `Evidence` rows + `DiscoveryRun.status` (Postgres) | Target Application (external), SecretsClient | A new crawl strategy never touches Inference or Review — it only ever writes `Evidence` + `DiscoveryRun.status`. `[UPDATED 2026-07-15]` No scope/budget config to respect — always full-Application, exhaustive-traversal only |
-| **Inference**<br>`apps/workers/discovery` (`InferenceActivity`) | Raw Evidence → candidate Journeys/Capabilities; attribute Evidence to a Journey; compute `identity_key`; `[UPDATED 2026-07-15]` immediately starts `GenerationWorkflow` per candidate (AD-1) — no approval gate | FR-8, FR-14, FR-15 | `Evidence` rows from Discovery | `Journey`/`Capability` rows (`status=candidate`), `Evidence.journey_id`, one `GenerationWorkflow` started per candidate | `AIProvider` port (AD-3) | Changing the inference prompt/model, or the `identity_key` fingerprint (AD-13), never touches Discovery's crawl code or Review's curation logic |
+| **Discovery**<br>`apps/workers/discovery` (`DiscoveryActivity`), `DiscoveryWorkflow` | Autonomously explore the entire target app; detect the exhaustive-traversal stop condition | FR-6–7 | `Application` config + credentials (via SecretsClient) | `Page`/`Form`/`FormField`/`ValidationRule`/`Action`/`ApiEndpoint`/`PageTransition` rows (`merged_into_id=null`), `DiscoveryRun.status` (Postgres) `[UPDATED 2026-07-18 — replaces Evidence]` | Target Application (external), SecretsClient | A new crawl strategy never touches the Model Builder or Inference — it only ever writes new typed rows + `DiscoveryRun.status`, never resolves duplicates itself (AD-14). `[UPDATED 2026-07-15]` No scope/budget config to respect — always full-Application, exhaustive-traversal only |
+| **Application Model Builder**<br>`apps/workers/discovery` (`ApplicationModelBuilderActivity`) `[NEW 2026-07-18]` `[REWRITTEN 2026-07-18 — Evidence removed]` | Merge duplicate Page/Form/Action/ApiEndpoint/PageTransition captures (within and across Discovery Runs) into canonical rows via `merged_into_id`; derive Component/ComponentLocator/Assertion from canonical rows | FR-30 | Typed rows from Discovery (this and prior runs, same Application) | `merged_into_id` set on superseded rows; new `Component`/`ComponentLocator`/`Assertion` rows | `packages/domain` (AD-14) | A new merge/derivation rule is isolated to this module — never touches Discovery's crawl code or Inference's AI logic (AD-14) |
+| **Inference**<br>`apps/workers/discovery` (`InferenceActivity`) | `[UPDATED 2026-07-18]` Canonical Application Model rows → candidate Journeys/Capabilities; attribute canonical rows to a Journey (`journey_id`, never on a superseded row); compute `identity_key`; `[UPDATED 2026-07-15]` immediately starts `GenerationWorkflow` per candidate (AD-1) — no approval gate | FR-8, FR-14, FR-15 | Canonical (`merged_into_id IS NULL`) Application Model rows, from the Model Builder — never raw/superseded rows | `Journey`/`Capability` rows (`status=candidate`), `journey_id` attribution on canonical rows, one `GenerationWorkflow` started per candidate | `AIProvider` port (AD-3) | Changing the inference prompt/model, or the `identity_key` fingerprint (AD-13), never touches Discovery's crawl code, the Application Model Builder, or Review's curation logic |
 | **Review**<br>`apps/api` review endpoints, `packages/domain` | `[UPDATED 2026-07-15]` Human rename / delete curation; sole path that can exclude a Journey from the Trusted Knowledge Model — no approve/reject, no longer starts `GenerationWorkflow` (moved to Inference, above) | FR-9, FR-12–14 | Candidate Journeys/Capabilities; reviewer action from `apps/web` | `status=deleted`, or updated name | `packages/domain` (AD-7) | A new curation action is isolated to this module — Discovery, Inference, and Generation only ever read `status`, never assume how it got there |
-| **Scenario Generation**<br>`apps/workers/generation` (`ScenarioGenerationActivity`) | Discovered Journey → happy-path + negative Scenarios, triggered immediately at creation (no approval gate) | FR-14, FR-16 | Discovered `Journey` + its Evidence | `Scenario` rows | `AIProvider` port | Swapping the scenario strategy never touches Playwright generation — they share a workflow, not code |
+| **Scenario Generation**<br>`apps/workers/generation` (`ScenarioGenerationActivity`) | Discovered Journey → happy-path + negative Scenarios, triggered immediately at creation (no approval gate) | FR-14, FR-16 | Discovered `Journey` + its attributed canonical Application Model rows (`[UPDATED 2026-07-18]` no Evidence) | `Scenario` rows | `AIProvider` port | Swapping the scenario strategy never touches Playwright generation — they share a workflow, not code |
 | **Playwright Generation**<br>`apps/workers/generation` (`PlaywrightGenerationActivity`) | Scenario → executable Playwright Test Asset; owns regeneration/versioning | FR-17–18 | `Scenario` rows | `TestAsset` rows (code + `current` flag, AD-8) | `AIProvider` port | Regeneration/versioning logic changes stay inside this module; Scenario Generation is untouched |
 | **CI Delivery** `[REMOVED 2026-07-15]`<br>`apps/workers/generation` (`CIDeliveryActivity`), `packages/delivery_adapters` | Push a Test Asset into the customer's repo (PR or direct commit) | — (previously FR-19–20, removed) | `TestAsset` + Application's configured Git host | PR/commit on the customer's Git host | `DeliveryAdapter` port (AD-4), AD-9 | Port contract retained as a forward-compatible seam (no harm keeping it ready); no story builds against it in current scope — see Deferred section |
 | **CI Instructions** `[REMOVED 2026-07-15]`<br>`packages/ci_instructions` | Produce the manual pipeline-wiring template for the Application's CI system | — (previously FR-21, removed) | Application's configured CI system | Instructions/template surfaced in `apps/web` | none — pure function of CI system | Port contract retained as a forward-compatible seam; not scheduled for V1 build — see Deferred section |
@@ -448,6 +491,7 @@ Every PRD feature area is one loosely-coupled module: a single Activity, endpoin
 
 ## Deferred
 
+- **`[RESOLVED — 2026-07-18]` Module vs. Capability relationship**: decided — no separate `Module` entity. The Application Model Builder's page-grouping concept is served by the existing `Capability` entity; `packages/domain` gains no new grouping entity for this. See `sprint-change-proposal-2026-07-18.md`.
 - **`[NEW — 2026-07-15]` Test-suite execution mechanism**: Generate Suite's `Run immediately`/`Schedule for later`/`Save without running` controls are a confirmed UI placeholder only (user-stated: "currently it is placeholder, we will tag the integration later"). **No architecture decision is made here.** Specifically: do not read "Run immediately" as authorizing the platform to execute generated tests itself — that would silently contradict the "no CI read-back channel" stance without a real decision ever having been made. Revisit once the mechanism is actually specified; it may turn out to be a revival of the removed CI Delivery module (below), a genuinely new test-runner capability, or something else entirely.
 - **`[REMOVED 2026-07-15, was "deferred"]` CI/CD delivery**: removed in full, not merely deferred — the Connect to CI/CD screen this depended on has no equivalent anywhere in the current UX (see `sprint-change-proposal-2026-07-15.md`). The `DeliveryAdapter`/`CIInstructionsGenerator` port contracts (AD-4) are unchanged and retained as a forward-compatible seam, ready to implement against if this feature is ever redesigned from scratch — but there is no scheduled path back to it.
 - **`[REMOVED 2026-07-15, was "deferred"]` Analytics surfaces**: Capability Map, coverage analytics, and the multi-application executive dashboard are removed in full — no screen in the current UX serves any of them. Journey detail (FR-23) is unaffected — it's retained, served inline from the discovery-review flow instead of a standalone screen.

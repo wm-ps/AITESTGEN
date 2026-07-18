@@ -6,13 +6,13 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function stubEvidenceFetch() {
+function stubCaptureFetch() {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => [] }))
 }
 
 describe('DiscoverJourneysPlaceholder', () => {
   it('shows a status pill reading Running with a pulsing dot while the Discovery Run is running', () => {
-    stubEvidenceFetch()
+    stubCaptureFetch()
     render(
       <DiscoverJourneysPlaceholder
         discoveryStatus="running"
@@ -26,7 +26,7 @@ describe('DiscoverJourneysPlaceholder', () => {
   })
 
   it('shows a re-authentication prompt distinct from a generic failure when session_expired', () => {
-    stubEvidenceFetch()
+    stubCaptureFetch()
     render(
       <DiscoverJourneysPlaceholder
         discoveryStatus="failed"
@@ -40,7 +40,7 @@ describe('DiscoverJourneysPlaceholder', () => {
   })
 
   it('shows a generic failure message (no re-auth prompt) for a non-session-expiry failure', () => {
-    stubEvidenceFetch()
+    stubCaptureFetch()
     render(
       <DiscoverJourneysPlaceholder
         discoveryStatus="failed"

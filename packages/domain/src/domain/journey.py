@@ -1,4 +1,4 @@
-"""Journey — a candidate business workflow inferred from Evidence (Story 2.5, AD-8/AD-13).
+"""Journey — a candidate business workflow inferred from the Application Model (Story 2.6, AD-8/AD-13).
 
 `discovery_run_id` identifies which Discovery Run *discovered* the Journey —
 set once at creation, immutable, independent of how many times it's later

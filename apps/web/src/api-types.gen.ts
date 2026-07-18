@@ -106,15 +106,15 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/discovery-runs/{external_id}/evidence": {
+    "/discovery-runs/{external_id}/captures": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List Evidence */
-        get: operations["list_evidence_discovery_runs__external_id__evidence_get"];
+        /** List Captures */
+        get: operations["list_captures_discovery_runs__external_id__captures_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -190,19 +190,17 @@ export interface components {
             /** Discovery Failure Reason */
             discovery_failure_reason: string | null;
         };
-        /** EvidenceRead */
-        EvidenceRead: {
-            /** Type */
-            type: string;
-            /** Details */
-            details: {
-                [key: string]: unknown;
-            };
+        /** CaptureRead */
+        CaptureRead: {
+            /** Kind */
+            kind: string;
+            /** Summary */
+            summary: string;
             /**
-             * Captured At
+             * Created At
              * Format: date-time
              */
-            captured_at: string;
+            created_at: string;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -421,7 +419,7 @@ export interface operations {
             };
         };
     };
-    list_evidence_discovery_runs__external_id__evidence_get: {
+    list_captures_discovery_runs__external_id__captures_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -440,7 +438,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EvidenceRead"][];
+                    "application/json": components["schemas"]["CaptureRead"][];
                 };
             };
             /** @description Validation Error */

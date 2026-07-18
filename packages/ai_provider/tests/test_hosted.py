@@ -1,4 +1,4 @@
-"""HostedAIProvider (Story 2.5, Task 2).
+"""HostedAIProvider (Story 2.6, Task 2).
 
 `infer_journeys`' parsing/mapping logic is tested here with `litellm.completion`
 monkeypatched — no real API key or network call needed. A real live call
@@ -15,23 +15,19 @@ from types import SimpleNamespace
 import litellm
 import pytest
 from ai_provider.hosted import HostedAIProvider
-from domain import Evidence
+from domain import Page
 
 
-def _fake_evidence(evidence_type: str, details: dict) -> Evidence:
-    return Evidence(
-        discovery_run_id=uuid.uuid4(),
-        type=evidence_type,
-        details=details,
-    )
+def _fake_page(url: str, title: str = "") -> Page:
+    return Page(application_id=uuid.uuid4(), discovery_run_id=uuid.uuid4(), url=url, title=title)
 
 
-def test_infer_journeys_maps_evidence_indices_to_external_ids(
+def test_infer_journeys_maps_page_indices_to_page_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ev0 = _fake_evidence("page", {"url": "https://app.example.com/items"})
-    ev1 = _fake_evidence("api_call", {"url": "https://app.example.com/api/items", "method": "GET"})
-    ev2 = _fake_evidence("page", {"url": "https://app.example.com/about"})
+    page0 = _fake_page("https://app.example.com/items", title="Items")
+    page1 = _fake_page("https://app.example.com/items/new", title="Add item")
+    page2 = _fake_page("https://app.example.com/about", title="About")
 
     fake_response_body = json.dumps(
         {
@@ -39,12 +35,12 @@ def test_infer_journeys_maps_evidence_indices_to_external_ids(
                 {
                     "name": "Browse items",
                     "capability_name": "Item Management",
-                    "evidence_indices": [0, 1],
+                    "page_indices": [0, 1],
                 },
                 {
                     "name": "View about page",
                     "capability_name": "Marketing",
-                    "evidence_indices": [2],
+                    "page_indices": [2],
                 },
             ]
         }
@@ -60,13 +56,13 @@ def test_infer_journeys_maps_evidence_indices_to_external_ids(
 
     monkeypatch.setattr(litellm, "completion", fake_completion)
 
-    candidates = HostedAIProvider().infer_journeys([ev0, ev1, ev2])
+    candidates = HostedAIProvider().infer_journeys([page0, page1, page2])
 
     assert len(candidates) == 2
     assert candidates[0].name == "Browse items"
     assert candidates[0].capability_name == "Item Management"
-    assert candidates[0].evidence_external_ids == [str(ev0.external_id), str(ev1.external_id)]
-    assert candidates[1].evidence_external_ids == [str(ev2.external_id)]
+    assert candidates[0].page_ids == [str(page0.id), str(page1.id)]
+    assert candidates[1].page_ids == [str(page2.id)]
 
     assert captured_kwargs["response_format"] == {"type": "json_object"}
     assert "model" in captured_kwargs
@@ -77,12 +73,10 @@ def test_infer_journeys_maps_evidence_indices_to_external_ids(
     reason="requires a real ANTHROPIC_API_KEY (or AI_MODEL's provider key) — not provisioned here",
 )
 def test_infer_journeys_live_call() -> None:
-    evidence = [
-        _fake_evidence("page", {"url": "https://app.example.com/cart"}),
-        _fake_evidence(
-            "api_call", {"url": "https://app.example.com/api/checkout", "method": "POST"}
-        ),
+    pages = [
+        _fake_page("https://app.example.com/cart", title="Cart"),
+        _fake_page("https://app.example.com/checkout", title="Checkout"),
     ]
-    candidates = HostedAIProvider().infer_journeys(evidence)
+    candidates = HostedAIProvider().infer_journeys(pages)
     assert candidates
     assert all(isinstance(c.name, str) and c.name for c in candidates)

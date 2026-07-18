@@ -12,7 +12,7 @@ import pytest
 from api.db import engine, init_db
 from api.main import app
 from api.scripts.seed_dev_data import seed
-from domain import DiscoveryRun, Evidence
+from domain import ApiEndpoint, DiscoveryRun, Page
 from fastapi.testclient import TestClient
 from hvac.exceptions import VaultError
 from secrets_client.vault_client import VAULT_ADDR, VAULT_TOKEN
@@ -81,9 +81,9 @@ def _create_application(client: TestClient, name: str) -> dict:
     return response.json()
 
 
-def test_list_evidence_returns_newest_first() -> None:
+def test_list_captures_returns_newest_first() -> None:
     init_db()
-    client = _signed_in_client("Org Evidence Feed")
+    client = _signed_in_client("Org Capture Feed")
     application = _create_application(client, "Feed App")
 
     with Session(engine) as session:
@@ -92,35 +92,40 @@ def test_list_evidence_returns_newest_first() -> None:
                 DiscoveryRun.external_id == uuid.UUID(application["discovery_run_id"])
             )
         ).one()
-        older = Evidence(
+        older = Page(
+            application_id=discovery_run.application_id,
             discovery_run_id=discovery_run.id,
-            type="page",
-            details={"url": "https://staging.example.com/older"},
-            captured_at=datetime.now(UTC) - timedelta(seconds=10),
-        )
-        newer = Evidence(
-            discovery_run_id=discovery_run.id,
-            type="api_call",
-            details={"url": "https://staging.example.com/api/newer"},
-            captured_at=datetime.now(UTC),
+            url="https://staging.example.com/older",
+            title="Older",
+            created_at=datetime.now(UTC) - timedelta(seconds=10),
         )
         session.add(older)
+        session.flush()
+
+        newer = ApiEndpoint(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            page_id=older.id,
+            method="GET",
+            path="/api/newer",
+            created_at=datetime.now(UTC),
+        )
         session.add(newer)
         session.commit()
 
-    response = client.get(f"/discovery-runs/{application['discovery_run_id']}/evidence")
+    response = client.get(f"/discovery-runs/{application['discovery_run_id']}/captures")
     assert response.status_code == 200
     body = response.json()
     assert len(body) == 2
-    assert body[0]["type"] == "api_call"
-    assert body[1]["type"] == "page"
+    assert body[0]["kind"] == "api_call"
+    assert body[1]["kind"] == "page"
 
 
-def test_list_evidence_is_organization_scoped() -> None:
+def test_list_captures_is_organization_scoped() -> None:
     init_db()
-    client_a = _signed_in_client("Org Evidence A")
-    client_b = _signed_in_client("Org Evidence B")
+    client_a = _signed_in_client("Org Capture A")
+    client_b = _signed_in_client("Org Capture B")
     application = _create_application(client_a, "Org A App")
 
-    response = client_b.get(f"/discovery-runs/{application['discovery_run_id']}/evidence")
+    response = client_b.get(f"/discovery-runs/{application['discovery_run_id']}/captures")
     assert response.status_code == 404

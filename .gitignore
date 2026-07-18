@@ -11,6 +11,11 @@ $RECYCLE.BIN/
 *.swp
 *.swo
 
+# --- Claude Code ---
+# .claude/settings.json (shared project config) IS committed; only the
+# per-user local-override file is machine-specific.
+.claude/settings.local.json
+
 # --- Env / secrets ---
 .env
 .env.*

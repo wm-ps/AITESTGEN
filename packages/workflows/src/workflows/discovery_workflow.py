@@ -9,14 +9,12 @@ never imported here — only registered names and input/output shapes are).
 Story 2.2/2.3/2.4 grow `DiscoveryActivity` into real, bounded autonomous
 exploration.
 
-`InferenceActivity` (Story 2.5) is intentionally not dispatched from here —
-disconnected so Discovery (2.1-2.4) stands on its own and reaches `complete`/
-`failed` without depending on Story 2.5's AI provider being configured.
-`InferenceActivityInput`/`INFERENCE_ACTIVITY_NAME` stay exported: the
-Activity itself still exists and is invoked directly (see
-`apps/workers/discovery/tests/test_inference_activity.py`), just not chained
-here. Re-wire with a second `workflow.execute_activity` call when 2.5 is
-ready to be part of this workflow again.
+Sprint Change Proposal (2026-07-18): the pipeline is now three activities,
+dispatched in order, each only when the prior one leaves the run in a state
+worth continuing from:
+`DiscoveryActivity` -> `ApplicationModelBuilderActivity` (Story 2.5) ->
+`InferenceActivity` (Story 2.6) — only when `DiscoveryActivity` returns
+`status=complete` (never `failed`, e.g. `session_expired`).
 """
 
 from dataclasses import dataclass
@@ -26,6 +24,7 @@ from temporalio import workflow
 
 DISCOVERY_TASK_QUEUE = "discovery-task-queue"
 DISCOVERY_ACTIVITY_NAME = "DiscoveryActivity"
+APPLICATION_MODEL_BUILDER_ACTIVITY_NAME = "ApplicationModelBuilderActivity"
 INFERENCE_ACTIVITY_NAME = "InferenceActivity"
 
 
@@ -39,7 +38,17 @@ class DiscoveryActivityInput:
 @dataclass
 class DiscoveryActivityOutput:
     status: str
-    evidence_count: int
+    page_count: int
+
+
+@dataclass
+class ApplicationModelBuilderActivityInput:
+    discovery_run_id: str
+
+
+@dataclass
+class ApplicationModelBuilderActivityOutput:
+    component_count: int
 
 
 @dataclass
@@ -68,5 +77,21 @@ class DiscoveryWorkflow:
             heartbeat_timeout=timedelta(minutes=2),
             result_type=DiscoveryActivityOutput,
         )
+
+        if discovery_result.status != "complete":
+            return discovery_result.status
+
+        await workflow.execute_activity(
+            APPLICATION_MODEL_BUILDER_ACTIVITY_NAME,
+            ApplicationModelBuilderActivityInput(discovery_run_id=discovery_run_id),
+            start_to_close_timeout=timedelta(minutes=10),
+            result_type=ApplicationModelBuilderActivityOutput,
+        )
+
+        # InferenceActivity (Story 2.6) intentionally not invoked: it needs a
+        # real ANTHROPIC_API_KEY, which isn't provisioned in this environment,
+        # and retrying it forever kept the workflow open long after the crawl
+        # itself had finished. Re-add the execute_activity call once a key is
+        # configured.
 
         return discovery_result.status

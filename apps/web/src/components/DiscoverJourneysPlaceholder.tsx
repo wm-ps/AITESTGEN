@@ -1,4 +1,4 @@
-import { EvidenceLiveFeed } from './EvidenceLiveFeed'
+import { CaptureLiveFeed } from './CaptureLiveFeed'
 import { Stepper } from './Stepper'
 import { StatusPill } from './StatusPill'
 
@@ -43,7 +43,7 @@ export function DiscoverJourneysPlaceholder({
           </p>
         )}
 
-        <EvidenceLiveFeed discoveryRunId={discoveryRunId} active={discoveryStatus === 'running'} />
+        <CaptureLiveFeed discoveryRunId={discoveryRunId} active={discoveryStatus === 'running'} />
       </main>
     </>
   )

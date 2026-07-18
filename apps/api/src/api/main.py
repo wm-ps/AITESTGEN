@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from domain import Application, AuthMethod, DiscoveryRun, Evidence, PlatformUser
+from domain import Action, ApiEndpoint, Application, AuthMethod, DiscoveryRun, Page, PlatformUser
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
@@ -191,18 +191,18 @@ def get_application(
     return _to_application_read(application, discovery_run)
 
 
-class EvidenceRead(BaseModel):
-    type: str
-    details: dict
-    captured_at: datetime
+class CaptureRead(BaseModel):
+    kind: str
+    summary: str
+    created_at: datetime
 
 
-@app.get("/discovery-runs/{external_id}/evidence", response_model=list[EvidenceRead])
-def list_evidence(
+@app.get("/discovery-runs/{external_id}/captures", response_model=list[CaptureRead])
+def list_captures(
     external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
-) -> list[EvidenceRead]:
+) -> list[CaptureRead]:
     discovery_run = session.exec(
         select(DiscoveryRun).where(DiscoveryRun.external_id == external_id)
     ).first()
@@ -214,13 +214,39 @@ def list_evidence(
     ):
         raise HTTPException(status_code=404, detail="discovery run not found")
 
-    rows = session.exec(
-        select(Evidence)
-        .where(Evidence.discovery_run_id == discovery_run.id)
-        .order_by(Evidence.captured_at.desc())  # type: ignore[attr-defined]
-        .limit(50)
+    # There is no single "capture" table (Story 2.2 rework, no generic
+    # Evidence) — the live feed is a union across the typed capture tables,
+    # ordered by created_at across all of them, not any one table's own feed.
+    pages = session.exec(select(Page).where(Page.discovery_run_id == discovery_run.id)).all()
+    actions = session.exec(select(Action).where(Action.discovery_run_id == discovery_run.id)).all()
+    api_calls = session.exec(
+        select(ApiEndpoint).where(ApiEndpoint.discovery_run_id == discovery_run.id)
     ).all()
-    return [
-        EvidenceRead(type=row.type, details=row.details, captured_at=row.captured_at)
-        for row in rows
-    ]
+
+    captures = (
+        [
+            CaptureRead(kind="page", summary=f"{p.title} ({p.url})", created_at=p.created_at)
+            for p in pages
+        ]
+        + [
+            CaptureRead(kind="action", summary=a.description, created_at=a.created_at)
+            for a in actions
+        ]
+        + [
+            CaptureRead(kind="api_call", summary=f"{e.method} {e.path}", created_at=e.created_at)
+            for e in api_calls
+        ]
+    )
+    captures.sort(key=lambda c: c.created_at, reverse=True)
+
+    # Self-explanatory terminal marker: the workflow keeps running past this
+    # point (Story 2.5's model builder, formerly 2.6's inference), so without
+    # this the feed just goes quiet with no signal that crawling itself is
+    # actually done.
+    if discovery_run.status == "complete":
+        completed_at = captures[0].created_at if captures else discovery_run.created_at
+        captures.insert(
+            0, CaptureRead(kind="status", summary="Crawling complete", created_at=completed_at)
+        )
+
+    return captures[:50]

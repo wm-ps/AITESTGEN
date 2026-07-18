@@ -6,9 +6,12 @@ primitives. All I/O lives in apps/workers/* Activities.
 """
 
 from workflows.discovery_workflow import (
+    APPLICATION_MODEL_BUILDER_ACTIVITY_NAME,
     DISCOVERY_ACTIVITY_NAME,
     DISCOVERY_TASK_QUEUE,
     INFERENCE_ACTIVITY_NAME,
+    ApplicationModelBuilderActivityInput,
+    ApplicationModelBuilderActivityOutput,
     DiscoveryActivityInput,
     DiscoveryActivityOutput,
     DiscoveryWorkflow,
@@ -17,10 +20,13 @@ from workflows.discovery_workflow import (
 from workflows.generation_workflow import GENERATION_TASK_QUEUE, GenerationWorkflow
 
 __all__ = [
+    "APPLICATION_MODEL_BUILDER_ACTIVITY_NAME",
     "DISCOVERY_ACTIVITY_NAME",
     "DISCOVERY_TASK_QUEUE",
     "GENERATION_TASK_QUEUE",
     "INFERENCE_ACTIVITY_NAME",
+    "ApplicationModelBuilderActivityInput",
+    "ApplicationModelBuilderActivityOutput",
     "DiscoveryActivityInput",
     "DiscoveryActivityOutput",
     "DiscoveryWorkflow",

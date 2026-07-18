@@ -1,6 +1,6 @@
-"""Object-storage abstraction for Evidence binaries (Story 2.2, Task 2).
+"""Object-storage abstraction for Page screenshot binaries (Story 2.2, Task 2).
 
-Architecture (AD-8) fixes the *shape* — binary evidence artifacts (screenshots,
+Architecture (AD-8) fixes the *shape* — binary artifacts (screenshots,
 DOM snapshots) referenced by an object-storage key, never stored inline in
 Postgres — but names no formal Protocol port for the backend provider (unlike
 `AIProvider`/`SecretsClient`) and explicitly defers the specific provider
