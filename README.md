@@ -92,8 +92,12 @@ uv run --package api python -m api.scripts.temporal_smoke_test
 
 Independent of local development above — raw manifests under `k8s/` (no Helm),
 deployed to namespace `aitestgen` on an existing EKS cluster. Doesn't touch or
-replace `docker compose` / `docker-compose.prod.yml`; see the deploy runbook
-for the full build-and-deploy steps.
+replace the local `docker compose` setup; see the deploy runbook for the full
+build-and-deploy steps.
+
+Postgres is **not deployed in-cluster** — it's expected to be externally
+hosted (e.g. RDS); point `POSTGRES_HOST`/`POSTGRES_PORT`/`POSTGRES_DB` in the
+`aitestgen-config` ConfigMap at it.
 
 Secrets (`POSTGRES_PASSWORD`, `SESSION_SECRET_KEY`, `VAULT_TOKEN`,
 `MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY`, `ANTHROPIC_API_KEY`) are created directly
@@ -107,7 +111,7 @@ own root token moves to a k8s Secret instead of being hardcoded.
 |---|---|---|---|
 | `api` | LoadBalancer | 8000 | FastAPI backend — sign-in, Application onboarding, discovery-run/capture queries. Public entrypoint for the SPA's API calls. |
 | `web` | LoadBalancer | 80 | React SPA (built with `VITE_API_BASE` pointed at the `api` Service), served by nginx. Public entrypoint for users. |
-| `postgres` | ClusterIP | 5432 | Primary datastore — Organizations, Users, Applications, DiscoveryRuns, Journeys, Capabilities, etc. Internal only. |
+| `postgres` | External (not deployed in-cluster) | 5432 (default) | Primary datastore — Organizations, Users, Applications, DiscoveryRuns, Journeys, Capabilities, etc. Customer-hosted (e.g. RDS); host/port/db name set via the `aitestgen-config` ConfigMap, password via the `aitestgen-secrets` Secret. |
 | `temporal` | ClusterIP | 7233 (gRPC), 8233 (Web UI) | Workflow engine driving `DiscoveryWorkflow` / `GenerationWorkflow`. Internal only (port-forward for the UI). |
 | `vault` | ClusterIP | 8200 | Dev-mode KV store for onboarded Applications' target-app credentials. Internal only. |
 | `minio` | ClusterIP | 9000 (S3 API), 9001 (console) | Object storage for discovery evidence (screenshots/DOM snapshots). Internal only. |

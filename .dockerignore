@@ -1,0 +1,17 @@
+.git
+.venv
+node_modules
+apps/web/node_modules
+apps/web/dist
+.claude
+_bmad
+_bmad-output
+docs
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.mypy_cache
+.ruff_cache
+*.log
+.env
+.env.*
