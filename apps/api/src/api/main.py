@@ -6,6 +6,7 @@ Story 1.3 adds Application onboarding.
 """
 
 import json
+import os
 import uuid
 from datetime import datetime
 from typing import Annotated
@@ -29,13 +30,25 @@ from api.discovery import start_discovery_run
 
 app = FastAPI(title="Application Intelligence Platform API")
 
-# Dev-only: allow the Vite dev server to call this API directly.
+# Allowed browser origins for the SPA. Overridable via CORS_ALLOWED_ORIGINS
+# (comma-separated) so each environment (dev/staging/prod) can set its own
+# without touching code; defaults cover both dev-server hostnames Vite may
+# be reached on (localhost and 127.0.0.1). Never combine "*" with
+# allow_credentials=True — the session cookie (Story 1.2) requires
+# credentialed CORS, which browsers reject if the origin is a wildcard.
+_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
+_allowed_origins = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ALLOWED_ORIGINS", _default_origins).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=_allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=True,  # the session cookie (Story 1.2) requires this
+    allow_credentials=True,
 )
 
 SessionDep = Annotated[Session, Depends(get_session)]

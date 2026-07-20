@@ -338,13 +338,13 @@ git diff --exit-code apps/web/src/api-types.gen.ts   # must be clean
 |---|---|---|
 | Sign-in page never goes away / stuck loading | API not running or unreachable | Confirm the API is up on `:8000` and `/health` returns ok |
 | `401` on login with the seeded credentials | Seed script never run, or run against a different `DATABASE_URL` | Re-run `uv run --package api python -m api.scripts.seed_dev_data` |
-| Cookie doesn't stick between requests / immediately signed out | CORS `allow_credentials` missing, or wrong origin | Confirm you're on `http://localhost:5173` (the only allowed CORS origin) and the API has `allow_credentials=True` |
+| Cookie doesn't stick between requests / immediately signed out | CORS `allow_credentials` missing, or wrong origin | Confirm you're on `http://localhost:5173` or `http://127.0.0.1:5173` (the default allowed CORS origins — override with `CORS_ALLOWED_ORIGINS`) and the API has `allow_credentials=True` |
 | `pytest` DB/Vault/Temporal tests skipped | One of Postgres/Vault/Temporal not reachable | `docker compose up -d`, then set `DATABASE_URL`/`VAULT_ADDR`/`TEMPORAL_ADDRESS` if non-default |
 | `alembic upgrade head` connection error | Postgres not up yet | Wait for the container healthcheck, then retry |
 | Connect App form submits but Discover Journeys never updates its status | Discovery worker not running | Start it: `uv run --package discovery-worker python -m discovery_worker.worker` |
 | Temporal smoke test hangs | Generation worker not running | Start it first, in its own terminal |
 | CI `api-types` job red | `api-types.gen.ts` was hand-edited or stale | Regenerate against a running API and commit the result |
-| Frontend can't reach API | Vite origin not allowed | Dev CORS allows `http://localhost:5173` only — use that origin |
+| Frontend can't reach API | Vite origin not allowed | Dev CORS allows `http://localhost:5173` and `http://127.0.0.1:5173` by default — for any other origin/port, set `CORS_ALLOWED_ORIGINS` (comma-separated) before starting the API |
 
 ---
 
