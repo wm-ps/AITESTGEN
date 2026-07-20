@@ -1,0 +1,60 @@
+# No Service — this is a Temporal worker, all outbound connections (to
+# temporal/postgres/vault/minio), nothing listens for inbound traffic.
+# Resource requests are higher than the other services: each crawl runs a
+# real headless Chromium instance (Story 2.2).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: discovery-worker
+  namespace: aitestgen
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: discovery-worker
+  template:
+    metadata:
+      labels:
+        app: discovery-worker
+    spec:
+      containers:
+        - name: discovery-worker
+          image: REPLACE_ECR_REGISTRY/aitestgen-discovery-worker:latest
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: POSTGRES_PASSWORD
+            - name: DATABASE_URL
+              value: "postgresql+psycopg://postgres:$(POSTGRES_PASSWORD)@postgres:5432/aitestgen"
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: VAULT_TOKEN
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: MINIO_ACCESS_KEY
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: MINIO_SECRET_KEY
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: ANTHROPIC_API_KEY
+          envFrom:
+            - configMapRef:
+                name: aitestgen-config
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
