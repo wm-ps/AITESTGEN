@@ -1,14 +1,12 @@
-"""DiscoveryWorkflow orchestration test (Story 2.1 AC 1, extended by 2.2/2.5).
+"""DiscoveryWorkflow orchestration test (Story 2.1 AC 1, extended by 2.2/2.5/2.6).
 
 Runs against Temporal's in-memory time-skipping test environment (no external
 Temporal server needed) — same pattern as
 `packages/workflows/tests/test_generation_workflow.py`. Proves the workflow
-dispatches `DiscoveryActivity` -> `ApplicationModelBuilderActivity`, only
-continuing past `DiscoveryActivity` when it returns `status=complete`, using
-**fake** activity implementations — fast, no real Playwright/DB/Vault I/O.
-
-`InferenceActivity` (Story 2.6) is intentionally not exercised here — the
-workflow no longer invokes it (see `discovery_workflow.py`).
+dispatches `DiscoveryActivity` -> `ApplicationModelBuilderActivity` ->
+`InferenceActivity`, only continuing past `DiscoveryActivity` when it returns
+`status=complete`, using **fake** activity implementations — fast, no real
+Playwright/DB/Vault/LLM I/O.
 """
 
 import uuid
@@ -24,6 +22,7 @@ from workflows import (
     DiscoveryActivityInput,
     DiscoveryActivityOutput,
     DiscoveryWorkflow,
+    InferenceActivityInput,
 )
 
 
@@ -46,6 +45,15 @@ def _make_fake_model_builder_activity(calls: list[str]):
     return fake_model_builder_activity
 
 
+def _make_fake_inference_activity(calls: list[str]):
+    @activity.defn(name="InferenceActivity")
+    async def fake_inference_activity(input: InferenceActivityInput) -> list[str]:
+        calls.append("inference")
+        return []
+
+    return fake_inference_activity
+
+
 async def _run_workflow(discovery_status: str, calls: list[str]) -> str:
     discovery_run_id = str(uuid.uuid4())
     application_id = str(uuid.uuid4())
@@ -58,6 +66,7 @@ async def _run_workflow(discovery_status: str, calls: list[str]) -> str:
             activities=[
                 _make_fake_discovery_activity(discovery_status),
                 _make_fake_model_builder_activity(calls),
+                _make_fake_inference_activity(calls),
             ],
         ):
             return await env.client.execute_workflow(
@@ -69,14 +78,14 @@ async def _run_workflow(discovery_status: str, calls: list[str]) -> str:
 
 
 @pytest.mark.asyncio
-async def test_discovery_workflow_chains_model_builder_when_complete() -> None:
+async def test_discovery_workflow_chains_model_builder_then_inference_when_complete() -> None:
     calls: list[str] = []
     assert await _run_workflow("complete", calls) == "complete"
-    assert calls == ["model_builder"]
+    assert calls == ["model_builder", "inference"]
 
 
 @pytest.mark.asyncio
-async def test_discovery_workflow_skips_model_builder_when_failed() -> None:
+async def test_discovery_workflow_skips_model_builder_and_inference_when_failed() -> None:
     calls: list[str] = []
     assert await _run_workflow("failed", calls) == "failed"
     assert calls == []

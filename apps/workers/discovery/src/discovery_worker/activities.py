@@ -15,6 +15,8 @@ candidate Journey/Capability rows, plus starting `GenerationWorkflow` per
 candidate (no approval gate, AD-1/AD-9).
 """
 
+import logging
+import os
 import uuid
 
 from ai_provider.hosted import HostedAIProvider
@@ -29,12 +31,14 @@ from domain import (
     Form,
     FormField,
     Journey,
+    JourneyStep,
     Page,
     PageTransition,
     ValidationRule,
 )
 from playwright.async_api import async_playwright
 from secrets_client.vault_client import SecretRef, VaultSecretsClient
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio import activity
 from temporalio.exceptions import WorkflowAlreadyStartedError
@@ -60,10 +64,18 @@ from discovery_worker.crawler import (
 )
 from discovery_worker.db import engine
 from discovery_worker.identity_key import compute_identity_key
+from discovery_worker.journey_clustering import cluster_and_batch
 from discovery_worker.model_builder import build_application_model
 from discovery_worker.object_store import ObjectStore
 from discovery_worker.session import establish_session
 from discovery_worker.temporal_client import get_temporal_client
+
+logger = logging.getLogger(__name__)
+
+# AC6: a per-run backstop, not a per-batch one — since AC5 removes any human
+# gate before GenerationWorkflow (and its cost) starts, this is the only
+# remaining bound on a bad/hallucinating inference run's blast radius.
+MAX_CANDIDATE_JOURNEYS_PER_RUN = int(os.environ.get("MAX_CANDIDATE_JOURNEYS_PER_RUN", "50"))
 
 
 @activity.defn(name="DiscoveryActivity")
@@ -369,82 +381,143 @@ async def inference_activity(input: InferenceActivityInput) -> list[str]:
             object.__setattr__(page, "outgoing_transitions", transitions_by_page.get(page.id, []))
             object.__setattr__(page, "assertions", assertions_by_page.get(page.id, []))
 
-        candidates = HostedAIProvider().infer_journeys(pages)
+        # Navigation-graph clustering (Story 2.6 rework): group pages by how
+        # they're actually navigated between — free, no LLM — then bin-pack
+        # those clusters into batches under a page-count budget, so no single
+        # HostedAIProvider call ever has to reason over more than one
+        # coherent, connected subset of the Application. Transitions must be
+        # resolved to canonical page ids first, or an edge referencing a
+        # since-superseded row would silently fail to connect anything.
+        canonical_transitions = [
+            PageTransition(
+                application_id=application.id,
+                discovery_run_id=discovery_run.id,
+                from_page_id=_canonical_page_id(t.from_page_id),
+                to_page_id=_canonical_page_id(t.to_page_id),
+            )
+            for t in transitions
+        ]
+        batches = cluster_and_batch(pages, canonical_transitions)
 
         pages_by_id = {page.id: page for page in pages}
         journey_external_ids: list[str] = []
         temporal_client = await get_temporal_client()
+        candidates_processed = 0
 
-        for candidate in candidates:
-            supporting_pages = [
-                pages_by_id[page_id]
-                for pid in candidate.page_ids
-                if (page_id := uuid.UUID(pid)) in pages_by_id
-            ]
-            supporting_page_ids = {page.id for page in supporting_pages}
-            supporting_forms = [f for f in forms if f.page_id in supporting_page_ids]
-            supporting_api_endpoints = [
-                e for e in api_endpoints if e.page_id in supporting_page_ids
-            ]
-            supporting_components = [c for c in components if c.page_id in supporting_page_ids]
+        for batch in batches:
+            candidates = HostedAIProvider().infer_journeys(batch)
 
-            identity_key = compute_identity_key(
-                supporting_pages, supporting_components, supporting_api_endpoints
-            )
+            for candidate in candidates:
+                if candidates_processed >= MAX_CANDIDATE_JOURNEYS_PER_RUN:
+                    logger.warning(
+                        "InferenceActivity: run-level cap (%d) reached for discovery_run=%s — "
+                        "dropping candidate %r, no GenerationWorkflow started for it",
+                        MAX_CANDIDATE_JOURNEYS_PER_RUN,
+                        input.discovery_run_id,
+                        candidate.name,
+                    )
+                    continue
+                candidates_processed += 1
 
-            # AD-13/AD-9: a retry that finds a matching identity_key already
-            # on this Application skips re-creating the Journey row.
-            existing_journey = session.exec(
-                select(Journey)
-                .join(DiscoveryRun, Journey.discovery_run_id == DiscoveryRun.id)  # type: ignore[arg-type]
-                .where(
-                    DiscoveryRun.application_id == application.id,
-                    Journey.identity_key == identity_key,
+                supporting_pages = [
+                    pages_by_id[page_id]
+                    for step in candidate.steps
+                    if (page_id := uuid.UUID(step.page_id)) in pages_by_id
+                ]
+                if not supporting_pages:
+                    continue
+                supporting_page_ids = {page.id for page in supporting_pages}
+                supporting_api_endpoints = [
+                    e for e in api_endpoints if e.page_id in supporting_page_ids
+                ]
+                supporting_components = [
+                    c for c in components if c.page_id in supporting_page_ids
+                ]
+
+                identity_key = compute_identity_key(
+                    supporting_pages, supporting_components, supporting_api_endpoints
                 )
-            ).first()
 
-            if existing_journey is not None:
-                journey = existing_journey
-            else:
-                capability = _get_or_create_capability(
-                    session, application.id, candidate.capability_name
-                )
-                journey = Journey(
-                    discovery_run_id=discovery_run.id,
-                    capability_id=capability.id,
-                    name=candidate.name,
-                    identity_key=identity_key,
-                )
-                session.add(journey)
+                # AD-13/AD-9: a retry (or a concurrent InferenceActivity run
+                # against the same Application) that finds a matching
+                # identity_key skips re-creating the Journey row.
+                journey = session.exec(
+                    select(Journey).where(
+                        Journey.application_id == application.id,
+                        Journey.identity_key == identity_key,
+                    )
+                ).first()
+
+                if journey is None:
+                    capability = _get_or_create_capability(
+                        session, application.id, candidate.capability_name
+                    )
+                    journey = Journey(
+                        application_id=application.id,
+                        discovery_run_id=discovery_run.id,
+                        capability_id=capability.id,
+                        name=candidate.name,
+                        identity_key=identity_key,
+                    )
+                    session.add(journey)
+                    try:
+                        session.flush()
+                    except IntegrityError:
+                        # Lost the race to a concurrent InferenceActivity run
+                        # — the UNIQUE(application_id, identity_key)
+                        # constraint (not just this select) is what actually
+                        # prevents the duplicate. Use the row the other run
+                        # created instead of retrying our own insert.
+                        session.rollback()
+                        journey = session.exec(
+                            select(Journey).where(
+                                Journey.application_id == application.id,
+                                Journey.identity_key == identity_key,
+                            )
+                        ).one()
+
+                # Idempotent under retry: rewrite this Journey's steps from
+                # scratch rather than appending, so a retry never duplicates
+                # step rows or leaves stale ones from a prior attempt. The
+                # deletes must be flushed before the new rows are added —
+                # otherwise SQLAlchemy may order the new INSERTs before the
+                # old DELETEs within the same flush, colliding with the
+                # UNIQUE(journey_id, step_order) constraint on a still-live
+                # old row.
+                for existing_step in session.exec(
+                    select(JourneyStep).where(JourneyStep.journey_id == journey.id)
+                ).all():
+                    session.delete(existing_step)
                 session.flush()
 
-            for page in supporting_pages:
-                page.journey_id = journey.id
-                session.add(page)
-            for form in supporting_forms:
-                form.journey_id = journey.id
-                session.add(form)
-            for endpoint in supporting_api_endpoints:
-                endpoint.journey_id = journey.id
-                session.add(endpoint)
-            for component in supporting_components:
-                component.journey_id = journey.id
-                session.add(component)
-            session.commit()
+                supporting_pages_by_id = {page.id: page for page in supporting_pages}
+                for order, step in enumerate(candidate.steps, start=1):
+                    step_page_id = uuid.UUID(step.page_id)
+                    if step_page_id not in supporting_pages_by_id:
+                        continue
+                    session.add(
+                        JourneyStep(
+                            journey_id=journey.id,
+                            page_id=step_page_id,
+                            step_order=order,
+                            stage_label=step.stage_label,
+                        )
+                    )
+                session.commit()
 
-            journey_external_ids.append(str(journey.external_id))
+                journey_external_ids.append(str(journey.external_id))
 
-            # AD-1/AD-9: no approval gate — start GenerationWorkflow
-            # immediately, whether the Journey was just created or found from
-            # a prior attempt. Temporal's duplicate-workflow-ID rejection
-            # makes this naturally idempotent on retry.
-            try:
-                await temporal_client.start_workflow(
-                    GenerationWorkflow.run,
-                    id=f"generation-{journey.external_id}-1",
-                    task_queue=GENERATION_TASK_QUEUE,
-                )
-            except WorkflowAlreadyStartedError:
-                pass
+                # AD-1/AD-9: no approval gate — start GenerationWorkflow
+                # immediately, whether the Journey was just created or found
+                # from a prior attempt. Temporal's duplicate-workflow-ID
+                # rejection makes this naturally idempotent on retry.
+                try:
+                    await temporal_client.start_workflow(
+                        GenerationWorkflow.run,
+                        id=f"generation-{journey.external_id}-1",
+                        task_queue=GENERATION_TASK_QUEUE,
+                    )
+                except WorkflowAlreadyStartedError:
+                    pass
 
         return journey_external_ids

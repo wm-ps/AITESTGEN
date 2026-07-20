@@ -33,6 +33,18 @@ no `Evidence` table. Also adds three crawl-optimization rules (AC 4-6):
   distinct labels per page (page-body content tried before nav/header/footer
   chrome) so a shared site-wide button doesn't crowd out every page-specific
   call-to-action the way a single first-DOM-match previously did.
+
+Bug fix (2026-07-20): `heartbeat()` was only ever called once per page, at
+the top of the outer loop, before that page's forms/buttons were processed.
+On a real site, one page's form-fill-and-submit or button-click sequence can
+itself take close to (or over) the Activity's `heartbeat_timeout` — observed
+live: a slow page caused no heartbeat for >120s, Temporal declared the
+activity heartbeat-timed-out, and retried `DiscoveryActivity` from scratch —
+repeatedly, since retry attempts aren't capped, re-crawling and re-persisting
+the entire site every time (a real, user-visible "infinite loop", not the
+accepted-risk unbounded-*traversal* case Story 2.3 already documents).
+Fixed by heartbeating before each individual form submission and button
+click too, not just once per page.
 """
 
 import logging
@@ -234,7 +246,15 @@ async def _fill_and_submit_form(
     page_url: str,
     sink: _CaptureSink,
     seen_form_signatures: set[tuple[str, str, tuple[tuple[str | None, str | None], ...]]],
+    heartbeat: Callable[[], None] | None = None,
 ) -> str | None:
+    # A form's fill+submit+settle sequence can itself run close to the
+    # heartbeat_timeout window on a slow page — heartbeating here, not just
+    # once per page in the outer loop, is what actually prevents a single
+    # slow form from silently exhausting the whole activity's heartbeat and
+    # triggering a from-scratch retry (see Dev Notes below).
+    if heartbeat:
+        heartbeat()
     form = page.locator(form_selector)
     action = await form.get_attribute("action") or page.url
     method = (await form.get_attribute("method") or "get").upper()
@@ -273,18 +293,32 @@ async def _fill_and_submit_form(
     if signature in seen_form_signatures:
         return None
     seen_form_signatures.add(signature)
+    logger.info("  filling form on %s: %d fields", page_url, len(input_info))
 
     fields: list[CapturedFormField] = []
     for i, info in enumerate(input_info):
         if info["type"] == "hidden":
             continue
+        # A field-heavy form (checkout/payment) fills one field at a time —
+        # each fill is its own browser round-trip, and a slow remote site
+        # can make a dozen-plus of these add up past the heartbeat window
+        # well before the form is ever submitted. Heartbeat per field, not
+        # just once at the top of the whole form.
+        if heartbeat:
+            heartbeat()
         field_el = all_inputs.nth(i)
         input_type = info["type"]
         name = info["name"]
         value = _generic_value(input_type, name, info["id"])
         selector = await _capture_selector(field_el, fallback_text=name)
         try:
-            await field_el.fill(value)
+            # Explicit short timeout, not Playwright's 30s default — a
+            # checkout-sized form can have several CSS-hidden conditional
+            # fields (e.g. a "same as billing" toggle) that never become
+            # actionable; without this, each one burns its full default
+            # wait before falling into the except below (observed live:
+            # ~2.7min silent gap on a 46-field form, 2026-07-20).
+            await field_el.fill(value, timeout=2000)
             fields.append(
                 CapturedFormField(
                     name=name,
@@ -301,11 +335,18 @@ async def _fill_and_submit_form(
     submit = form.locator("button[type=submit], input[type=submit], button:not([type])")
     submit_label: str | None = None
     submit_selector: str | None = None
+    # Bracket the submit+settle sequence with heartbeats — this is the
+    # single slowest step in form processing (a real submit can redirect
+    # through an auth check, hit a slow remote server, or reload a
+    # multi-asset page) and was the actual observed cause of a whole-crawl
+    # heartbeat-timeout retry loop (2026-07-20, checkout.jsp on a real site).
+    if heartbeat:
+        heartbeat()
     try:
         if await submit.count() > 0:
             submit_label = await _submit_button_label(submit.first)
             submit_selector = await _capture_selector(submit.first, fallback_text=submit_label)
-            await submit.first.click()
+            await submit.first.click(timeout=2000)
         else:
             await form.evaluate("f => f.submit()")
     except Exception:
@@ -320,10 +361,14 @@ async def _fill_and_submit_form(
         await page.wait_for_load_state("domcontentloaded", timeout=8000)
     except Exception:
         pass
+    if heartbeat:
+        heartbeat()
     try:
         await page.wait_for_load_state("networkidle", timeout=4000)
     except Exception:
         pass
+    if heartbeat:
+        heartbeat()
 
     sink.add(CapturedForm(page_url=page_url, action_url=action, method=method, fields=fields))
     after_url = _page_fingerprint(page.url)
@@ -349,7 +394,9 @@ async def _fill_and_submit_form(
     return after_url if after_url != before_url else None
 
 
-async def _click_standalone_buttons(page, sink: _CaptureSink, base_url: str) -> list[str]:
+async def _click_standalone_buttons(
+    page, sink: _CaptureSink, base_url: str, heartbeat: Callable[[], None] | None = None
+) -> list[str]:
     """Clicks up to `_MAX_ACTIONS_PER_PAGE` distinct-labeled standalone
     buttons — page-body content first, nav/header/footer chrome only if
     budget remains, so a site-wide nav item doesn't crowd out every
@@ -367,10 +414,17 @@ async def _click_standalone_buttons(page, sink: _CaptureSink, base_url: str) -> 
         if budget <= 0:
             break
         buttons = page.locator(group_selector)
-        for i in range(await buttons.count()):
+        button_count = await buttons.count()
+        logger.info("  %s: %d candidate buttons (budget=%d)", before_url, button_count, budget)
+        for i in range(button_count):
             if budget <= 0:
                 break
             button = buttons.nth(i)
+            # Same reasoning as `_fill_and_submit_form`: a click can trigger
+            # a slow navigation/settle, so heartbeat before each attempt, not
+            # just once per page.
+            if heartbeat:
+                heartbeat()
             try:
                 label = (await button.inner_text()).strip()
             except Exception:
@@ -387,14 +441,23 @@ async def _click_standalone_buttons(page, sink: _CaptureSink, base_url: str) -> 
             except Exception as exc:
                 logger.info("standalone button click failed: %r (%s)", label, exc)
                 continue
+            # Bracket the settle waits too — the click itself is fast, but
+            # what it triggers (a redirect, a slow page reload) is the same
+            # class of risk `_fill_and_submit_form`'s submit+settle is.
+            if heartbeat:
+                heartbeat()
             try:
                 await page.wait_for_load_state("domcontentloaded", timeout=8000)
             except Exception:
                 pass
+            if heartbeat:
+                heartbeat()
             try:
                 await page.wait_for_load_state("networkidle", timeout=4000)
             except Exception:
                 pass
+            if heartbeat:
+                heartbeat()
             sink.add(
                 CapturedAction(
                     page_url=before_url, description=label, captured_selector=selector
@@ -533,6 +596,13 @@ async def run_discovery_crawl(
             _maybe_enqueue(_page_fingerprint(raw_link), current_url)
 
         form_count = await page.locator("form").count()
+        logger.info(
+            "visiting %s (page %d/?, %d forms, queue=%d remaining)",
+            url,
+            len(visited_pages),
+            form_count,
+            len(page_queue),
+        )
         for form_index in range(form_count):
             form_key = f"{_page_fingerprint(page.url)}#form-{form_index}"
             if form_key in visited_forms:
@@ -544,6 +614,7 @@ async def run_discovery_crawl(
                 _page_fingerprint(page.url),
                 sink,
                 seen_form_signatures,
+                heartbeat=heartbeat,
             )
             _maybe_enqueue(new_url, current_url)
             if _page_fingerprint(page.url) != url:
@@ -554,7 +625,9 @@ async def run_discovery_crawl(
         # captured as an Action/Transition but its destination was never
         # queued for further crawling, so any flow reachable only via such a
         # button was structurally invisible past the first click.
-        for discovered_url in await _click_standalone_buttons(page, sink, base_url):
+        for discovered_url in await _click_standalone_buttons(
+            page, sink, base_url, heartbeat=heartbeat
+        ):
             _maybe_enqueue(discovered_url, current_url)
 
     await page.close()

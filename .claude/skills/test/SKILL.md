@@ -1,15 +1,36 @@
 ---
 name: test
-description: 'Bring up every local-dev dependency for AITestGen (Postgres/Temporal/Vault via Docker, migrations, seed data, API, discovery worker, web app) so the user can validate the app end-to-end without remembering the runbook. Use when the user types /test or asks to spin up / start / bring up the app for validation.'
+description: 'Bring up every local-dev dependency for AITestGen (Postgres/Temporal/Vault via Docker, migrations, seed data, API, discovery worker, generation worker, web app) so the user can validate the app end-to-end without remembering the runbook. Use when the user types /test or asks to spin up / start / bring up the app for validation.'
 ---
 
 # /test — spin up AITestGen for validation
 
-The three long-lived processes (API, discovery worker, web) each get their
-own **visible terminal window** via Windows' native `start` — not the Bash
-tool's background mode — so the user can watch logs live and Ctrl+C /
-troubleshoot per-process. Closing a window is how the user stops that
-process.
+The four long-lived processes (API, discovery worker, generation worker,
+web) each get their own **visible terminal window** via Windows' native
+`start` — not the Bash tool's background mode — so the user can watch logs
+live and Ctrl+C / troubleshoot per-process. Closing a window is how the user
+stops that process.
+
+**The generation worker is not optional, and not just a Story 1.1 wiring
+proof — read this before skipping it.** An earlier version of this skill
+said to skip it. That was true only while `InferenceActivity` (Story 2.6)
+wasn't actually wired into a live `DiscoveryWorkflow` run. It now is: every
+real Discovery Run that completes and finds candidate Journeys starts one
+real `GenerationWorkflow` per Journey (AD-1, no approval gate) — and with no
+worker polling `generation-task-queue`, each of those sits `Running` in
+Temporal forever, silently piling up (observed live: 14 stuck workflows
+after one real Discovery Run). `GenerationWorkflow`'s body is still a
+no-op stub (Epic 4 isn't built yet), so once a worker exists to pick them
+up they complete instantly — the fix is having a worker there *at all*, not
+a code change.
+
+**If any of the four processes need an AI provider key (`AI_MODEL`/
+`GEMINI_API_KEY`/`ANTHROPIC_API_KEY`, etc. — whatever `packages/ai_provider`
+is configured for) from a local `.env`, launch with `uv run --env-file .env
+...` instead of a bare `uv run ...`, for both the API and the discovery
+worker.** Neither loads `.env` on its own — nothing in this codebase calls
+`python-dotenv` or similar — so without `--env-file .env`, `HostedAIProvider`
+has no key and Discovery Runs that reach `InferenceActivity` fail outright.
 
 **Every `start` window-launch command below MUST be run with the Bash tool's
 `dangerouslyDisableSandbox: true`.** Without it, the Bash tool's sandbox kills
@@ -45,7 +66,7 @@ Then, in parallel (single message, multiple tool calls):
    If it's not `200`, open the API in its own window (hot-reloads on `.py`
    changes already, via `--reload`); use the Bash tool's sandbox-disable option:
    ```
-   cmd //c start "AITestGen API" cmd //k "uv run --package api uvicorn api.main:app --reload --port 8000"
+   cmd //c start "AITestGen API" cmd //k "uv run --env-file .env --package api uvicorn api.main:app --reload --port 8000"
    ```
 6. Check if the discovery worker is already running (e.g.
    `ps -W | grep -i discovery_worker` — this environment's Git Bash doesn't
@@ -53,7 +74,15 @@ Then, in parallel (single message, multiple tool calls):
    so edits to its source or the shared `packages/` restart it automatically
    (needed for an onboarded Application's DiscoveryRun to actually execute):
    ```
-   cmd //c start "AITestGen Discovery Worker" cmd //k "uv run --package discovery-worker watchfiles \"python -m discovery_worker.worker\" apps/workers/discovery/src packages"
+   cmd //c start "AITestGen Discovery Worker" cmd //k "uv run --env-file .env --package discovery-worker watchfiles \"python -m discovery_worker.worker\" apps/workers/discovery/src packages"
+   ```
+6b. Check if the generation worker is already running (`ps -W | grep -i
+   generation_worker`). If not, open it in its own window, same
+   `watchfiles`-wrapped pattern — **do not skip this one** (see the note
+   above; every real Discovery Run's candidate Journeys depend on it to
+   avoid piling up as permanently-`Running` `GenerationWorkflow`s):
+   ```
+   cmd //c start "AITestGen Generation Worker" cmd //k "uv run --env-file .env --package generation-worker watchfiles \"python -m generation_worker.worker\" apps/workers/generation/src packages"
    ```
 7. In `apps/web`: run `npm install` only if `node_modules` is missing, then
    `npm run generate:api-types` (regenerates TS types from the now-running
@@ -70,8 +99,10 @@ Then, in parallel (single message, multiple tool calls):
    - Temporal UI: http://localhost:8233
    - Sign-in: `dev@example.com` / `devpassword123`
    - Each process is in its own titled window ("AITestGen API" /
-     "AITestGen Discovery Worker" / "AITestGen Web") — watch logs there, and
-     close a window to stop that process.
+     "AITestGen Discovery Worker" / "AITestGen Generation Worker" /
+     "AITestGen Web") — watch logs there, and close a window to stop that
+     process.
 
-Skip the generation worker and the Temporal smoke test — those are a separate
-Story 1.1 wiring proof, not part of validating the app.
+Skip only the Temporal smoke test script
+(`api.scripts.temporal_smoke_test`) — that alone is the separate Story 1.1
+wiring proof, unrelated to validating the app end-to-end.

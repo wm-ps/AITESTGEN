@@ -44,10 +44,6 @@ class Component(SQLModel, table=True):
         default=None,
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("form.id"), nullable=True, index=True),
     )
-    journey_id: uuid.UUID | None = Field(
-        default=None,
-        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("journey.id"), nullable=True, index=True),
-    )
     name: str
     type: str
     action: str

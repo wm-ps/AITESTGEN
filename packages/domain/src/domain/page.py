@@ -1,14 +1,17 @@
 """Page — a typed, directly-captured page visit (Story 2.2, AD-8).
 
-Written directly by `DiscoveryActivity`, always with `merged_into_id=null`
-and `journey_id=null` — this story never resolves duplicates (that's
-`ApplicationModelBuilderActivity`, Story 2.5) and never attributes a Journey
-(that's `InferenceActivity`, Story 2.6). `merged_into_id` is a nullable
-self-FK: null means this row is canonical, set means it's been superseded by
-the row it points at. Scoped by both `application_id` (so the same logical
-page is recognized across Discovery Runs — what makes the model reusable)
-and `discovery_run_id` (capture provenance). Screenshots are referenced via
-`object_storage_key`, never stored inline.
+Written directly by `DiscoveryActivity`, always with `merged_into_id=null` —
+this story never resolves duplicates (that's `ApplicationModelBuilderActivity`,
+Story 2.5). `merged_into_id` is a nullable self-FK: null means this row is
+canonical, set means it's been superseded by the row it points at. Scoped by
+both `application_id` (so the same logical page is recognized across
+Discovery Runs — what makes the model reusable) and `discovery_run_id`
+(capture provenance). Screenshots are referenced via `object_storage_key`,
+never stored inline.
+
+Journey attribution no longer lives here — `InferenceActivity` (Story 2.6)
+attributes a canonical Page to a Journey via a `JourneyStep` row instead of a
+bare FK on this table, so one Page can support more than one Journey.
 """
 
 import uuid
@@ -45,12 +48,6 @@ class Page(SQLModel, table=True):
     merged_into_id: uuid.UUID | None = Field(
         default=None,
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("page.id"), nullable=True, index=True),
-    )
-    # Nullable — set only by InferenceActivity (Story 2.6), only onto a
-    # canonical (merged_into_id IS NULL) row.
-    journey_id: uuid.UUID | None = Field(
-        default=None,
-        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("journey.id"), nullable=True, index=True),
     )
     url: str
     title: str = ""

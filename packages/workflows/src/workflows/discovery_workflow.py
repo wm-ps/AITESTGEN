@@ -15,12 +15,18 @@ worth continuing from:
 `DiscoveryActivity` -> `ApplicationModelBuilderActivity` (Story 2.5) ->
 `InferenceActivity` (Story 2.6) — only when `DiscoveryActivity` returns
 `status=complete` (never `failed`, e.g. `session_expired`).
+
+`InferenceActivity` gets an explicit `start_to_close_timeout` (LLM calls are
+slow) and a bounded `RetryPolicy` (the first use of one in this codebase) —
+an unbounded default retry against a slow/flaky AI provider would otherwise
+risk silent repeated paid calls and a workflow that never resolves.
 """
 
 from dataclasses import dataclass
 from datetime import timedelta
 
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 
 DISCOVERY_TASK_QUEUE = "discovery-task-queue"
 DISCOVERY_ACTIVITY_NAME = "DiscoveryActivity"
@@ -88,10 +94,20 @@ class DiscoveryWorkflow:
             result_type=ApplicationModelBuilderActivityOutput,
         )
 
-        # InferenceActivity (Story 2.6) intentionally not invoked: it needs a
-        # real ANTHROPIC_API_KEY, which isn't provisioned in this environment,
-        # and retrying it forever kept the workflow open long after the crawl
-        # itself had finished. Re-add the execute_activity call once a key is
-        # configured.
+        await workflow.execute_activity(
+            INFERENCE_ACTIVITY_NAME,
+            InferenceActivityInput(discovery_run_id=discovery_run_id),
+            # Generous for LLM latency — InferenceActivity may make several
+            # sequential per-batch calls for a large Application (Story 2.6's
+            # navigation-graph clustering).
+            # ponytail: batches run sequentially within one Activity attempt,
+            # not concurrently — the simplest thing that satisfies this
+            # story's tasks. If a very-many-batch Application makes this
+            # timeout too tight, dispatching batches concurrently (they're
+            # independent) is the upgrade path, not a longer timeout alone.
+            start_to_close_timeout=timedelta(minutes=5),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+            result_type=list[str],
+        )
 
         return discovery_result.status

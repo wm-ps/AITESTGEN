@@ -42,10 +42,6 @@ class ApiEndpoint(SQLModel, table=True):
             PGUUID(as_uuid=True), ForeignKey("api_endpoint.id"), nullable=True, index=True
         ),
     )
-    journey_id: uuid.UUID | None = Field(
-        default=None,
-        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("journey.id"), nullable=True, index=True),
-    )
     method: str
     path: str
     # Captured alongside method/path so a negative/error-path Scenario (Story

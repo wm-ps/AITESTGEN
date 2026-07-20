@@ -59,6 +59,39 @@ async def test_crawl_captures_every_typed_capture(target_app_url: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_fires_more_than_once_per_page(target_app_url: str) -> None:
+    """Bug fix (2026-07-20): a page's own form-fill/button-click sequence can
+    take close to the Activity's heartbeat_timeout on a slow real site — if
+    heartbeat only fired once per page (at dequeue), that page alone could
+    silently exceed the timeout and trigger a from-scratch retry loop
+    (observed live against a real target). This proves heartbeat now also
+    fires per form submission and per button click, not just once per page."""
+    credential = json.dumps({"username": "qa", "password": "qa-pass"}).encode()
+    object_store = FakeObjectStore()
+    heartbeat_calls = 0
+
+    def count_heartbeat() -> None:
+        nonlocal heartbeat_calls
+        heartbeat_calls += 1
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch()
+        context = await establish_session(
+            browser, auth_method="standard_login", credential=credential, base_url=target_app_url
+        )
+        result = await run_discovery_crawl(
+            context, target_app_url, object_store, uuid.uuid4(), heartbeat=count_heartbeat
+        )
+        await context.close()
+        await browser.close()
+
+    # The target fixture's dashboard page alone has 2 forms + several
+    # standalone buttons — if heartbeat only fired once per page, this count
+    # would equal len(result.pages) exactly. It must be strictly greater.
+    assert heartbeat_calls > len(result.pages)
+
+
+@pytest.mark.asyncio
 async def test_crawl_detects_session_expiry_mid_crawl(target_app_url: str) -> None:
     # 3 authenticated hits succeed (the post-login redirect, the crawl's own
     # dashboard visit, and the shared header's same-page form resubmit); the

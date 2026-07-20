@@ -22,6 +22,7 @@ from domain.discovery_run import DiscoveryRun
 from domain.form import Form
 from domain.form_field import FormField
 from domain.journey import Journey, JourneyStatus
+from domain.journey_step import JourneyStep
 from domain.organization import Organization
 from domain.page import Page
 from domain.page_transition import PageTransition
@@ -43,6 +44,7 @@ __all__ = [
     "FormField",
     "Journey",
     "JourneyStatus",
+    "JourneyStep",
     "Organization",
     "Page",
     "PageTransition",

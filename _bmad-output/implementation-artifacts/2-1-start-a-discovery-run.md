@@ -4,7 +4,7 @@ baseline_commit: 48b6499e08423320a0156e02720f1e8e2ba7d66c
 
 # Story 2.1: Start a Discovery Run
 
-Status: review
+Status: done <!-- verified live end-to-end 2026-07-20: real Discovery Runs started from the UI, crawled, and completed successfully -->
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

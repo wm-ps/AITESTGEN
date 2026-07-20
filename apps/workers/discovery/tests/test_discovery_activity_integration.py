@@ -120,7 +120,8 @@ async def test_discovery_activity_captures_the_application_model_against_live_ta
     assert forms, "expected at least one Form row"
     assert all(page.discovery_run_id == discovery_run_id for page in pages)
     assert all(page.merged_into_id is None for page in pages)
-    assert all(page.journey_id is None for page in pages)
+    # Journey attribution no longer lives on Page at all (Story 2.6 rework —
+    # see JourneyStep) — DiscoveryActivity structurally cannot set it.
 
     object_store = ObjectStore()
     for page in pages:

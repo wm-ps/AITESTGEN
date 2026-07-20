@@ -4,7 +4,7 @@ baseline_commit: 48b6499e08423320a0156e02720f1e8e2ba7d66c
 
 # Story 2.4: Session Expiry Handling
 
-Status: review
+Status: done <!-- implementation and tests were already complete pre-session; not itself exercised by this session's live end-to-end runs (no session-expiry scenario occurred against the live test target) -->
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

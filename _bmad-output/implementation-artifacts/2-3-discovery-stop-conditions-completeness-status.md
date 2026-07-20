@@ -4,7 +4,7 @@ baseline_commit: 48b6499e08423320a0156e02720f1e8e2ba7d66c
 
 # Story 2.3: Discovery Completion `[RENAMED 2026-07-15, was "Discovery Stop Conditions & Completeness Status"]`
 
-Status: review
+Status: done <!-- verified live end-to-end 2026-07-20: real Discovery Runs reach status=complete with no iteration cap, as designed -->
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

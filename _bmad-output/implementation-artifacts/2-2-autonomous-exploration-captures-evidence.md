@@ -6,7 +6,7 @@ baseline_commit: 48b6499e08423320a0156e02720f1e8e2ba7d66c
 
 *Renamed 2026-07-18, was "...Captures Evidence" — the generic `Evidence` table is removed in full, not merely renamed; this story now writes typed rows directly. See `sprint-change-proposal-2026-07-18.md`.*
 
-Status: review <!-- reworked and re-verified 2026-07-18 (this session) against the typed-capture design — see Change Log -->
+Status: done <!-- reworked and re-verified 2026-07-18 against the typed-capture design (see Change Log); verified live end-to-end 2026-07-20: multiple real crawls against shopbit.onwavemaker.com produced correct typed Page/Form/Action/ApiEndpoint/PageTransition rows -->
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

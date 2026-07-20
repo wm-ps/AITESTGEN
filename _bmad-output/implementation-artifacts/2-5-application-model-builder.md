@@ -6,7 +6,7 @@ baseline_commit: acaa283a69798961a099674e00c02ecddaf9fd15
 
 *Renumbered 2026-07-18, was Story 2.6 — the initial draft numbered this story (Application Model Builder) AFTER the AI Inference story (2.5) that depends on its output, backwards from the actual pipeline order (Discovery → Model Builder → Inference). Corrected: this story is now 2.5, and AI Inference is renumbered to 2.6. Rewritten the same day, second pass: the generic `Evidence` table concept is removed — Story 2.2 now writes directly into typed tables (`Page`/`Form`/`Action`/`ApiEndpoint`/`PageTransition`), so this story's job shifts from "transform Evidence into structure" to "merge duplicate typed captures into canonical, reusable rows and derive Component/ComponentLocator/Assertion from them." See `sprint-change-proposal-2026-07-18.md`.*
 
-Status: review <!-- implemented and verified 2026-07-18 (this session) — see Change Log -->
+Status: done <!-- implemented and verified 2026-07-18 — see Change Log; verified live end-to-end again 2026-07-20 across multiple real Discovery Runs -->
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 

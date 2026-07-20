@@ -10,7 +10,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import Column, DateTime, ForeignKey, text
+from sqlalchemy import Column, DateTime, ForeignKey, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -19,6 +19,9 @@ CapabilityStatus = Literal["candidate", "deleted"]
 
 class Capability(SQLModel, table=True):
     __tablename__ = "capability"  # pyright: ignore[reportAssignmentType]
+    __table_args__ = (
+        UniqueConstraint("application_id", "name", name="uq_capability_application_id_name"),
+    )
 
     id: uuid.UUID = Field(
         default_factory=uuid.uuid7,

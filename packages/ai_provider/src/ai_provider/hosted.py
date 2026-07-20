@@ -21,14 +21,24 @@ is removed; not built here or anywhere else without a fresh product decision.
 """
 
 import json
+import logging
 import os
+import re
 
 import litellm
 from domain import Page
 
-from ai_provider.journey_candidate import JourneyCandidate
+from ai_provider.journey_candidate import JourneyCandidate, JourneyCandidateStep
 
 AI_MODEL = os.environ.get("AI_MODEL", "anthropic/claude-sonnet-5")
+
+logger = logging.getLogger(__name__)
+
+# AC1 backstop: a Journey name must be business language, never a raw route/
+# page identifier — this regex only catches the obvious case (starts with a
+# path separator, or is bare host/URL-shaped); it's a defensive net behind
+# prompting, not the primary enforcement mechanism.
+_ROUTE_SHAPED_NAME = re.compile(r"^(/|https?://)")
 
 _PROMPT = """You are analyzing a structured Application Model (canonical pages, their \
 forms, automatable components, API calls, and how users actually navigate between \
@@ -42,16 +52,19 @@ Each page's "outgoing_transitions" lists the URLs a user actually reached from i
 during crawling (a real navigation path, not a guess) — use this to sequence pages \
 into a Journey, not just their titles or URLs.
 
-Group these pages into candidate Journeys. Each Journey needs:
+Group these pages into candidate Journeys, each as an ORDERED sequence of steps in \
+the order a user actually moves through the flow. Each Journey needs:
 - "name": a short business-language name (e.g. "Add item to list") — never a raw \
 route or page identifier
 - "capability_name": the broader business capability this Journey belongs to \
 (e.g. "Item Management")
-- "page_indices": the indices (from the list above) of every page that supports this \
-Journey
+- "steps": an ordered list of {{"page_index": <int>, "stage_label": "<short \
+business-language stage name, e.g. \\"Login\\" or \\"MFA Verification\\">"}} — one \
+entry per page (from the indexed list above) that supports this Journey, in flow order
 
 Respond with ONLY a JSON object of this shape, no prose: \
-{{"journeys": [{{"name": "...", "capability_name": "...", "page_indices": [0, 2]}}, ...]}}"""
+{{"journeys": [{{"name": "...", "capability_name": "...", "steps": [ \
+{{"page_index": 0, "stage_label": "..."}}, {{"page_index": 2, "stage_label": "..."}}]}}, ...]}}"""
 
 
 def _describe_page(page: Page) -> str:
@@ -93,12 +106,41 @@ class HostedAIProvider:
 
         candidates = []
         for group in groups:
-            indices = group["page_indices"]
+            name = group["name"]
+            if _ROUTE_SHAPED_NAME.match(name):
+                logger.warning(
+                    "HostedAIProvider: dropped candidate with route-shaped name %r", name
+                )
+                continue
+
+            steps = []
+            for raw_step in group["steps"]:
+                index = raw_step["page_index"]
+                # AC7 hallucination guard: the AI referenced a page index
+                # outside what it was actually given — drop just this step,
+                # not necessarily the whole candidate.
+                if not (0 <= index < len(pages)):
+                    logger.warning(
+                        "HostedAIProvider: dropped hallucinated page_index %r for candidate %r",
+                        index,
+                        name,
+                    )
+                    continue
+                steps.append(
+                    JourneyCandidateStep(
+                        page_id=str(pages[index].id), stage_label=raw_step["stage_label"]
+                    )
+                )
+
+            if not steps:
+                logger.warning(
+                    "HostedAIProvider: dropped candidate %r — zero valid steps remained", name
+                )
+                continue
+
             candidates.append(
                 JourneyCandidate(
-                    name=group["name"],
-                    capability_name=group["capability_name"],
-                    page_ids=[str(pages[i].id) for i in indices],
+                    name=name, capability_name=group["capability_name"], steps=steps
                 )
             )
         return candidates

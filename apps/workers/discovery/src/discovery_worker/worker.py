@@ -9,6 +9,7 @@ Run with: uv run --package discovery-worker python -m discovery_worker.worker
 """
 
 import asyncio
+import logging
 import os
 
 from temporalio.client import Client
@@ -25,6 +26,11 @@ TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 
 
 async def main() -> None:
+    # No logging was configured anywhere in this process — the root logger's
+    # default level (WARNING) silently swallowed every `logger.info(...)`
+    # call in crawler.py, so a long-running crawl looked completely silent
+    # in this Terminal window even while it was actively working.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
     client = await Client.connect(TEMPORAL_ADDRESS)
     worker = Worker(
         client,

@@ -22,7 +22,20 @@ def _fake_page(url: str, title: str = "") -> Page:
     return Page(application_id=uuid.uuid4(), discovery_run_id=uuid.uuid4(), url=url, title=title)
 
 
-def test_infer_journeys_maps_page_indices_to_page_ids(
+def _monkeypatch_completion(monkeypatch: pytest.MonkeyPatch, fake_response_body: str) -> dict:
+    captured_kwargs: dict = {}
+
+    def fake_completion(**kwargs):
+        captured_kwargs.update(kwargs)
+        message = SimpleNamespace(content=fake_response_body)
+        choice = SimpleNamespace(message=message)
+        return SimpleNamespace(choices=[choice])
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    return captured_kwargs
+
+
+def test_infer_journeys_maps_ordered_steps_to_page_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page0 = _fake_page("https://app.example.com/items", title="Items")
@@ -35,42 +48,107 @@ def test_infer_journeys_maps_page_indices_to_page_ids(
                 {
                     "name": "Browse items",
                     "capability_name": "Item Management",
-                    "page_indices": [0, 1],
+                    "steps": [
+                        {"page_index": 0, "stage_label": "Browse"},
+                        {"page_index": 1, "stage_label": "Add Item"},
+                    ],
                 },
                 {
                     "name": "View about page",
                     "capability_name": "Marketing",
-                    "page_indices": [2],
+                    "steps": [{"page_index": 2, "stage_label": "About"}],
                 },
             ]
         }
     )
 
-    captured_kwargs = {}
-
-    def fake_completion(**kwargs):
-        captured_kwargs.update(kwargs)
-        message = SimpleNamespace(content=fake_response_body)
-        choice = SimpleNamespace(message=message)
-        return SimpleNamespace(choices=[choice])
-
-    monkeypatch.setattr(litellm, "completion", fake_completion)
+    captured_kwargs = _monkeypatch_completion(monkeypatch, fake_response_body)
 
     candidates = HostedAIProvider().infer_journeys([page0, page1, page2])
 
     assert len(candidates) == 2
     assert candidates[0].name == "Browse items"
     assert candidates[0].capability_name == "Item Management"
-    assert candidates[0].page_ids == [str(page0.id), str(page1.id)]
-    assert candidates[1].page_ids == [str(page2.id)]
+    assert [s.page_id for s in candidates[0].steps] == [str(page0.id), str(page1.id)]
+    assert [s.stage_label for s in candidates[0].steps] == ["Browse", "Add Item"]
+    assert [s.page_id for s in candidates[1].steps] == [str(page2.id)]
 
     assert captured_kwargs["response_format"] == {"type": "json_object"}
     assert "model" in captured_kwargs
 
 
+def test_infer_journeys_rejects_route_shaped_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    page0 = _fake_page("https://app.example.com/checkout", title="Checkout")
+    fake_response_body = json.dumps(
+        {
+            "journeys": [
+                {
+                    "name": "/checkout/step-2",
+                    "capability_name": "Order Management",
+                    "steps": [{"page_index": 0, "stage_label": "Checkout"}],
+                }
+            ]
+        }
+    )
+    _monkeypatch_completion(monkeypatch, fake_response_body)
+
+    candidates = HostedAIProvider().infer_journeys([page0])
+
+    assert candidates == []
+
+
+def test_infer_journeys_drops_hallucinated_page_index_keeping_valid_steps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page0 = _fake_page("https://app.example.com/cart", title="Cart")
+    fake_response_body = json.dumps(
+        {
+            "journeys": [
+                {
+                    "name": "Checkout",
+                    "capability_name": "Order Management",
+                    "steps": [
+                        {"page_index": 0, "stage_label": "Cart"},
+                        {"page_index": 99, "stage_label": "Nonexistent"},
+                    ],
+                }
+            ]
+        }
+    )
+    _monkeypatch_completion(monkeypatch, fake_response_body)
+
+    candidates = HostedAIProvider().infer_journeys([page0])
+
+    assert len(candidates) == 1
+    assert [s.page_id for s in candidates[0].steps] == [str(page0.id)]
+
+
+def test_infer_journeys_drops_whole_candidate_when_zero_valid_steps_remain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page0 = _fake_page("https://app.example.com/cart", title="Cart")
+    fake_response_body = json.dumps(
+        {
+            "journeys": [
+                {
+                    "name": "All Hallucinated",
+                    "capability_name": "Order Management",
+                    "steps": [{"page_index": 99, "stage_label": "Nonexistent"}],
+                }
+            ]
+        }
+    )
+    _monkeypatch_completion(monkeypatch, fake_response_body)
+
+    candidates = HostedAIProvider().infer_journeys([page0])
+
+    assert candidates == []
+
+
 @pytest.mark.skipif(
-    not os.environ.get("ANTHROPIC_API_KEY"),
-    reason="requires a real ANTHROPIC_API_KEY (or AI_MODEL's provider key) — not provisioned here",
+    not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("GEMINI_API_KEY")),
+    reason="requires a real provider API key matching AI_MODEL (ANTHROPIC_API_KEY or "
+    "GEMINI_API_KEY) — not provisioned here",
 )
 def test_infer_journeys_live_call() -> None:
     pages = [
