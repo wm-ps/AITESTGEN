@@ -10,13 +10,12 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from domain import Application, AuthMethod, DiscoveryRun, PlatformUser
+from domain import Action, ApiEndpoint, Application, AuthMethod, DiscoveryRun, Page, PlatformUser
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 from secrets_client import VaultSecretsClient
 from sqlmodel import Session, select
-from workflows import DISCOVERY_TASK_QUEUE, DiscoveryWorkflow
 
 from api.auth import (
     CurrentOrgIdDep,
@@ -26,7 +25,7 @@ from api.auth import (
     verify_password,
 )
 from api.db import get_session
-from api.temporal_client import get_temporal_client
+from api.discovery import start_discovery_run
 
 app = FastAPI(title="Application Intelligence Platform API")
 
@@ -118,6 +117,7 @@ class ApplicationRead(BaseModel):
     created_at: datetime
     discovery_run_id: uuid.UUID
     discovery_status: str
+    discovery_failure_reason: str | None
 
 
 def _to_application_read(application: Application, discovery_run: DiscoveryRun) -> ApplicationRead:
@@ -130,6 +130,7 @@ def _to_application_read(application: Application, discovery_run: DiscoveryRun) 
         created_at=application.created_at,
         discovery_run_id=discovery_run.external_id,
         discovery_status=discovery_run.status,
+        discovery_failure_reason=discovery_run.failure_reason,
     )
 
 
@@ -162,20 +163,9 @@ async def create_application(
     session.flush()
 
     # Absorbed from removed Story 1.5: start a DiscoveryRun immediately, in
-    # the same request — no separate "start discovery" action (AC 4).
-    discovery_run = DiscoveryRun(application_id=application.id, status="running")
-    session.add(discovery_run)
-    session.commit()
-    session.refresh(application)
-    session.refresh(discovery_run)
-
-    client = await get_temporal_client()
-    await client.start_workflow(
-        DiscoveryWorkflow.run,
-        str(application.external_id),
-        id=f"discovery-{discovery_run.external_id}",
-        task_queue=DISCOVERY_TASK_QUEUE,
-    )
+    # the same request — no separate "start discovery" action (AC 4). The
+    # DiscoveryRun-creation logic itself is Story 2.1's (api.discovery).
+    discovery_run = await start_discovery_run(session, application)
 
     return _to_application_read(application, discovery_run)
 
@@ -199,3 +189,64 @@ def get_application(
     ).first()
     assert discovery_run is not None
     return _to_application_read(application, discovery_run)
+
+
+class CaptureRead(BaseModel):
+    kind: str
+    summary: str
+    created_at: datetime
+
+
+@app.get("/discovery-runs/{external_id}/captures", response_model=list[CaptureRead])
+def list_captures(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[CaptureRead]:
+    discovery_run = session.exec(
+        select(DiscoveryRun).where(DiscoveryRun.external_id == external_id)
+    ).first()
+    application = session.get(Application, discovery_run.application_id) if discovery_run else None
+    if (
+        discovery_run is None
+        or application is None
+        or application.organization_id != organization_id
+    ):
+        raise HTTPException(status_code=404, detail="discovery run not found")
+
+    # There is no single "capture" table (Story 2.2 rework, no generic
+    # Evidence) — the live feed is a union across the typed capture tables,
+    # ordered by created_at across all of them, not any one table's own feed.
+    pages = session.exec(select(Page).where(Page.discovery_run_id == discovery_run.id)).all()
+    actions = session.exec(select(Action).where(Action.discovery_run_id == discovery_run.id)).all()
+    api_calls = session.exec(
+        select(ApiEndpoint).where(ApiEndpoint.discovery_run_id == discovery_run.id)
+    ).all()
+
+    captures = (
+        [
+            CaptureRead(kind="page", summary=f"{p.title} ({p.url})", created_at=p.created_at)
+            for p in pages
+        ]
+        + [
+            CaptureRead(kind="action", summary=a.description, created_at=a.created_at)
+            for a in actions
+        ]
+        + [
+            CaptureRead(kind="api_call", summary=f"{e.method} {e.path}", created_at=e.created_at)
+            for e in api_calls
+        ]
+    )
+    captures.sort(key=lambda c: c.created_at, reverse=True)
+
+    # Self-explanatory terminal marker: the workflow keeps running past this
+    # point (Story 2.5's model builder, formerly 2.6's inference), so without
+    # this the feed just goes quiet with no signal that crawling itself is
+    # actually done.
+    if discovery_run.status == "complete":
+        completed_at = captures[0].created_at if captures else discovery_run.created_at
+        captures.insert(
+            0, CaptureRead(kind="status", summary="Crawling complete", created_at=completed_at)
+        )
+
+    return captures[:50]

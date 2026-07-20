@@ -3,7 +3,13 @@ name = "ai-provider"
 version = "0.1.0"
 description = "AIProvider port — single abstraction for all LLM calls (architecture AD-3)"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "litellm>=1.55,<1.90",
+    "domain",
+]
+
+[tool.uv.sources]
+domain = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

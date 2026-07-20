@@ -52,7 +52,11 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-17  # Story 1-4 (Configure Application Authentication Method) implemented → review
+last_updated: 2026-07-18  # Sprint Change Proposal (Application Model Builder) implemented and
+#   verified this session: 2-2 reworked (typed capture, no Evidence table; page-fingerprint dedup,
+#   navigation-first, representative-action sampling), 2-5 (Application Model Builder) built new,
+#   2-6 (renumbered from 2-5) rewired to read canonical Page/Component rows. All three moved to
+#   `review`. See sprint-change-proposal-2026-07-18.md and epics.md.
 project: AITestGen
 project_key: NOKEY
 tracking_system: file-system
@@ -69,11 +73,20 @@ development_status:
   epic-1-retrospective: optional
 
   epic-2: in-progress
-  2-1-start-a-discovery-run: ready-for-dev  # trigger changed 2026-07-15: automatic on Application creation, not manual
-  2-2-autonomous-exploration-captures-evidence: ready-for-dev
-  2-3-discovery-stop-conditions-completeness-status: ready-for-dev  # renamed "Discovery Completion" 2026-07-15; incomplete status removed
-  2-4-session-expiry-handling: ready-for-dev
-  2-5-ai-journey-capability-inference-from-evidence: ready-for-dev
+  2-1-start-a-discovery-run: review  # trigger changed 2026-07-15: automatic on Application creation, not manual
+  2-2-autonomous-exploration-captures-evidence: review  # reworked 2026-07-18 per sprint-change-proposal-2026-07-18.md —
+    # page-fingerprint dedup, navigation-first traversal, representative-action sampling, AND writes typed rows
+    # (Page/Form/FormField/ValidationRule/Action/ApiEndpoint/PageTransition) directly — no generic Evidence table;
+    # story file title updated, filename unchanged. Re-implemented and verified this session.
+  2-3-discovery-stop-conditions-completeness-status: review  # renamed "Discovery Completion" 2026-07-15; incomplete status removed
+  2-4-session-expiry-handling: review
+  2-5-application-model-builder: review  # implemented 2026-07-18 — merges duplicate Page/Form/ApiEndpoint
+    # rows (captured directly by 2-2, no Evidence table) into canonical, application-scoped rows via
+    # merged_into_id; derives Component/ComponentLocator/Assertion; runs before AI inference (2-6)
+  2-6-ai-journey-capability-inference-from-application-model: review  # renumbered from 2-5 2026-07-18
+    # (was numbered ahead of its own Application Model dependency — corrected) — reworked and re-verified
+    # this session; reads canonical Page/Component rows built by 2-5, never raw Evidence (removed) or a
+    # merged/superseded row
   epic-2-retrospective: optional
 
   epic-3: in-progress

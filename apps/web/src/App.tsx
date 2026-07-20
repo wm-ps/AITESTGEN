@@ -58,7 +58,11 @@ function App() {
         />
       )}
       {view === 'discover' && application && (
-        <DiscoverJourneysPlaceholder discoveryStatus={application.discovery_status} />
+        <DiscoverJourneysPlaceholder
+          discoveryStatus={application.discovery_status}
+          discoveryFailureReason={application.discovery_failure_reason ?? null}
+          discoveryRunId={application.discovery_run_id}
+        />
       )}
     </>
   )

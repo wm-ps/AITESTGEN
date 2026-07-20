@@ -35,3 +35,18 @@ services:
       VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
     ports:
       - "8200:8200"
+
+  # Dev-mode only (Story 2.2, Task 2) — S3-compatible object store for
+  # Evidence binaries (screenshots, DOM snapshots). The object-storage
+  # backend provider is explicitly deferred by the architecture (Deferred
+  # section); MinIO unblocks the build now and stays swappable for real
+  # S3/GCS/Azure Blob later since they all speak the same object-key model.
+  minio:
+    image: minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console

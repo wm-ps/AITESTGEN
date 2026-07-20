@@ -2,10 +2,11 @@
 
 Story 1.3 absorbs the former Story 1.5's job: onboarding an Application
 starts a DiscoveryRun (`status="running"`) in the same request, no separate
-"Start Discovery Run" action. Story 2.1+ owns the run's real lifecycle
-(stop conditions, completeness status); this entity only needs to exist and
-be observable for this story. Follows the same UUIDv7-internal /
-UUIDv4-external split `Application` establishes.
+"Start Discovery Run" action. Story 2.3 adds the `complete` transition;
+Story 2.4 adds `failed`/`failure_reason` (AD-11) — `session_expired` is the
+one value the Architecture Spine names explicitly, meaningful only when
+`status="failed"`. Follows the same UUIDv7-internal / UUIDv4-external split
+`Application` establishes.
 """
 
 import uuid
@@ -40,6 +41,7 @@ class DiscoveryRun(SQLModel, table=True):
         ),
     )
     status: str = Field(default="running")
+    failure_reason: str | None = Field(default=None)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
