@@ -21,7 +21,7 @@ from ai_provider.journey_candidate import JourneyCandidate
 
 
 class AIProvider(Protocol):
-    def infer_journeys(self, pages: list[Page]) -> list[JourneyCandidate]: ...
+    async def infer_journeys(self, pages: list[Page]) -> list[JourneyCandidate]: ...
 
     def generate_scenarios(self, journey: Any, pages: list[Any]) -> list[Any]:
         """journey: Journey, pages: list[Page] -> list[Scenario]."""

@@ -60,7 +60,7 @@ class _FakeAIProvider:
     def __init__(self, candidates: list[JourneyCandidate]) -> None:
         self._candidates = candidates
 
-    def infer_journeys(self, pages: list[Page]) -> list[JourneyCandidate]:
+    async def infer_journeys(self, pages: list[Page]) -> list[JourneyCandidate]:
         return self._candidates
 
 

@@ -1,11 +1,11 @@
 """HostedAIProvider — the first real `AIProvider` adapter (Story 2.6, AD-3).
 
-Backed by `litellm` rather than a direct vendor SDK — no AI vendor is named
-in the PRD or Architecture Spine, resolved for this build via `litellm`
-(confirmed with the user during story creation). `litellm` is the one unified
-client that speaks a single interface across providers, so the model string
-is a config value (`AI_MODEL` env var), not a code change — this is what
-lets a future hosted/on-prem or vendor swap touch only this file (AD-3).
+Backed by a LiteLLM proxy server (not the `litellm` SDK) reached over HTTP —
+no AI vendor is named in the PRD or Architecture Spine; the proxy owns
+provider routing/credentials entirely, so this file only ever speaks one
+OpenAI-compatible `/chat/completions` shape. `AI_MODEL` is the proxy's model
+alias, not a code change — this is what lets a future vendor/model swap
+touch only proxy config, never this file (AD-3).
 
 Reads canonical `Page` rows (Story 2.5's Application Model), each optionally
 carrying transient `.forms`/`.components`/`.api_endpoints`/
@@ -14,10 +14,10 @@ attaches before calling this — richer context than a bare page URL, but this
 provider tolerates their absence (`getattr(..., [])`) so it stays usable
 against a plain `list[Page]` in isolation (e.g. tests).
 
-Requires an API key for whichever provider `AI_MODEL` names — for the
-default Anthropic model, `ANTHROPIC_API_KEY` (litellm reads it directly).
-`CustomerEndpointAIProvider` (on-prem) has no story to build it in — Epic 7
-is removed; not built here or anywhere else without a fresh product decision.
+Requires `LITELLM_BASE_URL` and `LITELLM_API_KEY` (the proxy's own virtual
+key, not a vendor key). `CustomerEndpointAIProvider` (on-prem) has no story
+to build it in — Epic 7 is removed; not built here or anywhere else without
+a fresh product decision.
 """
 
 import json
@@ -25,12 +25,14 @@ import logging
 import os
 import re
 
-import litellm
+import httpx
 from domain import Page
 
 from ai_provider.journey_candidate import JourneyCandidate, JourneyCandidateStep
 
 AI_MODEL = os.environ.get("AI_MODEL", "anthropic/claude-sonnet-5")
+LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "")
+LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "")
 
 logger = logging.getLogger(__name__)
 
@@ -89,19 +91,23 @@ def _describe_page(page: Page) -> str:
 
 
 class HostedAIProvider:
-    """`AIProvider` (Protocol) adapter backed by litellm."""
+    """`AIProvider` (Protocol) adapter backed by a LiteLLM proxy server."""
 
-    def infer_journeys(self, pages: list[Page]) -> list[JourneyCandidate]:
+    async def infer_journeys(self, pages: list[Page]) -> list[JourneyCandidate]:
         listing = "\n".join(f"{i}: {_describe_page(p)}" for i, p in enumerate(pages))
-        response = litellm.completion(
-            model=AI_MODEL,
-            messages=[{"role": "user", "content": _PROMPT.format(page_listing=listing)}],
-            response_format={"type": "json_object"},
-        )
-        # litellm's return type also covers streaming responses; this call
-        # never sets stream=True, so it's always the non-streaming shape.
-        content = response.choices[0].message.content  # type: ignore[union-attr]
-        assert content is not None
+        payload = {
+            "model": AI_MODEL,
+            "messages": [{"role": "user", "content": _PROMPT.format(page_listing=listing)}],
+            "response_format": {"type": "json_object"},
+        }
+        async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=60) as client:
+            response = await client.post(
+                "/chat/completions",
+                headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
+                json=payload,
+            )
+            response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
         groups = json.loads(content)["journeys"]
 
         candidates = []

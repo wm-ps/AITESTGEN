@@ -1,18 +1,17 @@
 """HostedAIProvider (Story 2.6, Task 2).
 
-`infer_journeys`' parsing/mapping logic is tested here with `litellm.completion`
-monkeypatched — no real API key or network call needed. A real live call
-against the configured model is a separate, skip-cleanly integration test
-(requires `ANTHROPIC_API_KEY` or whatever `AI_MODEL` needs) since this
-environment has no provisioned key.
+`infer_journeys`' parsing/mapping logic is tested here with
+`httpx.AsyncClient.post` monkeypatched — no real proxy key or network call
+needed. A real live call against the configured proxy is a separate,
+skip-cleanly integration test (requires `LITELLM_BASE_URL`/`LITELLM_API_KEY`)
+since this environment has no provisioned proxy.
 """
 
 import json
 import os
 import uuid
-from types import SimpleNamespace
 
-import litellm
+import httpx
 import pytest
 from ai_provider.hosted import HostedAIProvider
 from domain import Page
@@ -22,20 +21,24 @@ def _fake_page(url: str, title: str = "") -> Page:
     return Page(application_id=uuid.uuid4(), discovery_run_id=uuid.uuid4(), url=url, title=title)
 
 
-def _monkeypatch_completion(monkeypatch: pytest.MonkeyPatch, fake_response_body: str) -> dict:
-    captured_kwargs: dict = {}
+def _monkeypatch_post(monkeypatch: pytest.MonkeyPatch, fake_response_body: str) -> dict:
+    captured: dict = {}
 
-    def fake_completion(**kwargs):
-        captured_kwargs.update(kwargs)
-        message = SimpleNamespace(content=fake_response_body)
-        choice = SimpleNamespace(message=message)
-        return SimpleNamespace(choices=[choice])
+    async def fake_post(self, url, *, headers=None, json=None):
+        captured["url"] = url
+        captured["headers"] = headers
+        captured["json"] = json
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": fake_response_body}}]},
+            request=httpx.Request("POST", "https://fake-proxy.example.com/chat/completions"),
+        )
 
-    monkeypatch.setattr(litellm, "completion", fake_completion)
-    return captured_kwargs
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    return captured
 
 
-def test_infer_journeys_maps_ordered_steps_to_page_ids(
+async def test_infer_journeys_maps_ordered_steps_to_page_ids(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page0 = _fake_page("https://app.example.com/items", title="Items")
@@ -62,9 +65,9 @@ def test_infer_journeys_maps_ordered_steps_to_page_ids(
         }
     )
 
-    captured_kwargs = _monkeypatch_completion(monkeypatch, fake_response_body)
+    captured = _monkeypatch_post(monkeypatch, fake_response_body)
 
-    candidates = HostedAIProvider().infer_journeys([page0, page1, page2])
+    candidates = await HostedAIProvider().infer_journeys([page0, page1, page2])
 
     assert len(candidates) == 2
     assert candidates[0].name == "Browse items"
@@ -73,11 +76,12 @@ def test_infer_journeys_maps_ordered_steps_to_page_ids(
     assert [s.stage_label for s in candidates[0].steps] == ["Browse", "Add Item"]
     assert [s.page_id for s in candidates[1].steps] == [str(page2.id)]
 
-    assert captured_kwargs["response_format"] == {"type": "json_object"}
-    assert "model" in captured_kwargs
+    assert captured["json"]["response_format"] == {"type": "json_object"}
+    assert "model" in captured["json"]
+    assert captured["headers"]["Authorization"].startswith("Bearer ")
 
 
-def test_infer_journeys_rejects_route_shaped_name(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_infer_journeys_rejects_route_shaped_name(monkeypatch: pytest.MonkeyPatch) -> None:
     page0 = _fake_page("https://app.example.com/checkout", title="Checkout")
     fake_response_body = json.dumps(
         {
@@ -90,14 +94,14 @@ def test_infer_journeys_rejects_route_shaped_name(monkeypatch: pytest.MonkeyPatc
             ]
         }
     )
-    _monkeypatch_completion(monkeypatch, fake_response_body)
+    _monkeypatch_post(monkeypatch, fake_response_body)
 
-    candidates = HostedAIProvider().infer_journeys([page0])
+    candidates = await HostedAIProvider().infer_journeys([page0])
 
     assert candidates == []
 
 
-def test_infer_journeys_drops_hallucinated_page_index_keeping_valid_steps(
+async def test_infer_journeys_drops_hallucinated_page_index_keeping_valid_steps(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page0 = _fake_page("https://app.example.com/cart", title="Cart")
@@ -115,15 +119,15 @@ def test_infer_journeys_drops_hallucinated_page_index_keeping_valid_steps(
             ]
         }
     )
-    _monkeypatch_completion(monkeypatch, fake_response_body)
+    _monkeypatch_post(monkeypatch, fake_response_body)
 
-    candidates = HostedAIProvider().infer_journeys([page0])
+    candidates = await HostedAIProvider().infer_journeys([page0])
 
     assert len(candidates) == 1
     assert [s.page_id for s in candidates[0].steps] == [str(page0.id)]
 
 
-def test_infer_journeys_drops_whole_candidate_when_zero_valid_steps_remain(
+async def test_infer_journeys_drops_whole_candidate_when_zero_valid_steps_remain(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     page0 = _fake_page("https://app.example.com/cart", title="Cart")
@@ -138,23 +142,23 @@ def test_infer_journeys_drops_whole_candidate_when_zero_valid_steps_remain(
             ]
         }
     )
-    _monkeypatch_completion(monkeypatch, fake_response_body)
+    _monkeypatch_post(monkeypatch, fake_response_body)
 
-    candidates = HostedAIProvider().infer_journeys([page0])
+    candidates = await HostedAIProvider().infer_journeys([page0])
 
     assert candidates == []
 
 
 @pytest.mark.skipif(
-    not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("GEMINI_API_KEY")),
-    reason="requires a real provider API key matching AI_MODEL (ANTHROPIC_API_KEY or "
-    "GEMINI_API_KEY) — not provisioned here",
+    not (os.environ.get("LITELLM_BASE_URL") and os.environ.get("LITELLM_API_KEY")),
+    reason="requires a real LiteLLM proxy (LITELLM_BASE_URL/LITELLM_API_KEY) — "
+    "not provisioned here",
 )
-def test_infer_journeys_live_call() -> None:
+async def test_infer_journeys_live_call() -> None:
     pages = [
         _fake_page("https://app.example.com/cart", title="Cart"),
         _fake_page("https://app.example.com/checkout", title="Checkout"),
     ]
-    candidates = HostedAIProvider().infer_journeys(pages)
+    candidates = await HostedAIProvider().infer_journeys(pages)
     assert candidates
     assert all(isinstance(c.name, str) and c.name for c in candidates)

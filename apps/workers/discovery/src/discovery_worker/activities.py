@@ -405,7 +405,7 @@ async def inference_activity(input: InferenceActivityInput) -> list[str]:
         candidates_processed = 0
 
         for batch in batches:
-            candidates = HostedAIProvider().infer_journeys(batch)
+            candidates = await HostedAIProvider().infer_journeys(batch)
 
             for candidate in candidates:
                 if candidates_processed >= MAX_CANDIDATE_JOURNEYS_PER_RUN:

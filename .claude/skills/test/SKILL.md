@@ -24,13 +24,15 @@ no-op stub (Epic 4 isn't built yet), so once a worker exists to pick them
 up they complete instantly — the fix is having a worker there *at all*, not
 a code change.
 
-**If any of the four processes need an AI provider key (`AI_MODEL`/
-`GEMINI_API_KEY`/`ANTHROPIC_API_KEY`, etc. — whatever `packages/ai_provider`
-is configured for) from a local `.env`, launch with `uv run --env-file .env
-...` instead of a bare `uv run ...`, for both the API and the discovery
-worker.** Neither loads `.env` on its own — nothing in this codebase calls
-`python-dotenv` or similar — so without `--env-file .env`, `HostedAIProvider`
-has no key and Discovery Runs that reach `InferenceActivity` fail outright.
+**The API and discovery worker need `AI_MODEL`/`LITELLM_BASE_URL`/
+`LITELLM_API_KEY` from a local `.env` — launch both with `uv run --env-file
+.env ...` instead of a bare `uv run ...`.** Neither loads `.env` on its own —
+nothing in this codebase calls `python-dotenv` or similar — so without
+`--env-file .env`, `HostedAIProvider` has no proxy URL/key and Discovery Runs
+that reach `InferenceActivity` fail outright. `HostedAIProvider` talks to a
+LiteLLM *proxy server* over HTTP (`LITELLM_BASE_URL`), not a vendor SDK — no
+per-provider key (`GEMINI_API_KEY`/`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`) is
+read by this codebase; the proxy owns provider credentials.
 
 **Every `start` window-launch command below MUST be run with the Bash tool's
 `dangerouslyDisableSandbox: true`.** Without it, the Bash tool's sandbox kills
