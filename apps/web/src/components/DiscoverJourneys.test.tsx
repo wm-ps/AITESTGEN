@@ -13,9 +13,23 @@ const STEPS = [
   },
 ]
 
+const APPLICATION = {
+  id: 'app-1',
+  name: 'Test App',
+  url: 'https://app.example.com',
+  environment: 'staging',
+  auth_method: 'standard_login',
+  created_at: new Date(0).toISOString(),
+  discovery_run_id: 'run-1',
+  discovery_status: 'complete',
+  discovery_stage: 'analyzing',
+  discovery_failure_reason: null,
+}
+
 function stubFetch(overrides: {
   onRename?: (name: string) => void
   onDelete?: () => void
+  application?: Partial<typeof APPLICATION>
 } = {}) {
   vi.stubGlobal(
     'fetch',
@@ -35,6 +49,13 @@ function stubFetch(overrides: {
       if (url.includes('/journeys')) {
         return { ok: true, status: 200, json: async () => JOURNEYS }
       }
+      if (url.endsWith('/applications/app-1')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ ...APPLICATION, ...overrides.application }),
+        }
+      }
       return { ok: true, status: 200, json: async () => [] }
     }),
   )
@@ -44,9 +65,10 @@ function renderScreen() {
   return render(
     <DiscoverJourneys
       applicationId="app-1"
+      applicationName="Test App"
       discoveryStatus="complete"
+      discoveryStage="analyzing"
       discoveryFailureReason={null}
-      discoveryRunId="run-1"
     />,
   )
 }
@@ -68,25 +90,28 @@ describe('DiscoverJourneys', () => {
     expect(screen.queryByText(/risk/i)).toBeNull()
   })
 
-  it('hides the live discovery feed once Journeys have been discovered', async () => {
+  it('hides the business-stage import progress once Journeys have been discovered', async () => {
     stubFetch()
     renderScreen()
 
     await waitFor(() => {
       expect(screen.getByText('Checkout')).toBeTruthy()
     })
-    expect(screen.queryByText('Live discovery feed')).toBeNull()
+    expect(screen.queryByRole('progressbar')).toBeNull()
   })
 
-  it('shows the live discovery feed while no Journeys have been discovered yet', async () => {
+  it('shows the business-stage import progress while no Journeys have been discovered yet', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
-        if (url.includes('/captures')) {
+        if (url.includes('/journeys')) {
+          return { ok: true, status: 200, json: async () => [] }
+        }
+        if (url.endsWith('/applications/app-1')) {
           return {
             ok: true,
             status: 200,
-            json: async () => [{ kind: 'page', summary: 'Home (/)', created_at: '2026-01-01T00:00:00Z' }],
+            json: async () => ({ ...APPLICATION, discovery_stage: 'discovering' }),
           }
         }
         return { ok: true, status: 200, json: async () => [] }
@@ -95,8 +120,52 @@ describe('DiscoverJourneys', () => {
     renderScreen()
 
     await waitFor(() => {
-      expect(screen.getByText('Live discovery feed')).toBeTruthy()
+      expect(screen.getByText('Discovering journeys in Test App')).toBeTruthy()
+      // 25%, not 75% — the percentage reflects the stage that just finished
+      // (authentication), not "discovering"'s own target; see ImportProgress.tsx.
+      expect(screen.getByText('25%')).toBeTruthy()
     })
+    // No internal stage naming, and no crawl-specific/technical terminology
+    // in this view (CR-2 + live UX correction).
+    expect(screen.queryByText('Discovery')).toBeNull()
+    expect(screen.queryByText('Authentication')).toBeNull()
+    expect(document.body.textContent).not.toMatch(/crawl|queue|fingerprint/i)
+  })
+
+  it('shows the re-authentication banner once a poll reports session_expired, replacing stage progress', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/journeys')) return { ok: true, status: 200, json: async () => [] }
+        if (url.endsWith('/applications/app-1')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ...APPLICATION,
+              discovery_status: 'failed',
+              discovery_stage: null,
+              discovery_failure_reason: 'session_expired',
+            }),
+          }
+        }
+        return { ok: true, status: 200, json: async () => [] }
+      }),
+    )
+    render(
+      <DiscoverJourneys
+        applicationId="app-1"
+        applicationName="Test App"
+        discoveryStatus="running"
+        discoveryStage="discovering"
+        discoveryFailureReason={null}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert').textContent).toMatch(/session expired/i)
+    })
+    expect(screen.queryByRole('progressbar')).toBeNull()
   })
 
   it('selecting a row replaces the detail panel with that Journey’s step-by-step detail', async () => {
@@ -133,6 +202,9 @@ describe('DiscoverJourneys', () => {
               { step_order: 3, stage_label: 'Checkout', route: '/checkout', method: 'GET' },
             ],
           }
+        }
+        if (url.endsWith('/applications/app-1')) {
+          return { ok: true, status: 200, json: async () => APPLICATION }
         }
         return { ok: true, status: 200, json: async () => JOURNEYS }
       }),

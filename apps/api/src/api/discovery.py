@@ -14,7 +14,9 @@ from api.temporal_client import get_temporal_client
 
 
 async def start_discovery_run(session: Session, application: Application) -> DiscoveryRun:
-    discovery_run = DiscoveryRun(application_id=application.id, status="running")
+    discovery_run = DiscoveryRun(
+        application_id=application.id, status="running", stage="initializing"
+    )
     session.add(discovery_run)
     session.commit()
     session.refresh(application)

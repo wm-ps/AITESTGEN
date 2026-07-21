@@ -214,6 +214,10 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
             )
             object_store = await asyncio.to_thread(ObjectStore)
 
+            discovery_run.stage = "authenticating"
+            session.add(discovery_run)
+            session.commit()
+
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.launch(headless=True)
                 context = await establish_session(
@@ -222,6 +226,11 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                     credential=credential,
                     base_url=application.url,
                 )
+
+                discovery_run.stage = "discovering"
+                session.add(discovery_run)
+                session.commit()
+
                 result = await run_discovery_crawl(
                     context,
                     application.url,
@@ -305,6 +314,12 @@ async def inference_activity(input: InferenceActivityInput) -> list[str]:
         ).one()
         application = session.get(Application, discovery_run.application_id)
         assert application is not None
+
+        # AC8 (CR-2): set independently of `status`, which already flipped to
+        # "complete" back in discovery_activity, well before this Activity runs.
+        discovery_run.stage = "analyzing"
+        session.add(discovery_run)
+        session.commit()
 
         # Canonical rows only (merged_into_id IS NULL) — never a superseded
         # row (AD-14).

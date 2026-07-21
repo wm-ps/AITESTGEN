@@ -60,9 +60,10 @@ function App() {
       {view === 'discover' && application && (
         <DiscoverJourneys
           applicationId={application.id}
+          applicationName={application.name}
           discoveryStatus={application.discovery_status}
+          discoveryStage={application.discovery_stage ?? null}
           discoveryFailureReason={application.discovery_failure_reason ?? null}
-          discoveryRunId={application.discovery_run_id}
         />
       )}
     </>

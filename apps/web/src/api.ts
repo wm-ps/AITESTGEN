@@ -4,7 +4,6 @@ export type UserRead = components['schemas']['UserRead']
 export type LoginRequest = components['schemas']['LoginRequest']
 export type ApplicationCreate = components['schemas']['ApplicationCreate']
 export type ApplicationRead = components['schemas']['ApplicationRead']
-export type CaptureRead = components['schemas']['CaptureRead']
 export type JourneyRead = components['schemas']['JourneyRead']
 export type JourneyStepRead = components['schemas']['JourneyStepRead']
 
@@ -40,8 +39,8 @@ export const api = {
   me: () => request<UserRead>('/auth/me'),
   createApplication: (payload: ApplicationCreate) =>
     request<ApplicationRead>('/applications', { method: 'POST', body: JSON.stringify(payload) }),
-  listCaptures: (discoveryRunId: string) =>
-    request<CaptureRead[]>(`/discovery-runs/${discoveryRunId}/captures`),
+  getApplication: (applicationId: string) =>
+    request<ApplicationRead>(`/applications/${applicationId}`),
   listJourneys: (applicationId: string) =>
     request<JourneyRead[]>(`/applications/${applicationId}/journeys`),
   listJourneySteps: (journeyId: string) =>

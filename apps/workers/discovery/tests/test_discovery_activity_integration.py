@@ -115,6 +115,10 @@ async def test_discovery_activity_captures_the_application_model_against_live_ta
 
     assert completed_run is not None
     assert completed_run.status == "complete"
+    # CR-2 (AC 10): authenticating -> discovering, and stage remains
+    # "discovering" through completion (ApplicationModelBuilder/Inference are
+    # separate Activities that own the later stage transitions).
+    assert completed_run.stage == "discovering"
 
     assert pages, "expected at least one Page row"
     assert forms, "expected at least one Form row"

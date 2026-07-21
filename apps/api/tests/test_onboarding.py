@@ -9,6 +9,7 @@ import json
 import logging
 import uuid
 
+import httpx
 import hvac
 import pytest
 from api.db import engine, init_db
@@ -209,3 +210,115 @@ def test_cross_organization_isolation() -> None:
 
     assert client_a.get(f"/applications/{application_id}").status_code == 200
     assert client_b.get(f"/applications/{application_id}").status_code == 404
+
+
+# --- FR-31 (CR-3) — reachability validation ---
+# httpx never touches the network here — a fake AsyncClient stands in so these
+# tests exercise `_check_reachable`'s branching, not real DNS.
+
+
+class _FakeResponse:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+
+
+class _FakeAsyncClient:
+    def __init__(
+        self,
+        *,
+        unreachable: bool = False,
+        head_status: int = 200,
+        get_status: int = 200,
+        **_kwargs: object,
+    ) -> None:
+        self._unreachable = unreachable
+        self._head_status = head_status
+        self._get_status = get_status
+
+    async def __aenter__(self) -> _FakeAsyncClient:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    async def head(self, url: str) -> _FakeResponse:
+        if self._unreachable:
+            raise httpx.RequestError("simulated network failure")
+        return _FakeResponse(self._head_status)
+
+    async def get(self, url: str) -> _FakeResponse:
+        if self._unreachable:
+            raise httpx.RequestError("simulated network failure")
+        return _FakeResponse(self._get_status)
+
+
+@pytest.fixture(autouse=True)
+def _reachable_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every test in this module posts a synthetic `*.example.com` URL that
+    isn't actually reachable — stub httpx.AsyncClient to treat it as
+    reachable by default (FR-31) so the tests above (predating this CR)
+    don't become flaky/networked. Tests that exercise the reachability check
+    itself override this via their own `monkeypatch.setattr` call below,
+    which simply wins (last write to the same attribute)."""
+    monkeypatch.setattr("api.main.httpx.AsyncClient", lambda **kwargs: _FakeAsyncClient())
+
+
+def _post_application(client: TestClient, name: str, url: str = "https://app.example.com"):
+    return client.post(
+        "/applications",
+        json={
+            "name": name,
+            "url": url,
+            "environment": "staging",
+            "username": "qa-test-account",
+            "password": "irrelevant",
+        },
+    )
+
+
+def test_create_application_rejects_unreachable_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    init_db()
+    monkeypatch.setattr(
+        "api.main.httpx.AsyncClient", lambda **kwargs: _FakeAsyncClient(unreachable=True)
+    )
+    client = _signed_in_client("Org Unreachable URL")
+
+    response = _post_application(client, "Unreachable App")
+
+    assert response.status_code == 422
+    assert "did not respond" in response.json()["detail"]
+    with Session(engine) as session:
+        assert (
+            session.exec(select(Application).where(Application.name == "Unreachable App")).first()
+            is None
+        )
+
+
+def test_create_application_rejects_url_returning_5xx(monkeypatch: pytest.MonkeyPatch) -> None:
+    init_db()
+    monkeypatch.setattr(
+        "api.main.httpx.AsyncClient",
+        lambda **kwargs: _FakeAsyncClient(head_status=500, get_status=500),
+    )
+    client = _signed_in_client("Org 5xx URL")
+
+    response = _post_application(client, "Broken App")
+
+    assert response.status_code == 422
+    with Session(engine) as session:
+        assert (
+            session.exec(select(Application).where(Application.name == "Broken App")).first()
+            is None
+        )
+
+
+def test_create_application_sets_discovery_stage_initializing() -> None:
+    """Story 2.1 (CR-2): DiscoveryRun.stage is set to "initializing" in the
+    same request, round-tripping through ApplicationRead.discovery_stage."""
+    init_db()
+    client = _signed_in_client("Org Discovery Stage")
+
+    response = _post_application(client, "Stage App")
+
+    assert response.status_code == 201
+    assert response.json()["discovery_stage"] == "initializing"

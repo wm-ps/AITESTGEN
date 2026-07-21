@@ -2,7 +2,7 @@
 title: "Application Intelligence Platform — V1 PRD"
 status: final
 created: 2026-07-13
-updated: 2026-07-18
+updated: 2026-07-21
 ---
 
 # PRD: Application Intelligence Platform (V1)
@@ -91,6 +91,24 @@ Platform establishes a session prior to discovery either by (a) performing a sta
 
 **Notes:** Onboarding does not technically verify that the target is a Non-Production Environment — see §11 Constraints and Guardrails.
 
+#### FR-31: Application reachability validation `[ADDED 2026-07-21]`
+Platform validates that the submitted Base URL is reachable before creating an Application record or starting discovery. An unreachable URL fails fast with a clear message rather than proceeding.
+
+**Consequences (testable):**
+- A Base URL that returns a network/DNS error, or a 4xx/5xx response, blocks Application creation and DiscoveryWorkflow start; the user sees a specific, factual validation message.
+- A reachable Base URL (2xx/3xx) proceeds exactly as onboarding did before this change.
+
+**Notes:** Reuses the same reachability tolerance FR-6(f) already established for a live discovery-time destination (2xx/3xx = reachable) — no new concept, applied one step earlier in the pipeline. See `sprint-change-proposal-2026-07-21.md`.
+
+#### FR-32: Dynamic browser tab branding `[ADDED 2026-07-21]`
+Platform auto-fetches the target Application's favicon during onboarding (best-effort, non-blocking) and reflects the Application's name and favicon in the browser tab throughout the pipeline screens.
+
+**Consequences (testable):**
+- On successful reachability validation (FR-31), the platform attempts to fetch the target's favicon; a failed or missing fetch does not block onboarding and simply leaves `Application.favicon_url` null.
+- Every pipeline-step screen (Connect App, Discover Journeys, Review Scenarios, Generate Suite) shows the current Application's name and favicon (or the platform default, if none was fetched) in the browser tab; Home and Sign In show the platform default, consistent with their existing breadcrumb-suppression treatment (UX-DR16).
+
+**Notes:** No manual upload field — auto-fetch only, per explicit product decision. See `sprint-change-proposal-2026-07-21.md`.
+
 ### 4.2 Runtime Discovery
 
 **Description:** The exploration engine — navigates the Application the way a thorough tester would, capturing everything it encounters as raw signal for the intelligence layer.
@@ -111,6 +129,16 @@ Platform normalizes the typed records captured during discovery (FR-6) — Pages
 - Both AI journey/capability inference (FR-8) and Playwright generation (FR-17) consume canonical Application Model records, never a superseded/duplicate one.
 
 **Notes:** This does not change what a reviewer sees or does (§4.4 is unaffected) — it is an internal data-model deepening. See `sprint-change-proposal-2026-07-18.md`.
+
+#### FR-33: Business-oriented import progress `[ADDED 2026-07-21]`
+Platform surfaces Discovery Run progress via four business-language stages (Initialization, Authentication, Discovery, Analysis) with fixed percentages. No crawl-specific or otherwise technical terminology is exposed in this view.
+
+**Consequences (testable):**
+- The Discover Journeys pipeline step's in-progress view shows exactly one of four labels — Initialization, Authentication, Discovery, Analysis — never a raw route/page/API string, and never words like "crawling" or "crawl queue." `[UPDATED 2026-07-21, live UX correction]` The paired percentage reflects the stage that just *finished*, not the in-progress stage's own target — Initialization 0%, Authentication 10%, Discovery 25%, Analysis 75% while each is in progress; 100% is never rendered, since Journeys appearing (the view's exit condition) already means the pipeline is done.
+- FR-6's underlying typed-row capture (the former live-feed content) is unaffected as a data-capture behavior — it continues in real time; only its live, user-facing display is removed. `[NOTE]` This is a deliberate walk-back of a previously-built AC (Story 2.2's live-feed), not a new capability layered on top — see `sprint-change-proposal-2026-07-21.md`.
+- The Application Model Builder step (FR-30) is presented as part of the "Discovery" stage, not "Analysis" — "Analysis" maps to AI inference (FR-8) only.
+
+**Notes:** Progress reaches the browser via polling (frontend polls the existing `DiscoveryRun` read endpoint) — no new streaming infrastructure. See `sprint-change-proposal-2026-07-21.md`.
 
 ### 4.3 Journey & Capability Intelligence
 
@@ -223,6 +251,7 @@ Platform provides Journey-explorer detail — a view of a Journey's screens, act
 - AI-driven Journey/Capability inference (FR-8), with per-candidate step/evidence detail shown inline (FR-23).
 - Human curation: rename/delete workflow (FR-9, FR-12, FR-13, FR-15). `[UPDATED 2026-07-15]` FR-10/FR-11 (approve/reject) and FR-28 (edit) cut — generation is no longer gated on review; deletion is the sole exclusion mechanism.
 - Scenario generation (happy-path + negative), with per-scenario rename/**edit**/remove (FR-16, FR-18, FR-29), and Playwright test generation (FR-17) surfaced via a named Test Suite generation step. Generation starts immediately per discovered Journey, not on approval.
+- `[ADDED 2026-07-21]` Application-URL reachability validation at onboarding (FR-31), dynamic browser-tab branding reflecting the connected Application (FR-32), and business-language staged import progress replacing raw crawl detail (FR-33).
 
 ### 6.2 Removed From Scope (2026-07-15)
 `[UPDATED 2026-07-15]` These moved from "moved out of MVP, deferred" to "removed in full" the same day, once it was confirmed none has any path back without a fresh product/UX decision:
@@ -276,6 +305,7 @@ Per the approved brief, V1 business success is **not** a customer-count or reven
 - **2026-07-18 [Sprint Change Proposal]**: Application Model Builder introduced — full detail in `sprint-change-proposal-2026-07-18.md`. New **FR-30** (Application Model Builder) normalizes discovery signal into structured Pages/Components/Forms/Actions/APIs/Assertions/Page Transitions with per-component locator metadata; FR-6 gains explicit crawl-optimization rules (page-fingerprint dedup, navigation-first, representative-action sampling); FR-7 and §12 Risk item 7 gain clarifying notes that "exhaustive" means distinct pages/action patterns, not every DOM instance; FR-8 updated to read the Application Model rather than raw Evidence. No FR is removed, no MVP scope or reviewer-facing behavior changes (§4.4 unaffected). Epic 2 Story 2.2 reworked, new Story 2.5 (Application Model Builder) added, and the AI Journey/Capability Inference story renumbered 2.5 → 2.6 in `epics.md` (it depends on Story 2.5's output and can't be numbered ahead of it); Architecture AD-1/AD-8 updated and AD-14/AD-15 added to match.
 - **2026-07-18 [Follow-up, same day]**: The generic `Evidence` table concept is removed — a flat capture record duplicating what typed records already hold added no value. FR-6/FR-30 revised: discovery writes Page/Form/Action/ApiEndpoint/PageTransition records directly (typed, scoped to both `application_id` and the capturing `discovery_run_id`); duplicates within and across Discovery Runs against the same Application are merged into one canonical record per logical page/form/API (this is what makes the model genuinely "reusable" across re-discovery, not merely per-run); Component/ComponentLocator/Assertion remain purely derived, never directly captured. Architecture AD-8/AD-13/AD-14 rewritten to match — see `sprint-change-proposal-2026-07-18.md`.
 - **2026-07-19 [Crawl engine follow-up]**: Implementation of Story 2.2's crawl-optimization ACs surfaced four further refinements, all within FR-6's existing scope (no new FR, no MVP/reviewer-facing change): a page reached only via a non-link action (e.g. an "Add to Cart" button) is now followed onward instead of dead-ending at the click; a form with an identical shape/starting values (hidden fields included) reachable from more than one page is captured once (representative-form sampling, mirrors representative-action sampling); a destination that errors (network failure or 4xx/5xx) is skipped rather than persisted as a Page; and representative-action sampling is bounded to a small number of distinct action labels per page, prioritizing page-body content over shared nav/header/footer chrome. FR-6, FR-7, and §12 Risk item 7 updated to match; Architecture AD-15 updated; Story 2.2 gains ACs 7-9.
+- **2026-07-21 [Sprint Change Proposal — Import Experience & Progress UX]**: Three new FRs added — full detail in `sprint-change-proposal-2026-07-21.md`. **FR-31** (reachability validation) and **FR-32** (browser tab branding) added to §4.1 Onboarding; new Story 1.6 added to `epics.md`, Story 1.3 gains two ACs. **FR-33** (business-oriented import progress) added to §4.2; this walks back Story 2.2's AC3 (the raw crawl live-feed is no longer user-facing, though the underlying typed-row capture is unchanged) and adds stage-tracking ACs to Stories 2.1, 2.2, 2.6; new Story 2.7 added to `epics.md`. Architecture AD-10 extended with a `DiscoveryRun.stage` field; domain model gains `Application.favicon_url`. `EXPERIENCE.md`'s long-standing `[GAP]` on the "Discovery running" state (open since 2026-07-15) is resolved by FR-33's four-stage design. No MVP redefinition, no rollback — Stories 1.3, 2.1, 2.2, 2.6 revert to `in-progress` for rework per `sprint-status.yaml`.
 
 ## 10. Cross-Cutting NFRs
 

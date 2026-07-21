@@ -1,7 +1,7 @@
 ---
 name: Application Intelligence Platform
 status: final
-updated: 2026-07-15
+updated: 2026-07-21
 sources:
   - "../../prds/prd-AITestGen-2026-07-13/prd.md"
   - "../../briefs/brief-AITestGen-2026-07-12/brief.md"
@@ -44,6 +44,8 @@ Visual reference: `mockups/prototype-v2-standalone.html` (current, 2026-07-15 �
 **Naming rule — function-first labels — still holds.** Every screen name states what a user *does* there: "Connect App," "Discover Journeys," "Review Scenarios," "Generate Suite." This is a continuation of the same discipline that produced "Discovery Progress" over "Discovery Run" in the prior revision, not a new rule.
 
 **Breadcrumb / app-name context rule — narrowed.** The top bar shows the current Application's name plus an environment badge (e.g. "Staging") on all four pipeline-step screens, since every one of them is now inherently scoped to a single Application. It is suppressed on Sign In and Home, the only two screens that are pre-Application or cross-Application.
+
+**Browser tab branding rule `[ADDED 2026-07-21]`** (FR-32, Story 1.6) — follows the same suppression logic as the breadcrumb rule above: the browser tab title shows the current Application's name and its favicon (auto-fetched at onboarding, Story 1.3; falls back to the platform default if none was fetched) on all four pipeline-step screens. Sign In and Home revert the tab to the platform's default title and icon. See `sprint-change-proposal-2026-07-21.md`.
 
 ## Review & Trust Model
 
@@ -92,7 +94,7 @@ Behavioral only — visual specs live in `{DESIGN.md#Components}`.
 
 | State | Surface | Treatment |
 |---|---|---|
-| Discovery running / completing (PRD FR-7) | `[GAP]` no discovery-in-progress screen was reachable in the current reference prototype — the Connect App → Discover Journeys transition happened instantly against pre-seeded demo data. `[UPDATED 2026-07-15]` There is no "Incomplete" status anymore — FR-5 (time budget) is removed, and FR-7's only stop condition is exhaustive traversal; a Discovery Run either completes or fails (e.g., session expiry). The "Running" → "Complete" status-pill transition needs re-verification against a real in-progress state once one exists in the prototype or implementation. |
+| Discovery running / completing (PRD FR-7, FR-33) | `[RESOLVED 2026-07-21, was GAP]` The prior note ("no discovery-in-progress screen was reachable... needs re-verification") is settled by CR-2 (`sprint-change-proposal-2026-07-21.md`): the in-progress view is a centered card (spinner, "Discovering journeys in {Application name}," the current business-language stage label, and a progress bar/percentage), matching the reference prototype's Discovery Scan treatment (`mockups/prototype-v2-standalone.html`) rather than a bare inline bar. It shows exactly one of four business-language stage labels — Initialization, Authentication, Discovery, Analysis — mapped from `DiscoveryRun.stage`. No crawl-specific or technical terminology (e.g. "crawling," "crawl queue," raw route/page/API text) appears anywhere in this view — the raw live-feed originally specified in Story 2.2 AC3 is walked back from user-facing display (data capture itself is unaffected). The Application Model Builder step (Story 2.5) is presented as part of "Discovery," not "Analysis" — "Analysis" is AI inference (Story 2.6) only. `[UPDATED 2026-07-21, live UX correction]` The percentage paired with each label is the *previous* stage's completion, not the current stage's own target (0/10/25/75 while Initialization/Authentication/Discovery/Analysis are respectively in progress) — the original design paired "Discovery" (by far the longest stage) with a 75% target the instant it started, which read as nearly-done far too early. `[UPDATED 2026-07-15]` There is no "Incomplete" status — FR-5 (time budget) is removed, and FR-7's only stop condition is exhaustive traversal; a Discovery Run either completes (100% — implicit once Journeys appear and this view unmounts, never itself rendered) or fails (e.g., session expiry, shows the existing re-authentication prompt in place of stage progress). |
 | Journey/Scenario row before action | Discover Journeys, Review Scenarios | Rows show their name, a step/scenario count or type badge (`Happy Path`/`Negative Path`/`Edge Case` on Review Scenarios), and a `⋯` menu. `[GAP]` post-edit/remove row treatment not confirmed — see Component Patterns. |
 | Discover Journeys / Review Scenarios list cleared | Discover Journeys, Review Scenarios | `[UPDATED 2026-07-15]` No approve/reject count is shown — there's nothing to count since there's no approval step. Per Story 3.5, Discover Journeys' empty state is scoped to re-discovery dedup only (no new/undecided candidates remain, not an "all decided" summary). `[GAP]` the exact empty-state copy/treatment was not reachable during UX review; re-verify against implementation. |
 

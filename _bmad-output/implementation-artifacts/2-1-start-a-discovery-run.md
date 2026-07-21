@@ -4,9 +4,11 @@ baseline_commit: 48b6499e08423320a0156e02720f1e8e2ba7d66c
 
 # Story 2.1: Start a Discovery Run
 
-Status: done <!-- verified live end-to-end 2026-07-20: real Discovery Runs started from the UI, crawled, and completed successfully -->
+Status: review <!-- CR-2 rework (Task 7, stage=initializing) complete 2026-07-21, see notes below; original 2026-07-20 verification note: real Discovery Runs started from the UI, crawled, and completed successfully -->
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
+
+*Reverted from `done` to `in-progress` 2026-07-21 per `sprint-change-proposal-2026-07-21.md` (CR-2) — gains AC 3 (stage tracking) and Task 7 below. Everything above this note reflects the original implementation and is unchanged.*
 
 ## Story
 
@@ -20,6 +22,7 @@ so that the platform begins mapping its business journeys without an extra step.
 
 1. **Given** an Application was just created (Story 1.3's Connect App submission), **when** the creation request completes, **then** a `DiscoveryRun` record is created with `status=running`, and a bounded `DiscoveryWorkflow` is started for it (AD-1) — the workflow contains no direct I/O, only calls to Activities (AD-2). [Source: epics.md#Story 2.1; architecture#AD-1, #AD-2]
 2. The Discovery Progress screen shows a status pill reading "Running" with a pulsing dot. [Source: epics.md#Story 2.1; DESIGN.md#Components — status-pill]
+3. **`[ADDED 2026-07-21]` Given** the `DiscoveryRun` record above is created, **then** `DiscoveryRun.stage` is set to `initializing` immediately, before any crawl activity begins (FR-33, AD-10 extension) — consumed by Story 2.7's progress display. [Source: epics.md#Story 2.1; sprint-change-proposal-2026-07-21.md CR-2; FR-33]
 
 ## Tasks / Subtasks
 
@@ -45,6 +48,17 @@ so that the platform begins mapping its business journeys without an extra step.
   - [x] Creating an Application (Story 1.3) creates a `DiscoveryRun(status=running)` row and a running `DiscoveryWorkflow` in the same request, observable via Temporal CLI/Web UI — with no separate action taken
   - [x] Discovery Progress shows the "Running" status pill with a pulsing dot for the new run
 
+- [x] **`[ADDED 2026-07-21]`** Task 7: Add `DiscoveryRun.stage` and set it at creation (AC: 3)
+  - [x] Added a nullable `stage` column to `DiscoveryRun` (`packages/domain/src/domain/discovery_run.py`) — migration `a1b2c3d4e5f6`, following `a8cdc83f6451`'s shape.
+  - [x] `start_discovery_run` (`apps/api/src/api/discovery.py`) now sets `stage="initializing"` at the same point it sets `status="running"`.
+  - [x] Added `discovery_stage` to `ApplicationRead`/`_to_application_read` (`apps/api/src/api/main.py`), alongside `discovery_status`/`discovery_failure_reason`.
+  - [x] Confirmed and preserved: `discovery_activity` still sets `status="complete"` as soon as the crawl finishes, before Model Builder/Inference run — `stage` (set by Stories 2.2/2.6) is what continues to progress after that point. Story 2.7's polling gates on Journeys actually appearing, not on `status`, exactly per this note.
+
+### Task 7 Completion Notes (2026-07-21)
+
+- Live-verified against the real running API: `POST /applications` against a reachable URL returns `discovery_stage: "initializing"` in the same response.
+- Backend test added (`apps/api/tests/test_onboarding.py::test_create_application_sets_discovery_stage_initializing`).
+
 ## Dev Notes
 
 - **Do not confuse this story's workflow with Story 1.1's.** This is the single most likely cross-story mistake here: both stories build "a workflow that doesn't do much yet," but they are two different workflows serving two different later epics (`DiscoveryWorkflow` here feeds Epic 2/3; the 1.1 shell feeds Epic 4's `GenerationWorkflow`, graduated by Story 2.5's `InferenceActivity` — `[UPDATED 2026-07-15]` not Story 3.2, which is removed). Verify Story 1.1's actual File List before starting Task 2 to make sure you're not accidentally repurposing its workflow file.
@@ -66,6 +80,8 @@ so that the platform begins mapping its business journeys without an extra step.
 - [Source: _bmad-output/planning-artifacts/implementation-readiness-report-2026-07-13.md — confirms Story 1.1's workflow shell is earmarked for `GenerationWorkflow`, not this story (report predates the 2026-07-15 removal of Story 3.2; the shell's eventual owner is now Story 2.5)]
 - [Source: _bmad-output/implementation-artifacts/1-1-repository-service-scaffold.md — Temporal wiring and the no-op workflow this story must NOT reuse]
 - [Source: _bmad-output/implementation-artifacts/1-3-onboard-an-application-basic-details.md — the onboarding endpoint that now calls this story's `DiscoveryRun`-creation logic directly, absorbed from removed Story 1.5]
+- [Source: _bmad-output/planning-artifacts/sprint-change-proposal-2026-07-21.md — CR-2, AD-10 extension]
+- [Source: _bmad-output/implementation-artifacts/2-7-business-oriented-import-progress-display.md — consumes `DiscoveryRun.stage`/`discovery_stage` this story's Task 7 adds]
 
 ## Previous Story Intelligence
 

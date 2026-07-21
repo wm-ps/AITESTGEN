@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type JourneyRead, type JourneyStepRead } from '../api'
-import { CaptureLiveFeed } from './CaptureLiveFeed'
+import { useDiscoveryProgress } from '../hooks/useDiscoveryProgress'
+import { ImportProgress } from './ImportProgress'
 import { Stepper } from './Stepper'
 import { StatusPill } from './StatusPill'
 
@@ -152,21 +153,35 @@ function JourneyRowMenu({ onRename, onDelete }: { onRename: () => void; onDelete
 
 export function DiscoverJourneys({
   applicationId,
+  applicationName,
   discoveryStatus,
+  discoveryStage,
   discoveryFailureReason,
-  discoveryRunId,
 }: {
   applicationId: string
+  applicationName: string
   discoveryStatus: string
+  discoveryStage: string | null
   discoveryFailureReason: string | null
-  discoveryRunId: string
 }) {
   const [journeys, setJourneys] = useState<JourneyRead[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [steps, setSteps] = useState<JourneyStepRead[]>([])
   const [renamingId, setRenamingId] = useState<string | null>(null)
 
-  const sessionExpired = discoveryStatus === 'failed' && discoveryFailureReason === 'session_expired'
+  const {
+    status: liveStatus,
+    stage: liveStage,
+    failureReason: liveFailureReason,
+  } = useDiscoveryProgress(
+    applicationId,
+    discoveryStatus,
+    discoveryStage,
+    discoveryFailureReason,
+    journeys.length > 0,
+  )
+
+  const sessionExpired = liveStatus === 'failed' && liveFailureReason === 'session_expired'
 
   useEffect(() => {
     let cancelled = false
@@ -181,13 +196,16 @@ export function DiscoverJourneys({
     }
 
     poll()
-    if (discoveryStatus !== 'running') return
+    // `status` flips to "complete" as soon as the crawl finishes, well
+    // before Inference ever writes a Journey — gating on `status !== 'running'`
+    // alone would stop this poll before Journeys ever appear.
+    if (journeys.length > 0 || liveStatus === 'failed') return
     const interval = setInterval(poll, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
-  }, [applicationId, discoveryStatus])
+  }, [applicationId, liveStatus, journeys.length])
 
   useEffect(() => {
     if (!selectedId) {
@@ -233,7 +251,7 @@ export function DiscoverJourneys({
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', margin: '0 0 8px' }}>
           <h1 style={{ fontSize: 19, fontWeight: 650, margin: 0 }}>Discover Journeys</h1>
-          <StatusPill status={discoveryStatus} />
+          <StatusPill status={liveStatus} />
         </div>
 
         {sessionExpired ? (
@@ -241,7 +259,7 @@ export function DiscoverJourneys({
             Session expired mid-crawl. Re-authenticate to continue discovery.
           </p>
         ) : (
-          discoveryStatus === 'failed' && (
+          liveStatus === 'failed' && (
             <p className="caption" role="alert" style={{ color: 'var(--danger)' }}>
               Discovery Run failed.
             </p>
@@ -364,8 +382,8 @@ export function DiscoverJourneys({
           </div>
         )}
 
-        {journeys.length === 0 && (
-          <CaptureLiveFeed discoveryRunId={discoveryRunId} active={discoveryStatus === 'running'} />
+        {journeys.length === 0 && liveStatus !== 'failed' && (
+          <ImportProgress stage={liveStage} applicationName={applicationName} />
         )}
       </main>
     </>

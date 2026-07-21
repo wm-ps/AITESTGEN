@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
+import httpx
 from domain import (
     Action,
     ApiEndpoint,
@@ -143,6 +144,7 @@ class ApplicationRead(BaseModel):
     created_at: datetime
     discovery_run_id: uuid.UUID
     discovery_status: str
+    discovery_stage: str | None
     discovery_failure_reason: str | None
 
 
@@ -156,8 +158,31 @@ def _to_application_read(application: Application, discovery_run: DiscoveryRun) 
         created_at=application.created_at,
         discovery_run_id=discovery_run.external_id,
         discovery_status=discovery_run.status,
+        discovery_stage=discovery_run.stage,
         discovery_failure_reason=discovery_run.failure_reason,
     )
+
+
+_UNREACHABLE_DETAIL = (
+    "Base URL did not respond — confirm it's deployed and accessible before connecting."
+)
+
+
+async def _check_reachable(client: httpx.AsyncClient, url: str) -> None:
+    """FR-31 (CR-3): gates Application creation on the Base URL actually
+    responding, 2xx/3xx — the same tolerance FR-6(f) already uses for a live
+    discovery-time destination. Raises HTTPException(422) otherwise."""
+    try:
+        response = await client.head(url)
+        if response.status_code >= 400:
+            response = await client.get(url)
+    except httpx.RequestError:
+        try:
+            response = await client.get(url)
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=422, detail=_UNREACHABLE_DETAIL) from exc
+    if not (200 <= response.status_code < 400):
+        raise HTTPException(status_code=422, detail=_UNREACHABLE_DETAIL)
 
 
 @app.post("/applications", response_model=ApplicationRead, status_code=201)
@@ -166,6 +191,10 @@ async def create_application(
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
 ) -> ApplicationRead:
+    # FR-31 (CR-3): fail fast before any write if the Base URL isn't reachable.
+    async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
+        await _check_reachable(client, payload.url)
+
     # Credentials are written via SecretsClient immediately; the Application
     # row below stores only the returned opaque SecretRef.path (AD-5/NFR-1).
     # Exactly one of the two credential shapes is stored, matching the

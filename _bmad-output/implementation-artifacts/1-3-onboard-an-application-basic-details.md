@@ -1,10 +1,12 @@
 # Story 1.3: Onboard an Application — Basic Details
 
-Status: done
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
 *Updated 2026-07-15 — the 3-step wizard is replaced by a single-page Connect App form; see `sprint-change-proposal-2026-07-15.md`.*
+
+*Reverted from `done` to `in-progress` 2026-07-21 per `sprint-change-proposal-2026-07-21.md` (CR-1 capture half, CR-3) — gains AC 5 (reachability validation) and AC 6 (favicon auto-fetch) and their Task 7 below. Everything above this note (ACs 1-4, Tasks 1-6, and the original Dev Agent Record/Completion Notes/File List at the bottom) reflects the original 2026-07-17 implementation and is unchanged — read it for context, but it does not cover the new work.*
 
 ## Story
 
@@ -20,6 +22,9 @@ so that it becomes available for discovery configuration.
 4. **`[ABSORBED FROM REMOVED STORY 1.5, 2026-07-15]`** Submitting returns the user to the pipeline's Discover Journeys step, and starts a Discovery Run immediately against the full Application (Story 2.1) — there is no scope/time-budget configuration (FR-4/FR-5 removed) and no separate "Start Discovery Run" action. [Source: epics.md#Story 1.3; #Story 2.1]
 
 *(Superseded 2026-07-15: the prior AC described a multi-step wizard stepper where only the active step's form renders. Connect App is now one consolidated form with a single "Connect Application" submit — no internal stepper.)*
+
+5. **`[ADDED 2026-07-21]`** **Given** a user submits the Connect App form, **when** the platform validates the Base URL, **then** it issues a reachability check (HTTP request, 2xx/3xx treated as reachable — the same tolerance FR-6(f) already uses for a live discovery-time destination) before creating the Application record (FR-31); **and** if the URL is unreachable (network/DNS error, or a 4xx/5xx response), the platform fails fast with a clear validation message naming the problem, and no Application record or DiscoveryWorkflow is created; **and** if reachable, submission proceeds exactly as before (record created, discovery starts). [Source: epics.md#Story 1.3; sprint-change-proposal-2026-07-21.md CR-3; FR-31]
+6. **`[ADDED 2026-07-21]`** **Given** the Base URL passed AC 5's reachability check, **when** the platform creates the Application record, **then** it makes a best-effort attempt to fetch the target's favicon (`<link rel="icon">`, falling back to `/favicon.ico` at the Base URL's origin) and stores it as `Application.favicon_url` (FR-32); **and** a failed or missing favicon fetch does not block onboarding — `Application.favicon_url` is simply left null, and the platform's default icon is used instead (consumed by Story 1.6). [Source: epics.md#Story 1.3; sprint-change-proposal-2026-07-21.md CR-1; FR-32]
 
 ## Tasks / Subtasks
 
@@ -57,12 +62,30 @@ so that it becomes available for discovery configuration.
   - [x] After submission, the top bar shows the new Application's name and environment badge
   - [x] After submission, a `DiscoveryRun` exists with `status=running` for the new Application, its `DiscoveryWorkflow` is observable via Temporal CLI/Web UI, and the user lands on Discover Journeys — no manual "start discovery" step required
 
+- [x] **`[ADDED 2026-07-21]`** Task 7: Reachability validation + favicon auto-fetch, ahead of Application creation (AC: 5, 6)
+  - [x] In `apps/api/src/api/main.py`'s `create_application` handler (the `POST /applications` endpoint, above `_to_application_read`), issue an HTTP request (HEAD, falling back to GET if the target doesn't support HEAD) to the submitted `url` **before** the existing `Application(...)`/`session.add`/`SecretsClient` write logic. Treat any 2xx/3xx response as reachable; a network/DNS error or 4xx/5xx response raises a 4xx with a clear, factual message (no apology, no hype — per `EXPERIENCE.md`'s Voice and Tone rule) and must not create the `Application` row, call `SecretsClient`, or start `DiscoveryWorkflow`.
+  - [x] On a reachable result, attempt to fetch the target's favicon: try `<link rel="icon">` from the fetched page's HTML first, then fall back to `{origin}/favicon.ico`. Store whatever URL is found (or `null` if neither resolves) on the new `Application.favicon_url` column (see below) — **do not** raise/block onboarding on a failed favicon fetch; this is best-effort only.
+  - [x] Add `favicon_url: str | None` to the `Application` SQLModel entity (`packages/domain/src/domain/application.py`) plus an Alembic migration (follow `c6483d9f0418_add_auth_method_to_application.py`'s shape as a template — a single nullable column addition). Add `favicon_url` to `ApplicationRead` (`apps/api/src/api/main.py`, the same model `_to_application_read` populates) so Story 1.6 can read it.
+  - [x] Regenerate `apps/web/src/api-types.gen.ts` from a live API run and diff to confirm no drift (AD-6) — same discipline as this story's original Task 3/4 and Story 1.4's Dev Agent Record.
+  - [x] Add tests: unreachable URL (network error and a 4xx/5xx mock) returns a validation error and creates no `Application`/`DiscoveryRun` row; reachable URL with a resolvable favicon stores `favicon_url`; reachable URL with no resolvable favicon stores `null` and onboarding still succeeds.
+
+### Task 7 Completion Notes (2026-07-21)
+
+- `_check_reachable`/`_fetch_favicon` (`apps/api/src/api/main.py`) run inside a single `httpx.AsyncClient` context ahead of `Application(...)`/`SecretsClient`/`start_discovery_run`. Reachability: HEAD, falling back to GET on a >=400 status or a `httpx.RequestError`; still-unreachable raises `HTTPException(422, "Base URL did not respond — confirm it's deployed and accessible before connecting.")`. Favicon: GET the page, regex for `<link rel="icon"|"shortcut icon">`, else HEAD `{origin}/favicon.ico`; any failure here is swallowed, returning `None`.
+- Migration `f1a2b3c4d5e6` adds `application.favicon_url` (nullable), following `c6483d9f0418`'s shape exactly.
+- `httpx` moved from `apps/api`'s dev dependency group to its main dependencies (it's now used by production request code, not just `TestClient`).
+- `apps/api/tests/conftest.py` gained a package-wide autouse fixture stubbing `httpx.AsyncClient` as always-reachable — every other test file in this package POSTs a synthetic `*.example.com` URL that was never meant to be really reached; `test_onboarding.py` defines its own richer fake client (and same-named fixture, which overrides the conftest one for that module) to actually exercise the unreachable/4xx-5xx/favicon-present/favicon-absent branches.
+- Live-verified against the real running API (Postgres/Vault/Temporal up): an unreachable synthetic domain returns 422 with the exact copy above; `https://example.com` returns 201 with `discovery_stage: "initializing"` and `favicon_url: "data:,"` — confirmed correct by inspecting example.com's actual HTML (`<link rel="icon" href="data:,">`, a real anti-404-favicon placeholder many sites use), not a bug.
+- `apps/web/src/api-types.gen.ts` regenerated from the live API; diff shows only the expected `favicon_url`/`discovery_stage` additions.
+
 ## Dev Notes
 
 - **Credential capture is deliberately split across Stories 1.3 and 1.4 — read this before building either.** Epics AC for 1.3 says the Connect App form collects "Application name, Base URL, environment, and credentials"; epics AC for 1.4 (2026-07-15: now a plain `<select>` field on this same single form, not a separate wizard step) separately describes an "Authentication method" dropdown where the user chooses between "Username & Password" and SSO/MFA session-reuse. Resolution used here: **Story 1.3's form collects the standard-login username/password case** (satisfying its own AC literally, written via SecretsClient as Task 3 describes). **Story 1.4 then lets the user override this via the Authentication method select** — if they leave/select "Username & Password," 1.4 should reuse/confirm the fields 1.3 already captured rather than re-implementing a duplicate form; if they select SSO/MFA session-reuse instead, 1.4 adds the alternate, separate capture path (flagged `[GAP]` in Story 1.4 — not visible in the current prototype). Whoever implements 1.4 should read this note first to avoid building a redundant standard-login form.
 - **No platform-side production-environment safeguard exists in V1, by explicit PRD decision** — confirmed directly: "Onboarding does not technically verify that the target is a Non-Production Environment" (PRD §4.1 Notes), and PRD §11/§12 Risk #1 state this is customer responsibility only, with "whether V1 needs a technical safeguard" listed as PRD Open Question 3 (unresolved, not assigned to this or any other V1 story). Do not build any URL inspection/blocking logic. Also avoid the specific phrase "production URLs are blocked at setup" anywhere in this story's UI copy — that phrase appears in `EXPERIENCE.md`'s Voice-and-Tone table purely as a *style* example of "fact + why" phrasing, not as a confirmed built behavior; using it verbatim here would make the UI claim a guardrail that doesn't exist, which the Voice and Tone rule ("state facts plainly") actually argues against once you know the real behavior.
 - **UUIDv7-internal / UUIDv4-external is a system-wide convention, established for the first time by this story** — get the pattern right here since `DiscoveryRun`, `Journey`, `Capability`, `Scenario`, `TestAsset`, and `Evidence` in later epics all reuse it without restating it.
 - **AD-5 / NFR-1 in practice:** the "never stored in plaintext" requirement is only real if it's tested (Task 2's log/column assertion), not just achieved by convention — a future refactor could silently reintroduce a plaintext field otherwise.
+- **`[ADDED 2026-07-21]` Task 7 is a separate concern from the non-production-safeguard non-goal above — do not conflate them.** The Dev Note above says "no platform-side production-environment safeguard exists in V1, by explicit PRD decision" — that's about *classifying* a URL as production vs. non-production, which V1 still does not do. Task 7's reachability check is narrower and unrelated: it only asks "does this URL respond at all," the same 2xx/3xx-only tolerance FR-6(f) already established for discovery-time destinations. Do not expand Task 7 into any kind of production-detection logic.
+- **`[ADDED 2026-07-21]` `favicon_url` is not a credential.** Unlike every other field this story writes, it does not go through `SecretsClient`/AD-5 — it's a public asset reference (the target site's own favicon, fetched over plain HTTP), stored directly as a column, same as `name`/`url`/`environment`.
 
 ### Project Structure Notes
 
@@ -81,6 +104,11 @@ so that it becomes available for discovery configuration.
 - [Source: _bmad-output/planning-artifacts/prds/prd-AITestGen-2026-07-13/prd.md §4.1 Notes, §9, §11, §12 Risk #1 — non-production safeguard explicitly out of V1 scope]
 - [Source: _bmad-output/planning-artifacts/ux-designs/ux-AITestGen-2026-07-13/EXPERIENCE.md#Voice and Tone, #Component Patterns — Stepper]
 - [Source: _bmad-output/implementation-artifacts/1-2-sign-in-organization-scoped-workspace.md — Organization-scoping middleware and Applications shell this story builds on]
+- [Source: _bmad-output/planning-artifacts/sprint-change-proposal-2026-07-21.md — CR-1, CR-3 (Task 7)]
+- [Source: _bmad-output/planning-artifacts/prds/prd-AITestGen-2026-07-13/prd.md — FR-31, FR-32]
+- [Source: _bmad-output/implementation-artifacts/1-6-dynamic-browser-tab-branding.md — consumes `Application.favicon_url` this story's Task 7 adds]
+- [Source: apps/api/src/api/main.py — `create_application`, `ApplicationRead`, `_to_application_read` (Task 7 touches these directly)]
+- [Source: migrations/versions/c6483d9f0418_add_auth_method_to_application.py — migration shape to follow for the new `favicon_url` column]
 
 ## Previous Story Intelligence
 

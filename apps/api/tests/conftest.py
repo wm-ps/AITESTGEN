@@ -15,6 +15,39 @@ from api import main as api_main
 from api.temporal_client import get_temporal_client
 
 
+class _AlwaysReachableResponse:
+    status_code = 200
+
+
+class _AlwaysReachableAsyncClient:
+    """Stubs `httpx.AsyncClient` (FR-31, Story 1.3's rework) as always
+    reachable — every test in this package that POSTs to `/applications`
+    uses a synthetic `*.example.com` URL that was never meant to really be
+    reached. Only `test_onboarding.py`'s own reachability tests need to
+    control this behavior directly; they define a more detailed fake client
+    and their own same-named fixture, which simply overrides this one for
+    that module (standard pytest fixture shadowing)."""
+
+    async def __aenter__(self) -> _AlwaysReachableAsyncClient:
+        return self
+
+    async def __aexit__(self, *exc: object) -> bool:
+        return False
+
+    async def head(self, url: str) -> _AlwaysReachableResponse:
+        return _AlwaysReachableResponse()
+
+    async def get(self, url: str) -> _AlwaysReachableResponse:
+        return _AlwaysReachableResponse()
+
+
+@pytest.fixture(autouse=True)
+def _reachable_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "api.main.httpx.AsyncClient", lambda **kwargs: _AlwaysReachableAsyncClient()
+    )
+
+
 @pytest.fixture(autouse=True)
 def _terminate_discovery_workflows_started_by_test(monkeypatch: pytest.MonkeyPatch) -> None:
     started_external_ids: list[str] = []

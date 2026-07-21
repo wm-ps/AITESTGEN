@@ -15,12 +15,12 @@ dependencies = [
     "secrets-client",
     "bcrypt>=5.0.0",
     "itsdangerous>=2.2.0",
+    "httpx>=0.28",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.3",
-    "httpx>=0.28",
 ]
 
 [tool.uv.sources]

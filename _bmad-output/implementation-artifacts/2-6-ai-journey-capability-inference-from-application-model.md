@@ -6,9 +6,11 @@ baseline_commit: 48b6499e08423320a0156e02720f1e8e2ba7d66c
 
 *Renumbered 2026-07-18, was Story 2.5 — the original numbering placed this story ahead of the Application Model Builder it depends on, backwards from the actual pipeline order (Discovery → Model Builder → Inference). Now Story 2.6; Application Model Builder is Story 2.5. See correction note in `sprint-change-proposal-2026-07-18.md`.*
 
-Status: done <!-- JourneyStep entity + navigation-graph clustering + safety valves implemented and unit-tested (54 tests) 2026-07-20; verified live end-to-end same day across multiple real Discovery Runs — real Gemini litellm calls produced correct candidate Journeys with ordered JourneySteps against shopbit.onwavemaker.com. See Change Log. -->
+Status: review <!-- CR-2 rework (Task 4 addition, stage=analyzing) complete 2026-07-21, see notes below; original 2026-07-20 verification note: JourneyStep entity + navigation-graph clustering + safety valves implemented and unit-tested (54 tests); verified live end-to-end same day across multiple real Discovery Runs — real Gemini litellm calls produced correct candidate Journeys with ordered JourneySteps against shopbit.onwavemaker.com. See Change Log. -->
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
+
+*Reverted from `done` to `in-progress` 2026-07-21 per `sprint-change-proposal-2026-07-21.md` (CR-2) — gains AC 8 (stage tracking) and a Task 4 addition below. Everything else on this story is unchanged.*
 
 ## Story
 
@@ -27,6 +29,7 @@ so that I have something meaningful to review instead of a raw crawl log, and so
 5. **`[ADDED 2026-07-15]`** Immediately after writing each candidate Journey, `InferenceActivity` starts an independent, short-lived `GenerationWorkflow` for it — no human approval gate. The Temporal workflow ID is `generation-{journey_id}-1`. [Source: epics.md#Story 2.6 (absorbs cut Story 3.2); architecture#AD-1, #AD-9]
 6. **`[ADDED this pass]`** A single `InferenceActivity` run creates **no more than `MAX_CANDIDATE_JOURNEYS_PER_RUN` (config, default 50) candidate Journeys**; if the AI response would exceed this, the run logs a warning, persists the first `MAX_CANDIDATE_JOURNEYS_PER_RUN` valid candidates (by the AI's own returned order), and does not start `GenerationWorkflow` for the excess. This bounds the blast radius of a bad/hallucinating inference run, since AC5 removes any human gate before generation work (and its cost) begins. [Source: architecture#AD-9; risk raised in architecture review of this story]
 7. **`[ADDED this pass]`** A candidate whose AI-provided name matches a route/URL-shaped pattern (e.g. starts with `/`, or matches a basic URL regex) is rejected and logged, not persisted — a defensive backstop for AC1's "never a raw route/page identifier" requirement, which was previously enforced only by prompting. Similarly, a candidate referencing a `page_id` not present in the canonical input set passed to the AI is dropped (with the rest of that candidate's *valid* page_ids still used, unless zero valid pages remain, in which case the whole candidate is dropped) and logged as a hallucination event.
+8. **`[ADDED 2026-07-21]` Given** `InferenceActivity` begins, **then** `DiscoveryRun.stage` is set to `analyzing` (FR-33, AD-10 extension) — understood by the frontend (Story 2.7) to map to 100%. `[NOTE]` `DiscoveryRun.status` already flips to `complete` earlier, inside `discovery_activity`, right after the crawl finishes (Story 2.3/AD-10) — well before this Activity even runs. This AC does not change that; `stage` is a separate, finer-grained signal layered alongside the existing `status` field, not a replacement for it. [Source: epics.md#Story 2.6; sprint-change-proposal-2026-07-21.md CR-2; FR-33]
 
 ## Tasks / Subtasks
 
@@ -63,6 +66,12 @@ so that I have something meaningful to review instead of a raw crawl log, and so
   - [ ] **`[FIX]`** Write `JourneyStep` rows (not a bare FK) for each candidate: one row per `(journey_id, page_id_or_related, step_order, stage_label)`, in the AI-provided order. Never write a step referencing a row whose `merged_into_id` is set.
   - [ ] Compute `identity_key` deterministically from the **sorted set** of canonical row identities supporting the Journey (order excluded — see AC3's explicit rationale). Get this right now: any future re-discovery dedup work compares against this exact key.
   - [ ] **`[FIX]`** The full per-candidate sequence — find-or-create Journey, write `JourneyStep` rows, find-or-create Capability, start `GenerationWorkflow` — is wrapped so that a retry from any interruption point is safe: re-running against an already-created Journey (found via `identity_key`) must not duplicate `JourneyStep` rows (delete-and-rewrite-by-journey_id on retry, or an idempotency check per step_order, either is acceptable) before starting/re-attempting `GenerationWorkflow`.
+  - [x] **`[ADDED 2026-07-21]`** At the very start of `inference_activity` (before fetching canonical rows), set `discovery_run.stage = "analyzing"` and commit (AC8). This is independent of Task 3's `execute_activity` dispatch wiring — set it inside the Activity function itself so it fires whenever/however this Activity actually runs.
+
+### Task 4 Addition — Completion Notes (2026-07-21)
+
+- `inference_activity` (`apps/workers/discovery/src/discovery_worker/activities.py`) now sets `discovery_run.stage = "analyzing"` and commits as its very first action, before fetching any canonical rows — independent of `status`, which already flipped to `"complete"` inside `discovery_activity`.
+- Test added: `test_inference_activity_creates_journeys_attributes_pages_and_starts_generation` now also asserts `run.stage == "analyzing"` after the Activity runs (`apps/workers/discovery/tests/test_inference_activity.py`).
 
 - [ ] Task 5: Start `GenerationWorkflow` immediately per candidate Journey (AC: 5) — unchanged
   - [ ] Immediately after writing each candidate `Journey` (and its `JourneyStep` rows), start an independent `GenerationWorkflow` with workflow ID `generation-{journey_id}-1` — no approval gate.
@@ -113,6 +122,8 @@ so that I have something meaningful to review instead of a raw crawl log, and so
 - [Source: _bmad-output/implementation-artifacts/2-5-application-model-builder.md — hard dependency]
 - [Source: _bmad-output/implementation-artifacts/3-1-review-queue-candidate-list-evidence-panel.md — the concrete downstream consumer whose ordered/stage-labeled step requirement drove this pass's `JourneyStep` addition; corrected in the same pass, see its own Task 2]
 - (Story 3.2 "Approve" — removed 2026-07-15; absorbed into Task 5)
+- [Source: _bmad-output/planning-artifacts/sprint-change-proposal-2026-07-21.md — CR-2, AD-10 extension]
+- [Source: _bmad-output/implementation-artifacts/2-7-business-oriented-import-progress-display.md — consumes `stage=analyzing` this story's Task 4 addition sets]
 
 ## Previous Story Intelligence
 

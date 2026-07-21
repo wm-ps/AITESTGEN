@@ -239,6 +239,8 @@ export interface components {
             discovery_run_id: string;
             /** Discovery Status */
             discovery_status: string;
+            /** Discovery Stage */
+            discovery_stage: string | null;
             /** Discovery Failure Reason */
             discovery_failure_reason: string | null;
         };

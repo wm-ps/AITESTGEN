@@ -166,6 +166,14 @@ async def test_inference_activity_creates_journeys_attributes_pages_and_starts_g
 
     assert len(journey_external_ids) == 2
 
+    with Session(engine) as session:
+        run = session.exec(
+            select(DiscoveryRun).where(DiscoveryRun.external_id == discovery_run_external_id)
+        ).one()
+        # AC8 (CR-2): InferenceActivity sets stage=analyzing at its start,
+        # independent of `status` (already "complete" from discovery_activity).
+        assert run.stage == "analyzing"
+
     journey_uuids = [uuid.UUID(j) for j in journey_external_ids]
     with Session(engine) as session:
         journeys = session.exec(

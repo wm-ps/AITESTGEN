@@ -15,16 +15,18 @@ afterEach(() => {
 })
 
 describe('App', () => {
-  it('renders Sign in when there is no session', async () => {
+  it('renders Sign in when there is no session, with the default tab title/favicon', async () => {
     vi.stubGlobal('fetch', mockFetchOnce({ detail: 'not signed in' }, false, 401))
     render(<App />)
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Sign in' })).toBeTruthy()
     })
+    expect(document.title).toBe('AITestGen')
+    expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.svg')
   })
 
-  it('renders Home with the top bar and avatar menu when signed in', async () => {
+  it('renders Home with the top bar and avatar menu when signed in, with the default tab title/favicon', async () => {
     vi.stubGlobal(
       'fetch',
       mockFetchOnce({ name: 'Ada Lovelace', email: 'ada@example.com' }, true, 200),
@@ -35,6 +37,8 @@ describe('App', () => {
       expect(screen.getByRole('heading', { name: 'Welcome back, Ada' })).toBeTruthy()
     })
     expect(screen.getByText('Start a New Project')).toBeTruthy()
+    expect(document.title).toBe('AITestGen')
+    expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.svg')
 
     fireEvent.click(screen.getByRole('button', { name: 'AL' }))
 
@@ -62,6 +66,7 @@ describe('App', () => {
           created_at: new Date(0).toISOString(),
           discovery_run_id: 'run-1',
           discovery_status: 'running',
+          discovery_stage: 'initializing',
         }),
       })
     vi.stubGlobal('fetch', fetchMock)
@@ -87,5 +92,9 @@ describe('App', () => {
     expect(screen.getByText('My App')).toBeTruthy()
     expect(screen.getByText('staging')).toBeTruthy()
     expect(screen.getByText('Running')).toBeTruthy()
+
+    // Tab title/favicon are static platform branding — unaffected by the Application.
+    expect(document.title).toBe('AITestGen')
+    expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.svg')
   })
 })

@@ -92,6 +92,7 @@ dependencies = [
     { name = "bcrypt" },
     { name = "domain" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "itsdangerous" },
     { name = "psycopg", extra = ["binary"] },
     { name = "secrets-client" },
@@ -103,7 +104,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
 ]
 
@@ -113,6 +113,7 @@ requires-dist = [
     { name = "bcrypt", specifier = ">=5.0.0" },
     { name = "domain", editable = "packages/domain" },
     { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.28" },
     { name = "itsdangerous", specifier = ">=2.2.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "secrets-client", editable = "packages/secrets_client" },
@@ -123,10 +124,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "pytest", specifier = ">=8.3" },
-]
+dev = [{ name = "pytest", specifier = ">=8.3" }]
 
 [[package]]
 name = "argon2-cffi"
