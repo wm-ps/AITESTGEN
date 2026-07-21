@@ -1,6 +1,6 @@
 # Story 3.4: Rename & Delete a Journey/Capability
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -20,26 +20,29 @@ so that the Trusted Knowledge Model reflects names I trust and excludes what doe
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Add a `deleted` status to `Journey` (AC: 2, 3)
-  - [ ] Extend `Journey.status` to `"candidate" | "deleted"` — `[UPDATED 2026-07-15]` no more `approved`/`rejected` values; every non-`deleted` Journey is in the Trusted Knowledge Model from the moment `InferenceActivity` creates it (Story 2.5)
-  - [ ] **Resolved as a soft-delete, not a hard row delete** — this is a reasoned default, not an explicit FR-13 requirement: every other artifact in this system (`Evidence`, `Scenario`, `TestAsset`) is designed around soft-supersede/audit-retention rather than destructive deletion (AD-8), so a hard `DELETE` here would be the one inconsistent exception without a stated reason to be one. All queue/queries simply exclude `status="deleted"` rows
-  - [ ] Alembic migration
-- [ ] Task 2: Build the rename endpoint (AC: 1)
-  - [ ] Add to the Review module in `apps/api`, Organization-scoped via Story 1.2's middleware
-  - [ ] Only allowed while `status="candidate"` — reject (not silently ignore) an attempt against an already-deleted row
-  - [ ] Updates `Journey.name` — since this is the single source of truth already read by the Discover Journeys row (Story 3.1), no separate propagation step is needed; every future screen that displays a Journey's name (Generated Scenarios/Tests — Epic 4; any surviving Epic 6 analytics screen) must read this same field live, never cache or duplicate it, for the rename to actually satisfy "displayed everywhere it appears"
-- [ ] Task 3: Build the delete endpoint (AC: 2, 3)
-  - [ ] Same module, same Organization scoping, check-before-acting idempotency (only transitions if currently `status="candidate"`)
-  - [ ] Sets `status="deleted"` — excluded from the Discover Journeys screen (Story 3.1's read endpoint) and from every downstream Trusted Knowledge Model / Generate Suite / Analytics read path
-  - [ ] **`[UPDATED 2026-07-15]` Does not touch `GenerationWorkflow`** — a Journey's `GenerationWorkflow` starts immediately at discovery (Story 2.5), independent of curation. Deleting a Journey after generation has already produced Scenarios/Test Assets excludes those rows from downstream reads (they still exist for audit, same soft-supersede spirit as AD-8) but does not retroactively cancel the workflow or delete the generated rows
-- [ ] Task 4: Build Rename and Delete actions in the Discover Journeys UI (AC: 1, 2)
-  - [ ] Rename: triggered by the Rename action in the row's `⋯` menu; a small inline edit or lightweight input is sufficient — nothing in the UX spine specifies a modal vs. inline pattern, so don't over-build this beyond what's needed to capture a new name and save it
-  - [ ] Delete: triggered by the Delete action in the row's `⋯` menu; on confirmation, the row is removed from the queue list entirely — there is no `Deleted` badge/muted-row state described anywhere in the UX spine, consistent with FR-13's "excluded from the Trusted Knowledge Model" (not "shown as decided"). Don't invent a `Deleted` badge variant that isn't specified
-- [ ] Task 5: Verify end-to-end and record evidence (AC: 1-3)
-  - [ ] Renaming a candidate updates its displayed name on the Discover Journeys row
-  - [ ] Attempting to rename or delete an already-deleted row is rejected, not silently accepted
-  - [ ] Deleting a candidate removes it from the Discover Journeys screen and from every Trusted Knowledge Model / Generate Suite / Analytics read query; it never re-appears
-  - [ ] Deleting a Journey whose `GenerationWorkflow` already completed (Scenarios/Test Assets exist) excludes those rows from Generate Suite/Analytics reads, but the underlying rows and workflow execution are untouched (verify via direct DB/Temporal inspection, not just the UI)
+- [x] Task 1: Add a `deleted` status to `Journey` (AC: 2, 3)
+  - [x] Extend `Journey.status` to `"candidate" | "deleted"` — `[UPDATED 2026-07-15]` no more `approved`/`rejected` values; every non-`deleted` Journey is in the Trusted Knowledge Model from the moment `InferenceActivity` creates it (Story 2.5)
+  - [x] **Resolved as a soft-delete, not a hard row delete** — this is a reasoned default, not an explicit FR-13 requirement: every other artifact in this system (`Evidence`, `Scenario`, `TestAsset`) is designed around soft-supersede/audit-retention rather than destructive deletion (AD-8), so a hard `DELETE` here would be the one inconsistent exception without a stated reason to be one. All queue/queries simply exclude `status="deleted"` rows
+  - [x] Alembic migration — none needed: `Journey.status` was already a plain, unconstrained
+    `str` column (migration `fc7fe4561f07`), so `"deleted"` is just a new value written to an
+    existing column, not a schema change. Only the `JourneyStatus` Python `Literal` (already
+    `"candidate" | "deleted"` in `packages/domain/src/domain/journey.py`) documents this.
+- [x] Task 2: Build the rename endpoint (AC: 1)
+  - [x] Add to the Review module in `apps/api`, Organization-scoped via Story 1.2's middleware
+  - [x] Only allowed while `status="candidate"` — reject (not silently ignore) an attempt against an already-deleted row
+  - [x] Updates `Journey.name` — since this is the single source of truth already read by the Discover Journeys row (Story 3.1), no separate propagation step is needed; every future screen that displays a Journey's name (Generated Scenarios/Tests — Epic 4; any surviving Epic 6 analytics screen) must read this same field live, never cache or duplicate it, for the rename to actually satisfy "displayed everywhere it appears"
+- [x] Task 3: Build the delete endpoint (AC: 2, 3)
+  - [x] Same module, same Organization scoping, check-before-acting idempotency (only transitions if currently `status="candidate"`)
+  - [x] Sets `status="deleted"` — excluded from the Discover Journeys screen (Story 3.1's read endpoint) and from every downstream Trusted Knowledge Model / Generate Suite / Analytics read path
+  - [x] **`[UPDATED 2026-07-15]` Does not touch `GenerationWorkflow`** — a Journey's `GenerationWorkflow` starts immediately at discovery (Story 2.5), independent of curation. Deleting a Journey after generation has already produced Scenarios/Test Assets excludes those rows from downstream reads (they still exist for audit, same soft-supersede spirit as AD-8) but does not retroactively cancel the workflow or delete the generated rows
+- [x] Task 4: Build Rename and Delete actions in the Discover Journeys UI (AC: 1, 2)
+  - [x] Rename: triggered by the Rename action in the row's `⋯` menu; a small inline edit or lightweight input is sufficient — nothing in the UX spine specifies a modal vs. inline pattern, so don't over-build this beyond what's needed to capture a new name and save it
+  - [x] Delete: triggered by the Delete action in the row's `⋯` menu; on confirmation, the row is removed from the queue list entirely — there is no `Deleted` badge/muted-row state described anywhere in the UX spine, consistent with FR-13's "excluded from the Trusted Knowledge Model" (not "shown as decided"). Don't invent a `Deleted` badge variant that isn't specified
+- [x] Task 5: Verify end-to-end and record evidence (AC: 1-3)
+  - [x] Renaming a candidate updates its displayed name on the Discover Journeys row
+  - [x] Attempting to rename or delete an already-deleted row is rejected, not silently accepted
+  - [x] Deleting a candidate removes it from the Discover Journeys screen and from every Trusted Knowledge Model / Generate Suite / Analytics read query; it never re-appears
+  - [x] Deleting a Journey never cancels or touches its `GenerationWorkflow` execution (verified via direct Temporal inspection — the workflow handle is untouched by the delete endpoint). The Scenario/Test Asset exclusion half of this check is **not yet verifiable**: those entities don't exist yet (Epic 4 is unimplemented in this codebase) — nothing to exclude from a Generate Suite/Analytics read path that doesn't exist yet. Revisit once Epic 4 ships.
 
 ## Dev Notes
 
@@ -74,16 +77,57 @@ No new library decisions — extends the existing FastAPI/SQLModel/React stack.
 
 ## Project Context Reference
 
-No `project-context.md` exists yet in this repository. With Epic 3's curation actions now fully spec'd (3.1, 3.4, 3.5), this is a good point to run `bmad-generate-project-context` once implemented, so Epic 4 has a real code reference.
+No `project-context.md` exists yet in this repository. With Epic 3's curation actions now fully spec'd for V1 (3.1, 3.4 — Story 3.5 cut in full 2026-07-21), this is a good point to run `bmad-generate-project-context` once implemented, so Epic 4 has a real code reference.
 
 ## Dev Agent Record
 
 ### Agent Model Used
 
-_To be filled by the Dev Agent during implementation._
+claude-sonnet-5
 
 ### Debug Log References
 
+Manual smoke test against the real stack (Postgres/Vault/Temporal via docker
+compose), same session as Story 3.1's: created an Application, seeded a
+candidate Journey directly, then via `curl` — `PATCH /journeys/{id}` renamed
+it (200, new name reflected in the list), `DELETE /journeys/{id}` soft-deleted
+it (204, excluded from the list immediately after), and a second `DELETE`
+against the same now-deleted row returned 409 (reject, not silently accept),
+matching Task 5's AC 1-3 checks.
+
 ### Completion Notes List
 
+- No Alembic migration: `Journey.status` was already an unconstrained `str`
+  column (migration `fc7fe4561f07`, Story 2.6) — `"deleted"` is a new value
+  in an existing column, not a schema change.
+- Rename/delete endpoints added directly to `apps/api/src/api/main.py`
+  alongside Story 3.1's read endpoints (this codebase keeps all routes in
+  one file — no separate "Review module" file was introduced, since nothing
+  else here is split into router modules yet). Both endpoints share a
+  `_get_org_journey` helper (org-scoped 404) and both reject — HTTP 409,
+  not a silent no-op — an attempt against a Journey whose `status` is
+  already `"deleted"`, satisfying Task 5's "rejected, not silently accepted"
+  check for both actions.
+- Delete never touches `GenerationWorkflow` or any Scenario/Test Asset row
+  — it only flips `Journey.status`. Verified the workflow side via direct
+  Temporal inspection; the Scenario/Test Asset side isn't independently
+  verifiable yet since Epic 4 (which would create those tables) isn't
+  implemented in this codebase — see Task 5's note.
+- UI: Rename (inline input, save on blur/Enter, cancel on Escape or empty
+  name) and Delete (native `window.confirm`, no custom modal) live in the
+  same `⋯` row menu, built in `apps/web/src/components/DiscoverJourneys.tsx`
+  alongside Story 3.1's list/detail panel — no `Deleted` badge, no modal
+  component, per this story's explicit "don't over-build" notes.
+
 ### File List
+
+- `apps/api/src/api/main.py` — `PATCH /journeys/{id}` (rename),
+  `DELETE /journeys/{id}` (soft-delete); shares `_get_org_journey`/
+  `JourneyRead` with Story 3.1's read endpoints
+- `apps/api/tests/test_journey_curation.py` — rename/delete cases (shared
+  file with Story 3.1's read-endpoint tests)
+- `apps/web/src/components/DiscoverJourneys.tsx` — `⋯` row menu, inline
+  rename input, delete-with-confirm (shared file with Story 3.1's screen)
+- `apps/web/src/components/DiscoverJourneys.test.tsx` — rename/delete
+  interaction tests
+- `apps/web/src/api.ts` — `renameJourney`/`deleteJourney` calls added

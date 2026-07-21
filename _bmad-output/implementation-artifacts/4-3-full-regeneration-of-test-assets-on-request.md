@@ -44,7 +44,7 @@ so that I get fresh coverage after the Journey or my understanding of it has cha
 ### Project Structure Notes
 
 - Extends `apps/api` (new, standalone regenerate endpoint — `[UPDATED 2026-07-15]` no sibling approve endpoint exists to share code with; Story 3.2 is cut), and `ScenarioGenerationActivity`/`PlaywrightGenerationActivity` (`apps/workers/generation`, Stories 4.1/4.2). Adds a UI control to the Generate Suite screen (Story 4.2). No new entities, no new top-level directories. This is the last story in Epic 4.
-- **Depends on Epic 1, Epic 2 (Story 2.5), Epic 3's curation stories (3.1, 3.4, 3.5), and Stories 4.1–4.2 being actually implemented**, not just created — all remain `ready-for-dev` as of this story's creation, and `git log` shows only the initial BMad-tooling commit.
+- **Depends on Epic 1, Epic 2 (Story 2.5), Epic 3's curation stories (3.1, 3.4 — Story 3.5 cut in full 2026-07-21), and Stories 4.1–4.2 being actually implemented**, not just created — all remain `ready-for-dev` as of this story's creation, and `git log` shows only the initial BMad-tooling commit.
 
 ### References
 

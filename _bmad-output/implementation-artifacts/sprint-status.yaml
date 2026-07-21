@@ -93,9 +93,12 @@ development_status:
   # Stories 3-2 (Approve) and 3-3 (Reject) removed 2026-07-15 — no approval gate exists;
   #   GenerationWorkflow-start moved to 2-5, Delete (3-4) is the sole exclusion mechanism.
   #   Journey Explorer (formerly Epic 6 Story 6-2) lives here too, folded into 3-1.
-  3-1-review-queue-candidate-list-evidence-panel: ready-for-dev
-  3-4-rename-delete-a-journey-capability: ready-for-dev  # Edit (FR-28) added then cut same day; reverted to Rename & Delete
-  3-5-review-queue-empty-state-new-journey-flagging-on-re-discovery: ready-for-dev  # empty-state half cut 2026-07-15; dedup-only now
+  # Story 3-5 (New-Journey Flagging on Re-Discovery) removed 2026-07-21 — cut in full for V1,
+  #   explicit product decision to keep the first shipped version simple. Epic 3 for V1 is 3-1 + 3-4 only.
+  3-1-review-queue-candidate-list-evidence-panel: review  # implemented 2026-07-21 — Discover Journeys
+    # two-pane screen (candidate list + sticky 340px step-detail panel), journeys/steps read endpoints
+  3-4-rename-delete-a-journey-capability: review  # implemented 2026-07-21 — Edit (FR-28) added then cut
+    # same day; reverted to Rename & Delete. Soft-delete via Journey.status="deleted"
   epic-3-retrospective: optional
 
   epic-4: in-progress

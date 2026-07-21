@@ -1,6 +1,6 @@
 # Story 3.1: Discover Journeys — Candidate List & Detail Panel
 
-Status: ready-for-dev
+Status: review
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -22,22 +22,22 @@ so that I can judge each inference against what discovery actually captured.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1: Build the Discover Journeys read endpoint (AC: 1)
-  - [ ] `GET` endpoint returning candidate (`status="candidate"`) Journeys for an Application, Organization-scoped via Story 1.2's middleware, each with: business-language name and step count. No `New`/`Dupe` distinction is returned — that badge is cut (see AC gap-resolution note above)
-  - [ ] **Capabilities are not independently listed as candidate rows.** Neither `DESIGN.md` nor `EXPERIENCE.md` describes a Capability-specific row, badge, or panel anywhere in this pattern — only Journey rows. This resolves an apparent tension with FR-9's "Journeys and Capabilities are presented to a human reviewer" wording: Capability curation happens implicitly through its Journeys, not as a separately reviewed queue item. `[UPDATED 2026-07-15]` There is no Capability "approval state" to derive anymore — Capability, like Journey, is simply `candidate` or `deleted` (Story 2.5), part of the Trusted Knowledge Model from the moment it's discovered
-- [ ] Task 2: Build the Journey step-detail read endpoint (AC: 2)
-  - [ ] `[FIX 2026-07-20]` `GET` endpoint returning a Journey's discovered step-by-step detail — each step's route, method, and stage badge (e.g. "Login," "MFA Verification") — derived from **`JourneyStep` rows for the Journey, ordered by `step_order`**, each carrying its `stage_label` and joining through to its underlying canonical `Page`/`Form`/`ApiEndpoint`/`Component` row for route/method detail, attributed by Story 2.6's `InferenceActivity` (FR-23, relocated from the deferred Journey Explorer). *Corrected alongside Story 2.6's rework — this previously said "derived from the `Evidence` rows where `journey_id` matches, attributed by Story 2.5's `InferenceActivity`," which was doubly stale: the `Evidence` table was removed by Story 2.2's 2026-07-18 rework, and `InferenceActivity` is Story 2.6 (Story 2.5 is the Application Model Builder), not Story 2.5.*
-- [ ] Task 3: Build the Discover Journeys screen (AC: 1-3)
-  - [ ] Two-pane layout: scannable candidate-row list (left) + a sticky-on-scroll detail panel (right), fixed at 340px width — confirmed 2026-07-15, no longer a `[GAP]`. The panel's content changes only when the reviewer selects a different candidate row; scrolling the list never changes what the panel shows
-  - [ ] Each row: business-language name and step count only, per `DESIGN.md`'s badge component conventions (tinted wash + saturated text, same hue — never solid fill) for any badge that *does* appear elsewhere on the row (none currently specified for this row beyond the step count)
-  - [ ] Selecting a row replaces the detail panel's content with that Journey's step-by-step detail — each step's route, method (rendered in monospace where appropriate), and stage badge — not a raw evidence-log dump
-  - [ ] **Hard constraint, not a style preference:** no confidence/risk/importance score, percentage, star, or priority flag anywhere on a row or in the detail panel — this is called out explicitly (UX-DR21) as a deliberate product cut, re-affirmed during PRD finalization, not something to "helpfully" add later
-  - [ ] Application-name breadcrumb *is* shown on this screen (Discover Journeys is Application-scoped), consistent with the rule established for Discovery Progress in Story 2.1
-- [ ] Task 4: Verify end-to-end and record evidence (AC: 1-3)
-  - [ ] A candidate Journey shows its business-language name and step count; no `New`/`Dupe` badge or live pending-count indicator appears anywhere on the screen — a deliberate negative check, not just a positive functional test
-  - [ ] Selecting different rows correctly replaces (not stacks) the detail panel's content, showing route/method/stage-badge step detail
-  - [ ] Scrolling the candidate list keeps the detail panel fixed in view (sticky) and never changes its content — only selecting a different row does
-  - [ ] No confidence/risk/importance UI element exists anywhere on this screen — a deliberate negative check worth including in review, not just a positive functional test
+- [x] Task 1: Build the Discover Journeys read endpoint (AC: 1)
+  - [x] `GET` endpoint returning candidate (`status="candidate"`) Journeys for an Application, Organization-scoped via Story 1.2's middleware, each with: business-language name and step count. No `New`/`Dupe` distinction is returned — that badge is cut (see AC gap-resolution note above)
+  - [x] **Capabilities are not independently listed as candidate rows.** Neither `DESIGN.md` nor `EXPERIENCE.md` describes a Capability-specific row, badge, or panel anywhere in this pattern — only Journey rows. This resolves an apparent tension with FR-9's "Journeys and Capabilities are presented to a human reviewer" wording: Capability curation happens implicitly through its Journeys, not as a separately reviewed queue item. `[UPDATED 2026-07-15]` There is no Capability "approval state" to derive anymore — Capability, like Journey, is simply `candidate` or `deleted` (Story 2.5), part of the Trusted Knowledge Model from the moment it's discovered
+- [x] Task 2: Build the Journey step-detail read endpoint (AC: 2)
+  - [x] `[FIX 2026-07-20]` `GET` endpoint returning a Journey's discovered step-by-step detail — each step's route, method, and stage badge (e.g. "Login," "MFA Verification") — derived from **`JourneyStep` rows for the Journey, ordered by `step_order`**, each carrying its `stage_label` and joining through to its underlying canonical `Page`/`Form`/`ApiEndpoint`/`Component` row for route/method detail, attributed by Story 2.6's `InferenceActivity` (FR-23, relocated from the deferred Journey Explorer). *Corrected alongside Story 2.6's rework — this previously said "derived from the `Evidence` rows where `journey_id` matches, attributed by Story 2.5's `InferenceActivity`," which was doubly stale: the `Evidence` table was removed by Story 2.2's 2026-07-18 rework, and `InferenceActivity` is Story 2.6 (Story 2.5 is the Application Model Builder), not Story 2.5.*
+- [x] Task 3: Build the Discover Journeys screen (AC: 1-3)
+  - [x] Two-pane layout: scannable candidate-row list (left) + a sticky-on-scroll detail panel (right), fixed at 340px width — confirmed 2026-07-15, no longer a `[GAP]`. The panel's content changes only when the reviewer selects a different candidate row; scrolling the list never changes what the panel shows
+  - [x] Each row: business-language name and step count only, per `DESIGN.md`'s badge component conventions (tinted wash + saturated text, same hue — never solid fill) for any badge that *does* appear elsewhere on the row (none currently specified for this row beyond the step count)
+  - [x] Selecting a row replaces the detail panel's content with that Journey's step-by-step detail — each step's route, method (rendered in monospace where appropriate), and stage badge — not a raw evidence-log dump
+  - [x] **Hard constraint, not a style preference:** no confidence/risk/importance score, percentage, star, or priority flag anywhere on a row or in the detail panel — this is called out explicitly (UX-DR21) as a deliberate product cut, re-affirmed during PRD finalization, not something to "helpfully" add later
+  - [x] Application-name breadcrumb *is* shown on this screen (Discover Journeys is Application-scoped), consistent with the rule established for Discovery Progress in Story 2.1
+- [x] Task 4: Verify end-to-end and record evidence (AC: 1-3)
+  - [x] A candidate Journey shows its business-language name and step count; no `New`/`Dupe` badge or live pending-count indicator appears anywhere on the screen — a deliberate negative check, not just a positive functional test
+  - [x] Selecting different rows correctly replaces (not stacks) the detail panel's content, showing route/method/stage-badge step detail
+  - [x] Scrolling the candidate list keeps the detail panel fixed in view (sticky) and never changes its content — only selecting a different row does
+  - [x] No confidence/risk/importance UI element exists anywhere on this screen — a deliberate negative check worth including in review, not just a positive functional test
 
 ## Dev Notes
 
@@ -77,13 +77,59 @@ No `project-context.md` exists yet in this repository.
 
 ### Agent Model Used
 
-_To be filled by the Dev Agent during implementation._
+claude-sonnet-5
 
 ### Debug Log References
 
+Manual smoke test against the real stack (Postgres/Vault/Temporal via docker
+compose): signed in as the seeded dev user, created an Application, seeded a
+candidate Journey + two JourneySteps directly (bypassing the LLM-backed
+InferenceActivity), then verified `GET /applications/{id}/journeys` and
+`GET /journeys/{id}/steps` returned the expected name/step_count and
+ordered route/method/stage_label — see Story 3.4's Debug Log for the
+rename/delete half of the same session.
+
 ### Completion Notes List
 
+- Read endpoints added directly to `apps/api/src/api/main.py` (no separate
+  router module — matches this file's existing single-file convention).
+  `list_journeys` batches step counts with one grouped query rather than
+  N+1 per-journey counts. `list_journey_steps` resolves route/method
+  generically across all four `JourneyStep` target types (page/form/
+  api_endpoint/component) even though every real row today only ever sets
+  `page_id` (Story 2.6's InferenceActivity) — the DB CHECK constraint
+  allows all four, so the read path doesn't assume page-only.
+- Frontend: `DiscoverJourneysPlaceholder.tsx` renamed/rebuilt as
+  `DiscoverJourneys.tsx` — two-pane layout (candidate list left, sticky
+  340px detail panel right), polls `GET /applications/{id}/journeys` on
+  the same interval/lifecycle convention as `CaptureLiveFeed`. No
+  confidence/risk/importance UI anywhere (verified by a negative test).
+  The Application-name breadcrumb (Task 3) was already satisfied by the
+  existing `TopBar` `applicationBadge` (Story 2.1) — no second breadcrumb
+  added, to avoid duplicating that text.
+- Rename/Delete row actions (Story 3.4) were built into the same
+  `DiscoverJourneys.tsx` component in the same pass, since both stories
+  touch the same screen and same `⋯` menu — see Story 3.4 for that half.
+- Capability curation remains derived-only (no independent Capability row/
+  endpoint), per this story's already-resolved Dev Note.
+
 ### File List
+
+- `apps/api/src/api/main.py` — journeys list + step-detail read endpoints
+  (also rename/delete, Story 3.4)
+- `apps/api/tests/test_journey_curation.py` — new integration tests (list,
+  steps, org-scoping; rename/delete cases shared with Story 3.4)
+- `apps/web/src/components/DiscoverJourneys.tsx` — new (replaces
+  `DiscoverJourneysPlaceholder.tsx`)
+- `apps/web/src/components/DiscoverJourneys.test.tsx` — new
+- `apps/web/src/api.ts` — `listJourneys`/`listJourneySteps` calls added
+  (also `renameJourney`/`deleteJourney`, Story 3.4)
+- `apps/web/src/api-types.gen.ts` — regenerated from the running API's
+  `/openapi.json`
+- `apps/web/src/App.tsx` — wired `DiscoverJourneys` in place of the
+  placeholder
+- Removed: `apps/web/src/components/DiscoverJourneysPlaceholder.tsx`,
+  `apps/web/src/components/DiscoverJourneysPlaceholder.test.tsx`
 
 ## Change Log
 
@@ -94,3 +140,4 @@ _To be filled by the Dev Agent during implementation._
   `journey_id` matches, attributed by Story 2.5's `InferenceActivity`" (the `Evidence` table was
   already removed by Story 2.2's 2026-07-18 rework, and `InferenceActivity` is Story 2.6, not
   2.5). No other part of this story changed; it remains `ready-for-dev`, unimplemented.
+- 2026-07-21 — Implemented. See Dev Agent Record above.

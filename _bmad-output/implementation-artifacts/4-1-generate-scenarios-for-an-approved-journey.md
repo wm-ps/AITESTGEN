@@ -56,7 +56,7 @@ so that the map becomes actionable test coverage, not just documentation.
 ### Project Structure Notes
 
 - Adds `Scenario` to `packages/domain`, extends `HostedAIProvider` (`packages/ai_provider`, Story 2.5), adds `ScenarioGenerationActivity` to `apps/workers/generation` (per the Structural Seed's worker split), extends `GenerationWorkflow` (`packages/workflows`, Stories 1.1/2.5), and builds the Review Scenarios screen in `apps/web`. No new top-level directories.
-- **Depends on Epic 1, Epic 2 (Stories 1.1–2.5), and Epic 3's curation stories (3.1, 3.4, 3.5) being actually implemented**, not just created — all remain `ready-for-dev` as of this story's creation, and `git log` shows only the initial BMad-tooling commit. This is the first story in Epic 4.
+- **Depends on Epic 1, Epic 2 (Stories 1.1–2.5), and Epic 3's curation stories (3.1, 3.4 — Story 3.5 cut in full 2026-07-21) being actually implemented**, not just created — all remain `ready-for-dev` as of this story's creation, and `git log` shows only the initial BMad-tooling commit. This is the first story in Epic 4.
 
 ### References
 

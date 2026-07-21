@@ -343,7 +343,7 @@ So that I have something meaningful to review instead of a raw crawl log.
 
 ## Epic 3: Human Curation & Trusted Knowledge Model `[RENAMED 2026-07-15, was "Human Review & Trusted Knowledge Model"]`
 
-`[REWRITTEN 2026-07-15]` A reviewer curates discovered candidates (rename, delete) in the Discover Journeys screen; every discovered Journey is already in the Trusted Knowledge Model and generating coverage before the reviewer looks at it (Epic 2) — deletion is the only exclusion mechanism, not a gate. Re-running discovery only flags genuinely new Journeys.
+`[REWRITTEN 2026-07-15]` A reviewer curates discovered candidates (rename, delete) in the Discover Journeys screen; every discovered Journey is already in the Trusted Knowledge Model and generating coverage before the reviewer looks at it (Epic 2) — deletion is the only exclusion mechanism, not a gate. `[UPDATED 2026-07-21]` Epic 3 for V1 is Stories 3.1 and 3.4 only — cross-run re-discovery refinement (formerly Story 3.5) is out of scope for this version, to be revisited later. `InferenceActivity`'s existing `identity_key` find-or-create (Story 2.6) already prevents duplicate Journey rows on a re-discovery match; refining what happens beyond that on a match is the deferred work.
 
 ### Story 3.1: Discover Journeys — Candidate List & Detail Panel
 
@@ -381,20 +381,6 @@ So that the Trusted Knowledge Model reflects names I trust and excludes what doe
 **Given** a candidate Journey/Capability
 **When** the reviewer deletes it (via the `⋯` menu)
 **Then** it is excluded from the Trusted Knowledge Model — along with any Scenarios/Test Assets already generated for it — from Generate Suite compilation and Analytics (FR-13); this does not cancel an in-flight or completed `GenerationWorkflow`, consistent with FR-18's regeneration being the only way to redo generation for a kept Journey
-
-### Story 3.5: New-Journey Flagging on Re-Discovery `[RENAMED 2026-07-15, was "Discover Journeys Empty State & New-Journey Flagging on Re-Discovery"]`
-
-**`[CUT 2026-07-15]`** This story's empty-state half is cut — it existed only because the old approve/reject model forced a decision on every row before the queue could "clear." With no forced per-row decision, there is no zero-undecided state to trigger an empty-state screen; a reviewer can delete what they don't want and move on whenever they're satisfied. Only the re-discovery dedup logic below survives.
-
-As a reviewer,
-I want to see only genuinely new Journeys on a re-discovery run,
-So that I never have to re-review something I've already seen before.
-
-**Acceptance Criteria:**
-
-**Given** discovery is re-run on a previously discovered Application
-**When** `InferenceActivity` produces new candidates
-**Then** only candidates whose `identity_key` does not match any existing Journey in the Application are surfaced (FR-15, AD-13) — already-known Journeys are never automatically re-surfaced, and a suppressed match does not alter the existing Journey's `discovery_run_id` or evidence attribution
 
 ## Epic 4: Scenario & Playwright Test Generation
 

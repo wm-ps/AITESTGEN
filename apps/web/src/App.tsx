@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api, type ApplicationRead, type UserRead } from './api'
 import { ConnectAppForm } from './components/ConnectAppForm'
-import { DiscoverJourneysPlaceholder } from './components/DiscoverJourneysPlaceholder'
+import { DiscoverJourneys } from './components/DiscoverJourneys'
 import { Home } from './components/Home'
 import { SignIn } from './components/SignIn'
 import { TopBar } from './components/TopBar'
@@ -58,7 +58,8 @@ function App() {
         />
       )}
       {view === 'discover' && application && (
-        <DiscoverJourneysPlaceholder
+        <DiscoverJourneys
+          applicationId={application.id}
           discoveryStatus={application.discovery_status}
           discoveryFailureReason={application.discovery_failure_reason ?? null}
           discoveryRunId={application.discovery_run_id}

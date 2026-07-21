@@ -5,6 +5,8 @@ export type LoginRequest = components['schemas']['LoginRequest']
 export type ApplicationCreate = components['schemas']['ApplicationCreate']
 export type ApplicationRead = components['schemas']['ApplicationRead']
 export type CaptureRead = components['schemas']['CaptureRead']
+export type JourneyRead = components['schemas']['JourneyRead']
+export type JourneyStepRead = components['schemas']['JourneyStepRead']
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
@@ -40,6 +42,17 @@ export const api = {
     request<ApplicationRead>('/applications', { method: 'POST', body: JSON.stringify(payload) }),
   listCaptures: (discoveryRunId: string) =>
     request<CaptureRead[]>(`/discovery-runs/${discoveryRunId}/captures`),
+  listJourneys: (applicationId: string) =>
+    request<JourneyRead[]>(`/applications/${applicationId}/journeys`),
+  listJourneySteps: (journeyId: string) =>
+    request<JourneyStepRead[]>(`/journeys/${journeyId}/steps`),
+  renameJourney: (journeyId: string, name: string) =>
+    request<JourneyRead>(`/journeys/${journeyId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+  deleteJourney: (journeyId: string) =>
+    request<undefined>(`/journeys/${journeyId}`, { method: 'DELETE' }),
 }
 
 export { ApiError }

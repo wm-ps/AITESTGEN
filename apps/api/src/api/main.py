@@ -11,11 +11,24 @@ import uuid
 from datetime import datetime
 from typing import Annotated
 
-from domain import Action, ApiEndpoint, Application, AuthMethod, DiscoveryRun, Page, PlatformUser
+from domain import (
+    Action,
+    ApiEndpoint,
+    Application,
+    AuthMethod,
+    Component,
+    DiscoveryRun,
+    Form,
+    Journey,
+    JourneyStep,
+    Page,
+    PlatformUser,
+)
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 from secrets_client import VaultSecretsClient
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from api.auth import (
@@ -183,12 +196,9 @@ async def create_application(
     return _to_application_read(application, discovery_run)
 
 
-@app.get("/applications/{external_id}", response_model=ApplicationRead)
-def get_application(
-    external_id: uuid.UUID,
-    session: SessionDep,
-    organization_id: CurrentOrgIdDep,
-) -> ApplicationRead:
+def _get_org_application(
+    session: Session, organization_id: uuid.UUID, external_id: uuid.UUID
+) -> Application:
     application = session.exec(
         select(Application).where(
             Application.external_id == external_id,
@@ -197,6 +207,16 @@ def get_application(
     ).first()
     if application is None:
         raise HTTPException(status_code=404, detail="application not found")
+    return application
+
+
+@app.get("/applications/{external_id}", response_model=ApplicationRead)
+def get_application(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> ApplicationRead:
+    application = _get_org_application(session, organization_id, external_id)
     discovery_run = session.exec(
         select(DiscoveryRun).where(DiscoveryRun.application_id == application.id)
     ).first()
@@ -263,3 +283,192 @@ def list_captures(
         )
 
     return captures[:50]
+
+
+# --- Discover Journeys (Story 3.1) + Rename/Delete (Story 3.4) ---
+# No confidence/risk/importance field appears on either read model below —
+# UX-DR21 is a hard, repeatedly-reaffirmed product constraint, not a style
+# choice to "helpfully" add to later (see story 3.1's Dev Notes).
+
+
+class JourneyRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    step_count: int
+
+
+class JourneyStepRead(BaseModel):
+    step_order: int
+    stage_label: str
+    route: str
+    method: str
+
+
+class JourneyRenamePayload(BaseModel):
+    name: str
+
+
+def _get_org_journey(
+    session: Session, organization_id: uuid.UUID, external_id: uuid.UUID
+) -> Journey:
+    journey = session.exec(select(Journey).where(Journey.external_id == external_id)).first()
+    application = session.get(Application, journey.application_id) if journey else None
+    if journey is None or application is None or application.organization_id != organization_id:
+        raise HTTPException(status_code=404, detail="journey not found")
+    return journey
+
+
+def _journey_step_route_and_method(
+    step: JourneyStep,
+    pages: dict[uuid.UUID, Page],
+    forms: dict[uuid.UUID, Form],
+    api_endpoints: dict[uuid.UUID, ApiEndpoint],
+    components: dict[uuid.UUID, Component],
+) -> tuple[str, str]:
+    # Exactly one of these is set per row (DB CHECK constraint) — every real
+    # `JourneyStep` today only ever sets `page_id` (Story 2.6's
+    # InferenceActivity), but the schema allows all four typed targets, so
+    # this resolves all of them rather than assuming page-only.
+    if step.page_id is not None:
+        return pages[step.page_id].url, "GET"
+    if step.form_id is not None:
+        form = forms[step.form_id]
+        return form.action_url, form.method
+    if step.api_endpoint_id is not None:
+        endpoint = api_endpoints[step.api_endpoint_id]
+        return endpoint.path, endpoint.method
+    assert step.component_id is not None
+    component = components[step.component_id]
+    return pages[component.page_id].url, "GET"
+
+
+@app.get("/applications/{external_id}/journeys", response_model=list[JourneyRead])
+def list_journeys(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[JourneyRead]:
+    application = _get_org_application(session, organization_id, external_id)
+    journeys = session.exec(
+        select(Journey).where(
+            Journey.application_id == application.id,
+            Journey.status == "candidate",
+        )
+    ).all()
+    step_counts: dict[uuid.UUID, int] = {}
+    if journeys:
+        step_counts = dict(
+            session.exec(
+                select(JourneyStep.journey_id, func.count())
+                .where(JourneyStep.journey_id.in_([j.id for j in journeys]))  # type: ignore[attr-defined]
+                .group_by(JourneyStep.journey_id)  # type: ignore[arg-type]
+            ).all()
+        )
+    return [
+        JourneyRead(id=j.external_id, name=j.name, step_count=step_counts.get(j.id, 0))
+        for j in journeys
+    ]
+
+
+@app.get("/journeys/{external_id}/steps", response_model=list[JourneyStepRead])
+def list_journey_steps(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[JourneyStepRead]:
+    journey = _get_org_journey(session, organization_id, external_id)
+    steps = session.exec(
+        select(JourneyStep)
+        .where(JourneyStep.journey_id == journey.id)
+        .order_by(JourneyStep.step_order)  # type: ignore[arg-type]
+    ).all()
+
+    component_ids = {s.component_id for s in steps if s.component_id}
+    components = {
+        c.id: c
+        for c in (
+            session.exec(
+                select(Component).where(Component.id.in_(component_ids))  # type: ignore[attr-defined]
+            ).all()
+            if component_ids
+            else []
+        )
+    }
+    page_ids = {s.page_id for s in steps if s.page_id} | {c.page_id for c in components.values()}
+    form_ids = {s.form_id for s in steps if s.form_id}
+    api_endpoint_ids = {s.api_endpoint_id for s in steps if s.api_endpoint_id}
+
+    pages = {
+        p.id: p
+        for p in (
+            session.exec(select(Page).where(Page.id.in_(page_ids))).all()  # type: ignore[attr-defined]
+            if page_ids
+            else []
+        )
+    }
+    forms = {
+        f.id: f
+        for f in (
+            session.exec(select(Form).where(Form.id.in_(form_ids))).all()  # type: ignore[attr-defined]
+            if form_ids
+            else []
+        )
+    }
+    api_endpoints = {
+        e.id: e
+        for e in (
+            session.exec(
+                select(ApiEndpoint).where(
+                    ApiEndpoint.id.in_(api_endpoint_ids)  # type: ignore[attr-defined]
+                )
+            ).all()
+            if api_endpoint_ids
+            else []
+        )
+    }
+
+    result = []
+    for step in steps:
+        route, method = _journey_step_route_and_method(
+            step, pages, forms, api_endpoints, components
+        )
+        result.append(
+            JourneyStepRead(
+                step_order=step.step_order, stage_label=step.stage_label, route=route, method=method
+            )
+        )
+    return result
+
+
+@app.patch("/journeys/{external_id}", response_model=JourneyRead)
+def rename_journey(
+    external_id: uuid.UUID,
+    payload: JourneyRenamePayload,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> JourneyRead:
+    journey = _get_org_journey(session, organization_id, external_id)
+    if journey.status != "candidate":
+        raise HTTPException(status_code=409, detail="journey already deleted")
+    journey.name = payload.name
+    session.add(journey)
+    session.commit()
+    session.refresh(journey)
+    step_count = session.exec(
+        select(func.count()).select_from(JourneyStep).where(JourneyStep.journey_id == journey.id)
+    ).one()
+    return JourneyRead(id=journey.external_id, name=journey.name, step_count=step_count)
+
+
+@app.delete("/journeys/{external_id}", status_code=204)
+def delete_journey(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> None:
+    journey = _get_org_journey(session, organization_id, external_id)
+    if journey.status != "candidate":
+        raise HTTPException(status_code=409, detail="journey already deleted")
+    journey.status = "deleted"
+    session.add(journey)
+    session.commit()
