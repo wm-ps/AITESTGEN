@@ -17,12 +17,22 @@ import os
 import uuid
 from io import BytesIO
 
+import urllib3
 from minio import Minio
 
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
 MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.environ.get("MINIO_BUCKET", "discovery-evidence")
+
+# minio's default http_client has no timeout at all (urllib3's own default) —
+# a stalled connection to MinIO (container paused, Docker network blip) would
+# otherwise block whatever thread calls `put`/`get` indefinitely. Observed
+# live: this was blocking the crawler's asyncio event loop outright since
+# `put` used to be called inline (2026-07-21); now that it's off-loaded via
+# `asyncio.to_thread`, a bound still matters so a stuck call frees its thread
+# instead of parking it forever.
+_HTTP_CLIENT = urllib3.PoolManager(timeout=urllib3.Timeout(connect=5, read=30))
 
 
 class ObjectStore:
@@ -32,6 +42,7 @@ class ObjectStore:
             access_key=MINIO_ACCESS_KEY,
             secret_key=MINIO_SECRET_KEY,
             secure=False,
+            http_client=_HTTP_CLIENT,
         )
         if not self._client.bucket_exists(MINIO_BUCKET):
             self._client.make_bucket(MINIO_BUCKET)

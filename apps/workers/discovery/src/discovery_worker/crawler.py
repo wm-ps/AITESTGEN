@@ -47,6 +47,7 @@ Fixed by heartbeating before each individual form submission and button
 click too, not just once per page.
 """
 
+import asyncio
 import logging
 import re
 import uuid
@@ -172,7 +173,7 @@ class _CaptureSink:
         self._result = result
         self._on_capture = on_capture
 
-    def add(self, item: CapturedItem) -> None:
+    async def add(self, item: CapturedItem) -> None:
         if isinstance(item, CapturedPage):
             self._result.pages.append(item)
         elif isinstance(item, CapturedForm):
@@ -184,7 +185,13 @@ class _CaptureSink:
         elif isinstance(item, CapturedTransition):
             self._result.transitions.append(item)
         if self._on_capture:
-            self._on_capture(item)
+            # `_on_capture` (the real Activity's `_persist`) does a
+            # synchronous Postgres commit — off the event loop so a slow
+            # commit stalls only this crawl, not the heartbeat/poll loop
+            # this worker process owes Temporal for every other concurrent
+            # workflow (observed live: a stalled commit froze the whole
+            # worker, not just this activity — 2026-07-21).
+            await asyncio.to_thread(self._on_capture, item)
 
 
 def _same_origin(url: str, base_url: str) -> bool:
@@ -370,7 +377,9 @@ async def _fill_and_submit_form(
     if heartbeat:
         heartbeat()
 
-    sink.add(CapturedForm(page_url=page_url, action_url=action, method=method, fields=fields))
+    await sink.add(
+        CapturedForm(page_url=page_url, action_url=action, method=method, fields=fields)
+    )
     after_url = _page_fingerprint(page.url)
     # Recorded whenever there's a real label, whether or not the submit
     # produced a navigation — a submit that only updates in-page state (no
@@ -378,7 +387,7 @@ async def _fill_and_submit_form(
     # Transition is the one that needs an actual observed navigation to mean
     # anything.
     if submit_label:
-        sink.add(
+        await sink.add(
             CapturedAction(
                 page_url=before_url,
                 description=submit_label,
@@ -386,7 +395,7 @@ async def _fill_and_submit_form(
             )
         )
     if after_url != before_url:
-        sink.add(
+        await sink.add(
             CapturedTransition(
                 from_url=before_url, to_url=after_url, triggered_by_description=submit_label
             )
@@ -458,7 +467,7 @@ async def _click_standalone_buttons(
                 pass
             if heartbeat:
                 heartbeat()
-            sink.add(
+            await sink.add(
                 CapturedAction(
                     page_url=before_url, description=label, captured_selector=selector
                 )
@@ -466,7 +475,7 @@ async def _click_standalone_buttons(
             budget -= 1
             after_url = _page_fingerprint(page.url)
             if after_url != before_url:
-                sink.add(
+                await sink.add(
                     CapturedTransition(
                         from_url=before_url, to_url=after_url, triggered_by_description=label
                     )
@@ -499,7 +508,7 @@ async def run_discovery_crawl(
                 body = (await response.text())[:500]
             except Exception:
                 body = None
-            sink.add(
+            await sink.add(
                 CapturedApiCall(
                     page_url=_page_fingerprint(page.url),
                     method=request.method,
@@ -557,15 +566,26 @@ async def run_discovery_crawl(
             # retried; nothing about it (Page, links, forms, buttons) is
             # explored further.
             continue
-        screenshot = await page.screenshot()
-        key = object_store.put(screenshot, discovery_run_id)
-        sink.add(CapturedPage(url=page.url, title=await page.title(), object_storage_key=key))
+        try:
+            screenshot = await page.screenshot()
+            title = await page.title()
+            # Synchronous MinIO upload — off the event loop for the same
+            # reason as the DB commit above (see `_CaptureSink.add`).
+            key = await asyncio.to_thread(object_store.put, screenshot, discovery_run_id)
+        except Exception:
+            # A screenshot/upload hiccup on one page previously failed the
+            # *entire* run (any uncaught exception here escapes to
+            # `discovery_activity`'s except-block, below) — treat it like
+            # any other broken destination instead: skip the page, keep
+            # crawling everything else.
+            continue
+        await sink.add(CapturedPage(url=page.url, title=title, object_storage_key=key))
         # Records how the crawler actually reached this page — without this,
         # plain link-followed BFS navigation (the vast majority of a normal
         # crawl) left `PageTransition` almost empty, since only click/form-
         # triggered navigation emitted one below.
         if from_url and from_url != url:
-            sink.add(CapturedTransition(from_url=from_url, to_url=url))
+            await sink.add(CapturedTransition(from_url=from_url, to_url=url))
 
         # Story 2.4 (AD-11), checked before the exhaustive-traversal
         # continuation below: session expiry looks like an *unrequested*

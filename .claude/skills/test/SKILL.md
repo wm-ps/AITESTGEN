@@ -74,17 +74,55 @@ Then, in parallel (single message, multiple tool calls):
    `ps -W | grep -i discovery_worker` — this environment's Git Bash doesn't
    have `pgrep`). If not, open it in its own window, wrapped in `watchfiles`
    so edits to its source or the shared `packages/` restart it automatically
-   (needed for an onboarded Application's DiscoveryRun to actually execute):
+   (needed for an onboarded Application's DiscoveryRun to actually execute).
+
+   The launch command is `scripts\run-discovery-worker.cmd` (and
+   `scripts\run-generation-worker.cmd` below) — **use the wrapper script, do
+   not inline the `uv run ... watchfiles "..."` command directly into the
+   `start`/`cmd /k` line.** Two real bugs were found doing it inline, both
+   invisible until you check for a spawned python child process (the cmd
+   window just sits at an idle prompt with no error visible unless you
+   redirect its output):
+   - Windows `cmd.exe` does not honor backslash-escaped inner quotes
+     (`\"...\"`) — nesting a quoted, multi-word `watchfiles` target through
+     `cmd //c start ... cmd //k "..."` silently mangles the quoting and
+     `watchfiles` errors with `unrecognized arguments`. A wrapper script
+     needs no nested quoting since it holds the real command directly.
+   - `uv run watchfiles "python -m discovery_worker.worker" ...` alone is
+     also wrong even with quoting fixed: `uv run` only prepends
+     `.venv\Scripts` to PATH for the `watchfiles` process itself; the target
+     command `watchfiles` spawns as its own child does not inherit that
+     prepend, so bare `python` resolves to uv's managed base interpreter
+     instead of the venv and fails with `ModuleNotFoundError`. The wrapper
+     scripts below re-wrap the target in its own `uv run --package ...
+     python -m ...` to force the correct venv python.
+
+   If `scripts/run-discovery-worker.cmd` doesn't exist yet, create it:
    ```
-   cmd //c start "AITestGen Discovery Worker" cmd //k "uv run --env-file .env --package discovery-worker watchfiles \"python -m discovery_worker.worker\" apps/workers/discovery/src packages"
+   @echo off
+   cd /d "%~dp0.."
+   uv run --env-file .env --package discovery-worker watchfiles "uv run --package discovery-worker python -m discovery_worker.worker" apps/workers/discovery/src packages
+   ```
+   Then launch it — **pass the path with an escaped backslash
+   (`scripts\\run-discovery-worker.cmd`) or Git Bash's unquoted-backslash
+   handling turns `\r` into a bare `r`, mangling the path to
+   `scriptsrun-discovery-worker.cmd`**:
+   ```
+   cmd //c start "AITestGen Discovery Worker" cmd //k "scripts\\run-discovery-worker.cmd"
    ```
 6b. Check if the generation worker is already running (`ps -W | grep -i
-   generation_worker`). If not, open it in its own window, same
-   `watchfiles`-wrapped pattern — **do not skip this one** (see the note
-   above; every real Discovery Run's candidate Journeys depend on it to
-   avoid piling up as permanently-`Running` `GenerationWorkflow`s):
+   generation_worker`). If not, same pattern. Create
+   `scripts/run-generation-worker.cmd` if missing:
    ```
-   cmd //c start "AITestGen Generation Worker" cmd //k "uv run --env-file .env --package generation-worker watchfiles \"python -m generation_worker.worker\" apps/workers/generation/src packages"
+   @echo off
+   cd /d "%~dp0.."
+   uv run --env-file .env --package generation-worker watchfiles "uv run --package generation-worker python -m generation_worker.worker" apps/workers/generation/src packages
+   ```
+   **do not skip this one** (see the note above; every real Discovery Run's
+   candidate Journeys depend on it to avoid piling up as
+   permanently-`Running` `GenerationWorkflow`s):
+   ```
+   cmd //c start "AITestGen Generation Worker" cmd //k "scripts\\run-generation-worker.cmd"
    ```
 7. In `apps/web`: run `npm install` only if `node_modules` is missing, then
    `npm run generate:api-types` (regenerates TS types from the now-running

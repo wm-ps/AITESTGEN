@@ -6,11 +6,19 @@ object-store modules — the closest thing to "verify end-to-end" this
 environment supports without a real deployed target application.
 """
 
+import asyncio
 import json
+import time
 import uuid
 
 import pytest
-from discovery_worker.crawler import CapturedAction, CapturedPage, run_discovery_crawl
+from discovery_worker.crawler import (
+    CapturedAction,
+    CapturedPage,
+    CrawlResult,
+    _CaptureSink,
+    run_discovery_crawl,
+)
 from discovery_worker.session import establish_session
 from fixtures.target_app import configure
 from playwright.async_api import async_playwright
@@ -262,6 +270,36 @@ async def test_crawl_discards_an_error_status_destination(target_app_url: str) -
 
     assert not any(page.url.endswith("/broken") for page in result.pages)
     assert not any(t.to_url.endswith("/broken") for t in result.transitions)
+
+
+@pytest.mark.asyncio
+async def test_capture_sink_add_does_not_block_the_event_loop() -> None:
+    """2026-07-21 fix: `on_capture` (real shape: a synchronous Postgres
+    commit, or a synchronous MinIO upload upstream of it) must run off the
+    event loop. Before this fix, a slow `on_capture` call froze the whole
+    worker process — not just the current crawl — since Temporal's
+    heartbeat/poll loop for every concurrent workflow shares this same
+    event loop. A concurrently-scheduled ticker task only advances while
+    `add` awaits if `on_capture` is truly off-thread."""
+    ticks = 0
+
+    async def ticker() -> None:
+        nonlocal ticks
+        for _ in range(10):
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    def blocking_on_capture(item: CapturedPage) -> None:
+        time.sleep(0.15)
+
+    sink = _CaptureSink(CrawlResult(), blocking_on_capture)
+    tick_task = asyncio.create_task(ticker())
+    await sink.add(CapturedPage(url="https://example.com", title="Home"))
+    # Checked immediately, before awaiting `tick_task`: if `on_capture` ran
+    # inline on the event loop (the pre-fix behavior), `ticker` never got a
+    # turn until `add` returned, so `ticks` would still be 0 right here.
+    assert ticks > 0
+    await tick_task
 
 
 def test_captured_dataclasses_carry_selector_info() -> None:

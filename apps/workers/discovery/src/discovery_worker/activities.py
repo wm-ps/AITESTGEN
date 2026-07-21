@@ -15,6 +15,7 @@ candidate Journey/Capability rows, plus starting `GenerationWorkflow` per
 candidate (no approval gate, AD-1/AD-9).
 """
 
+import asyncio
 import logging
 import os
 import uuid
@@ -203,8 +204,15 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                 session.commit()
 
         try:
-            credential = VaultSecretsClient().resolve(SecretRef(path=input.secret_ref))
-            object_store = ObjectStore()
+            # Both are synchronous network clients (hvac/requests, minio/
+            # urllib3) — off the event loop so a slow Vault/MinIO response
+            # stalls only this activity, not the heartbeat/poll loop this
+            # worker owes Temporal for every other concurrent workflow.
+            vault_client = VaultSecretsClient()
+            credential = await asyncio.to_thread(
+                vault_client.resolve, SecretRef(path=input.secret_ref)
+            )
+            object_store = await asyncio.to_thread(ObjectStore)
 
             async with async_playwright() as playwright:
                 browser = await playwright.chromium.launch(headless=True)

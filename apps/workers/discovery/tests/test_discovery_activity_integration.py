@@ -188,7 +188,14 @@ async def test_pages_captured_before_a_mid_crawl_crash_are_not_lost(
 ) -> None:
     """The fix for captures being written only at the very end: a crash
     partway through must not discard whatever was already captured — it
-    should already be committed to Postgres by that point."""
+    should already be committed to Postgres by that point.
+
+    2026-07-21: a screenshot-upload failure is now caught per-page (like a
+    broken `goto` destination) instead of escaping to fail the whole run —
+    a transient MinIO hiccup on one page shouldn't torch hours of otherwise-
+    healthy traversal. So the crawl now runs to completion around the
+    simulated failure rather than crashing; what this test actually checks
+    (captures before the failure point are never lost) still holds."""
     init_db()
     secret_ref_path, application_external_id, discovery_run_id, discovery_run_external_id = (
         _seed_application(target_app_url)
@@ -217,9 +224,10 @@ async def test_pages_captured_before_a_mid_crawl_crash_are_not_lost(
         )
     )
 
-    assert result.status == "failed"
+    assert result.status == "complete"
 
     with Session(engine) as session:
         pages = session.exec(select(Page).where(Page.discovery_run_id == discovery_run_id)).all()
 
-    assert pages, "pages captured before the crash must survive it, not be discarded"
+    assert pages, "pages captured before the failure must survive it, not be discarded"
+    assert calls["count"] > 1, "the simulated failure must actually have been hit"
