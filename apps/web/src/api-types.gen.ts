@@ -175,6 +175,75 @@ export interface paths {
         patch: operations["rename_journey_journeys__external_id__patch"];
         trace?: never;
     };
+    "/applications/{external_id}/generate-scenarios": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate Scenarios */
+        post: operations["generate_scenarios_applications__external_id__generate_scenarios_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/scenarios": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Scenarios */
+        get: operations["list_scenarios_applications__external_id__scenarios_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scenarios/{external_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Scenario */
+        delete: operations["delete_scenario_scenarios__external_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename Scenario */
+        patch: operations["rename_scenario_scenarios__external_id__patch"];
+        trace?: never;
+    };
+    "/scenarios/{external_id}/test-data": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Scenario Test Data */
+        patch: operations["update_scenario_test_data_scenarios__external_id__test_data_patch"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -295,6 +364,54 @@ export interface components {
             email: string;
             /** Password */
             password: string;
+        };
+        /** ScenarioRead */
+        ScenarioRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Journey Id
+             * Format: uuid
+             */
+            journey_id: string;
+            /** Journey Name */
+            journey_name: string;
+            /** Type */
+            type: string;
+            /** Name */
+            name: string;
+            /** Steps */
+            steps: string[];
+            /** Expected Result */
+            expected_result: string;
+            /** Test Data */
+            test_data: components["schemas"]["ScenarioTestDataFieldRead"][];
+            /** Test Data Complete */
+            test_data_complete: boolean;
+        };
+        /** ScenarioRenamePayload */
+        ScenarioRenamePayload: {
+            /** Name */
+            name: string;
+        };
+        /** ScenarioTestDataFieldRead */
+        ScenarioTestDataFieldRead: {
+            /** Name */
+            name: string;
+            /** Mandatory */
+            mandatory: boolean;
+            /** Value */
+            value: string | null;
+        };
+        /** ScenarioTestDataUpdatePayload */
+        ScenarioTestDataUpdatePayload: {
+            /** Name */
+            name: string;
+            /** Value */
+            value: string;
         };
         /** UserRead */
         UserRead: {
@@ -655,6 +772,179 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JourneyRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_scenarios_applications__external_id__generate_scenarios_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_scenarios_applications__external_id__scenarios_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_scenario_scenarios__external_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_scenario_scenarios__external_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScenarioRenamePayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_scenario_test_data_scenarios__external_id__test_data_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScenarioTestDataUpdatePayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioRead"];
                 };
             };
             /** @description Validation Error */

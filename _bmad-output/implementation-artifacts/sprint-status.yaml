@@ -129,7 +129,10 @@ development_status:
   epic-3-retrospective: optional
 
   epic-4: in-progress
-  4-1-generate-scenarios-for-an-approved-journey: ready-for-dev
+  4-1-generate-scenarios-for-an-approved-journey: review  # implemented 2026-07-21 — button-triggered
+    # generation (Continue to Scenarios), AI-defined test-data fields, reviewer completion gate
+    # (Continue to Generate Test Suite). Also fixed InferenceActivity to stop auto-starting
+    # GenerationWorkflow, per this story's own corrected flow.
   4-2-generate-playwright-test-assets-from-scenarios: ready-for-dev
   4-3-full-regeneration-of-test-assets-on-request: ready-for-dev
   epic-4-retrospective: optional

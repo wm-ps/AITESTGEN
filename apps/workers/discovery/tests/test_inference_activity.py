@@ -24,7 +24,7 @@ from domain import (
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
-from workflows import GENERATION_TASK_QUEUE, InferenceActivityInput
+from workflows import InferenceActivityInput
 
 
 def _db_available() -> bool:
@@ -139,7 +139,7 @@ def _seed_completed_run() -> tuple[uuid.UUID, uuid.UUID, list[Page], ApiEndpoint
 
 
 @pytest.mark.asyncio
-async def test_inference_activity_creates_journeys_attributes_pages_and_starts_generation(
+async def test_inference_activity_creates_journeys_and_attributes_pages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     init_db()
@@ -219,11 +219,10 @@ async def test_inference_activity_creates_journeys_attributes_pages_and_starts_g
         assert not hasattr(Page, "journey_id")
         assert not hasattr(ApiEndpoint, "journey_id")
 
-    client = await get_temporal_client()
-    for journey_external_id in journey_external_ids:
-        handle = client.get_workflow_handle(f"generation-{journey_external_id}-1")
-        description = await handle.describe()
-        assert description.task_queue == GENERATION_TASK_QUEUE
+    # `[CORRECTED 2026-07-21]` InferenceActivity no longer starts
+    # GenerationWorkflow — Story 4.1 moved that to an explicit
+    # "Continue to Scenarios" trigger. Nothing to assert about Temporal here
+    # anymore; see apps/api's generate-scenarios endpoint tests instead.
 
 
 @pytest.mark.asyncio

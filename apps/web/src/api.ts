@@ -6,6 +6,7 @@ export type ApplicationCreate = components['schemas']['ApplicationCreate']
 export type ApplicationRead = components['schemas']['ApplicationRead']
 export type JourneyRead = components['schemas']['JourneyRead']
 export type JourneyStepRead = components['schemas']['JourneyStepRead']
+export type ScenarioRead = components['schemas']['ScenarioRead']
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
@@ -52,6 +53,24 @@ export const api = {
     }),
   deleteJourney: (journeyId: string) =>
     request<undefined>(`/journeys/${journeyId}`, { method: 'DELETE' }),
+  generateScenarios: (applicationId: string) =>
+    request<{ journeys_triggered: number }>(`/applications/${applicationId}/generate-scenarios`, {
+      method: 'POST',
+    }),
+  listScenarios: (applicationId: string) =>
+    request<ScenarioRead[]>(`/applications/${applicationId}/scenarios`),
+  renameScenario: (scenarioId: string, name: string) =>
+    request<ScenarioRead>(`/scenarios/${scenarioId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+  deleteScenario: (scenarioId: string) =>
+    request<undefined>(`/scenarios/${scenarioId}`, { method: 'DELETE' }),
+  updateScenarioTestData: (scenarioId: string, name: string, value: string) =>
+    request<ScenarioRead>(`/scenarios/${scenarioId}/test-data`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name, value }),
+    }),
 }
 
 export { ApiError }

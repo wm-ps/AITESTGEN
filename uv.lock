@@ -437,14 +437,34 @@ name = "generation-worker"
 version = "0.1.0"
 source = { editable = "apps/workers/generation" }
 dependencies = [
+    { name = "ai-provider" },
+    { name = "domain" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "sqlmodel" },
     { name = "temporalio" },
     { name = "workflows" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
 [package.metadata]
 requires-dist = [
+    { name = "ai-provider", editable = "packages/ai_provider" },
+    { name = "domain", editable = "packages/domain" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "sqlmodel", specifier = ">=0.0.24" },
     { name = "temporalio", specifier = ">=1.9" },
     { name = "workflows", editable = "packages/workflows" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.3" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
 ]
 
 [[package]]

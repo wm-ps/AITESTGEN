@@ -3,10 +3,11 @@ import { ApiError, api, type ApplicationRead, type UserRead } from './api'
 import { ConnectAppForm } from './components/ConnectAppForm'
 import { DiscoverJourneys } from './components/DiscoverJourneys'
 import { Home } from './components/Home'
+import { ReviewScenarios } from './components/ReviewScenarios'
 import { SignIn } from './components/SignIn'
 import { TopBar } from './components/TopBar'
 
-type View = 'home' | 'connect-app' | 'discover'
+type View = 'home' | 'connect-app' | 'discover' | 'review-scenarios'
 
 function App() {
   const [user, setUser] = useState<UserRead | null | undefined>(undefined)
@@ -64,7 +65,15 @@ function App() {
           discoveryStatus={application.discovery_status}
           discoveryStage={application.discovery_stage ?? null}
           discoveryFailureReason={application.discovery_failure_reason ?? null}
+<<<<<<< Updated upstream
+=======
+          discoveryRunId={application.discovery_run_id}
+          onContinueToScenarios={() => setView('review-scenarios')}
+>>>>>>> Stashed changes
         />
+      )}
+      {view === 'review-scenarios' && application && (
+        <ReviewScenarios applicationId={application.id} />
       )}
     </>
   )

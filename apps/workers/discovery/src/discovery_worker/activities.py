@@ -11,8 +11,9 @@ Story 2.3 adds the `complete` transition; Story 2.4 adds the
 crash. Story 2.5 adds `ApplicationModelBuilderActivity`: merges duplicate
 typed captures into canonical rows and derives Component/ComponentLocator/
 Assertion. Story 2.6 adds `InferenceActivity`: canonical Page rows ->
-candidate Journey/Capability rows, plus starting `GenerationWorkflow` per
-candidate (no approval gate, AD-1/AD-9).
+candidate Journey/Capability rows. `[CORRECTED 2026-07-21]` No longer starts
+`GenerationWorkflow` — Story 4.1 moved that to an explicit "Continue to
+Scenarios" trigger (its Task 5), not automatic per candidate here.
 """
 
 import asyncio
@@ -42,14 +43,11 @@ from secrets_client.vault_client import SecretRef, VaultSecretsClient
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio import activity
-from temporalio.exceptions import WorkflowAlreadyStartedError
 from workflows import (
-    GENERATION_TASK_QUEUE,
     ApplicationModelBuilderActivityInput,
     ApplicationModelBuilderActivityOutput,
     DiscoveryActivityInput,
     DiscoveryActivityOutput,
-    GenerationWorkflow,
     InferenceActivityInput,
 )
 
@@ -69,13 +67,12 @@ from discovery_worker.journey_clustering import cluster_and_batch
 from discovery_worker.model_builder import build_application_model
 from discovery_worker.object_store import ObjectStore
 from discovery_worker.session import establish_session
-from discovery_worker.temporal_client import get_temporal_client
 
 logger = logging.getLogger(__name__)
 
-# AC6: a per-run backstop, not a per-batch one — since AC5 removes any human
-# gate before GenerationWorkflow (and its cost) starts, this is the only
-# remaining bound on a bad/hallucinating inference run's blast radius.
+# AC6: a per-run backstop, not a per-batch one — bounds a bad/hallucinating
+# inference run's blast radius (number of Journey/JourneyStep rows written),
+# independent of whether generation is triggered automatically or on request.
 MAX_CANDIDATE_JOURNEYS_PER_RUN = int(os.environ.get("MAX_CANDIDATE_JOURNEYS_PER_RUN", "50"))
 
 
@@ -424,7 +421,6 @@ async def inference_activity(input: InferenceActivityInput) -> list[str]:
 
         pages_by_id = {page.id: page for page in pages}
         journey_external_ids: list[str] = []
-        temporal_client = await get_temporal_client()
         candidates_processed = 0
 
         for batch in batches:
@@ -434,7 +430,7 @@ async def inference_activity(input: InferenceActivityInput) -> list[str]:
                 if candidates_processed >= MAX_CANDIDATE_JOURNEYS_PER_RUN:
                     logger.warning(
                         "InferenceActivity: run-level cap (%d) reached for discovery_run=%s — "
-                        "dropping candidate %r, no GenerationWorkflow started for it",
+                        "dropping candidate %r",
                         MAX_CANDIDATE_JOURNEYS_PER_RUN,
                         input.discovery_run_id,
                         candidate.name,
@@ -530,17 +526,10 @@ async def inference_activity(input: InferenceActivityInput) -> list[str]:
 
                 journey_external_ids.append(str(journey.external_id))
 
-                # AD-1/AD-9: no approval gate — start GenerationWorkflow
-                # immediately, whether the Journey was just created or found
-                # from a prior attempt. Temporal's duplicate-workflow-ID
-                # rejection makes this naturally idempotent on retry.
-                try:
-                    await temporal_client.start_workflow(
-                        GenerationWorkflow.run,
-                        id=f"generation-{journey.external_id}-1",
-                        task_queue=GENERATION_TASK_QUEUE,
-                    )
-                except WorkflowAlreadyStartedError:
-                    pass
+                # `[CORRECTED 2026-07-21]` No GenerationWorkflow start here
+                # anymore — Story 4.1's 2026-07-21 correction moved that
+                # trigger to the "Continue to Scenarios" endpoint (Story 4.1
+                # Task 5), fired by explicit user action, not automatically
+                # per candidate at discovery time.
 
         return journey_external_ids

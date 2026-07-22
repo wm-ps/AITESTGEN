@@ -157,17 +157,28 @@ export function DiscoverJourneys({
   discoveryStatus,
   discoveryStage,
   discoveryFailureReason,
+<<<<<<< Updated upstream
+=======
+  discoveryRunId,
+  onContinueToScenarios,
+>>>>>>> Stashed changes
 }: {
   applicationId: string
   applicationName: string
   discoveryStatus: string
   discoveryStage: string | null
   discoveryFailureReason: string | null
+<<<<<<< Updated upstream
+=======
+  discoveryRunId: string
+  onContinueToScenarios: () => void
+>>>>>>> Stashed changes
 }) {
   const [journeys, setJourneys] = useState<JourneyRead[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [steps, setSteps] = useState<JourneyStepRead[]>([])
   const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [continuing, setContinuing] = useState(false)
 
   const {
     status: liveStatus,
@@ -238,6 +249,17 @@ export function DiscoverJourneys({
 
   const selectedJourney = journeys.find((j) => j.id === selectedId) ?? null
   const stages = stageFlow(steps)
+  const canContinue = journeys.length > 0 && !continuing
+
+  async function handleContinueToScenarios() {
+    setContinuing(true)
+    try {
+      await api.generateScenarios(applicationId)
+      onContinueToScenarios()
+    } finally {
+      setContinuing(false)
+    }
+  }
 
   return (
     <>
@@ -252,6 +274,41 @@ export function DiscoverJourneys({
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', margin: '0 0 8px' }}>
           <h1 style={{ fontSize: 19, fontWeight: 650, margin: 0 }}>Discover Journeys</h1>
           <StatusPill status={liveStatus} />
+        </div>
+
+        <div
+          className="card-panel"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: 'var(--space-4) var(--space-5)',
+            marginBottom: 'var(--space-4)',
+            gap: 'var(--space-4)',
+          }}
+        >
+          <div style={{ fontSize: 14, fontWeight: 600 }}>
+            {journeys.length} Journey{journeys.length === 1 ? '' : 's'} Discovered
+          </div>
+          <button
+            type="button"
+            onClick={handleContinueToScenarios}
+            disabled={!canContinue}
+            style={{
+              padding: '10px 20px',
+              whiteSpace: 'nowrap',
+              background: canContinue ? 'var(--signal)' : 'var(--border)',
+              color: canContinue ? 'var(--signal-ink)' : 'var(--ink-faint)',
+              border: 'none',
+              borderRadius: 'var(--radius)',
+              fontSize: 14,
+              fontWeight: 600,
+              fontFamily: 'inherit',
+              cursor: canContinue ? 'pointer' : 'not-allowed',
+            }}
+          >
+            Continue to Scenarios →
+          </button>
         </div>
 
         {sessionExpired ? (

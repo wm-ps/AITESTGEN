@@ -5,7 +5,7 @@ const STEPS = [
   { key: 'generate', label: 'Generate Suite' },
 ] as const
 
-export function Stepper({ current }: { current: 'connect-app' | 'discover' }) {
+export function Stepper({ current }: { current: 'connect-app' | 'discover' | 'review' }) {
   const currentIndex = STEPS.findIndex((step) => step.key === current)
 
   return (

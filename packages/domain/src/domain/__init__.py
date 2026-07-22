@@ -27,6 +27,7 @@ from domain.organization import Organization
 from domain.page import Page
 from domain.page_transition import PageTransition
 from domain.platform_user import PlatformUser
+from domain.scenario import Scenario, ScenarioType
 from domain.validation_rule import ValidationRule
 
 __all__ = [
@@ -49,5 +50,7 @@ __all__ = [
     "Page",
     "PageTransition",
     "PlatformUser",
+    "Scenario",
+    "ScenarioType",
     "ValidationRule",
 ]

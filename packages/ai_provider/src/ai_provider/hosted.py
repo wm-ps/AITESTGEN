@@ -26,9 +26,10 @@ import os
 import re
 
 import httpx
-from domain import Page
+from domain import Journey, Page
 
 from ai_provider.journey_candidate import JourneyCandidate, JourneyCandidateStep
+from ai_provider.scenario_candidate import ScenarioCandidate, TestDataFieldCandidate
 
 AI_MODEL = os.environ.get("AI_MODEL", "anthropic/claude-sonnet-5")
 LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "")
@@ -77,17 +78,50 @@ def _describe_page(page: Page) -> str:
     assertions = [
         f"{a.kind}:{a.expected_value}" for a in getattr(page, "assertions", [])
     ]
-    return json.dumps(
-        {
-            "url": page.url,
-            "title": page.title,
-            "components": components,
-            "forms": forms,
-            "api_calls": api_calls,
-            "outgoing_transitions": outgoing_transitions,
-            "assertions": assertions,
-        }
-    )
+    description = {
+        "url": page.url,
+        "title": page.title,
+        "components": components,
+        "forms": forms,
+        "api_calls": api_calls,
+        "outgoing_transitions": outgoing_transitions,
+        "assertions": assertions,
+    }
+    # Story 4.1: ScenarioGenerationActivity attaches each step's business
+    # stage label the same way InferenceActivity attaches forms/components
+    # above — present only when the page is being described as a Journey
+    # step (generate_scenarios), absent during infer_journeys.
+    stage_label = getattr(page, "stage_label", None)
+    if stage_label is not None:
+        description["stage_label"] = stage_label
+    return json.dumps(description)
+
+
+_SCENARIO_PROMPT = """You are writing integration test Scenarios for a specific business \
+Journey in a web application, based on its discovered steps and the underlying captured \
+pages/forms/API calls.
+
+Journey: "{journey_name}"
+
+Steps (in order — each is a business-language stage of this Journey, with the captured \
+page/form/API/component detail behind it):
+{step_listing}
+
+Generate integration test Scenarios covering this Journey, including a Happy Path, at \
+least one Negative Path (a validation/error condition), and at least one Edge Case. Each \
+Scenario needs:
+- "name": a short business-language name (e.g. "Guest checkout with an expired card")
+- "type": one of "happy", "negative", "edge"
+- "steps": an ordered list of plain-language test steps a QA engineer would follow
+- "expected_result": what should happen if the Scenario passes
+- "test_data": a list of {{"name": "<field name, e.g. \\"username\\">", "mandatory": <bool>}} \
+— the input values a human tester must supply to run this Scenario (e.g. login credentials, \
+a card number, an expected confirmation value). Do NOT include a value — only the field name \
+and whether it's required; a reviewer supplies the actual value later.
+
+Respond with ONLY a JSON object of this shape, no prose: \
+{{"scenarios": [{{"name": "...", "type": "happy", "steps": ["...", "..."], \
+"expected_result": "...", "test_data": [{{"name": "...", "mandatory": true}}]}}, ...]}}"""
 
 
 class HostedAIProvider:
@@ -147,6 +181,53 @@ class HostedAIProvider:
             candidates.append(
                 JourneyCandidate(
                     name=name, capability_name=group["capability_name"], steps=steps
+                )
+            )
+        return candidates
+
+    async def generate_scenarios(
+        self, journey: Journey, pages: list[Page]
+    ) -> list[ScenarioCandidate]:
+        # `pages` is already in step order, each carrying a transient
+        # `.stage_label` (attached by ScenarioGenerationActivity the same way
+        # InferenceActivity attaches `.forms`/`.components`/etc) — so the
+        # listing below doubles as both the step sequence and the supporting
+        # capture detail, no separate steps argument needed.
+        listing = "\n".join(f"{i + 1}: {_describe_page(p)}" for i, p in enumerate(pages))
+        payload = {
+            "model": AI_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": _SCENARIO_PROMPT.format(
+                        journey_name=journey.name, step_listing=listing
+                    ),
+                }
+            ],
+            "response_format": {"type": "json_object"},
+        }
+        async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=60) as client:
+            response = await client.post(
+                "/chat/completions",
+                headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
+                json=payload,
+            )
+            response.raise_for_status()
+        content = response.json()["choices"][0]["message"]["content"]
+        raw_scenarios = json.loads(content)["scenarios"]
+
+        candidates = []
+        for raw in raw_scenarios:
+            candidates.append(
+                ScenarioCandidate(
+                    name=raw["name"],
+                    type=raw["type"],
+                    steps=list(raw["steps"]),
+                    expected_result=raw["expected_result"],
+                    test_data=[
+                        TestDataFieldCandidate(name=f["name"], mandatory=bool(f["mandatory"]))
+                        for f in raw.get("test_data", [])
+                    ],
                 )
             )
         return candidates

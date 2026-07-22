@@ -29,11 +29,19 @@ const APPLICATION = {
 function stubFetch(overrides: {
   onRename?: (name: string) => void
   onDelete?: () => void
+<<<<<<< Updated upstream
   application?: Partial<typeof APPLICATION>
+=======
+  onGenerate?: () => void
+>>>>>>> Stashed changes
 } = {}) {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'POST' && url.includes('/generate-scenarios')) {
+        overrides.onGenerate?.()
+        return { ok: true, status: 202, json: async () => ({ journeys_triggered: 1 }) }
+      }
       if (init?.method === 'PATCH') {
         const body = JSON.parse(init.body as string)
         overrides.onRename?.(body.name)
@@ -61,7 +69,7 @@ function stubFetch(overrides: {
   )
 }
 
-function renderScreen() {
+function renderScreen(onContinueToScenarios: () => void = () => {}) {
   return render(
     <DiscoverJourneys
       applicationId="app-1"
@@ -69,6 +77,11 @@ function renderScreen() {
       discoveryStatus="complete"
       discoveryStage="analyzing"
       discoveryFailureReason={null}
+<<<<<<< Updated upstream
+=======
+      discoveryRunId="run-1"
+      onContinueToScenarios={onContinueToScenarios}
+>>>>>>> Stashed changes
     />,
   )
 }
@@ -299,5 +312,52 @@ describe('DiscoverJourneys', () => {
       expect(screen.getByText('Checkout')).toBeTruthy()
     })
     expect(deleted).toBe(false)
+  })
+
+  it('shows the Journeys-discovered count and an enabled Continue to Scenarios button', async () => {
+    stubFetch()
+    renderScreen()
+
+    await waitFor(() => {
+      expect(screen.getByText('1 Journey Discovered')).toBeTruthy()
+    })
+    const button = screen.getByRole('button', {
+      name: 'Continue to Scenarios →',
+    }) as HTMLButtonElement
+    expect(button.disabled).toBe(false)
+  })
+
+  it('disables Continue to Scenarios when there are no candidate Journeys', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => [] })))
+    renderScreen()
+
+    await waitFor(() => {
+      expect(screen.getByText('0 Journeys Discovered')).toBeTruthy()
+    })
+    const button = screen.getByRole('button', {
+      name: 'Continue to Scenarios →',
+    }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+  })
+
+  it('clicking Continue to Scenarios triggers generation then navigates onward', async () => {
+    let generated = false
+    stubFetch({
+      onGenerate: () => {
+        generated = true
+      },
+    })
+    let navigated = false
+    renderScreen(() => {
+      navigated = true
+    })
+    await waitFor(() => screen.getByText('1 Journey Discovered'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to Scenarios →' }))
+
+    await waitFor(() => {
+      expect(navigated).toBe(true)
+    })
+    expect(generated).toBe(true)
   })
 })

@@ -24,6 +24,7 @@ from domain import (
     JourneyStep,
     Page,
     PlatformUser,
+    Scenario,
 )
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,6 +32,8 @@ from pydantic import BaseModel, Field, model_validator
 from secrets_client import VaultSecretsClient
 from sqlalchemy import func
 from sqlmodel import Session, select
+from temporalio.exceptions import WorkflowAlreadyStartedError
+from workflows import GENERATION_TASK_QUEUE, GenerationWorkflow
 
 from api.auth import (
     CurrentOrgIdDep,
@@ -41,6 +44,7 @@ from api.auth import (
 )
 from api.db import get_session
 from api.discovery import start_discovery_run
+from api.temporal_client import get_temporal_client
 
 app = FastAPI(title="Application Intelligence Platform API")
 
@@ -501,3 +505,191 @@ def delete_journey(
     journey.status = "deleted"
     session.add(journey)
     session.commit()
+
+
+# --- Scenario generation + Review Scenarios (Story 4.1) ---
+# `[CORRECTED 2026-07-21]` Scenario generation is button-triggered, not
+# automatic at Journey-discovery time — see generate_scenarios below, the
+# sole trigger for GenerationWorkflow/ScenarioGenerationActivity.
+
+
+class ScenarioTestDataFieldRead(BaseModel):
+    name: str
+    mandatory: bool
+    value: str | None
+
+
+class ScenarioRead(BaseModel):
+    id: uuid.UUID
+    journey_id: uuid.UUID
+    journey_name: str
+    type: str
+    name: str
+    steps: list[str]
+    expected_result: str
+    test_data: list[ScenarioTestDataFieldRead]
+    test_data_complete: bool
+
+
+class ScenarioRenamePayload(BaseModel):
+    name: str
+
+
+class ScenarioTestDataUpdatePayload(BaseModel):
+    name: str
+    value: str
+
+
+def _to_scenario_read(
+    scenario: Scenario, journey_external_id: uuid.UUID, journey_name: str
+) -> ScenarioRead:
+    return ScenarioRead(
+        id=scenario.external_id,
+        journey_id=journey_external_id,
+        journey_name=journey_name,
+        type=scenario.type,
+        name=scenario.name,
+        steps=scenario.steps,
+        expected_result=scenario.expected_result,
+        test_data=[ScenarioTestDataFieldRead(**field) for field in scenario.test_data],
+        test_data_complete=scenario.test_data_complete(),
+    )
+
+
+def _get_org_scenario(
+    session: Session, organization_id: uuid.UUID, external_id: uuid.UUID
+) -> tuple[Scenario, Journey]:
+    scenario = session.exec(select(Scenario).where(Scenario.external_id == external_id)).first()
+    journey = session.get(Journey, scenario.journey_id) if scenario else None
+    application = session.get(Application, journey.application_id) if journey else None
+    if (
+        scenario is None
+        or journey is None
+        or application is None
+        or application.organization_id != organization_id
+    ):
+        raise HTTPException(status_code=404, detail="scenario not found")
+    return scenario, journey
+
+
+@app.post("/applications/{external_id}/generate-scenarios", status_code=202)
+async def generate_scenarios(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> dict[str, int]:
+    application = _get_org_application(session, organization_id, external_id)
+    journeys = session.exec(
+        select(Journey).where(
+            Journey.application_id == application.id,
+            Journey.status == "candidate",
+        )
+    ).all()
+
+    client = await get_temporal_client()
+    triggered = 0
+    for journey in journeys:
+        # Idempotent: skip a Journey that already has Scenarios for its
+        # current attempt — Temporal's WorkflowAlreadyStartedError below is
+        # the second layer, covering the narrower race where the workflow
+        # started but hasn't written its Scenario rows yet.
+        already_generated = session.exec(
+            select(Scenario).where(
+                Scenario.journey_id == journey.id,
+                Scenario.generation_run_id == journey.attempt,
+            )
+        ).first()
+        if already_generated is not None:
+            continue
+        try:
+            await client.start_workflow(
+                GenerationWorkflow.run,
+                str(journey.external_id),
+                id=f"generation-{journey.external_id}-{journey.attempt}",
+                task_queue=GENERATION_TASK_QUEUE,
+            )
+            triggered += 1
+        except WorkflowAlreadyStartedError:
+            pass
+
+    return {"journeys_triggered": triggered}
+
+
+@app.get("/applications/{external_id}/scenarios", response_model=list[ScenarioRead])
+def list_scenarios(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[ScenarioRead]:
+    application = _get_org_application(session, organization_id, external_id)
+    journeys = session.exec(
+        select(Journey).where(
+            Journey.application_id == application.id,
+            Journey.status == "candidate",
+        )
+    ).all()
+    if not journeys:
+        return []
+    journeys_by_id = {j.id: j for j in journeys}
+    scenarios = session.exec(
+        select(Scenario).where(
+            Scenario.journey_id.in_(journeys_by_id.keys()),  # type: ignore[attr-defined]
+            Scenario.current.is_(True),  # type: ignore[attr-defined]
+        )
+    ).all()
+    return [
+        _to_scenario_read(
+            s, journeys_by_id[s.journey_id].external_id, journeys_by_id[s.journey_id].name
+        )
+        for s in scenarios
+    ]
+
+
+@app.patch("/scenarios/{external_id}", response_model=ScenarioRead)
+def rename_scenario(
+    external_id: uuid.UUID,
+    payload: ScenarioRenamePayload,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> ScenarioRead:
+    scenario, journey = _get_org_scenario(session, organization_id, external_id)
+    scenario.name = payload.name
+    session.add(scenario)
+    session.commit()
+    session.refresh(scenario)
+    return _to_scenario_read(scenario, journey.external_id, journey.name)
+
+
+@app.delete("/scenarios/{external_id}", status_code=204)
+def delete_scenario(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> None:
+    scenario, _journey = _get_org_scenario(session, organization_id, external_id)
+    session.delete(scenario)
+    session.commit()
+
+
+@app.patch("/scenarios/{external_id}/test-data", response_model=ScenarioRead)
+def update_scenario_test_data(
+    external_id: uuid.UUID,
+    payload: ScenarioTestDataUpdatePayload,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> ScenarioRead:
+    scenario, journey = _get_org_scenario(session, organization_id, external_id)
+    updated_fields = [dict(field) for field in scenario.test_data]
+    for field in updated_fields:
+        if field["name"] == payload.name:
+            field["value"] = payload.value
+            break
+    else:
+        raise HTTPException(
+            status_code=422, detail=f"unknown test data field {payload.name!r}"
+        )
+    scenario.test_data = updated_fields
+    session.add(scenario)
+    session.commit()
+    session.refresh(scenario)
+    return _to_scenario_read(scenario, journey.external_id, journey.name)
