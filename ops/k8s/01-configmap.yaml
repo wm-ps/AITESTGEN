@@ -17,8 +17,8 @@ data:
   # Postgres is externally hosted (e.g. RDS) — not deployed in-cluster.
   # Replace with the real endpoint; POSTGRES_PORT/POSTGRES_DB assume RDS
   # defaults, override here too if yours differ.
-  POSTGRES_HOST: "REPLACE-WITH-EXTERNAL-POSTGRES-HOST"
-  POSTGRES_PORT: "5432"
+  POSTGRES_HOST: "44.193.88.55"
+  POSTGRES_PORT: "8045"
   POSTGRES_DB: "aitestgen"
   # No TLS in front of the LoadBalancer Services yet (see README) — a
   # Secure cookie would never reach the browser over plain HTTP.
