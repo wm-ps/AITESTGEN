@@ -29,11 +29,8 @@ const APPLICATION = {
 function stubFetch(overrides: {
   onRename?: (name: string) => void
   onDelete?: () => void
-<<<<<<< Updated upstream
   application?: Partial<typeof APPLICATION>
-=======
   onGenerate?: () => void
->>>>>>> Stashed changes
 } = {}) {
   vi.stubGlobal(
     'fetch',
@@ -77,11 +74,7 @@ function renderScreen(onContinueToScenarios: () => void = () => {}) {
       discoveryStatus="complete"
       discoveryStage="analyzing"
       discoveryFailureReason={null}
-<<<<<<< Updated upstream
-=======
-      discoveryRunId="run-1"
       onContinueToScenarios={onContinueToScenarios}
->>>>>>> Stashed changes
     />,
   )
 }
@@ -172,6 +165,7 @@ describe('DiscoverJourneys', () => {
         discoveryStatus="running"
         discoveryStage="discovering"
         discoveryFailureReason={null}
+        onContinueToScenarios={() => {}}
       />,
     )
 
@@ -328,7 +322,15 @@ describe('DiscoverJourneys', () => {
   })
 
   it('disables Continue to Scenarios when there are no candidate Journeys', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => [] })))
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.endsWith('/applications/app-1')) {
+          return { ok: true, status: 200, json: async () => APPLICATION }
+        }
+        return { ok: true, status: 200, json: async () => [] }
+      }),
+    )
     renderScreen()
 
     await waitFor(() => {

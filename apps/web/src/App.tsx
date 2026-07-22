@@ -65,11 +65,7 @@ function App() {
           discoveryStatus={application.discovery_status}
           discoveryStage={application.discovery_stage ?? null}
           discoveryFailureReason={application.discovery_failure_reason ?? null}
-<<<<<<< Updated upstream
-=======
-          discoveryRunId={application.discovery_run_id}
           onContinueToScenarios={() => setView('review-scenarios')}
->>>>>>> Stashed changes
         />
       )}
       {view === 'review-scenarios' && application && (

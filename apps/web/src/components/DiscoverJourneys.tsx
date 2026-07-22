@@ -157,22 +157,14 @@ export function DiscoverJourneys({
   discoveryStatus,
   discoveryStage,
   discoveryFailureReason,
-<<<<<<< Updated upstream
-=======
-  discoveryRunId,
   onContinueToScenarios,
->>>>>>> Stashed changes
 }: {
   applicationId: string
   applicationName: string
   discoveryStatus: string
   discoveryStage: string | null
   discoveryFailureReason: string | null
-<<<<<<< Updated upstream
-=======
-  discoveryRunId: string
   onContinueToScenarios: () => void
->>>>>>> Stashed changes
 }) {
   const [journeys, setJourneys] = useState<JourneyRead[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
