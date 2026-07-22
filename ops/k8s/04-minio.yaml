@@ -4,7 +4,9 @@ metadata:
   name: minio-data
   namespace: aitestgen
 spec:
-  accessModes: ["ReadWriteOnce"]
+  storageClassName: gp3
+  accessModes:
+    - ReadWriteOnce
   resources:
     requests:
       storage: 20Gi
@@ -73,3 +75,4 @@ spec:
     - name: console
       port: 9001
       targetPort: 9001
+
