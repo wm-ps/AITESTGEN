@@ -18,7 +18,7 @@ spec:
     spec:
       containers:
         - name: web
-          image: REPLACE_ECR_REGISTRY/aitestgen-web:latest
+          image: REPLACE_IMAGE
           ports:
             - containerPort: 80
           readinessProbe:
@@ -41,7 +41,7 @@ metadata:
   name: web
   namespace: aitestgen
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: web
   ports:

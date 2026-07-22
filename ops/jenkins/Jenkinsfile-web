@@ -1,0 +1,85 @@
+properties([
+  pipelineTriggers([
+    githubPush()
+  ])
+])
+
+pipeline {
+  agent any
+
+  environment {
+    AWS_REGION = 'us-east-1'
+    ECR_REPO = 'poc-aitestgen'
+    IMAGE_TAG = "web-stage.${env.BUILD_NUMBER}"
+    KUBECONFIG = credentials('kubeconfig-credential-id')
+    K8S_PATH = "ops/k8s"
+  }
+
+  stages {
+
+    stage('Build Docker Image') {
+      steps {
+        script {
+          withAWS(region: AWS_REGION, credentials: 'wm-ps-user-ecr') {
+
+            def awsAccountID = sh(returnStdout: true, script: """
+              aws sts get-caller-identity --query Account --output text
+            """).trim()
+
+            sh """
+              aws ecr get-login-password --region ${AWS_REGION} \
+                | docker login --username AWS --password-stdin ${awsAccountID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+            """
+
+            sh """
+              docker build \
+                -t ${ECR_REPO}:${IMAGE_TAG} \
+                -f apps/web/Dockerfile \
+                apps/web
+            """
+          }
+        }
+      }
+    }
+
+    stage('Push Docker Image') {
+      steps {
+        script {
+          withAWS(region: AWS_REGION, credentials: 'wm-ps-user-ecr') {
+
+            def awsAccountID = sh(returnStdout: true, script: """
+              aws sts get-caller-identity --query Account --output text
+            """).trim()
+
+            def fullImage = "${awsAccountID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}"
+
+            sh "docker tag ${ECR_REPO}:${IMAGE_TAG} ${fullImage}"
+            sh "docker push ${fullImage}"
+          }
+        }
+      }
+    }
+
+    stage('Deploy to Kubernetes') {
+      steps {
+        script {
+          withAWS(region: AWS_REGION, credentials: 'wm-ps-user-ecr') {
+
+            def awsAccountID = sh(returnStdout: true, script: """
+              aws sts get-caller-identity --query Account --output text
+            """).trim()
+
+            def image = "${awsAccountID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}"
+
+            sh """
+              sed -i 's|REPLACE_IMAGE|${image}|' ${K8S_PATH}/07-web.yaml
+            """
+
+            sh "kubectl apply -f ${K8S_PATH}/07-web.yaml"
+            sh "kubectl apply -f ${K8S_PATH}/07-web-ingress.yaml"
+          }
+        }
+      }
+    }
+  }
+}

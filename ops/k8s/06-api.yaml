@@ -85,7 +85,7 @@ metadata:
   name: api
   namespace: aitestgen
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: api
   ports:
