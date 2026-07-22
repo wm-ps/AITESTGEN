@@ -8,7 +8,7 @@ metadata:
   name: aitestgen-config
   namespace: aitestgen
 data:
-  CORS_ALLOWED_ORIGINS: "http://REPLACE-AFTER-WEB-DEPLOYED"
+  CORS_ALLOWED_ORIGINS: "https://aitestgen-app.onwavemaker.com"
   AI_MODEL: "anthropic/claude-sonnet-5"
   MINIO_BUCKET: "discovery-evidence"
   MINIO_ENDPOINT: "minio:9000"
