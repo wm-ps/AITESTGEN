@@ -35,7 +35,7 @@ pipeline {
               docker build \
                 -t ${ECR_REPO}:${IMAGE_TAG} \
                 -f apps/api/Dockerfile \
-                apps/api
+                .
             """
           }
         }
