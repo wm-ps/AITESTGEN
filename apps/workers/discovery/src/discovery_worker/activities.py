@@ -100,8 +100,35 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
         page_ids_by_url: dict[str, uuid.UUID] = {}
         action_ids_by_key: dict[tuple[str, str], uuid.UUID] = {}
         page_count = 0
+        login_page_url: str | None = None
 
         def _persist(item: CapturedItem) -> None:
+            # `[FIXED 2026-07-22]` A single bad insert (any DB-level error —
+            # a value too long for a column, a constraint violation, etc.)
+            # used to poison this whole `Session`: SQLAlchemy refuses every
+            # further `commit()` on a session with a failed transaction
+            # (`psycopg.errors.InFailedSqlTransaction`) until an explicit
+            # `rollback()` happens, which nothing here ever did. Observed
+            # live: one bad `ApiEndpoint` capture cascaded into every
+            # subsequent capture failing the same way for the rest of the
+            # crawl, which eventually surfaced as an uncaught exception that
+            # crashed the *entire* Activity — Temporal then retried it from
+            # absolute scratch, repeatedly (visible as `discovery_run.stage`
+            # regressing back to "authenticating" every ~100s, with no
+            # `failure_reason` ever recorded, since the crash happened
+            # trying to persist that very failure). One bad capture should
+            # be skipped, not take down the whole run.
+            try:
+                _persist_one(item)
+            except Exception:
+                logger.exception(
+                    "discovery_activity: failed to persist a %s capture — "
+                    "rolling back and continuing",
+                    type(item).__name__,
+                )
+                session.rollback()
+
+        def _persist_one(item: CapturedItem) -> None:
             nonlocal page_count
             if isinstance(item, CapturedPage):
                 page = Page(
@@ -200,6 +227,18 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                 )
                 session.commit()
 
+        def _persist_and_note_login_page(item: CapturedItem) -> None:
+            # `establish_session` captures the login page/form (if any)
+            # before `run_discovery_crawl` starts — remembering its URL here
+            # lets that crawl seed its first page's `from_url` with it, so
+            # the login page isn't an isolated island in the navigation
+            # graph `journey_clustering.py` groups pages by (see
+            # `crawler.py`'s matching `[ADDED 2026-07-23]` note).
+            nonlocal login_page_url
+            _persist(item)
+            if login_page_url is None and isinstance(item, CapturedPage):
+                login_page_url = item.url
+
         try:
             # Both are synchronous network clients (hvac/requests, minio/
             # urllib3) — off the event loop so a slow Vault/MinIO response
@@ -222,6 +261,17 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                     auth_method=application.auth_method,
                     credential=credential,
                     base_url=application.url,
+                    # A real cross-origin OAuth login round-trip can take
+                    # long enough on its own to trip Temporal's heartbeat
+                    # timeout before the crawl even starts — see session.py's
+                    # `[FIXED 2026-07-22, again]` note.
+                    heartbeat=activity.heartbeat if activity.in_activity() else None,
+                    # `[ADDED 2026-07-23]` Captures the login page/form once,
+                    # up front, so a "Sign in" journey has real Page/Form
+                    # rows to be inferred from — see session.py's matching note.
+                    object_store=object_store,
+                    discovery_run_id=discovery_run.id,
+                    on_capture=_persist_and_note_login_page,
                 )
 
                 discovery_run.stage = "discovering"
@@ -239,18 +289,32 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                     # not when this function is called directly (as the
                     # integration tests do).
                     heartbeat=activity.heartbeat if activity.in_activity() else None,
+                    # Lets the crawler replay this same login mid-crawl if a
+                    # short-lived session expires before traversal finishes
+                    # (see crawler.py's `_MAX_CONSECUTIVE_REAUTH_ATTEMPTS`).
+                    auth_method=application.auth_method,
+                    credential=credential,
+                    login_page_url=login_page_url,
                 )
                 await context.close()
                 await browser.close()
-        except Exception:
+        except Exception as exc:
             # A genuine crash, unrelated to session expiry (AD-11 is the
             # distinct, expected case above) — this story doesn't build a
             # full error-handling framework, only ensures the run doesn't
             # stay stuck showing `running` forever. Whatever was captured
             # before the crash is already committed via `_persist` above —
             # this empty result only affects the return value below.
+            # `[FIXED 2026-07-22]` This used to swallow the exception
+            # entirely — no log, no `failure_reason` — leaving a "failed"
+            # run with zero trace of why. Logged and recorded now so a real
+            # failure is actually diagnosable instead of a dead end.
+            logger.exception(
+                "discovery_activity crashed for discovery_run=%s", input.discovery_run_id
+            )
             result = CrawlResult()
             discovery_run.status = "failed"
+            discovery_run.failure_reason = f"{type(exc).__name__}: {exc}"[:500]
         else:
             if result.session_expired:
                 # This must stay a distinct code path from `complete` below —
@@ -476,6 +540,7 @@ async def inference_activity(input: InferenceActivityInput) -> list[str]:
                         discovery_run_id=discovery_run.id,
                         capability_id=capability.id,
                         name=candidate.name,
+                        description=candidate.description or None,
                         identity_key=identity_key,
                     )
                     session.add(journey)

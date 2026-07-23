@@ -61,12 +61,14 @@ the order a user actually moves through the flow. Each Journey needs:
 route or page identifier
 - "capability_name": the broader business capability this Journey belongs to \
 (e.g. "Item Management")
+- "description": one or two plain-language sentences summarizing what this Journey \
+covers and why a QA engineer would care about testing it
 - "steps": an ordered list of {{"page_index": <int>, "stage_label": "<short \
 business-language stage name, e.g. \\"Login\\" or \\"MFA Verification\\">"}} — one \
 entry per page (from the indexed list above) that supports this Journey, in flow order
 
 Respond with ONLY a JSON object of this shape, no prose: \
-{{"journeys": [{{"name": "...", "capability_name": "...", "steps": [ \
+{{"journeys": [{{"name": "...", "capability_name": "...", "description": "...", "steps": [ \
 {{"page_index": 0, "stage_label": "..."}}, {{"page_index": 2, "stage_label": "..."}}]}}, ...]}}"""
 
 
@@ -180,7 +182,10 @@ class HostedAIProvider:
 
             candidates.append(
                 JourneyCandidate(
-                    name=name, capability_name=group["capability_name"], steps=steps
+                    name=name,
+                    capability_name=group["capability_name"],
+                    steps=steps,
+                    description=group.get("description", ""),
                 )
             )
         return candidates

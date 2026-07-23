@@ -327,6 +327,7 @@ def list_captures(
 class JourneyRead(BaseModel):
     id: uuid.UUID
     name: str
+    description: str | None
     step_count: int
 
 
@@ -398,7 +399,12 @@ def list_journeys(
             ).all()
         )
     return [
-        JourneyRead(id=j.external_id, name=j.name, step_count=step_counts.get(j.id, 0))
+        JourneyRead(
+            id=j.external_id,
+            name=j.name,
+            description=j.description,
+            step_count=step_counts.get(j.id, 0),
+        )
         for j in journeys
     ]
 
@@ -490,7 +496,12 @@ def rename_journey(
     step_count = session.exec(
         select(func.count()).select_from(JourneyStep).where(JourneyStep.journey_id == journey.id)
     ).one()
-    return JourneyRead(id=journey.external_id, name=journey.name, step_count=step_count)
+    return JourneyRead(
+        id=journey.external_id,
+        name=journey.name,
+        description=journey.description,
+        step_count=step_count,
+    )
 
 
 @app.delete("/journeys/{external_id}", status_code=204)

@@ -199,16 +199,21 @@ export function DiscoverJourneys({
     }
 
     poll()
-    // `status` flips to "complete" as soon as the crawl finishes, well
-    // before Inference ever writes a Journey — gating on `status !== 'running'`
-    // alone would stop this poll before Journeys ever appear.
-    if (journeys.length > 0 || liveStatus === 'failed') return
+    // `[FIXED 2026-07-22]` Inference writes Journeys one at a time (its own
+    // commit per candidate, Story 2.6) — stopping as soon as `journeys.length
+    // > 0` (the old condition) stopped polling the instant the *first*
+    // Journey landed, silently missing every one written after it (a real
+    // run producing 11 Journeys only ever showed 1). There's no
+    // "analysis fully finished" signal from the backend today (`stage` only
+    // ever reaches "analyzing" and never moves past it), so the only correct
+    // stop condition available is the run having failed outright.
+    if (liveStatus === 'failed') return
     const interval = setInterval(poll, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
-  }, [applicationId, liveStatus, journeys.length])
+  }, [applicationId, liveStatus])
 
   useEffect(() => {
     if (!selectedId) {
@@ -358,6 +363,11 @@ export function DiscoverJourneys({
                   ) : (
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 600 }}>{journey.name}</div>
+                      {journey.description && (
+                        <div className="caption" style={{ fontSize: 12, marginTop: 2 }}>
+                          {journey.description}
+                        </div>
+                      )}
                       <div className="caption" style={{ fontSize: 12 }}>
                         {journey.step_count} step{journey.step_count === 1 ? '' : 's'}
                       </div>

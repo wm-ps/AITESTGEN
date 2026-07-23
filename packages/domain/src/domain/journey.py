@@ -80,6 +80,7 @@ class Journey(SQLModel, table=True):
     )
     status: str = Field(default="candidate")
     name: str
+    description: str | None = Field(default=None)
     # No standalone index — every real lookup filters by application_id
     # together with identity_key, which the composite unique constraint
     # above already indexes.

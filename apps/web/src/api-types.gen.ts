@@ -339,6 +339,8 @@ export interface components {
             id: string;
             /** Name */
             name: string;
+            /** Description */
+            description: string | null;
             /** Step Count */
             step_count: number;
         };

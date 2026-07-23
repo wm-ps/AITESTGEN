@@ -27,3 +27,4 @@ class JourneyCandidate:
     name: str
     capability_name: str
     steps: list[JourneyCandidateStep]
+    description: str = ""

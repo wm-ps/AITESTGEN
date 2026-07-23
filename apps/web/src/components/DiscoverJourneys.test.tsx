@@ -2,7 +2,14 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DiscoverJourneys } from './DiscoverJourneys'
 
-const JOURNEYS = [{ id: 'journey-1', name: 'Checkout', step_count: 2 }]
+const JOURNEYS = [
+  {
+    id: 'journey-1',
+    name: 'Checkout',
+    description: 'Customer adds an item to the cart and completes payment.',
+    step_count: 2,
+  },
+]
 const STEPS = [
   { step_order: 1, stage_label: 'Login', route: 'https://app.example.com/login', method: 'GET' },
   {
@@ -92,8 +99,51 @@ describe('DiscoverJourneys', () => {
       expect(screen.getByText('Checkout')).toBeTruthy()
     })
     expect(screen.getByText('2 steps')).toBeTruthy()
+    expect(
+      screen.getByText('Customer adds an item to the cart and completes payment.')
+    ).toBeTruthy()
     expect(screen.queryByText(/confidence/i)).toBeNull()
     expect(screen.queryByText(/risk/i)).toBeNull()
+  })
+
+  it('keeps polling for more Journeys after the first one appears', async () => {
+    // Regression: inference writes Journeys one at a time (its own commit
+    // per candidate) — the poll used to stop dead the instant `journeys.length
+    // > 0`, so a run producing many Journeys only ever displayed the first.
+    // The 2nd call still reports only 1 Journey (the 2nd hasn't been
+    // committed by inference yet) — only a *genuine recurring interval tick*
+    // (not the one-shot re-render this effect's `journeys.length` dependency
+    // triggers the instant the count first changes) reaches call #3, where
+    // the 2nd Journey finally shows up. A test that let call #2 already
+    // return 2 Journeys would pass even against the old buggy code, since
+    // that one-shot bonus poll would coincidentally already catch up.
+    let journeysCallCount = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/journeys')) {
+          journeysCallCount += 1
+          return {
+            ok: true,
+            status: 200,
+            json: async () =>
+              journeysCallCount >= 3
+                ? [...JOURNEYS, { id: 'journey-2', name: 'Return an item', step_count: 3 }]
+                : JOURNEYS,
+          }
+        }
+        if (url.endsWith('/applications/app-1')) {
+          return { ok: true, status: 200, json: async () => APPLICATION }
+        }
+        return { ok: true, status: 200, json: async () => [] }
+      }),
+    )
+    renderScreen()
+
+    await waitFor(() => screen.getByText('Checkout'))
+    await waitFor(() => expect(screen.getByText('Return an item')).toBeTruthy(), {
+      timeout: 3000,
+    })
   })
 
   it('hides the business-stage import progress once Journeys have been discovered', async () => {
