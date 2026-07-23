@@ -14,7 +14,7 @@ import uuid
 import httpx
 import pytest
 from ai_provider.hosted import HostedAIProvider
-from domain import Page
+from domain import Page, Scenario
 
 
 def _fake_page(url: str, title: str = "") -> Page:
@@ -162,3 +162,47 @@ async def test_infer_journeys_live_call() -> None:
     candidates = await HostedAIProvider().infer_journeys(pages)
     assert candidates
     assert all(isinstance(c.name, str) and c.name for c in candidates)
+
+
+def _fake_scenario(**overrides) -> Scenario:
+    defaults = dict(
+        journey_id=uuid.uuid4(),
+        type="happy",
+        name="Guest checkout",
+        steps=["Add item to cart", "Submit payment"],
+        expected_result="Order confirmation is shown",
+        test_data=[{"name": "username", "mandatory": True, "value": "qa-user"}],
+        generation_run_id=1,
+    )
+    defaults.update(overrides)
+    return Scenario(**defaults)
+
+
+async def test_generate_playwright_returns_code(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _monkeypatch_post(
+        monkeypatch, "def test_guest_checkout():\n    pass\n"
+    )
+    scenario = _fake_scenario()
+
+    result = await HostedAIProvider().generate_playwright(scenario)
+
+    # Trailing whitespace is stripped by `generate_playwright` itself.
+    assert result.code == "def test_guest_checkout():\n    pass"
+    assert "Guest checkout" in captured["json"]["messages"][0]["content"]
+    assert "qa-user" in captured["json"]["messages"][0]["content"]
+    # No response_format here — raw Playwright source, not JSON.
+    assert "response_format" not in captured["json"]
+
+
+async def test_generate_playwright_strips_markdown_code_fences(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _monkeypatch_post(
+        monkeypatch, "```python\ndef test_guest_checkout():\n    pass\n```"
+    )
+    scenario = _fake_scenario()
+
+    result = await HostedAIProvider().generate_playwright(scenario)
+
+    assert result.code == "def test_guest_checkout():\n    pass"
+    assert "```" not in result.code

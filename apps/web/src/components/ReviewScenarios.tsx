@@ -143,11 +143,16 @@ function ScenarioRowMenu({ onRename, onDelete }: { onRename: () => void; onDelet
   )
 }
 
-export function ReviewScenarios({ applicationId }: { applicationId: string }) {
+export function ReviewScenarios({
+  applicationId,
+  onContinueToGenerate,
+}: {
+  applicationId: string
+  onContinueToGenerate: () => void
+}) {
   const [scenarios, setScenarios] = useState<ScenarioRead[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
-  const [readyMessage, setReadyMessage] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -188,7 +193,11 @@ export function ReviewScenarios({ applicationId }: { applicationId: string }) {
   }
 
   const selectedScenario = scenarios.find((s) => s.id === selectedId) ?? null
-  const allComplete = scenarios.length > 0 && scenarios.every((s) => s.test_data_complete)
+  // `[UPDATED]` No longer gated on test_data completeness — any blank field
+  // (missed by the reviewer, or never filled in at all) gets a sensible
+  // default at generation time (PlaywrightGenerationActivity, Story 4.2).
+  // Enabled as soon as there's at least one Scenario to generate from.
+  const canContinue = scenarios.length > 0
 
   return (
     <>
@@ -218,30 +227,24 @@ export function ReviewScenarios({ applicationId }: { applicationId: string }) {
           </div>
           <button
             type="button"
-            onClick={() => setReadyMessage(true)}
-            disabled={!allComplete}
+            onClick={onContinueToGenerate}
+            disabled={!canContinue}
             style={{
               padding: '10px 20px',
               whiteSpace: 'nowrap',
-              background: allComplete ? 'var(--signal)' : 'var(--border)',
-              color: allComplete ? 'var(--signal-ink)' : 'var(--ink-faint)',
+              background: canContinue ? 'var(--signal)' : 'var(--border)',
+              color: canContinue ? 'var(--signal-ink)' : 'var(--ink-faint)',
               border: 'none',
               borderRadius: 'var(--radius)',
               fontSize: 14,
               fontWeight: 600,
               fontFamily: 'inherit',
-              cursor: allComplete ? 'pointer' : 'not-allowed',
+              cursor: canContinue ? 'pointer' : 'not-allowed',
             }}
           >
             Continue to Generate Test Suite →
           </button>
         </div>
-
-        {readyMessage && (
-          <p className="caption" role="status" style={{ margin: '0 0 16px' }}>
-            Ready — Test Suite generation isn't built yet (Story 4.2).
-          </p>
-        )}
 
         {scenarios.length === 0 ? (
           <p className="caption">

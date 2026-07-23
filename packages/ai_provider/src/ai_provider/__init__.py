@@ -10,19 +10,20 @@ canonical `Page` rows, never raw Evidence (removed in full 2026-07-18) or a
 superseded/merged row. `generate_scenarios` returns `ScenarioCandidate`s
 (Story 4.1), mirroring `infer_journeys`'s `JourneyCandidate` shape — the
 Activity, not this port, converts candidates into real `Scenario` rows.
-`generate_playwright` still uses `Any` — `TestAssetCode` isn't built by this
-story (Story 4.2's job); `Any` stands in so nothing invented here can drift
-from the real type once it lands. `[CORRECTED 2026-07-21]` `generate_scenarios`
-is `async` — it was previously declared sync in this Protocol, which never
-matched `infer_journeys`'s real (network I/O) shape.
+`[CORRECTED 2026-07-21]` `generate_scenarios` is `async` — it was previously
+declared sync in this Protocol, which never matched `infer_journeys`'s real
+(network I/O) shape. `[ADDED 2026-07-23]` `generate_playwright` (Story 4.2)
+now has its real `Scenario -> TestAssetCode` signature, `async` for the same
+reason.
 """
 
-from typing import Any, Protocol
+from typing import Protocol
 
-from domain import Journey, Page
+from domain import Journey, Page, Scenario
 
 from ai_provider.journey_candidate import JourneyCandidate
 from ai_provider.scenario_candidate import ScenarioCandidate
+from ai_provider.test_asset_code import TestAssetCode
 
 
 class AIProvider(Protocol):
@@ -32,6 +33,4 @@ class AIProvider(Protocol):
         self, journey: Journey, pages: list[Page]
     ) -> list[ScenarioCandidate]: ...
 
-    def generate_playwright(self, scenario: Any) -> Any:
-        """scenario: Scenario -> TestAssetCode."""
-        ...
+    async def generate_playwright(self, scenario: Scenario) -> TestAssetCode: ...

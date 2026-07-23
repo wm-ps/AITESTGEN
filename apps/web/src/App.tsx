@@ -2,12 +2,20 @@ import { useEffect, useState } from 'react'
 import { ApiError, api, type ApplicationRead, type UserRead } from './api'
 import { ConnectAppForm } from './components/ConnectAppForm'
 import { DiscoverJourneys } from './components/DiscoverJourneys'
+import { GenerateSuite } from './components/GenerateSuite'
 import { Home } from './components/Home'
 import { ReviewScenarios } from './components/ReviewScenarios'
 import { SignIn } from './components/SignIn'
+import { TestSuiteResults } from './components/TestSuiteResults'
 import { TopBar } from './components/TopBar'
 
-type View = 'home' | 'connect-app' | 'discover' | 'review-scenarios'
+type View =
+  | 'home'
+  | 'connect-app'
+  | 'discover'
+  | 'review-scenarios'
+  | 'generate-suite'
+  | 'test-suite-results'
 
 function App() {
   const [user, setUser] = useState<UserRead | null | undefined>(undefined)
@@ -69,7 +77,19 @@ function App() {
         />
       )}
       {view === 'review-scenarios' && application && (
-        <ReviewScenarios applicationId={application.id} />
+        <ReviewScenarios
+          applicationId={application.id}
+          onContinueToGenerate={() => setView('generate-suite')}
+        />
+      )}
+      {view === 'generate-suite' && application && (
+        <GenerateSuite
+          applicationId={application.id}
+          onGenerated={() => setView('test-suite-results')}
+        />
+      )}
+      {view === 'test-suite-results' && application && (
+        <TestSuiteResults applicationId={application.id} />
       )}
     </>
   )

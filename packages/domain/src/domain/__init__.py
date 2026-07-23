@@ -8,7 +8,10 @@ the typed capture entities (`Page`/`Form`/`FormField`/`ValidationRule`/
 `Action`/`ApiEndpoint`/`PageTransition` — there is no generic `Evidence`
 table, removed 2026-07-18). Story 2.5 adds the derived entities
 (`Component`/`ComponentLocator`/`Assertion`). Story 2.6 adds
-`Journey`/`Capability`.
+`Journey`/`Capability`. Story 4.1 adds `Scenario`/`JourneyStep`. Story 4.2
+adds `TestSuite`/`TestAsset` (one `TestSuite` per Journey per attempt,
+auto-named from the Journey; one `TestAsset` per Scenario, belonging to its
+Journey's `TestSuite`).
 """
 
 from domain.action import Action
@@ -28,6 +31,8 @@ from domain.page import Page
 from domain.page_transition import PageTransition
 from domain.platform_user import PlatformUser
 from domain.scenario import Scenario, ScenarioType
+from domain.test_asset import TestAsset
+from domain.test_suite import TestSuite
 from domain.validation_rule import ValidationRule
 
 __all__ = [
@@ -52,5 +57,7 @@ __all__ = [
     "PlatformUser",
     "Scenario",
     "ScenarioType",
+    "TestAsset",
+    "TestSuite",
     "ValidationRule",
 ]

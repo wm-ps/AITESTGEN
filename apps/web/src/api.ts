@@ -7,6 +7,8 @@ export type ApplicationRead = components['schemas']['ApplicationRead']
 export type JourneyRead = components['schemas']['JourneyRead']
 export type JourneyStepRead = components['schemas']['JourneyStepRead']
 export type ScenarioRead = components['schemas']['ScenarioRead']
+export type TestCaseRead = components['schemas']['TestCaseRead']
+export type TestSuiteRead = components['schemas']['TestSuiteRead']
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
 
@@ -71,6 +73,12 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ name, value }),
     }),
+  generateSuite: (applicationId: string) =>
+    request<{ suites_triggered: number }>(`/applications/${applicationId}/generate-suite`, {
+      method: 'POST',
+    }),
+  listTestSuites: (applicationId: string) =>
+    request<TestSuiteRead[]>(`/applications/${applicationId}/test-suites`),
 }
 
 export { ApiError }

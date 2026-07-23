@@ -70,7 +70,7 @@ afterEach(() => {
 describe('ReviewScenarios', () => {
   it('renders scenario rows with type badge and journey name', async () => {
     stubFetch([INCOMPLETE_SCENARIO])
-    render(<ReviewScenarios applicationId="app-1" />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByText('Guest checkout')).toBeTruthy()
@@ -79,21 +79,21 @@ describe('ReviewScenarios', () => {
     expect(screen.getByText('Happy Path')).toBeTruthy()
   })
 
-  it('shows an incomplete indicator and keeps Continue disabled while mandatory test data is empty', async () => {
+  it('shows an incomplete indicator but leaves Continue enabled — blank fields get a default at generation time', async () => {
     stubFetch([INCOMPLETE_SCENARIO])
-    render(<ReviewScenarios applicationId="app-1" />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} />)
 
     await waitFor(() => screen.getByText('Guest checkout'))
     expect(screen.getByText('Test data incomplete')).toBeTruthy()
     const button = screen.getByRole('button', {
       name: 'Continue to Generate Test Suite →',
     }) as HTMLButtonElement
-    expect(button.disabled).toBe(true)
+    expect(button.disabled).toBe(false)
   })
 
   it('enables Continue to Generate Test Suite once every scenario is complete', async () => {
     stubFetch([COMPLETE_SCENARIO])
-    render(<ReviewScenarios applicationId="app-1" />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} />)
 
     await waitFor(() => screen.getByText('Checkout with promo'))
     const button = screen.getByRole('button', {
@@ -102,9 +102,20 @@ describe('ReviewScenarios', () => {
     expect(button.disabled).toBe(false)
   })
 
+  it('keeps Continue disabled only when there are zero scenarios', async () => {
+    stubFetch([])
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} />)
+
+    await waitFor(() => screen.getByText(/No Scenarios yet/))
+    const button = screen.getByRole('button', {
+      name: 'Continue to Generate Test Suite →',
+    }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+  })
+
   it('selecting a scenario shows its steps, test data inputs, and expected result', async () => {
     stubFetch([INCOMPLETE_SCENARIO])
-    render(<ReviewScenarios applicationId="app-1" />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} />)
 
     await waitFor(() => screen.getByText('Guest checkout'))
     fireEvent.click(screen.getByText('Guest checkout'))
@@ -123,7 +134,7 @@ describe('ReviewScenarios', () => {
         updatedWith = body
       },
     })
-    render(<ReviewScenarios applicationId="app-1" />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} />)
 
     await waitFor(() => screen.getByText('Guest checkout'))
     fireEvent.click(screen.getByText('Guest checkout'))
@@ -138,9 +149,21 @@ describe('ReviewScenarios', () => {
     })
   })
 
+  it('clicking Continue to Generate Test Suite calls onContinueToGenerate', async () => {
+    stubFetch([COMPLETE_SCENARIO])
+    const onContinueToGenerate = vi.fn()
+    render(
+      <ReviewScenarios applicationId="app-1" onContinueToGenerate={onContinueToGenerate} />,
+    )
+
+    await waitFor(() => screen.getByText('Checkout with promo'))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to Generate Test Suite →' }))
+    expect(onContinueToGenerate).toHaveBeenCalledOnce()
+  })
+
   it('renders an empty state when there are no scenarios yet', async () => {
     stubFetch([])
-    render(<ReviewScenarios applicationId="app-1" />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByText(/No Scenarios yet/)).toBeTruthy()

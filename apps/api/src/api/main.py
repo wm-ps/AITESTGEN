@@ -25,6 +25,8 @@ from domain import (
     Page,
     PlatformUser,
     Scenario,
+    TestAsset,
+    TestSuite,
 )
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,7 +35,7 @@ from secrets_client import VaultSecretsClient
 from sqlalchemy import func
 from sqlmodel import Session, select
 from temporalio.exceptions import WorkflowAlreadyStartedError
-from workflows import GENERATION_TASK_QUEUE, GenerationWorkflow
+from workflows import GENERATION_TASK_QUEUE, GenerationWorkflow, SuiteGenerationWorkflow
 
 from api.auth import (
     CurrentOrgIdDep,
@@ -704,3 +706,149 @@ def update_scenario_test_data(
     session.commit()
     session.refresh(scenario)
     return _to_scenario_read(scenario, journey.external_id, journey.name)
+
+
+# --- Generate Suite (Story 4.2) ---
+# One `SuiteGenerationWorkflow` per candidate Journey with current Scenarios
+# — mirrors generate_scenarios' "one GenerationWorkflow per candidate
+# Journey" pattern exactly. Journey-scoped, not Application-wide: the
+# workflow-ID convention (`suite-{journey_id}-{attempt}`) mirrors
+# `generation-{journey_id}-{attempt}`, so `journey.attempt` is what makes
+# both the double-click race and Story 4.3 regeneration work correctly with
+# no extra bookkeeping.
+
+
+class TestCaseRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    type: str
+    code: str
+
+
+class TestSuiteRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    journey_name: str
+    test_cases: list[TestCaseRead]
+
+
+@app.post("/applications/{external_id}/generate-suite", status_code=202)
+async def generate_suite(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> dict[str, int]:
+    application = _get_org_application(session, organization_id, external_id)
+    journeys = session.exec(
+        select(Journey).where(
+            Journey.application_id == application.id,
+            Journey.status == "candidate",
+        )
+    ).all()
+
+    client = await get_temporal_client()
+    triggered = 0
+    for journey in journeys:
+        has_current_scenarios = session.exec(
+            select(Scenario).where(
+                Scenario.journey_id == journey.id,
+                Scenario.current.is_(True),  # type: ignore[attr-defined]
+            )
+        ).first()
+        if has_current_scenarios is None:
+            continue
+        # Idempotent: skip a Journey that already has a TestSuite for its
+        # current attempt — Temporal's WorkflowAlreadyStartedError below is
+        # the second layer, covering the narrower race where the workflow
+        # started but hasn't written its TestSuite row yet.
+        already_generated = session.exec(
+            select(TestSuite).where(
+                TestSuite.journey_id == journey.id,
+                TestSuite.generation_run_id == journey.attempt,
+            )
+        ).first()
+        if already_generated is not None:
+            continue
+        try:
+            await client.start_workflow(
+                SuiteGenerationWorkflow.run,
+                str(journey.external_id),
+                id=f"suite-{journey.external_id}-{journey.attempt}",
+                task_queue=GENERATION_TASK_QUEUE,
+            )
+            triggered += 1
+        except WorkflowAlreadyStartedError:
+            pass
+
+    return {"suites_triggered": triggered}
+
+
+@app.get("/applications/{external_id}/test-suites", response_model=list[TestSuiteRead])
+def list_test_suites(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[TestSuiteRead]:
+    application = _get_org_application(session, organization_id, external_id)
+    journeys = session.exec(
+        select(Journey).where(
+            Journey.application_id == application.id,
+            Journey.status == "candidate",
+        )
+    ).all()
+    if not journeys:
+        return []
+    journeys_by_id = {j.id: j for j in journeys}
+
+    test_suites = session.exec(
+        select(TestSuite).where(
+            TestSuite.journey_id.in_(journeys_by_id.keys()),  # type: ignore[attr-defined]
+            TestSuite.current.is_(True),  # type: ignore[attr-defined]
+        )
+    ).all()
+    if not test_suites:
+        return []
+    suite_ids = [ts.id for ts in test_suites]
+
+    test_assets = session.exec(
+        select(TestAsset).where(
+            TestAsset.test_suite_id.in_(suite_ids),  # type: ignore[attr-defined]
+            TestAsset.current.is_(True),  # type: ignore[attr-defined]
+        )
+    ).all()
+    scenario_ids = {a.scenario_id for a in test_assets}
+    scenarios_by_id = {
+        s.id: s
+        for s in (
+            session.exec(select(Scenario).where(Scenario.id.in_(scenario_ids))).all()  # type: ignore[attr-defined]
+            if scenario_ids
+            else []
+        )
+    }
+
+    assets_by_suite: dict[uuid.UUID, list[TestAsset]] = {}
+    for asset in test_assets:
+        assets_by_suite.setdefault(asset.test_suite_id, []).append(asset)
+
+    result = []
+    for test_suite in test_suites:
+        journey = journeys_by_id[test_suite.journey_id]
+        test_cases = []
+        for asset in assets_by_suite.get(test_suite.id, []):
+            scenario = scenarios_by_id.get(asset.scenario_id)
+            if scenario is None:
+                continue
+            test_cases.append(
+                TestCaseRead(
+                    id=asset.external_id, name=scenario.name, type=scenario.type, code=asset.code
+                )
+            )
+        result.append(
+            TestSuiteRead(
+                id=test_suite.external_id,
+                name=test_suite.name,
+                journey_name=journey.name,
+                test_cases=test_cases,
+            )
+        )
+    return result

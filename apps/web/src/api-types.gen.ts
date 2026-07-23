@@ -244,6 +244,40 @@ export interface paths {
         patch: operations["update_scenario_test_data_scenarios__external_id__test_data_patch"];
         trace?: never;
     };
+    "/applications/{external_id}/generate-suite": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate Suite */
+        post: operations["generate_suite_applications__external_id__generate_suite_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/test-suites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Test Suites */
+        get: operations["list_test_suites_applications__external_id__test_suites_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -414,6 +448,34 @@ export interface components {
             name: string;
             /** Value */
             value: string;
+        };
+        /** TestCaseRead */
+        TestCaseRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Type */
+            type: string;
+            /** Code */
+            code: string;
+        };
+        /** TestSuiteRead */
+        TestSuiteRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Journey Name */
+            journey_name: string;
+            /** Test Cases */
+            test_cases: components["schemas"]["TestCaseRead"][];
         };
         /** UserRead */
         UserRead: {
@@ -947,6 +1009,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScenarioRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_suite_applications__external_id__generate_suite_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_test_suites_applications__external_id__test_suites_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestSuiteRead"][];
                 };
             };
             /** @description Validation Error */

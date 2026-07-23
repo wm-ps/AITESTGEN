@@ -1,7 +1,10 @@
-"""Generation worker process — Story 1.1 scaffold, graduated by Story 4.1.
+"""Generation worker process — Story 1.1 scaffold, graduated by Story 4.1,
+extended by Story 4.2.
 
-Registers `GenerationWorkflow` and `ScenarioGenerationActivity` against a
-local Temporal server. `PlaywrightGenerationActivity` lands in Story 4.2.
+Registers `GenerationWorkflow`/`ScenarioGenerationActivity` (Story 4.1) and
+`SuiteGenerationWorkflow`/`EnsureTestSuiteActivity`/`PlaywrightGenerationActivity`
+(Story 4.2) against a local Temporal server, on the same task queue (one
+worker process, two independent workflow types).
 
 Run with: uv run --package generation-worker python -m generation_worker.worker
 """
@@ -12,9 +15,13 @@ import os
 
 from temporalio.client import Client
 from temporalio.worker import Worker
-from workflows import GENERATION_TASK_QUEUE, GenerationWorkflow
+from workflows import GENERATION_TASK_QUEUE, GenerationWorkflow, SuiteGenerationWorkflow
 
-from generation_worker.activities import scenario_generation_activity
+from generation_worker.activities import (
+    ensure_test_suite_activity,
+    playwright_generation_activity,
+    scenario_generation_activity,
+)
 
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 
@@ -25,8 +32,12 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=GENERATION_TASK_QUEUE,
-        workflows=[GenerationWorkflow],
-        activities=[scenario_generation_activity],
+        workflows=[GenerationWorkflow, SuiteGenerationWorkflow],
+        activities=[
+            scenario_generation_activity,
+            ensure_test_suite_activity,
+            playwright_generation_activity,
+        ],
     )
     print(f"Generation worker polling task queue '{GENERATION_TASK_QUEUE}' at {TEMPORAL_ADDRESS}")
     await worker.run()
