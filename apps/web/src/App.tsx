@@ -89,7 +89,10 @@ function App() {
         />
       )}
       {view === 'test-suite-results' && application && (
-        <TestSuiteResults applicationId={application.id} />
+        <TestSuiteResults
+          applicationId={application.id}
+          onGoToDashboard={() => setView('home')}
+        />
       )}
     </>
   )

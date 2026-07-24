@@ -165,6 +165,12 @@ textarea:focus-visible,
   }
 }
 
+@keyframes aitg-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @keyframes aitg-drift {
   0%,
   100% {
