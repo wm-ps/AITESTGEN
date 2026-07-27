@@ -24,6 +24,10 @@ MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
 MINIO_ACCESS_KEY = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
 MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = os.environ.get("MINIO_BUCKET", "discovery-evidence")
+# Local MinIO is plain HTTP with no meaningful region; real AWS S3 requires
+# secure=True and a region matching the bucket for SigV4 signing to succeed.
+MINIO_SECURE = os.environ.get("MINIO_SECURE", "false").lower() == "true"
+MINIO_REGION = os.environ.get("MINIO_REGION") or None
 
 # minio's default http_client has no timeout at all (urllib3's own default) —
 # a stalled connection to MinIO (container paused, Docker network blip) would
@@ -41,7 +45,8 @@ class ObjectStore:
             MINIO_ENDPOINT,
             access_key=MINIO_ACCESS_KEY,
             secret_key=MINIO_SECRET_KEY,
-            secure=False,
+            secure=MINIO_SECURE,
+            region=MINIO_REGION,
             http_client=_HTTP_CLIENT,
         )
         if not self._client.bucket_exists(MINIO_BUCKET):

@@ -33,6 +33,7 @@ pipeline {
 
             sh """
               docker build \
+                --build-arg VITE_API_BASE=https://aitestgen-api.onwavemaker.com \
                 -t ${ECR_REPO}:${IMAGE_TAG} \
                 -f apps/web/Dockerfile \
                 apps/web
