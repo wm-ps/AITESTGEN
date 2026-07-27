@@ -11,7 +11,8 @@ updated: "2026-07-15 — see sprint-change-proposal-2026-07-15.md: Story 6.2 rel
   2026-07-18 [follow-up, same day] — the generic `Evidence` table concept is removed in full: Story 2.2 now writes typed rows directly (`Page`/`Form`/`FormField`/`ValidationRule`/`Action`/`ApiEndpoint`/`PageTransition`), each scoped by `application_id` (making the model genuinely reusable across re-discovery, not just per-run) plus `discovery_run_id` (provenance). Story 2.5 resolves duplicates via a self-referencing `merged_into_id` and derives `Component`/`ComponentLocator`/`Assertion`. PRD FR-6/FR-30, Architecture AD-8/AD-13/AD-14, and Stories 2.2/2.5/2.6 updated to match.
   2026-07-19 [crawl engine follow-up] — Story 2.2 gains ACs 7-9, all within FR-6's existing scope: button-triggered navigation is now followed onward instead of dead-ending at the click; forms with an identical shape/starting values (hidden fields included) are sampled representatively across pages; a broken/error (network failure or 4xx/5xx) destination is skipped rather than captured; and AC 6's representative-action sampling is bounded to a small number of distinct labels per page, page-body content before nav/header/footer chrome. PRD FR-6/FR-7/§12 item 7 and Architecture AD-15 updated to match.
   2026-07-21 [Sprint Change Proposal — Import Experience & Progress UX Improvements] — see sprint-change-proposal-2026-07-21.md: new FR-31 (reachability validation) and FR-32 (browser tab branding) added to Epic 1 — Story 1.3 gains two ACs, new Story 1.6 added. New FR-33 (business-oriented import progress) added to Epic 2 — Story 2.2's AC3 walked back (raw live-feed no longer user-facing, capture itself unchanged), Stories 2.1/2.6 gain stage-transition ACs, new Story 2.7 added. Architecture AD-10 extended with DiscoveryRun.stage; domain model gains Application.favicon_url. Stories 1.3, 2.1, 2.2, 2.6 reverted to in-progress for rework per sprint-status.yaml.
-  2026-07-27 — see sprint-change-proposal-2026-07-27.md: Story 4.3 (Full Regeneration of Test Assets on Request, FR-18) removed in full, not deferred — explicit product decision. No code existed to remove: despite sprint-status.yaml/commit history suggesting it was completed, it was never actually built (that work was Story 4.2's, mislabeled in the commit message). Story 4.3 section deleted, its story file removed, Epic 4 description and FR Coverage Map updated to drop FR-18; sprint-status.yaml entry removed; PRD FR-18/§5/§6.1/§9 and Architecture AD-1/AD-8/Module Map/Deferred updated to match."
+  2026-07-27 — see sprint-change-proposal-2026-07-27.md: Story 4.3 (Full Regeneration of Test Assets on Request, FR-18) removed in full, not deferred — explicit product decision. No code existed to remove: despite sprint-status.yaml/commit history suggesting it was completed, it was never actually built (that work was Story 4.2's, mislabeled in the commit message). Story 4.3 section deleted, its story file removed, Epic 4 description and FR Coverage Map updated to drop FR-18; sprint-status.yaml entry removed; PRD FR-18/§5/§6.1/§9 and Architecture AD-1/AD-8/Module Map/Deferred updated to match.
+  2026-07-27 [follow-up, same day] — see sprint-change-proposal-2026-07-27-2.md: new Story 4.3 (Download a Generated Test Suite, FR-34) added to Epic 4, reusing the slot vacated above — a reviewer-triggered export of all current Test Suites for an Application into a single, suite-folder-organized, runnable Playwright project zip. Epic 4 description and FR Coverage Map updated to add FR-34; PRD §4.5/§6.1/§9 and Architecture Module Map (new Test Suite Export row)/Deferred updated to match."
 ---
 
 # Application Intelligence Platform - Epic Breakdown
@@ -133,6 +134,7 @@ FR-17: Epic 4 - Playwright Test Asset generation
 FR-18: `[CUT 2026-07-27]` Full regeneration on request — no longer built; no customer-facing way to refresh generated coverage, deletion (FR-13) is the sole lever
 FR-28: `[ADDED then CUT 2026-07-15]` Edit a discovered Journey — no longer built
 FR-29: Epic 4 - Edit/remove a generated Scenario `[ADDED 2026-07-15]`
+FR-34: Epic 4 - Download all current Test Suites as a runnable, suite-folder-organized Playwright project `[ADDED 2026-07-27]`
 FR-23: Epic 3 `[RETAINED, RELOCATED]` - Journey step/evidence detail, now inline in the discovery-review screen (was Epic 6 - Journey Explorer)
 
 *(FR-19–22 and FR-24–27 — removed 2026-07-15 along with Epics 5, 6 [partially], and 7. See `sprint-change-proposal-2026-07-15.md` for history.)*
@@ -161,8 +163,8 @@ A user can start a Discovery Run, watch live progress (running/complete/failed-s
 **FRs covered:** FR-9, FR-12, FR-13, FR-15, FR-23 (relocated 2026-07-15). `[CUT 2026-07-15]` FR-10 (Approve), FR-11 (Reject) — no story files retained (removed 2026-07-15); FR-28 (Edit) — see Story 3.4.
 
 ### Epic 4: Scenario & Playwright Test Generation
-`[UPDATED 2026-07-15]` Every discovered Journey automatically produces happy-path/negative Scenarios (rename/edit/removable pre-generation as of 2026-07-15) and executable Playwright Test Assets, generated as a named Test Suite — generation starts immediately on discovery, not on approval. `[UPDATED 2026-07-27]` No regeneration mechanism exists (FR-18 cut in full) — once generated, a Journey's coverage is refreshed only by deleting the Journey (Epic 3) and letting re-discovery produce a new one.
-**FRs covered:** FR-16, FR-17, FR-29 (added 2026-07-15). `[CUT 2026-07-27]` FR-18 (Full regeneration) — no longer built, see Story 4.3's removal below.
+`[UPDATED 2026-07-15]` Every discovered Journey automatically produces happy-path/negative Scenarios (rename/edit/removable pre-generation as of 2026-07-15) and executable Playwright Test Assets, generated as a named Test Suite — generation starts immediately on discovery, not on approval. `[UPDATED 2026-07-27]` No regeneration mechanism exists (FR-18 cut in full) — once generated, a Journey's coverage is refreshed only by deleting the Journey (Epic 3) and letting re-discovery produce a new one. `[UPDATED 2026-07-27]` The full set of current Test Suites can be downloaded as a single, suite-folder-organized, runnable Playwright project.
+**FRs covered:** FR-16, FR-17, FR-29 (added 2026-07-15), FR-34 (added 2026-07-27). `[CUT 2026-07-27]` FR-18 (Full regeneration) — no longer built, see Story 4.3's removal below.
 
 *(Epic 5 "CI/CD Delivery," Epic 6 "Analytics & Executive Dashboards," and Epic 7 "Deployment & AI Provider Configuration" removed in full 2026-07-15 — none had any supporting screen in the current UX, and Epic 7's on-prem deployment is a confirmed parked-for-later-release decision, not current scope. Epic 6's Journey Explorer (FR-23) survives, relocated into Epic 3's Story 3.1. See `sprint-change-proposal-2026-07-15.md` for the original history.)*
 
@@ -449,7 +451,7 @@ So that the Trusted Knowledge Model reflects names I trust and excludes what doe
 
 ## Epic 4: Scenario & Playwright Test Generation
 
-`[UPDATED 2026-07-15]` Every discovered Journey automatically produces happy-path/negative Scenarios and executable Playwright Test Assets, viewable — generation starts immediately on discovery (Epic 2), not on approval. `[UPDATED 2026-07-27]` No regeneration mechanism exists — Story 4.3 (FR-18) is cut in full, not deferred; once generated, a Journey's coverage is refreshed only by deleting the Journey (Epic 3) and letting re-discovery produce a new one.
+`[UPDATED 2026-07-15]` Every discovered Journey automatically produces happy-path/negative Scenarios and executable Playwright Test Assets, viewable — generation starts immediately on discovery (Epic 2), not on approval. `[UPDATED 2026-07-27]` No regeneration mechanism exists — Story 4.3 (FR-18) is cut in full, not deferred; once generated, a Journey's coverage is refreshed only by deleting the Journey (Epic 3) and letting re-discovery produce a new one. `[UPDATED 2026-07-27]` A reviewer can download the full set of current Test Suites as a single, suite-folder-organized, runnable Playwright project (new Story 4.3, FR-34).
 
 ### Story 4.1: Generate Scenarios for a Discovered Journey `[RENAMED 2026-07-15, was "...for an Approved Journey"]`
 
@@ -493,5 +495,24 @@ So that I have real, runnable regression coverage for the Journey.
 **`[NOTE FOR PM/ENG — 2026-07-15]`** The Generate Suite screen also shows an "Execution" choice (`Run immediately`/`Schedule for later`/`Save without running`) — this is a confirmed UI placeholder only; do not build execution/scheduling behavior against it (see architecture Deferred section). The screen the user sees immediately after clicking "Generate Test Suite" (i.e., whether the prior code-viewer + `<details>` disclosure pattern survives) was not reachable during UX review — `[GAP]`, retained as last-confirmed spec pending re-verification.
 
 *(Story 4.3 "Full Regeneration of Test Assets on Request" [FR-18] removed in full 2026-07-27 — explicit product decision, not deferred. No code existed to remove: despite tracking suggesting it was "completed," the regenerate-trigger endpoint and UI control were never built — that commit actually implemented Story 4.2, mislabeled by the developer. See `sprint-change-proposal-2026-07-27.md`.)*
+
+### Story 4.3: Download a Generated Test Suite `[ADDED 2026-07-27, same day the prior Story 4.3 was cut — different feature, reused slot]`
+
+As a user,
+I want to download all current Test Suites for an Application as a single, ready-to-run Playwright project,
+So that I can run the generated tests locally, or fold them into my own regression process, without hand-assembling a project from copied code.
+
+**Acceptance Criteria:**
+
+**Given** an Application with at least one current Test Suite
+**When** the reviewer clicks Download on the Test Suites Generated screen
+**Then** the platform assembles a zip containing one folder per current Test Suite under `tests/`, named after its Journey, each holding that suite's generated test files (FR-34)
+**And** the archive also includes a generated `requirements.txt` (`pytest`, `pytest-playwright`), a `conftest.py`/`pytest.ini`, empty `fixtures/` and `utils/` scaffold folders, and a `README.md` covering setup
+**And** the assembled project is structurally validated (every current suite present, no partial/empty suite folder) before the zip is returned
+**And** after extracting and running `pip install -r requirements.txt && playwright install`, `pytest` runs the full project, and `pytest tests/<suite-folder>` runs a single suite
+
+**`[CORRECTED 2026-07-27, during story creation]`** The downloaded project is **Python**, not Node/TypeScript as originally drafted — `TestAsset.code` is generated as Python `playwright.sync_api` code (`HostedAIProvider.generate_playwright`), and no Python→TypeScript conversion step exists in the pipeline. A `package.json`/`playwright.config.ts`/`tsconfig.json` scaffold wrapping that Python code would not run.
+
+**`[NOTE FOR ENG — 2026-07-27]`** Suite-folder naming should adapt the existing `toSpecFileName` slug convention already implemented in `TestSuiteResults.tsx` (`apps/web/src/components/TestSuiteResults.tsx`) to Python's `test_*.py` module-naming rule (pytest only discovers `test_*.py`/`*_test.py`) — the suite folder name is that same slug (hyphens), one directory level up; each test file within it is `test_<slug-with-underscores>.py`.
 
 *(Epic 5 "CI/CD Delivery" [Stories 5.1-5.3], Epic 6 "Analytics & Executive Dashboards" [Stories 6.1, 6.3, 6.4 — 6.2 relocated into Story 3.1], and Epic 7 "Deployment & AI Provider Configuration" [Stories 7.1-7.2] removed in full 2026-07-15. None had any supporting screen in the current UX; Epic 7's on-prem deployment is additionally a confirmed parked-for-later-release product decision. See `sprint-change-proposal-2026-07-15.md` for the original history and rationale.)*
