@@ -13,12 +13,6 @@ pipeline {
     IMAGE_TAG = "api-stage.${env.BUILD_NUMBER}"
     KUBECONFIG = credentials('kubeconfig-credential-id')
     K8S_PATH = "ops/k8s"
-    // Matches api.scripts.seed_dev_data's own defaults (same creds documented
-    // for local dev sign-in) — override here if staging should use different
-    // credentials than local dev.
-    SEED_EMAIL = "dev@example.com"
-    SEED_PASSWORD = "devpassword123"
-    SEED_ORG_NAME = "Dev Organization"
   }
 
   stages {
@@ -106,31 +100,15 @@ pipeline {
     // (Dockerfile COPYs the whole repo), so run it in the container that
     // already has the real DATABASE_URL wired in via env, rather than
     // duplicating DB connection setup on the Jenkins agent.
+    //
+    // Seeding of dev@example.com is handled inside the migration chain
+    // itself (see migrations/versions/e7c2a4b9d105_seed_dev_platform_user.py),
+    // not as a separate Jenkins stage — so it runs automatically here.
     stage('Run Database Migrations') {
       steps {
         script {
           withAWS(region: AWS_REGION, credentials: 'wm-ps-user-ecr') {
             sh "kubectl exec deployment/api -n aitestgen -- /app/.venv/bin/alembic upgrade head"
-          }
-        }
-      }
-    }
-
-    // seed_dev_data is idempotent (no-op if SEED_EMAIL already exists), so
-    // this is safe to run on every deploy rather than only the first one.
-    // No PRD story adds self-service registration (no "Sign Up" screen
-    // exists), so this script is the only way any PlatformUser row ever
-    // gets created against the real RDS instance. Same kubectl exec /
-    // deployment-name pattern as the migrations stage above — no new RBAC,
-    // no hard-coded pod name.
-    stage('Seed Dev Data') {
-      steps {
-        script {
-          withAWS(region: AWS_REGION, credentials: 'wm-ps-user-ecr') {
-            sh """
-              kubectl exec deployment/api -n aitestgen -- /app/.venv/bin/python -m api.scripts.seed_dev_data \
-                '${SEED_EMAIL}' '${SEED_PASSWORD}' '${SEED_ORG_NAME}'
-            """
           }
         }
       }
