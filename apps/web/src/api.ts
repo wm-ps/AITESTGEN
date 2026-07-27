@@ -10,7 +10,7 @@ export type ScenarioRead = components['schemas']['ScenarioRead']
 export type TestCaseRead = components['schemas']['TestCaseRead']
 export type TestSuiteRead = components['schemas']['TestSuiteRead']
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:8000'
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
 class ApiError extends Error {
   status: number
