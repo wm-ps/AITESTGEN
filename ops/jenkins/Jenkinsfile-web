@@ -72,11 +72,22 @@ pipeline {
 
             def image = "${awsAccountID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}"
 
+            // `sed -i` on the tracked manifest only works once per workspace:
+            // after the first run replaces REPLACE_IMAGE, the placeholder is
+            // gone from the checked-out copy, so every later run's sed is a
+            // silent no-op and `kubectl apply` keeps re-applying the SAME
+            // old image forever, no matter how many new images get built.
+            // Render into an untracked file instead so REPLACE_IMAGE in git
+            // is never touched, and use `kubectl set image` as the actual
+            // trigger so a rollout always happens even if the rendered spec
+            // is otherwise identical to what's already applied.
             sh """
-              sed -i 's|REPLACE_IMAGE|${image}|' ${K8S_PATH}/07-web.yaml
+              sed 's|REPLACE_IMAGE|${image}|' ${K8S_PATH}/07-web.yaml > ${K8S_PATH}/07-web.rendered.yaml
             """
 
-            sh "kubectl apply -f ${K8S_PATH}/07-web.yaml"
+            sh "kubectl apply -f ${K8S_PATH}/07-web.rendered.yaml"
+            sh "kubectl set image deployment/web web=${image} -n aitestgen"
+            sh "kubectl rollout status deployment/web -n aitestgen --timeout=120s"
             sh "kubectl apply -f ${K8S_PATH}/07-web-ingress.yaml"
           }
         }

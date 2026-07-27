@@ -69,6 +69,13 @@ playwright/.cache/
 *.bak
 *.pid
 
+# --- Jenkins deploy rendering ---
+# ops/k8s/*.yaml keep REPLACE_IMAGE checked in; Jenkinsfiles render the real
+# image tag into these *.rendered.yaml siblings per-run instead of editing
+# the tracked manifest in place (that used to make REPLACE_IMAGE substitution
+# a one-time-only no-op in a reused Jenkins workspace).
+ops/k8s/*.rendered.yaml
+
 # --- Unnecessary / generated docs & scratch artifacts ---
 # BMAD scratch/working files (design drafts, decision logs) — not deliverables
 **/.working/
