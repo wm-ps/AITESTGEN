@@ -10,7 +10,8 @@ updated: "2026-07-15 — see sprint-change-proposal-2026-07-15.md: Story 6.2 rel
   2026-07-18 [correction] — initial numbering had Application Model Builder as Story 2.6, after the AI Inference story (2.5) that depends on it, backwards from the actual pipeline order (Discovery → Model Builder → Inference). Corrected: Application Model Builder is Story 2.5, AI Inference is Story 2.6.
   2026-07-18 [follow-up, same day] — the generic `Evidence` table concept is removed in full: Story 2.2 now writes typed rows directly (`Page`/`Form`/`FormField`/`ValidationRule`/`Action`/`ApiEndpoint`/`PageTransition`), each scoped by `application_id` (making the model genuinely reusable across re-discovery, not just per-run) plus `discovery_run_id` (provenance). Story 2.5 resolves duplicates via a self-referencing `merged_into_id` and derives `Component`/`ComponentLocator`/`Assertion`. PRD FR-6/FR-30, Architecture AD-8/AD-13/AD-14, and Stories 2.2/2.5/2.6 updated to match.
   2026-07-19 [crawl engine follow-up] — Story 2.2 gains ACs 7-9, all within FR-6's existing scope: button-triggered navigation is now followed onward instead of dead-ending at the click; forms with an identical shape/starting values (hidden fields included) are sampled representatively across pages; a broken/error (network failure or 4xx/5xx) destination is skipped rather than captured; and AC 6's representative-action sampling is bounded to a small number of distinct labels per page, page-body content before nav/header/footer chrome. PRD FR-6/FR-7/§12 item 7 and Architecture AD-15 updated to match.
-  2026-07-21 [Sprint Change Proposal — Import Experience & Progress UX Improvements] — see sprint-change-proposal-2026-07-21.md: new FR-31 (reachability validation) and FR-32 (browser tab branding) added to Epic 1 — Story 1.3 gains two ACs, new Story 1.6 added. New FR-33 (business-oriented import progress) added to Epic 2 — Story 2.2's AC3 walked back (raw live-feed no longer user-facing, capture itself unchanged), Stories 2.1/2.6 gain stage-transition ACs, new Story 2.7 added. Architecture AD-10 extended with DiscoveryRun.stage; domain model gains Application.favicon_url. Stories 1.3, 2.1, 2.2, 2.6 reverted to in-progress for rework per sprint-status.yaml."
+  2026-07-21 [Sprint Change Proposal — Import Experience & Progress UX Improvements] — see sprint-change-proposal-2026-07-21.md: new FR-31 (reachability validation) and FR-32 (browser tab branding) added to Epic 1 — Story 1.3 gains two ACs, new Story 1.6 added. New FR-33 (business-oriented import progress) added to Epic 2 — Story 2.2's AC3 walked back (raw live-feed no longer user-facing, capture itself unchanged), Stories 2.1/2.6 gain stage-transition ACs, new Story 2.7 added. Architecture AD-10 extended with DiscoveryRun.stage; domain model gains Application.favicon_url. Stories 1.3, 2.1, 2.2, 2.6 reverted to in-progress for rework per sprint-status.yaml.
+  2026-07-27 — see sprint-change-proposal-2026-07-27.md: Story 4.3 (Full Regeneration of Test Assets on Request, FR-18) removed in full, not deferred — explicit product decision. No code existed to remove: despite sprint-status.yaml/commit history suggesting it was completed, it was never actually built (that work was Story 4.2's, mislabeled in the commit message). Story 4.3 section deleted, its story file removed, Epic 4 description and FR Coverage Map updated to drop FR-18; sprint-status.yaml entry removed; PRD FR-18/§5/§6.1/§9 and Architecture AD-1/AD-8/Module Map/Deferred updated to match."
 ---
 
 # Application Intelligence Platform - Epic Breakdown
@@ -40,7 +41,7 @@ FR-14: `[REWRITTEN 2026-07-15]` Every discovered, non-deleted Journey/Capability
 FR-15: Re-running discovery on a previously discovered Application flags only newly-discovered Journeys/Capabilities (existence check only, not change detection) for human review; already-known Journeys are not automatically re-surfaced.
 FR-16: Platform generates integration test Scenarios for each discovered Journey, covering both happy-path and negative/edge-case scenarios. `[UPDATED 2026-07-15]` Generation starts immediately upon discovery, not gated on approval.
 FR-17: Platform converts generated Scenarios into executable Playwright Test Assets.
-FR-18: When a customer triggers regeneration of Test Assets for a Journey, platform regenerates Scenarios and Test Assets from scratch (full regeneration only, not incremental). Updated 2026-07-15: Scenarios are now editable/removable pre-generation (FR-29).
+FR-18: `[CUT 2026-07-27]` Previously: when a customer triggers regeneration of Test Assets for a Journey, platform regenerates Scenarios and Test Assets from scratch (full regeneration only, not incremental). Cut in full — explicit product decision; V1 ships with no customer-facing way to refresh a Journey's generated coverage, deletion (FR-13) is the sole reviewer lever. Retained here as a record of intent. Scenarios remain editable/removable pre-generation (FR-29), unaffected by this cut.
 FR-28 `[ADDED then CUT 2026-07-15]`: Reviewer can edit a discovered Journey via a per-row action menu, in addition to rename/delete. Cut the same day it was added — its exact edit surface (name/description vs. constituent steps) was never confirmed in the UX review, and product decided not to build it.
 FR-29 `[ADDED 2026-07-15]`: Reviewer can rename, edit, or remove a generated Scenario before Playwright generation. `[GAP]` whether edits feed generation or are display-only is unconfirmed.
 FR-31 `[ADDED 2026-07-21]`: Platform validates that the submitted Base URL is reachable before creating an Application record or starting discovery; an unreachable URL fails fast with a clear message.
@@ -129,7 +130,7 @@ FR-14: Epic 2 - Discovery gates downstream use (Trusted Knowledge Model) — `Ge
 FR-15: Epic 3 - New-journey flagging on re-discovery
 FR-16: Epic 4 - Scenario generation (happy-path + negative), starts immediately on discovery
 FR-17: Epic 4 - Playwright Test Asset generation
-FR-18: Epic 4 - Full regeneration on request
+FR-18: `[CUT 2026-07-27]` Full regeneration on request — no longer built; no customer-facing way to refresh generated coverage, deletion (FR-13) is the sole lever
 FR-28: `[ADDED then CUT 2026-07-15]` Edit a discovered Journey — no longer built
 FR-29: Epic 4 - Edit/remove a generated Scenario `[ADDED 2026-07-15]`
 FR-23: Epic 3 `[RETAINED, RELOCATED]` - Journey step/evidence detail, now inline in the discovery-review screen (was Epic 6 - Journey Explorer)
@@ -160,8 +161,8 @@ A user can start a Discovery Run, watch live progress (running/complete/failed-s
 **FRs covered:** FR-9, FR-12, FR-13, FR-15, FR-23 (relocated 2026-07-15). `[CUT 2026-07-15]` FR-10 (Approve), FR-11 (Reject) — no story files retained (removed 2026-07-15); FR-28 (Edit) — see Story 3.4.
 
 ### Epic 4: Scenario & Playwright Test Generation
-`[UPDATED 2026-07-15]` Every discovered Journey automatically produces happy-path/negative Scenarios (rename/edit/removable pre-generation as of 2026-07-15) and executable Playwright Test Assets, generated as a named Test Suite, regenerable from scratch on request — generation starts immediately on discovery, not on approval.
-**FRs covered:** FR-16, FR-17, FR-18, FR-29 (added 2026-07-15)
+`[UPDATED 2026-07-15]` Every discovered Journey automatically produces happy-path/negative Scenarios (rename/edit/removable pre-generation as of 2026-07-15) and executable Playwright Test Assets, generated as a named Test Suite — generation starts immediately on discovery, not on approval. `[UPDATED 2026-07-27]` No regeneration mechanism exists (FR-18 cut in full) — once generated, a Journey's coverage is refreshed only by deleting the Journey (Epic 3) and letting re-discovery produce a new one.
+**FRs covered:** FR-16, FR-17, FR-29 (added 2026-07-15). `[CUT 2026-07-27]` FR-18 (Full regeneration) — no longer built, see Story 4.3's removal below.
 
 *(Epic 5 "CI/CD Delivery," Epic 6 "Analytics & Executive Dashboards," and Epic 7 "Deployment & AI Provider Configuration" removed in full 2026-07-15 — none had any supporting screen in the current UX, and Epic 7's on-prem deployment is a confirmed parked-for-later-release decision, not current scope. Epic 6's Journey Explorer (FR-23) survives, relocated into Epic 3's Story 3.1. See `sprint-change-proposal-2026-07-15.md` for the original history.)*
 
@@ -444,11 +445,11 @@ So that the Trusted Knowledge Model reflects names I trust and excludes what doe
 **Then** the new name is saved and displayed everywhere the Journey/Capability appears (FR-12)
 **Given** a candidate Journey/Capability
 **When** the reviewer deletes it (via the `⋯` menu)
-**Then** it is excluded from the Trusted Knowledge Model — along with any Scenarios/Test Assets already generated for it — from Generate Suite compilation and Analytics (FR-13); this does not cancel an in-flight or completed `GenerationWorkflow`, consistent with FR-18's regeneration being the only way to redo generation for a kept Journey
+**Then** it is excluded from the Trusted Knowledge Model — along with any Scenarios/Test Assets already generated for it — from Generate Suite compilation and Analytics (FR-13); this does not cancel an in-flight or completed `GenerationWorkflow`. `[UPDATED 2026-07-27]` There is no way to redo generation for a kept Journey — FR-18 (regeneration) is cut in full; deletion only excludes, it never triggers anything new
 
 ## Epic 4: Scenario & Playwright Test Generation
 
-`[UPDATED 2026-07-15]` Every discovered Journey automatically produces happy-path/negative Scenarios and executable Playwright Test Assets, viewable, and regenerable from scratch on request — generation starts immediately on discovery (Epic 2), not on approval.
+`[UPDATED 2026-07-15]` Every discovered Journey automatically produces happy-path/negative Scenarios and executable Playwright Test Assets, viewable — generation starts immediately on discovery (Epic 2), not on approval. `[UPDATED 2026-07-27]` No regeneration mechanism exists — Story 4.3 (FR-18) is cut in full, not deferred; once generated, a Journey's coverage is refreshed only by deleting the Journey (Epic 3) and letting re-discovery produce a new one.
 
 ### Story 4.1: Generate Scenarios for a Discovered Journey `[RENAMED 2026-07-15, was "...for an Approved Journey"]`
 
@@ -491,18 +492,6 @@ So that I have real, runnable regression coverage for the Journey.
 
 **`[NOTE FOR PM/ENG — 2026-07-15]`** The Generate Suite screen also shows an "Execution" choice (`Run immediately`/`Schedule for later`/`Save without running`) — this is a confirmed UI placeholder only; do not build execution/scheduling behavior against it (see architecture Deferred section). The screen the user sees immediately after clicking "Generate Test Suite" (i.e., whether the prior code-viewer + `<details>` disclosure pattern survives) was not reachable during UX review — `[GAP]`, retained as last-confirmed spec pending re-verification.
 
-### Story 4.3: Full Regeneration of Test Assets on Request
-
-As a user,
-I want to trigger a full regeneration of a Journey's Scenarios and Test Assets,
-So that I get fresh coverage after the Journey or my understanding of it has changed.
-
-**Acceptance Criteria:**
-
-**Given** a discovered Journey with existing, `current=true` Scenarios and Test Assets
-**When** the user triggers regeneration
-**Then** a new `GenerationWorkflow` attempt runs `ScenarioGenerationActivity` and `PlaywrightGenerationActivity` from scratch — never as an incremental diff/patch (FR-18)
-**And** the new attempt's `Scenario`/`TestAsset` rows are written with `current=true`, while the prior attempt's rows flip to `current=false` (soft-superseded, retained for audit, never deleted) (AD-8)
-**And** the regeneration Activity is idempotent under Temporal's at-least-once retry — a retried attempt does not produce duplicate current rows (AD-9)
+*(Story 4.3 "Full Regeneration of Test Assets on Request" [FR-18] removed in full 2026-07-27 — explicit product decision, not deferred. No code existed to remove: despite tracking suggesting it was "completed," the regenerate-trigger endpoint and UI control were never built — that commit actually implemented Story 4.2, mislabeled by the developer. See `sprint-change-proposal-2026-07-27.md`.)*
 
 *(Epic 5 "CI/CD Delivery" [Stories 5.1-5.3], Epic 6 "Analytics & Executive Dashboards" [Stories 6.1, 6.3, 6.4 — 6.2 relocated into Story 3.1], and Epic 7 "Deployment & AI Provider Configuration" [Stories 7.1-7.2] removed in full 2026-07-15. None had any supporting screen in the current UX; Epic 7's on-prem deployment is additionally a confirmed parked-for-later-release product decision. See `sprint-change-proposal-2026-07-15.md` for the original history and rationale.)*

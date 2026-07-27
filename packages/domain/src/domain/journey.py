@@ -17,8 +17,9 @@ nothing extra.
 
 No `approved`/`rejected` status — Approve/Reject were cut (2026-07-15); every
 non-`deleted` Journey is in the Trusted Knowledge Model immediately (FR-14).
-`attempt` starts at `1` here (no approval step to increment it); Story 4.3's
-regeneration endpoint is what increments it later.
+`attempt` starts at `1` here (no approval step to increment it). No feature
+increments it today — Story 4.3/FR-18 (regeneration) is cut in full, see
+sprint-change-proposal-2026-07-27.md.
 """
 
 import uuid

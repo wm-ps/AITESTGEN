@@ -714,8 +714,9 @@ def update_scenario_test_data(
 # Journey" pattern exactly. Journey-scoped, not Application-wide: the
 # workflow-ID convention (`suite-{journey_id}-{attempt}`) mirrors
 # `generation-{journey_id}-{attempt}`, so `journey.attempt` is what makes
-# both the double-click race and Story 4.3 regeneration work correctly with
-# no extra bookkeeping.
+# the double-click race safe to retry with no extra bookkeeping. (Story
+# 4.3/FR-18 regeneration, which would have been the other caller bumping
+# `attempt`, is cut in full — see sprint-change-proposal-2026-07-27.md.)
 
 
 class TestCaseRead(BaseModel):

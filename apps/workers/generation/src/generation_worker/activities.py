@@ -173,7 +173,9 @@ async def ensure_test_suite_activity(
     fan-out) — so N concurrent `PlaywrightGenerationActivity` calls for the
     same Journey never race to create duplicate `TestSuite` rows. Also
     supersedes the prior attempt's `TestSuite`/`TestAsset` rows atomically
-    with the new `TestSuite`'s creation (Story 4.3 AC 2).
+    with the new `TestSuite`'s creation, if `Journey.attempt` is ever bumped
+    (no feature does this today — Story 4.3/FR-18 is cut in full, see
+    sprint-change-proposal-2026-07-27.md).
 
     `[FIXED 2026-07-23]` The actual DB work runs in a thread
     (`asyncio.to_thread`) — a real Application's Generate Suite submission

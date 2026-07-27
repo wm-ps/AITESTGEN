@@ -52,7 +52,8 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-21  # Sprint Change Proposal (Import Experience & Progress UX Improvements)
+last_updated: 2026-07-27  # Sprint Change Proposal (cut Story 4.3, FR-18 — see sprint-change-proposal-2026-07-27.md)
+# 2026-07-21 note (below) kept for history:
 #   implemented and moved to review: Story 1-3's Task 7 (reachability validation + favicon
 #   auto-fetch, FR-31/FR-32), Story 1-6 (Dynamic Browser Tab Branding, new), Story 2-1's Task 7
 #   (DiscoveryRun.stage=initializing), Story 2-2's Task 6 (stage=authenticating/discovering
@@ -134,7 +135,9 @@ development_status:
     # (Continue to Generate Test Suite). Also fixed InferenceActivity to stop auto-starting
     # GenerationWorkflow, per this story's own corrected flow.
   4-2-generate-playwright-test-assets-from-scenarios: ready-for-dev
-  4-3-full-regeneration-of-test-assets-on-request: ready-for-dev
+  # Story 4.3 (Full Regeneration of Test Assets on Request) removed 2026-07-27 — explicit product decision,
+  #   not deferred; no code existed to build on despite tracking suggesting otherwise (the "4.3 has been
+  #   completed" commit actually implemented Story 4.2, mislabeled). See sprint-change-proposal-2026-07-27.md.
   epic-4-retrospective: optional
 
   # Epic 5 (CI/CD Delivery), Epic 6 (Analytics & Executive Dashboards), and Epic 7 (Deployment &
