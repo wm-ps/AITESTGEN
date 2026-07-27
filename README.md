@@ -100,12 +100,18 @@ hosted (e.g. RDS); point `POSTGRES_HOST`/`POSTGRES_PORT`/`POSTGRES_DB` in the
 `aitestgen-config` ConfigMap at it.
 
 Secrets (`POSTGRES_PASSWORD`, `SESSION_SECRET_KEY`, `VAULT_TOKEN`,
-`MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY`, `ANTHROPIC_API_KEY`) are created directly
+`ANTHROPIC_API_KEY`, and — only where IAM roles for service accounts (IRSA)
+aren't used — `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`) are created directly
 as a Kubernetes `Secret` (`kubectl create secret generic aitestgen-secrets ...`)
 rather than committed as YAML. Vault itself still runs — in-cluster, dev-mode,
 in the `aitestgen` namespace — since `apps/api`/`apps/workers/discovery` call it
 at runtime to store onboarded Applications' target-app credentials; only its
 own root token moves to a k8s Secret instead of being hardcoded.
+
+`[UPDATED 2026-07-24]` Object storage for discovery evidence (screenshots/DOM
+snapshots) is AWS S3 in production (Story 2.8) — there is no in-cluster
+`minio` Deployment/Service. Local development still uses the docker-compose
+`minio` service below, unchanged (S3-compatible, dev ergonomics only).
 
 | Service | Type | Port(s) | Usage |
 |---|---|---|---|
@@ -114,7 +120,7 @@ own root token moves to a k8s Secret instead of being hardcoded.
 | `postgres` | External (not deployed in-cluster) | 5432 (default) | Primary datastore — Organizations, Users, Applications, DiscoveryRuns, Journeys, Capabilities, etc. Customer-hosted (e.g. RDS); host/port/db name set via the `aitestgen-config` ConfigMap, password via the `aitestgen-secrets` Secret. |
 | `temporal` | ClusterIP | 7233 (gRPC), 8233 (Web UI) | Workflow engine driving `DiscoveryWorkflow` / `GenerationWorkflow`. Internal only (port-forward for the UI). |
 | `vault` | ClusterIP | 8200 | Dev-mode KV store for onboarded Applications' target-app credentials. Internal only. |
-| `minio` | ClusterIP | 9000 (S3 API), 9001 (console) | Object storage for discovery evidence (screenshots/DOM snapshots). Internal only. |
+| `s3` (AWS) | External (not deployed in-cluster) | n/a | Object storage for discovery evidence (screenshots/DOM snapshots) — production bucket, region set via the `aitestgen-config` ConfigMap, accessed via IRSA or the `aitestgen-secrets` access-key pair. |
 | `discovery-worker` | — (no Service) | n/a | Temporal worker — outbound only. Runs the Playwright crawler + AI inference activities. |
 | `generation-worker` | — (no Service) | n/a | Temporal worker — outbound only. Scenario/test-asset generation (Epic 4, not yet implemented). |
 

@@ -1,5 +1,5 @@
 # No Service — this is a Temporal worker, all outbound connections (to
-# temporal/postgres/vault/minio), nothing listens for inbound traffic.
+# temporal/postgres/vault/s3), nothing listens for inbound traffic.
 # Resource requests are higher than the other services: each crawl runs a
 # real headless Chromium instance (Story 2.2).
 apiVersion: apps/v1
@@ -53,16 +53,21 @@ spec:
                 secretKeyRef:
                   name: aitestgen-secrets
                   key: VAULT_TOKEN
-            - name: MINIO_ACCESS_KEY
+            # Only needed if the cluster doesn't use EKS Pod Identity/IRSA for
+            # this ServiceAccount — boto3 falls back to these env vars when no
+            # role-based credentials are available. Prefer Pod Identity/IRSA
+            # (scoped to s3:GetObject/s3:PutObject on AWS_S3_BUCKET only) and
+            # drop these two entries + the matching aitestgen-secrets keys.
+            - name: AWS_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
                   name: aitestgen-secrets
-                  key: MINIO_ACCESS_KEY
-            - name: MINIO_SECRET_KEY
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
                   name: aitestgen-secrets
-                  key: MINIO_SECRET_KEY
+                  key: AWS_SECRET_ACCESS_KEY
             - name: ANTHROPIC_API_KEY
               valueFrom:
                 secretKeyRef:

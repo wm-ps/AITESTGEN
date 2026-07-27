@@ -71,7 +71,7 @@ NFR-5 (Platform scope): Desktop web app only — no mobile or tablet form factor
 - The API's generated OpenAPI spec is the only contract between `apps/web` and `apps/api` — frontend TypeScript types are generated from the FastAPI/Pydantic OpenAPI spec; no hand-written duplicate request/response shape is permitted (AD-6).
 - `[UPDATED 2026-07-15]` The Trusted Knowledge Model has exactly one deletion path: only `apps/api`'s delete endpoint may transition a Journey/Capability's status to `deleted`; workers may only write `candidate` or downstream generation status (AD-7). There is no more `approved`/`rejected` state — every non-deleted Journey/Capability is part of the Trusted Knowledge Model from the moment it's discovered.
 - `[UPDATED 2026-07-18]` There is no generic `Evidence` table. `DiscoveryActivity` writes typed rows directly (`Page`, `Form`/`FormField`/`ValidationRule`, `Action`, `ApiEndpoint`, `PageTransition`), each tagged `application_id` + `discovery_run_id`; `ApplicationModelBuilderActivity` merges duplicates (within and across Discovery Runs) via a self-referencing `merged_into_id`, and derives `Component`/`ComponentLocator`/`Assertion` from canonical rows; `InferenceActivity` attributes `journey_id` only onto canonical rows. `Journey.discovery_run_id` is immutable; `Scenario`/`TestAsset` rows carry `generation_run_id` plus a `current: bool` flag, with prior attempts soft-superseded (never deleted) on regeneration (AD-8).
-- Large binary artifacts (screenshots) are never stored inline in Postgres — `Page.object_storage_key` holds an object-storage key/reference; structured metadata lives directly as typed columns in Postgres (AD-8).
+- Large binary artifacts (screenshots) are never stored inline in Postgres — `Page.object_storage_key` holds an object-storage key/reference; structured metadata lives directly as typed columns in Postgres (AD-8). `[RESOLVED 2026-07-24]` Production object-storage backend: AWS S3; local-dev/CI: docker-compose MinIO (unchanged, S3-compatible) — see Story 2.8.
 - Every side-effecting Activity (form submission, PR/commit creation) must be idempotent under Temporal's at-least-once retry, using a deterministic check-before-acting key derived from its inputs. `[UPDATED 2026-07-15]` `InferenceActivity`'s candidate-creation step is keyed by the same `identity_key` used for re-discovery dedup (AD-13); its `GenerationWorkflow`-start is naturally idempotent via Temporal's duplicate-workflow-ID rejection, with no separate reconciliation sweep needed (AD-9).
 - `[UPDATED 2026-07-15]` `DiscoveryRun.status` must be a first-class, queryable field (`running | complete | failed`) — completeness is never inferred from presence/absence of other data (AD-10). No `incomplete` value exists — there is no time-budget stop condition to produce one (FR-7).
 - Session expiry mid-crawl must be detected as a distinct condition from a normal stop condition, terminating the run with `status=failed`, `failure_reason=session_expired`, surfaced by `apps/api` as a re-authentication prompt distinguishable from other `failed` causes (AD-11).
@@ -79,7 +79,7 @@ NFR-5 (Platform scope): Desktop web app only — no mobile or tablet form factor
 - Each candidate Journey needs a deterministic `identity_key` computed from its underlying evidence shape (not its AI-generated display name); re-discovery dedup/suppression for FR-15 compares against this key and never alters existing attribution (AD-13).
 - Stack versions to build against: Python 3.14.6, FastAPI (current stable), SQLModel (current stable), Alembic (current stable), PostgreSQL 18.4, Temporal Python SDK (current GA), Playwright Python 1.57+, React 19.x, Vite 8.1.x, TypeScript 7.0 GA (verify AD-6's OpenAPI→TS codegen tooling supports it before adopting, else pin TypeScript 5.9 as fallback).
 - Platform's own CI (build/test/lint of this codebase) runs on GitHub Actions; every `apps/*` service ships as its own container image; traces/metrics use OpenTelemetry, correlated by Temporal `workflow_id` (matching structured-log correlation).
-- Deferred by explicit architecture decision (not to be designed against in V1 stories): SaaS vs. on-prem deployment topology and where Temporal itself runs; the object-storage backend provider; direct-commit regeneration conflict handling; a non-production technical safeguard; confidence/risk-scoring reintroduction; reviewer prioritization/importance-marking; tenant billing/plan model.
+- Deferred by explicit architecture decision (not to be designed against in V1 stories): SaaS vs. on-prem deployment topology and where Temporal itself runs; direct-commit regeneration conflict handling; a non-production technical safeguard; confidence/risk-scoring reintroduction; reviewer prioritization/importance-marking; tenant billing/plan model. `[RESOLVED 2026-07-24]` The object-storage backend provider (previously deferred here) is decided — AWS S3 in production, MinIO unchanged for local-dev/CI — see Story 2.8.
 - Blocking dependency: the SSO/MFA session-state capture mechanism (PRD Open Question 8) is unresolved and blocks detailed design/build of the Onboarding flow's auth step (FR-3) — stories touching this step must treat the mechanism as a placeholder pending that decision.
 - `[CUT 2026-07-15]` The live pending-review count indicator and New/Dupe candidate-row badges are confirmed cut — the nav rail they depended on is retired, and neither was confirmed present in the current reference prototype. See Story 3.1.
 
@@ -404,6 +404,26 @@ So that I understand what's happening without needing to know how discovery work
 **And** `DiscoveryRun.status=failed` (e.g. `session_expired`, AD-11) shows the existing re-authentication prompt in place of stage progress
 
 **Notes:** The Application Model Builder step (Story 2.5) is presented as part of the "Discovery" stage, not "Analysis" — per explicit product decision, since it's still processing what was crawled, not yet AI inference.
+
+### Story 2.8: Production Object Storage on AWS S3 `[ADDED 2026-07-24]`
+
+*Added per `sprint-change-proposal-2026-07-24.md`. Resolves the object-storage backend provider question the architecture explicitly deferred (AD-8, Operational Envelope) — decided as AWS S3 for production. Next available Epic 2 story number.*
+
+As an operator running AITestGen in production,
+I want discovery-evidence binaries (screenshots, DOM snapshots) stored in AWS S3 instead of a self-hosted MinIO deployment,
+So that the platform relies on managed, durable cloud storage rather than an in-cluster stateful service we operate ourselves.
+
+**Acceptance Criteria:**
+
+**Given** a production (EKS) deployment
+**When** `DiscoveryActivity` persists a screenshot via `object_store.py`
+**Then** the binary is written to an AWS S3 bucket using the same `put(bytes) -> key` / `get(key) -> bytes` contract Story 2.2 established — no caller (`crawler.py`, `activities.py`) changes
+
+**And** the in-cluster `minio` Deployment/Service/PVC (`ops/k8s/04-minio.yaml`) is removed, and `apps/api`/`apps/workers/discovery` k8s manifests and the `aitestgen-config`/`aitestgen-secrets` objects are updated for an S3 bucket + region instead of a MinIO endpoint; the discovery-worker pods authenticate to S3 via IAM (pod identity / IRSA) where the cluster supports it, falling back to an access-key pair in `aitestgen-secrets` otherwise
+
+**And** local development and CI continue to run against the existing docker-compose MinIO service unchanged (dev ergonomics only, per the architecture's local/production split) — `object_store.py` targets either backend through the same S3-compatible API, selected by endpoint configuration, not a code branch
+
+**Notes:** Local-dev behavior is intentionally out of scope — MinIO in `docker-compose.yml` remains the local/CI substitute (S3 wire-compatible). Only the production (`ops/k8s/`) deployment and its ConfigMap/Secret wiring change. See `sprint-change-proposal-2026-07-24.md` for the full impact analysis.
 
 ## Epic 3: Human Curation & Trusted Knowledge Model `[RENAMED 2026-07-15, was "Human Review & Trusted Knowledge Model"]`
 
