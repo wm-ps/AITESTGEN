@@ -58,6 +58,9 @@ last_updated: 2026-07-24  # Sprint Change Proposal (MinIO -> AWS S3 for producti
 #   compose MinIO is unchanged. See sprint-change-proposal-2026-07-24.md.
 # 2026-07-21  # Sprint Change Proposal (Import Experience & Progress UX Improvements)
 last_updated: 2026-07-27  # Sprint Change Proposal (cut Story 4.3, FR-18 — see sprint-change-proposal-2026-07-27.md)
+#   Same-day follow-up: added new Story 4.3 (Download a Generated Test Suite, FR-34), reusing the vacated
+#   slot for a different feature — see sprint-change-proposal-2026-07-27-2.md.
+#   Same-day follow-up: Story 4.3 story file created via bmad-create-story, moved to ready-for-dev.
 # 2026-07-21 note (below) kept for history:
 #   implemented and moved to review: Story 1-3's Task 7 (reachability validation + favicon
 #   auto-fetch, FR-31/FR-32), Story 1-6 (Dynamic Browser Tab Branding, new), Story 2-1's Task 7
@@ -149,6 +152,12 @@ development_status:
   # Story 4.3 (Full Regeneration of Test Assets on Request) removed 2026-07-27 — explicit product decision,
   #   not deferred; no code existed to build on despite tracking suggesting otherwise (the "4.3 has been
   #   completed" commit actually implemented Story 4.2, mislabeled). See sprint-change-proposal-2026-07-27.md.
+  4-3-download-a-generated-test-suite: ready-for-dev  # ADDED 2026-07-27 — new Story 4.3, reuses the slot
+    # vacated above (different feature). FR-34: download all current Test Suites for an Application as a
+    # single, suite-folder-organized, runnable Python (pytest/pytest-playwright) project — corrected from
+    # an initially-drafted Node/TypeScript scaffold once TestAsset.code was confirmed to be Python.
+    # See sprint-change-proposal-2026-07-27-2.md. Story file created; one [GAP] flagged for dev-time
+    # verification (exact AI-generated code shape) before finalizing requirements.txt/conftest.py.
   epic-4-retrospective: optional
 
   # Epic 5 (CI/CD Delivery), Epic 6 (Analytics & Executive Dashboards), and Epic 7 (Deployment &
