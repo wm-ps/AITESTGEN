@@ -45,7 +45,7 @@ spec:
             # Postgres is externally hosted (e.g. RDS) — not a Service in
             # this cluster. The password never gets written to the ConfigMap.
             - name: DATABASE_URL
-              value: "postgresql+psycopg://postgres:$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
+              value: "postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
             - name: SESSION_SECRET_KEY
               valueFrom:
                 secretKeyRef:

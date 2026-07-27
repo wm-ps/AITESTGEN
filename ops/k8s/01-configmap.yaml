@@ -20,6 +20,7 @@ data:
   POSTGRES_HOST: "44.193.88.55"
   POSTGRES_PORT: "8045"
   POSTGRES_DB: "aitestgen"
+  POSTGRES_USER: "aitestgen"  
   # No TLS in front of the LoadBalancer Services yet (see README) — a
   # Secure cookie would never reach the browser over plain HTTP.
   # Flip to "true" only after HTTPS is in place (ACM cert + ALB Ingress,
