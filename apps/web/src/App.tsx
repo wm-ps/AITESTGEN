@@ -56,14 +56,23 @@ function App() {
           view === 'home' ? undefined : application ? { name: application.name, environment: application.environment } : undefined
         }
         onLogout={handleLogout}
+        onGoHome={() => setView('home')}
       />
-      {view === 'home' && <Home user={user} onConnectApp={() => setView('connect-app')} />}
+      {view === 'home' && (
+        <Home
+          user={user}
+          application={application}
+          onConnectApp={() => setView('connect-app')}
+          onResumeApplication={() => setView('discover')}
+        />
+      )}
       {view === 'connect-app' && (
         <ConnectAppForm
           onConnected={(app) => {
             setApplication(app)
             setView('discover')
           }}
+          onCancel={() => setView('home')}
         />
       )}
       {view === 'discover' && application && (

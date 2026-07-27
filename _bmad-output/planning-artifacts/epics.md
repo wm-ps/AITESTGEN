@@ -192,7 +192,7 @@ So that every subsequent feature has a consistent, contract-safe structure to bu
 
 ### Story 1.2: Sign In & Organization-Scoped Workspace
 
-*Updated 2026-07-15 — IA changed from persistent nav-rail shell to top-bar + Home landing; see `sprint-change-proposal-2026-07-15.md`.*
+*Updated 2026-07-15 — IA changed from persistent nav-rail shell to top-bar + Home landing; see `sprint-change-proposal-2026-07-15.md`. Updated 2026-07-27 — Home layout and dark-mode-parity requirement changed per the UX v3 redirect; see `sprint-change-proposal-2026-07-27-3.md`.*
 
 As a user,
 I want to sign in and land in a workspace scoped to my Organization,
@@ -202,8 +202,8 @@ So that my Applications and data are isolated from any other customer's.
 
 **Given** a registered user belonging to an Organization
 **When** they sign in
-**Then** they land on Home, showing three action cards (Start a New Project, Managed Applications, Watch a Product Demo) beneath a top bar (brand mark + product name, left; user-initials avatar, right)
-**And** the design-token system is applied with full light/dark parity (`:root` light defaults, `@media (prefers-color-scheme: dark)` override, explicit `data-theme` override) — no component hardcodes a color
+**Then** they land on Home. `[UPDATED 2026-07-27]` With zero Applications onboarded, Home shows an onboarding empty state (icon badge, "No projects yet" heading, one line of body copy, a primary "+ Create New Project" button). With at least one existing Application, Home instead shows that Application as a persistent card (name, journey/scenario counts, status) beside a "Watch Demo" action — clicking the card resumes the guided pipeline at that Application's Discover Journeys step, never resetting to Connect App. An Application's card remains on Home regardless of its Journey count, including zero after all Journeys are deleted — Home only reverts to the zero-Applications empty state when no Application has ever been onboarded. All of this sits beneath the existing top bar (brand mark + product name, left — click returns to Home from anywhere; user-initials avatar, right)
+**And** the design-token system is applied per `EXPERIENCE.md`/`DESIGN.md`'s current token set — no component hardcodes a color. `[DECISION, 2026-07-27]` Full light/dark parity is dropped as a requirement (the reference UX no longer specifies dark values, and this was never a PRD/FR commitment) — the design-token system is light-mode only. The existing `@media (prefers-color-scheme: dark)`/`data-theme="dark"` overrides in `apps/web/src/tokens.css`/`theme.ts` must be removed, not left in place with stale pre-redirect colors — a stale dark theme would look more broken than no dark theme for OS-dark-mode users. Reinstating dark mode later requires a fresh product decision and new `DESIGN.md` token values, not a revival of the old teal-based dark palette
 **And** clicking the avatar opens a menu showing the user's name, email, and a Log out action
 **And** every API query the user's session triggers is scoped to their Organization via one central scoping mechanism (AD-12) — a second Organization's data is never returned
 **And** the Home screen omits the top-bar Application-name breadcrumb (UX-DR16) — it is inherently pre-Application
@@ -260,7 +260,7 @@ So that I can tell which Application I'm working on at a glance across browser t
 
 ### Story 1.4: Configure Application Authentication Method
 
-*Updated 2026-07-15 — "Authentication method" is now a plain `<select>` field on the single Connect App form, not a wizard step with option cards.*
+*Updated 2026-07-15 — "Authentication method" is now a plain `<select>` field on the single Connect App form, not a wizard step with option cards. Updated 2026-07-27 — concrete three-option set confirmed per the UX v3 redirect; see `sprint-change-proposal-2026-07-27-3.md`.*
 
 As a user onboarding an Application,
 I want to choose how the platform authenticates to it — standard login or a reusable pre-authenticated session,
@@ -271,6 +271,11 @@ So that SSO/MFA-protected apps can still be discovered.
 **Given** a user filling out the Connect App form
 **When** they select "Username & Password" from the Authentication method dropdown
 **Then** username/password fields are captured and stored via SecretsClient for later use establishing a session before discovery
+
+**`[ADDED 2026-07-27]` Given** a user filling out the Connect App form
+**When** they open the Authentication method dropdown
+**Then** it offers exactly three options — Username & Password, API Key, OAuth Client Credentials — each revealing its own credential field(s) on selection (username+password fields; a single API Key field). `[GAP]` OAuth Client Credentials' own field set is unconfirmed — the reference UX reveals nothing further for it; needs explicit confirmation before implementation, not an invented Client ID/Secret pair.
+
 **Given** the user instead needs SSO/MFA session-reuse
 **When** they provide the reusable session state through the (explicitly provisional, per PRD Open Question 8) placeholder mechanism
 **Then** that session state is stored via SecretsClient as a secret reference, never in plaintext
@@ -475,7 +480,7 @@ So that the Trusted Knowledge Model reflects names I trust and excludes what doe
 
 ### Story 4.1: Generate Scenarios for a Discovered Journey `[RENAMED 2026-07-15, was "...for an Approved Journey"]`
 
-*Updated 2026-07-15 — Scenarios are no longer view-only; adds FR-29 (edit/remove). Trigger updated same day: generation starts on discovery, not approval (FR-10/FR-11 cut — see Epic 3).*
+*Updated 2026-07-15 — Scenarios are no longer view-only; adds FR-29 (edit/remove). Trigger updated same day: generation starts on discovery, not approval (FR-10/FR-11 cut — see Epic 3). Updated 2026-07-27 — adds a Ready/Needs Data readiness filter per the UX v3 redirect; see `sprint-change-proposal-2026-07-27-3.md`.*
 
 As a user,
 I want a discovered Journey to automatically get integration test Scenarios covering both happy-path and negative cases,
@@ -489,6 +494,11 @@ So that the map becomes actionable test coverage, not just documentation.
 **And** the Review Scenarios screen lists them with `Happy Path`/`Negative Path`/`Edge Case` badges, each with a `⋯` menu offering rename/edit/remove (FR-29)
 **And** selecting a scenario shows its Test steps, a Test data table, and Expected result in a detail panel
 
+**`[ADDED 2026-07-27]` Given** a generated Scenario
+**When** the platform evaluates its required Test Data fields
+**Then** it computes a readiness status — Ready if every required field has a value, otherwise Needs Data — shown as a status pill on the Scenario's list row and in its detail panel, recomputed live (no separate save step) the instant a required field is filled or cleared
+**And** the Review Scenarios screen offers a 3-way filter (All / Ready / Needs Data) above the list, filtering which Scenarios are shown without altering which exist
+
 **`[GAP — flagged 2026-07-15]`** Whether an edited Scenario's Test data/steps actually feed Playwright generation, or the edit is display-only, is unconfirmed — flag for engineering before implementing the edit action's persistence behavior.
 
 **`[NOTE — 2026-07-18]`** `ScenarioGenerationActivity`'s AI context now draws on canonical Application Model rows (Story 2.5) rather than raw Evidence (removed) — no AC change, only richer input to the same `AIProvider` call.
@@ -497,7 +507,7 @@ So that the map becomes actionable test coverage, not just documentation.
 
 ### Story 4.2: Generate Playwright Test Assets via a Named Test Suite
 
-*Updated 2026-07-15 — reframed from a standalone "Generated Tests" code-review screen into "Generate Suite," the pipeline's 4th step. Underlying `TestAsset` generation is unchanged.*
+*Updated 2026-07-15 — reframed from a standalone "Generated Tests" code-review screen into "Generate Suite," the pipeline's 4th step. Underlying `TestAsset` generation is unchanged. Updated 2026-07-27 — resolves the post-generation-screen `[GAP]` per the UX v3 redirect; see `sprint-change-proposal-2026-07-27-3.md`.*
 
 As a user,
 I want each generated Scenario converted into an executable Playwright test as part of a named, generated Test Suite,
@@ -512,7 +522,9 @@ So that I have real, runnable regression coverage for the Journey.
 
 **`[NOTE — 2026-07-18]`** `PlaywrightGenerationActivity`'s AI context now includes the Application Model's Component locator metadata (preferred + fallback locators) — no AC change, richer input to the same `AIProvider` call.
 
-**`[NOTE FOR PM/ENG — 2026-07-15]`** The Generate Suite screen also shows an "Execution" choice (`Run immediately`/`Schedule for later`/`Save without running`) — this is a confirmed UI placeholder only; do not build execution/scheduling behavior against it (see architecture Deferred section). The screen the user sees immediately after clicking "Generate Test Suite" (i.e., whether the prior code-viewer + `<details>` disclosure pattern survives) was not reachable during UX review — `[GAP]`, retained as last-confirmed spec pending re-verification.
+**`[NOTE FOR PM/ENG — 2026-07-15]`** The Generate Suite screen also shows an "Execution" choice (`Run immediately`/`Schedule for later`/`Save without running`) — this is a confirmed UI placeholder only; do not build execution/scheduling behavior against it (see architecture Deferred section).
+
+**`[RESOLVED 2026-07-27]`** The screen shown immediately after clicking "Generate Test Suite" is confirmed: a Suite Generated screen showing a hero card (suite name, "Generated {N} test cases across {N} journeys · Est. runtime {X}"), three stat tiles (test cases / journeys covered / est. runtime), and a collapsible Generated Tests list grouped by generated file, each group expandable to a per-scenario row (type badge, name, a secondary "Code" button). This screen also hosts the "Download Test Suite" action (Story 4.3) and a "Go to Dashboard" button, which returns to Home — there is no separate Dashboard screen. See `sprint-change-proposal-2026-07-27-3.md`.
 
 *(Story 4.3 "Full Regeneration of Test Assets on Request" [FR-18] removed in full 2026-07-27 — explicit product decision, not deferred. No code existed to remove: despite tracking suggesting it was "completed," the regenerate-trigger endpoint and UI control were never built — that commit actually implemented Story 4.2, mislabeled by the developer. See `sprint-change-proposal-2026-07-27.md`.)*
 

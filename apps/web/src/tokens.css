@@ -1,114 +1,81 @@
-/* Design-token system (Story 1.2, Task 4) — copied verbatim from DESIGN.md's
-   frontmatter. :root sets light defaults; @media (prefers-color-scheme:
-   dark) overrides for OS dark preference; :root[data-theme] lets an in-app
-   toggle (see theme.ts) override the OS preference outright. No component
-   may hardcode a color outside this layer. */
+/* Design-token system (Story 1.2) — values verified 2026-07-27 by rendering
+   prototype-v3.html directly (Playwright + computed styles), not just
+   reading its JS source: the accent is teal #0F766E, not the blue #2563EB
+   DESIGN.md's frontmatter had claimed (that appears to have been read off
+   an unused `this.props.accentColor || '#2563EB'` fallback that isn't the
+   value actually in effect at runtime). Semantic colors (good/danger/warn,
+   the Happy Path badge's blue happy-wash/accent-strong pairing) WERE
+   confirmed correct against computed styles and are unchanged. Inter, soft
+   shadow elevation, and the brand-mark/hero-card gradients also confirmed.
+   Light mode only — dark-mode parity was dropped as a requirement in the
+   2026-07-27 UX redirect (no toggle ever shipped; DESIGN.md specifies no
+   dark values). No component may hardcode a color outside this layer. */
 
 :root {
-  --paper: #ffffff;
-  --surface: #f7f7fa;
-  --surface-hover: #efeff4;
-  --border: #e4e4ec;
-  --border-strong: #d3d3de;
-  --ink: #17171c;
-  --ink-muted: #6e6e7a;
-  --ink-faint: #a4a4af;
-  --signal: #0f766e;
-  --signal-ink: #ffffff;
-  --signal-wash: #e6f5f3;
-  --good: #1a7f5a;
-  --good-wash: #e7f5ef;
-  --danger: #c4342f;
-  --danger-wash: #fbebea;
-  --warn: #b5750c;
-  --warn-wash: #fbf1df;
+  --canvas: #ffffff;
+  --canvas-wash: #f8fafc;
+  --canvas-wash-alt: #f1f5f9;
+  --border: #e2e8f0;
+  --border-hairline: #f1f5f9;
+  --border-strong: #cbd5e1;
+  --ink: #0f172a;
+  --ink-secondary: #334155;
+  --ink-muted: #64748b;
+  --ink-faint: #94a3b8;
 
-  --font-ui: -apple-system, 'Segoe UI', ui-sans-serif, system-ui, Roboto, Helvetica, Arial,
-    sans-serif;
-  --font-mono: ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  --accent: #0f766e;
+  --accent-strong: #115e59;
+  --accent-ink: #ffffff;
+  --accent-wash-soft: #0f766e0d;
+  --accent-wash: #0f766e21;
+  --accent-wash-strong: #0f766e38;
 
-  --radius-sm: 4px;
-  --radius: 6px;
-  --radius-lg: 10px;
+  --good: #16a34a;
+  --good-strong: #15803d;
+  --good-wash: #f0fdf4;
+  --danger: #dc2626;
+  --danger-strong: #b91c1c;
+  --danger-wash: #fef2f2;
+  --warn: #d97706;
+  --warn-strong: #b45309;
+  --warn-wash: #fffbeb;
+  --warn-wash-border: #fde68a;
+  --happy-wash: #eff6ff;
+  --happy-strong: #1d4ed8;
+
+  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'SFMono-Regular', Consolas, ui-monospace, Menlo, monospace;
+
+  --radius-xs: 6px;
+  --radius-sm: 7px;
+  --radius: 8px;
+  --radius-md: 9px;
+  --radius-lg: 12px;
+  --radius-xl: 14px;
+  --radius-2xl: 16px;
   --radius-full: 9999px;
 
   --space-1: 4px;
-  --space-2: 8px;
-  --space-3: 12px;
-  --space-4: 16px;
-  --space-5: 20px;
-  --space-6: 24px;
-  --space-7: 28px;
-  --space-8: 32px;
-  --space-10: 40px;
+  --space-2: 6px;
+  --space-3: 8px;
+  --space-4: 10px;
+  --space-5: 12px;
+  --space-6: 14px;
+  --space-7: 16px;
+  --space-8: 20px;
+  --space-9: 24px;
+  --space-10: 32px;
   --content-max: 1180px;
-  --content-x: 28px;
-  --content-top: 26px;
+  --content-max-wide: 1720px;
+  --content-x: 32px;
+  --content-top: 22px;
+
+  --shadow-card: 0 4px 14px -3px rgba(15, 23, 42, 0.1), 0 1px 3px rgba(15, 23, 42, 0.06);
+  --shadow-card-hover: 0 6px 18px -3px rgba(15, 23, 42, 0.14), 0 2px 4px rgba(15, 23, 42, 0.08);
+  --shadow-dropdown: 0 8px 20px rgba(15, 23, 42, 0.12);
+  --shadow-dropdown-lg: 0 12px 28px rgba(15, 23, 42, 0.14);
+  --shadow-topbar: 0 2px 8px -4px rgba(15, 23, 42, 0.1);
+  --shadow-button-primary: 0 6px 16px -6px var(--accent-wash-strong);
 
   color-scheme: light;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #0f0f13;
-    --surface: #17171d;
-    --surface-hover: #1d1d24;
-    --border: #27272f;
-    --border-strong: #34343e;
-    --ink: #ededf2;
-    --ink-muted: #95959f;
-    --ink-faint: #5b5b66;
-    --signal: #2dd4bf;
-    --signal-ink: #0f0f13;
-    --signal-wash: #112420;
-    --good: #3fce96;
-    --good-wash: #12281f;
-    --danger: #f17872;
-    --danger-wash: #2e1717;
-    --warn: #e3a63c;
-    --warn-wash: #2e2411;
-    color-scheme: dark;
-  }
-}
-
-:root[data-theme='light'] {
-  --paper: #ffffff;
-  --surface: #f7f7fa;
-  --surface-hover: #efeff4;
-  --border: #e4e4ec;
-  --border-strong: #d3d3de;
-  --ink: #17171c;
-  --ink-muted: #6e6e7a;
-  --ink-faint: #a4a4af;
-  --signal: #0f766e;
-  --signal-ink: #ffffff;
-  --signal-wash: #e6f5f3;
-  --good: #1a7f5a;
-  --good-wash: #e7f5ef;
-  --danger: #c4342f;
-  --danger-wash: #fbebea;
-  --warn: #b5750c;
-  --warn-wash: #fbf1df;
-  color-scheme: light;
-}
-
-:root[data-theme='dark'] {
-  --paper: #0f0f13;
-  --surface: #17171d;
-  --surface-hover: #1d1d24;
-  --border: #27272f;
-  --border-strong: #34343e;
-  --ink: #ededf2;
-  --ink-muted: #95959f;
-  --ink-faint: #5b5b66;
-  --signal: #2dd4bf;
-  --signal-ink: #0f0f13;
-  --signal-wash: #112420;
-  --good: #3fce96;
-  --good-wash: #12281f;
-  --danger: #f17872;
-  --danger-wash: #2e1717;
-  --warn: #e3a63c;
-  --warn-wash: #2e2411;
-  color-scheme: dark;
 }

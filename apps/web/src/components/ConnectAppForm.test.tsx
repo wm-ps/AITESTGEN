@@ -16,26 +16,50 @@ afterEach(() => {
 
 describe('ConnectAppForm', () => {
   it('defaults the Authentication method select to Username & Password with credential fields visible', () => {
-    render(<ConnectAppForm onConnected={vi.fn()} />)
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     const select = screen.getByLabelText('Authentication method') as HTMLSelectElement
     expect(select.tagName).toBe('SELECT')
     expect(select.value).toBe('standard_login')
     expect(screen.getByLabelText('Username')).toBeTruthy()
     expect(screen.getByLabelText('Password')).toBeTruthy()
-    expect(screen.queryByLabelText('Session state (JSON)')).toBeNull()
+    expect(screen.queryByLabelText('API Key')).toBeNull()
   })
 
-  it('swaps to the session-state field when SSO/MFA session reuse is selected', () => {
-    render(<ConnectAppForm onConnected={vi.fn()} />)
+  it('offers exactly the confirmed 3-option auth method set, API Key and OAuth disabled pending backend support', () => {
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    const select = screen.getByLabelText('Authentication method') as HTMLSelectElement
+    const options = Array.from(select.options).map((o) => ({ value: o.value, disabled: o.disabled }))
+    expect(options).toEqual([
+      { value: 'standard_login', disabled: false },
+      { value: 'api_key', disabled: true },
+      { value: 'oauth_client_credentials', disabled: true },
+    ])
+  })
+
+  it('swaps to the API Key field when the API Key method is selected', () => {
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     fireEvent.change(screen.getByLabelText('Authentication method'), {
-      target: { value: 'sso_session_reuse' },
+      target: { value: 'api_key' },
     })
 
     expect(screen.queryByLabelText('Username')).toBeNull()
     expect(screen.queryByLabelText('Password')).toBeNull()
-    expect(screen.getByLabelText('Session state (JSON)')).toBeTruthy()
+    expect(screen.getByLabelText('API Key')).toBeTruthy()
+  })
+
+  it('reveals no additional fields for OAuth Client Credentials (unconfirmed by the prototype)', () => {
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    fireEvent.change(screen.getByLabelText('Authentication method'), {
+      target: { value: 'oauth_client_credentials' },
+    })
+
+    expect(screen.queryByLabelText('Username')).toBeNull()
+    expect(screen.queryByLabelText('Password')).toBeNull()
+    expect(screen.queryByLabelText('API Key')).toBeNull()
   })
 
   it('submits username/password when standard_login is selected (the default)', async () => {
@@ -46,7 +70,7 @@ describe('ConnectAppForm', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const onConnected = vi.fn()
-    render(<ConnectAppForm onConnected={onConnected} />)
+    render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
     fillCommonFields()
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
@@ -58,45 +82,37 @@ describe('ConnectAppForm', () => {
     expect(body.auth_method).toBe('standard_login')
     expect(body.username).toBe('qa-account')
     expect(body.password).toBe('qa-password')
-    expect(body.session_state).toBeUndefined()
   })
 
-  it('submits session_state when sso_session_reuse is selected', async () => {
+  it('keeps the form on Connect App and shows the backend-provided inline error when the reachability check fails (FR-31)', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 201,
-      json: async () => ({ id: '1', name: 'My App' }),
+      ok: false,
+      status: 422,
+      statusText: 'Unprocessable Entity',
+      json: async () => ({ detail: "Could not reach this URL — check it's correct and reachable" }),
     })
     vi.stubGlobal('fetch', fetchMock)
     const onConnected = vi.fn()
-    render(<ConnectAppForm onConnected={onConnected} />)
+    render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
     fillCommonFields()
-    fireEvent.change(screen.getByLabelText('Authentication method'), {
-      target: { value: 'sso_session_reuse' },
-    })
-    fireEvent.change(screen.getByLabelText('Session state (JSON)'), {
-      target: { value: '{"cookies":[]}' },
-    })
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'qa-password' } })
     fireEvent.click(screen.getByRole('button', { name: /Connect Application/ }))
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
-    expect(body.auth_method).toBe('sso_session_reuse')
-    expect(body.session_state).toBe('{"cookies":[]}')
-    expect(body.username).toBeUndefined()
-    expect(body.password).toBeUndefined()
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toBe("Could not reach this URL — check it's correct and reachable")
+    expect(onConnected).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Application name')).toBeTruthy()
   })
 
-  it('never claims the platform performs the SSO/MFA handshake itself', () => {
-    render(<ConnectAppForm onConnected={vi.fn()} />)
-    fireEvent.change(screen.getByLabelText('Authentication method'), {
-      target: { value: 'sso_session_reuse' },
-    })
+  it('calls onCancel when Cancel is clicked, matching prototype-v3.html Import screen', () => {
+    const onCancel = vi.fn()
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={onCancel} />)
 
-    const bodyText = document.body.textContent ?? ''
-    for (const claim of ['SAML', 'OAuth', 'OIDC', 'retrieves your MFA', 'logs you in via SSO']) {
-      expect(bodyText).not.toContain(claim)
-    }
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    expect(onCancel).toHaveBeenCalledTimes(1)
   })
 })

@@ -61,7 +61,7 @@ export function ImportProgress({
             width: `${percent}%`,
             height: '100%',
             borderRadius: 'var(--radius-full)',
-            background: 'var(--signal)',
+            background: 'var(--accent)',
             transition: 'width 400ms ease',
           }}
         />

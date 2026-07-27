@@ -34,9 +34,10 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Welcome back, Ada' })).toBeTruthy()
+      expect(screen.getByRole('heading', { name: 'Projects' })).toBeTruthy()
     })
-    expect(screen.getByText('Start a New Project')).toBeTruthy()
+    expect(screen.getByText('Welcome, Ada')).toBeTruthy()
+    expect(screen.getByText('+ Create New Project')).toBeTruthy()
     expect(document.title).toBe('AITestGen')
     expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.svg')
 
@@ -73,9 +74,9 @@ describe('App', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(screen.getByText('Start a New Project')).toBeTruthy()
+      expect(screen.getByText('+ Create New Project')).toBeTruthy()
     })
-    fireEvent.click(screen.getByText('Start a New Project'))
+    fireEvent.click(screen.getByText('+ Create New Project'))
 
     fireEvent.change(screen.getByLabelText('Application name'), { target: { value: 'My App' } })
     fireEvent.change(screen.getByLabelText('Base URL'), {
@@ -90,11 +91,85 @@ describe('App', () => {
       expect(screen.getByRole('heading', { name: 'Discover Journeys' })).toBeTruthy()
     })
     expect(screen.getByText('My App')).toBeTruthy()
-    expect(screen.getByText('staging')).toBeTruthy()
+    expect(screen.getByText('Staging')).toBeTruthy()
     expect(screen.getByText('Running')).toBeTruthy()
 
     // Tab title/favicon are static platform branding — unaffected by the Application.
     expect(document.title).toBe('AITestGen')
     expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.svg')
+  })
+
+  it('shows the persistent Application card on Home and resumes at Discover Journeys on click', async () => {
+    // Routed by URL rather than call order: Discover Journeys polls listJourneys
+    // on an interval, so a plain ordered queue of mockResolvedValueOnce would be
+    // fragile against an extra poll firing before the assertions below run.
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => {
+      const path = String(url)
+      if (path.endsWith('/auth/me')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ name: 'Ada Lovelace', email: 'ada@example.com' }),
+        })
+      }
+      if (path.endsWith('/applications') && init?.method === 'POST') {
+        return Promise.resolve({
+          ok: true,
+          status: 201,
+          json: async () => ({
+            id: 'app-1',
+            name: 'My App',
+            url: 'https://staging.example.com',
+            environment: 'staging',
+            auth_method: 'standard_login',
+            created_at: new Date(0).toISOString(),
+            discovery_run_id: 'run-1',
+            discovery_status: 'completed',
+            discovery_stage: null,
+          }),
+        })
+      }
+      if (path.endsWith('/journeys')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => [{}, {}] })
+      }
+      if (path.endsWith('/scenarios')) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => [{}, {}, {}] })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => [] })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByText('+ Create New Project')).toBeTruthy()
+    })
+    fireEvent.click(screen.getByText('+ Create New Project'))
+
+    fireEvent.change(screen.getByLabelText('Application name'), { target: { value: 'My App' } })
+    fireEvent.change(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://staging.example.com' },
+    })
+    fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'staging' } })
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'qa-password' } })
+    fireEvent.click(screen.getByRole('button', { name: /Connect Application/ }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Discover Journeys' })).toBeTruthy()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Go to Home' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('2 journeys · 3 scenarios')).toBeTruthy()
+    })
+    expect(screen.getByText('Ready for suite')).toBeTruthy()
+    expect(screen.getByText('Watch Demo')).toBeTruthy()
+
+    fireEvent.click(screen.getByText('My App'))
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Discover Journeys' })).toBeTruthy()
+    })
   })
 })

@@ -3,9 +3,9 @@
 // in here per DESIGN.md's own semantic-color rule (green = healthy/generated,
 // red = failing), not a literal citation.
 const COLORS: Record<string, { background: string; foreground: string }> = {
-  running: { background: 'var(--signal-wash)', foreground: 'var(--signal)' },
-  complete: { background: 'var(--good-wash)', foreground: 'var(--good)' },
-  failed: { background: 'var(--danger-wash)', foreground: 'var(--danger)' },
+  running: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
+  complete: { background: 'var(--good-wash)', foreground: 'var(--good-strong)' },
+  failed: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },
 }
 
 export function StatusPill({ status }: { status: string }) {
@@ -13,16 +13,13 @@ export function StatusPill({ status }: { status: string }) {
   const colors = COLORS[status] ?? COLORS.running
   return (
     <span
+      className="status-pill"
       style={{
         display: 'inline-flex',
         alignItems: 'center',
         gap: 'var(--space-2)',
         background: colors.background,
         color: colors.foreground,
-        borderRadius: 'var(--radius-full)',
-        fontSize: 11.5,
-        fontWeight: 650,
-        padding: '4px 10px',
       }}
     >
       {status === 'running' && (

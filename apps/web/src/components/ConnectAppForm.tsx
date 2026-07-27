@@ -2,16 +2,34 @@ import { useState } from 'react'
 import { ApiError, api, type ApplicationCreate, type ApplicationRead } from '../api'
 import { Stepper } from './Stepper'
 
-type AuthMethod = ApplicationCreate['auth_method']
+// The dropdown's confirmed 3-option set (DESIGN.md "Connect App form"): Username & Password,
+// API Key, OAuth Client Credentials. Only 'standard_login' is backend-supported today
+// (packages/domain/src/domain/application.py AuthMethod) — API Key/OAuth are shown per the
+// confirmed design but disabled until the backend accepts them.
+type AuthMethod = ApplicationCreate['auth_method'] | 'api_key' | 'oauth_client_credentials'
 
-export function ConnectAppForm({ onConnected }: { onConnected: (application: ApplicationRead) => void }) {
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="label-required" style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
+      {children}
+    </span>
+  )
+}
+
+export function ConnectAppForm({
+  onConnected,
+  onCancel,
+}: {
+  onConnected: (application: ApplicationRead) => void
+  onCancel: () => void
+}) {
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
-  const [environment, setEnvironment] = useState('')
+  const [environment, setEnvironment] = useState('staging')
   const [authMethod, setAuthMethod] = useState<AuthMethod>('standard_login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [sessionState, setSessionState] = useState('')
+  const [apiKey, setApiKey] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
@@ -20,11 +38,13 @@ export function ConnectAppForm({ onConnected }: { onConnected: (application: App
     setError(null)
     setSubmitting(true)
     try {
-      const application = await api.createApplication(
-        authMethod === 'standard_login'
-          ? { name, url, environment, auth_method: authMethod, username, password }
-          : { name, url, environment, auth_method: authMethod, session_state: sessionState },
-      )
+      const application = await api.createApplication({
+        name,
+        url,
+        environment,
+        auth_method: authMethod as ApplicationCreate['auth_method'],
+        ...(authMethod === 'standard_login' ? { username, password } : {}),
+      })
       onConnected(application)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Connecting the Application failed.')
@@ -36,85 +56,81 @@ export function ConnectAppForm({ onConnected }: { onConnected: (application: App
   return (
     <>
       <Stepper current="connect-app" />
-      <main style={{ maxWidth: 720, margin: '0 auto', padding: '48px var(--content-x)' }}>
-        <h1 style={{ fontSize: 22, fontWeight: 700, margin: '0 0 6px' }}>Connect to your live application</h1>
-        <p className="caption" style={{ maxWidth: 560, fontSize: 14, margin: '0 0 14px' }}>
-          AITestGen connects to your deployed application over the network — not your source code —
-          then turns its critical workflows into a structured library of test scenarios, ready to
-          review in minutes.
-        </p>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--space-2)',
-            fontSize: 12.5,
-            color: 'var(--ink-faint)',
-            margin: '0 0 32px',
-          }}
-        >
-          <span>Read-only connection</span>
-          <span>→</span>
-          <span>Workflows mapped</span>
-          <span>→</span>
-          <span>Scenarios ready to review</span>
-        </div>
+      <main style={{ maxWidth: 'clamp(720px, 68vw, 1080px)', margin: '0 auto', padding: '32px 24px' }}>
+        <h1 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 12px', textAlign: 'center' }}>
+          Connect to your live application
+        </h1>
 
         <form
           onSubmit={handleSubmit}
           className="card-panel"
           style={{
-            padding: 'var(--space-8)',
+            padding: '14px 22px',
             display: 'flex',
             flexDirection: 'column',
-            gap: 'var(--space-5)',
+            gap: 'var(--space-3)',
+            boxShadow: 'var(--shadow-dropdown-lg)',
           }}
         >
-          <label className="field">
-            <span className="label">Application name</span>
-            <input required value={name} onChange={(e) => setName(e.target.value)} />
-          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 'var(--space-7)' }}>
+            <label className="field">
+              <FieldLabel>Application name</FieldLabel>
+              <input required value={name} onChange={(e) => setName(e.target.value)} />
+            </label>
 
-          <label className="field">
-            <span className="label">Base URL</span>
-            <input
-              type="url"
-              required
-              placeholder="https://staging.example.com"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-            />
-          </label>
+            <label className="field">
+              <FieldLabel>Base URL</FieldLabel>
+              <input
+                type="url"
+                required
+                placeholder="https://staging.example.com"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+              />
+            </label>
+          </div>
 
-          <label className="field">
-            <span className="label">Environment</span>
-            <input
-              required
-              placeholder="staging, UAT, ..."
-              value={environment}
-              onChange={(e) => setEnvironment(e.target.value)}
-            />
-          </label>
+          <div style={{ height: 1, background: 'var(--border-hairline)' }} />
 
-          <label className="field">
-            <span className="label">Authentication method</span>
-            <select
-              value={authMethod}
-              onChange={(e) => setAuthMethod(e.target.value as AuthMethod)}
-            >
-              <option value="standard_login">Username &amp; Password</option>
-              <option value="sso_session_reuse">SSO / MFA session reuse</option>
-            </select>
-          </label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
+            <label className="field">
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
+                Environment
+              </span>
+              <select value={environment} onChange={(e) => setEnvironment(e.target.value)}>
+                <option value="staging">Staging</option>
+                <option value="qa">QA</option>
+                <option value="production">Production</option>
+              </select>
+            </label>
+
+            <label className="field">
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
+                Authentication method
+              </span>
+              <select
+                value={authMethod}
+                onChange={(e) => setAuthMethod(e.target.value as AuthMethod)}
+              >
+                <option value="standard_login">Username &amp; Password</option>
+                <option value="api_key" disabled>
+                  API Key (coming soon)
+                </option>
+                <option value="oauth_client_credentials" disabled>
+                  OAuth Client Credentials (coming soon)
+                </option>
+              </select>
+            </label>
+          </div>
 
           {authMethod === 'standard_login' ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-5)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
               <label className="field">
-                <span className="label">Username</span>
+                <FieldLabel>Username</FieldLabel>
                 <input required autoComplete="off" value={username} onChange={(e) => setUsername(e.target.value)} />
               </label>
               <label className="field">
-                <span className="label">Password</span>
+                <FieldLabel>Password</FieldLabel>
                 <input
                   type="password"
                   required
@@ -124,33 +140,22 @@ export function ConnectAppForm({ onConnected }: { onConnected: (application: App
                 />
               </label>
             </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-1)' }}>
-              <label className="field">
-                <span className="label">Session state (JSON)</span>
-                <textarea
-                  required
-                  rows={4}
-                  placeholder="Paste the contents of a previously-exported storageState.json"
-                  value={sessionState}
-                  onChange={(e) => setSessionState(e.target.value)}
-                />
-              </label>
-              <span className="caption" style={{ fontSize: 12.5 }}>
-                AITestGen doesn't perform your sign-in for SSO/MFA-protected Applications — provide
-                a session your identity provider already authenticated, and discovery will reuse it.
-              </span>
-            </div>
-          )}
+          ) : authMethod === 'api_key' ? (
+            <label className="field">
+              <FieldLabel>API Key</FieldLabel>
+              <input required autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+            </label>
+          ) : null}
 
           <p
             className="caption"
             style={{
-              background: 'var(--surface)',
+              background: 'var(--canvas-wash)',
               border: '1px solid var(--border)',
               borderRadius: 'var(--radius)',
               padding: 'var(--space-3)',
               margin: 0,
+              fontSize: 12.5,
               lineHeight: 1.5,
             }}
           >
@@ -164,8 +169,11 @@ export function ConnectAppForm({ onConnected }: { onConnected: (application: App
             </div>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-            <button type="submit" className="button-primary" disabled={submitting} style={{ padding: '11px 22px' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
+            <button type="button" className="button-secondary" onClick={onCancel} style={{ padding: '9px 18px' }}>
+              Cancel
+            </button>
+            <button type="submit" className="button-primary" disabled={submitting} style={{ padding: '9px 20px' }}>
               {submitting ? 'Connecting…' : 'Connect Application →'}
             </button>
           </div>

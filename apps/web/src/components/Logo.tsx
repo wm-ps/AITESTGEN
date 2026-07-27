@@ -8,8 +8,8 @@ export function Logo({ size = 34 }: { size?: number }) {
       style={{
         width: size,
         height: size,
-        borderRadius: px(10),
-        background: 'linear-gradient(135deg, var(--signal) 0%, var(--signal) 65%, rgba(0,0,0,0.22) 100%)',
+        borderRadius: size <= 30 ? 'var(--radius-sm)' : 'var(--radius-md)',
+        background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent) 65%, rgba(0,0,0,0.22) 100%)',
         boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.4), inset 0 -6px 10px rgba(0,0,0,0.15)',
         position: 'relative',
         flexShrink: 0,

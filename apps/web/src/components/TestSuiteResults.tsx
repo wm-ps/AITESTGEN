@@ -5,52 +5,127 @@ import { Stepper } from './Stepper'
 const POLL_INTERVAL_MS = 1500
 const SECONDS_PER_TEST_CASE = 45
 
-function toSpecFileName(journeyName: string): string {
+// DESIGN.md's Suite Generated note: group by the real generated Python file
+// structure, not the reference prototype's literal `.spec.ts` filenames —
+// Story 4.3 (unbuilt) already prescribes this `test_<slug>.py` convention.
+function toTestFileName(journeyName: string): string {
   const slug = journeyName
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-  return `${slug || 'journey'}.spec.ts`
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return `test_${slug || 'journey'}.py`
 }
 
-function Spinner() {
+function ArrowRightIcon() {
   return (
-    <span
-      aria-hidden="true"
-      style={{
-        display: 'inline-block',
-        width: 14,
-        height: 14,
-        borderRadius: '50%',
-        border: '2px solid var(--border)',
-        borderTopColor: 'var(--signal)',
-        animation: 'aitg-spin 0.7s linear infinite',
-      }}
-    />
+    <svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 12h14M13 6l6 6-6 6" />
+    </svg>
   )
 }
 
-function StatCard({ icon, value, label }: { icon: string; value: string | number; label: string }) {
+function CheckIcon() {
   return (
-    <div className="card-panel" style={{ padding: 'var(--space-5)', textAlign: 'center' }}>
-      <span
+    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M5 13l4 4L19 7" />
+    </svg>
+  )
+}
+
+function DownloadIcon() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3v12" />
+      <path d="M7 10l5 5 5-5" />
+      <path d="M5 21h14" />
+    </svg>
+  )
+}
+
+function ClipboardCheckIcon() {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
+      <rect x={9} y={3} width={6} height={4} rx={1} />
+      <path d="M9 12l2 2 4-4" />
+    </svg>
+  )
+}
+
+function JourneysIcon() {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx={12} cy={5.5} r={2} />
+      <circle cx={6} cy={17} r={2} />
+      <circle cx={18} cy={17} r={2} />
+      <path d="M12 7.5 6 15.3M12 7.5l6 7.8M7.8 17h8.4" />
+    </svg>
+  )
+}
+
+function ClockIcon() {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx={12} cy={12} r={9} />
+      <path d="M12 7v5l3.5 3.5" />
+    </svg>
+  )
+}
+
+function ChevronIcon({ size, color, open }: { size: number; color: string; open: boolean }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={color}
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ flexShrink: 0, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s ease' }}
+    >
+      <path d="M6 9l6 6 6-6" />
+    </svg>
+  )
+}
+
+function StatTile({ icon, value, label }: { icon: React.ReactNode; value: string | number; label: string }) {
+  return (
+    <div
+      style={{
+        background: 'var(--canvas)',
+        border: '1px solid var(--border-hairline)',
+        borderRadius: 'var(--radius-lg)',
+        boxSizing: 'border-box',
+        padding: '14px 16px',
+        boxShadow: '0 4px 14px -3px rgba(15,23,42,0.12), 0 1px 3px rgba(15,23,42,0.07)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 12,
+      }}
+    >
+      <div
         aria-hidden="true"
         style={{
-          display: 'inline-flex',
+          width: 28,
+          height: 28,
+          borderRadius: 9,
+          background: 'var(--accent-wash)',
+          color: 'var(--accent)',
+          display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          width: 32,
-          height: 32,
-          borderRadius: 'var(--radius-full)',
-          background: 'var(--signal-wash)',
-          color: 'var(--signal)',
-          marginBottom: 'var(--space-3)',
+          flexShrink: 0,
         }}
       >
         {icon}
-      </span>
-      <div style={{ fontSize: 24, fontWeight: 700 }}>{value}</div>
-      <div className="caption">{label}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: 19, fontWeight: 700, color: 'var(--ink)', lineHeight: 1.1 }}>{value}</div>
+        <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 3 }}>{label}</div>
+      </div>
     </div>
   )
 }
@@ -61,9 +136,9 @@ function StatCard({ icon, value, label }: { icon: string; value: string | number
 // breakdown; each test case shows a type badge and a "Code" button opening
 // one shared code-viewer modal — not a `<details>`-disclosure list.
 const TYPE_BADGE: Record<string, { label: string; background: string; color: string }> = {
-  happy: { label: 'Happy Path', background: 'var(--good-wash)', color: 'var(--good)' },
-  negative: { label: 'Negative Path', background: 'var(--danger-wash)', color: 'var(--danger)' },
-  edge: { label: 'Edge Case', background: 'var(--warn-wash)', color: 'var(--warn)' },
+  happy: { label: 'Happy Path', background: 'var(--happy-wash)', color: 'var(--happy-strong)' },
+  negative: { label: 'Negative Path', background: 'var(--danger-wash)', color: 'var(--danger-strong)' },
+  edge: { label: 'Edge Case', background: 'var(--warn-wash)', color: 'var(--warn-strong)' },
 }
 
 function CodeModal({ testCase, onClose }: { testCase: TestCaseRead; onClose: () => void }) {
@@ -150,8 +225,18 @@ export function TestSuiteResults({
 }) {
   const [suites, setSuites] = useState<TestSuiteRead[]>([])
   const [expectedTestCaseCount, setExpectedTestCaseCount] = useState(0)
-  const [detailsOpen, setDetailsOpen] = useState(true)
+  const [testsExpanded, setTestsExpanded] = useState(false)
+  const [expandedSuiteIds, setExpandedSuiteIds] = useState<Set<string>>(new Set())
   const [activeCode, setActiveCode] = useState<TestCaseRead | null>(null)
+
+  function toggleSuite(suiteId: string) {
+    setExpandedSuiteIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(suiteId)) next.delete(suiteId)
+      else next.add(suiteId)
+      return next
+    })
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -192,36 +277,36 @@ export function TestSuiteResults({
     return (
       <>
         <Stepper current="generate" />
-        <main
-          style={{
-            maxWidth: 'var(--content-max)',
-            margin: '0 auto',
-            padding: `var(--content-top) var(--content-x)`,
-          }}
-        >
-          <h1 style={{ fontSize: 19, fontWeight: 650, margin: '0 0 8px' }}>Test Suites</h1>
-          <div className="card-panel" style={{ padding: 'var(--space-5)' }}>
-            <div style={{ display: 'flex', gap: 'var(--space-5)', marginBottom: 'var(--space-4)' }}>
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 700 }}>{suites.length}</div>
-                <div className="caption" style={{ fontSize: 12 }}>
-                  Test Suite{suites.length === 1 ? '' : 's'}
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: 22, fontWeight: 700 }}>{testCaseCount}</div>
-                <div className="caption" style={{ fontSize: 12 }}>
-                  Test case{testCaseCount === 1 ? '' : 's'}
-                </div>
-              </div>
-            </div>
-            <p
-              className="caption"
-              role="status"
-              style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}
+        <main style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, boxSizing: 'border-box' }}>
+          <div role="status" style={{ textAlign: 'center' }}>
+            <div
+              aria-hidden="true"
+              style={{
+                width: 64,
+                height: 64,
+                borderRadius: 'var(--radius-full)',
+                background: 'var(--accent-wash)',
+                color: 'var(--accent)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                margin: '0 auto 22px',
+                boxSizing: 'border-box',
+                animation: 'aitg-transition-icon 0.5s ease-out both, aitg-pulse 1.6s ease-in-out 0.5s infinite',
+              }}
             >
-              <Spinner />
-              Generating — {testCaseCount}/{expectedTestCaseCount || '…'} test cases so far…
+              <ArrowRightIcon />
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--ink)', marginBottom: 16 }}>
+              Generating your test suite…
+            </div>
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 16 }}>
+              <span style={{ width: 7, height: 7, borderRadius: 'var(--radius-full)', background: 'var(--accent)', animation: 'aitg-dot-bounce 1s ease-in-out infinite', animationDelay: '0s' }} />
+              <span style={{ width: 7, height: 7, borderRadius: 'var(--radius-full)', background: 'var(--accent)', animation: 'aitg-dot-bounce 1s ease-in-out infinite', animationDelay: '0.15s' }} />
+              <span style={{ width: 7, height: 7, borderRadius: 'var(--radius-full)', background: 'var(--accent)', animation: 'aitg-dot-bounce 1s ease-in-out infinite', animationDelay: '0.3s' }} />
+            </div>
+            <p className="caption" style={{ margin: 0, fontSize: 12.5 }}>
+              {testCaseCount}/{expectedTestCaseCount || '…'} test cases so far
             </p>
           </div>
         </main>
@@ -232,183 +317,285 @@ export function TestSuiteResults({
   return (
     <>
       <Stepper current="generate" allComplete />
-      <main
-        style={{
-          maxWidth: 'var(--content-max)',
-          margin: '0 auto',
-          padding: `var(--content-top) var(--content-x)`,
-        }}
-      >
-        <div style={{ textAlign: 'center', marginBottom: 'var(--space-6)' }}>
-          <span
-            aria-hidden="true"
+      <main style={{ display: 'flex', justifyContent: 'center', padding: '28px 24px' }}>
+        <div style={{ maxWidth: 'clamp(760px, 68vw, 1080px)', width: '100%' }}>
+          <div
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 48,
-              height: 48,
-              borderRadius: 'var(--radius-full)',
-              background: 'var(--good-wash)',
-              color: 'var(--good)',
-              fontSize: 20,
-              marginBottom: 'var(--space-4)',
+              position: 'relative',
+              overflow: 'hidden',
+              borderRadius: 'var(--radius-2xl)',
+              background: 'linear-gradient(135deg, var(--accent) 0%, var(--accent) 55%, rgba(0,0,0,0.25) 100%)',
+              padding: '20px 24px',
+              textAlign: 'center',
+              marginBottom: 16,
             }}
           >
-            ✓
-          </span>
-          <h1 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 6px' }}>Test Suites Generated</h1>
-          <p className="caption" style={{ margin: '0 0 var(--space-5)' }}>
-            Generated {testCaseCount} test cases across {suites.length} journeys · Est. runtime{' '}
-            {estRuntimeMin} min
-          </p>
-          <button
-            type="button"
-            onClick={onGoToDashboard}
-            style={{
-              padding: '10px 20px',
-              background: 'var(--signal)',
-              color: 'var(--signal-ink)',
-              border: 'none',
-              borderRadius: 'var(--radius)',
-              fontSize: 14,
-              fontWeight: 600,
-              fontFamily: 'inherit',
-              cursor: 'pointer',
-            }}
-          >
-            Go to Dashboard →
-          </button>
-        </div>
-
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-            gap: 'var(--space-4)',
-            marginBottom: 'var(--space-6)',
-          }}
-        >
-          <StatCard icon="✓" value={testCaseCount} label="Test cases" />
-          <StatCard icon="◈" value={suites.length} label="Journeys covered" />
-          <StatCard icon="◷" value={`${estRuntimeMin} min`} label="Est. runtime" />
-        </div>
-
-        <div className="card-panel" style={{ padding: 0 }}>
-          <button
-            type="button"
-            onClick={() => setDetailsOpen((o) => !o)}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              padding: 'var(--space-4)',
-              background: 'none',
-              border: 'none',
-              borderBottom: detailsOpen ? '1px solid var(--border)' : 'none',
-              width: '100%',
-              textAlign: 'left',
-              fontSize: 13,
-              fontWeight: 600,
-              color: 'var(--signal)',
-              fontFamily: 'inherit',
-              cursor: 'pointer',
-            }}
-          >
-            {detailsOpen ? 'Hide test details' : 'Show test details'}
-            <span aria-hidden="true">{detailsOpen ? '⌃' : '⌄'}</span>
-          </button>
-
-          {detailsOpen &&
-            suites.map((suite) => (
+            <span
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                width: 200,
+                height: 200,
+                borderRadius: 'var(--radius-full)',
+                background: 'rgba(255,255,255,0.08)',
+                top: -60,
+                right: -40,
+                pointerEvents: 'none',
+              }}
+            />
+            <span
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                width: 160,
+                height: 160,
+                borderRadius: 'var(--radius-full)',
+                background: 'rgba(255,255,255,0.06)',
+                bottom: -70,
+                left: -30,
+                pointerEvents: 'none',
+              }}
+            />
+            <div style={{ position: 'relative' }}>
               <div
-                key={suite.id}
-                style={{ padding: 'var(--space-4)', borderBottom: '1px solid var(--border)' }}
+                aria-hidden="true"
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: 'var(--radius-full)',
+                  background: 'rgba(255,255,255,0.16)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  margin: '0 auto 10px',
+                }}
               >
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: 'var(--space-2)',
-                  }}
-                >
-                  <div
-                    style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono, monospace)' }}
-                  >
-                    {toSpecFileName(suite.journey_name)}
-                  </div>
-                  <div className="caption" style={{ fontSize: 12 }}>
-                    {suite.test_cases.length} test{suite.test_cases.length === 1 ? '' : 's'}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  {suite.test_cases.map((testCase) => {
-                    const badge = TYPE_BADGE[testCase.type] ?? TYPE_BADGE.happy
-                    return (
-                      <div
-                        key={testCase.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          gap: 'var(--space-3)',
-                          padding: '8px 4px',
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                          <span
-                            style={{
-                              display: 'inline-block',
-                              padding: '2px 7px',
-                              borderRadius: 6,
-                              fontSize: 10.5,
-                              fontWeight: 600,
-                              background: badge.background,
-                              color: badge.color,
-                              flexShrink: 0,
-                            }}
-                          >
-                            {badge.label}
-                          </span>
-                          <span
-                            style={{
-                              fontSize: 13,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {testCase.name}
-                          </span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setActiveCode(testCase)}
-                          style={{
-                            padding: '5px 12px',
-                            background: 'var(--paper)',
-                            border: '1px solid var(--border)',
-                            borderRadius: 6,
-                            fontSize: 12,
-                            fontWeight: 600,
-                            fontFamily: 'inherit',
-                            cursor: 'pointer',
-                            whiteSpace: 'nowrap',
-                            flexShrink: 0,
-                          }}
-                        >
-                          View Code
-                        </button>
-                      </div>
-                    )
-                  })}
+                <div style={{ width: 28, height: 28, borderRadius: 'var(--radius-full)', background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <CheckIcon />
                 </div>
               </div>
-            ))}
-        </div>
+              <h1 style={{ fontSize: 19, fontWeight: 700, color: '#FFFFFF', margin: '0 0 5px' }}>
+                Test Suites Generated
+              </h1>
+              <p style={{ margin: '0 0 14px', fontSize: 12.5, color: 'rgba(255,255,255,0.85)' }}>
+                Generated {testCaseCount} test cases across {suites.length} journeys · Est. runtime{' '}
+                {estRuntimeMin} min
+              </p>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>
+                <button
+                  type="button"
+                  disabled
+                  title="Coming soon"
+                  style={{
+                    padding: '9px 20px',
+                    background: 'rgba(255,255,255,0.16)',
+                    color: '#FFFFFF',
+                    border: '1px solid rgba(255,255,255,0.5)',
+                    borderRadius: 'var(--radius)',
+                    fontSize: 13.5,
+                    fontWeight: 700,
+                    fontFamily: 'inherit',
+                    cursor: 'not-allowed',
+                    opacity: 0.75,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 7,
+                  }}
+                >
+                  <DownloadIcon />
+                  Download Test Suite
+                </button>
+                <button
+                  type="button"
+                  onClick={onGoToDashboard}
+                  style={{
+                    padding: '9px 22px',
+                    background: '#FFFFFF',
+                    color: 'var(--accent)',
+                    border: 'none',
+                    borderRadius: 'var(--radius)',
+                    fontSize: 13.5,
+                    fontWeight: 700,
+                    fontFamily: 'inherit',
+                    cursor: 'pointer',
+                    boxShadow: '0 8px 16px -6px rgba(0,0,0,0.2)',
+                  }}
+                >
+                  Go to Dashboard →
+                </button>
+              </div>
+            </div>
+          </div>
 
-        {activeCode && <CodeModal testCase={activeCode} onClose={() => setActiveCode(null)} />}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 16 }}>
+            <StatTile icon={<ClipboardCheckIcon />} value={testCaseCount} label="Test cases" />
+            <StatTile icon={<JourneysIcon />} value={suites.length} label="Journeys covered" />
+            <StatTile icon={<ClockIcon />} value={`${estRuntimeMin} min`} label="Est. runtime" />
+          </div>
+
+          <div
+            style={{
+              background: 'var(--canvas)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-lg)',
+              boxSizing: 'border-box',
+              overflow: 'hidden',
+              boxShadow: '0 4px 14px -3px rgba(15,23,42,0.12), 0 1px 3px rgba(15,23,42,0.07)',
+              marginBottom: 24,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setTestsExpanded((o) => !o)}
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: 12,
+                width: '100%',
+                padding: '16px 20px',
+                background: 'none',
+                border: 'none',
+                borderBottom: testsExpanded ? '1px solid var(--border-hairline)' : 'none',
+                textAlign: 'left',
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)' }}>Generated Tests</div>
+                <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2 }}>
+                  {testCaseCount > 0
+                    ? `${testCaseCount} test${testCaseCount === 1 ? '' : 's'} across ${suites.length} file${suites.length === 1 ? '' : 's'}`
+                    : 'No tests generated'}
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', whiteSpace: 'nowrap' }}>
+                  {testsExpanded ? 'Hide Tests' : 'View Tests'}
+                </span>
+                <ChevronIcon size={15} color="var(--accent)" open={testsExpanded} />
+              </div>
+            </button>
+
+            {testsExpanded &&
+              suites.map((suite) => {
+                const suiteOpen = expandedSuiteIds.has(suite.id)
+                return (
+                  <div key={suite.id} style={{ borderBottom: '1px solid var(--border-hairline)' }}>
+                    <button
+                      type="button"
+                      onClick={() => toggleSuite(suite.id)}
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: 12,
+                        width: '100%',
+                        padding: '14px 20px',
+                        background: 'none',
+                        border: 'none',
+                        textAlign: 'left',
+                        fontFamily: 'inherit',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                        <span
+                          style={{
+                            fontSize: 13,
+                            fontWeight: 700,
+                            color: 'var(--ink)',
+                            fontFamily: 'var(--font-mono)',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap',
+                          }}
+                        >
+                          {toTestFileName(suite.journey_name)}
+                        </span>
+                        <span style={{ fontSize: 12, color: 'var(--ink-muted)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                          {suite.test_cases.length} test{suite.test_cases.length === 1 ? '' : 's'}
+                        </span>
+                      </div>
+                      <ChevronIcon size={14} color="var(--ink-faint)" open={suiteOpen} />
+                    </button>
+
+                    {suiteOpen && (
+                      <div style={{ padding: '0 20px 14px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {suite.test_cases.map((testCase) => {
+                          const badge = TYPE_BADGE[testCase.type] ?? TYPE_BADGE.happy
+                          return (
+                            <div
+                              key={testCase.id}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 12,
+                                padding: '7px 10px',
+                                borderRadius: 6,
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                                <span
+                                  style={{
+                                    display: 'inline-block',
+                                    padding: '2px 7px',
+                                    borderRadius: 6,
+                                    fontSize: 10.5,
+                                    fontWeight: 600,
+                                    background: badge.background,
+                                    color: badge.color,
+                                    flexShrink: 0,
+                                  }}
+                                >
+                                  {badge.label}
+                                </span>
+                                <span
+                                  style={{
+                                    fontSize: 13,
+                                    color: 'var(--ink-secondary)',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {testCase.name}
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => setActiveCode(testCase)}
+                                style={{
+                                  padding: '5px 12px',
+                                  background: 'var(--canvas)',
+                                  border: '1px solid var(--border-strong)',
+                                  boxShadow: '0 1px 2px rgba(15,23,42,0.06)',
+                                  borderRadius: 6,
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  color: 'var(--accent)',
+                                  fontFamily: 'inherit',
+                                  cursor: 'pointer',
+                                  whiteSpace: 'nowrap',
+                                  flexShrink: 0,
+                                }}
+                              >
+                                Code
+                              </button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+          </div>
+
+          {activeCode && <CodeModal testCase={activeCode} onClose={() => setActiveCode(null)} />}
+        </div>
       </main>
     </>
   )

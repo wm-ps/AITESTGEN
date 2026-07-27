@@ -6,6 +6,7 @@ import { Stepper } from './Stepper'
 import { StatusPill } from './StatusPill'
 
 const POLL_INTERVAL_MS = 1500
+const JOURNEYS_PER_PAGE = 5
 
 // Collapses consecutive steps sharing a stage (e.g. a page visit + its form
 // submit both labeled "Checkout") into one flow node — the reviewer wants
@@ -171,6 +172,15 @@ export function DiscoverJourneys({
   const [steps, setSteps] = useState<JourneyStepRead[]>([])
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [continuing, setContinuing] = useState(false)
+  const [search, setSearch] = useState('')
+  const [page, setPage] = useState(0)
+  // Distinguishes "discovery hasn't produced any Journeys yet" (show
+  // Discovery Progress) from "every Journey was deleted" (show the bare
+  // "All journeys have been removed." empty state, EXPERIENCE.md State
+  // Patterns) — both look identical as `journeys.length === 0`, so this
+  // remembers whether the list was ever non-empty in this session.
+  const hadJourneysRef = useRef(false)
+  if (journeys.length > 0) hadJourneysRef.current = true
 
   const {
     status: liveStatus,
@@ -248,6 +258,16 @@ export function DiscoverJourneys({
   const stages = stageFlow(steps)
   const canContinue = journeys.length > 0 && !continuing
 
+  const searchLower = search.trim().toLowerCase()
+  const matchingJourneys = journeys.filter((j) => (j.name ?? '').toLowerCase().includes(searchLower))
+  const totalPages = Math.max(1, Math.ceil(matchingJourneys.length / JOURNEYS_PER_PAGE))
+  const pageClamped = Math.min(page, totalPages - 1)
+  const pagedJourneys = matchingJourneys.slice(
+    pageClamped * JOURNEYS_PER_PAGE,
+    pageClamped * JOURNEYS_PER_PAGE + JOURNEYS_PER_PAGE,
+  )
+  const showPagination = matchingJourneys.length > JOURNEYS_PER_PAGE
+
   async function handleContinueToScenarios() {
     setContinuing(true)
     try {
@@ -268,44 +288,68 @@ export function DiscoverJourneys({
           padding: `var(--content-top) var(--content-x)`,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)', margin: '0 0 8px' }}>
-          <h1 style={{ fontSize: 19, fontWeight: 650, margin: 0 }}>Discover Journeys</h1>
-          <StatusPill status={liveStatus} />
-        </div>
-
         <div
-          className="card-panel"
           style={{
             display: 'flex',
-            alignItems: 'center',
+            alignItems: 'flex-end',
             justifyContent: 'space-between',
-            padding: 'var(--space-4) var(--space-5)',
-            marginBottom: 'var(--space-4)',
-            gap: 'var(--space-4)',
+            gap: 'var(--space-8)',
+            marginBottom: 'var(--space-7)',
           }}
         >
-          <div style={{ fontSize: 14, fontWeight: 600 }}>
-            {journeys.length} Journey{journeys.length === 1 ? '' : 's'} Discovered
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+              <h1 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
+                Discover Journeys
+              </h1>
+              <StatusPill status={liveStatus} />
+            </div>
+            <div className="caption" style={{ fontSize: 13, marginTop: 3 }}>
+              {journeys.length} Journey{journeys.length === 1 ? '' : 's'} Discovered
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={handleContinueToScenarios}
-            disabled={!canContinue}
-            style={{
-              padding: '10px 20px',
-              whiteSpace: 'nowrap',
-              background: canContinue ? 'var(--signal)' : 'var(--border)',
-              color: canContinue ? 'var(--signal-ink)' : 'var(--ink-faint)',
-              border: 'none',
-              borderRadius: 'var(--radius)',
-              fontSize: 14,
-              fontWeight: 600,
-              fontFamily: 'inherit',
-              cursor: canContinue ? 'pointer' : 'not-allowed',
-            }}
-          >
-            Continue to Scenarios →
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)', flexShrink: 0 }}>
+            <input
+              type="text"
+              placeholder="Search journeys"
+              aria-label="Search journeys"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value)
+                setPage(0)
+              }}
+              style={{
+                width: 200,
+                boxSizing: 'border-box',
+                padding: '8px 12px',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius)',
+                fontSize: 13,
+                fontFamily: 'inherit',
+                color: 'var(--ink)',
+              }}
+            />
+            <button
+              type="button"
+              onClick={handleContinueToScenarios}
+              disabled={!canContinue}
+              style={{
+                padding: '10px 20px',
+                whiteSpace: 'nowrap',
+                background: canContinue ? 'var(--accent)' : 'var(--border)',
+                color: canContinue ? 'var(--accent-ink)' : 'var(--ink-faint)',
+                border: 'none',
+                borderRadius: 'var(--radius)',
+                fontSize: 14,
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                cursor: canContinue ? 'pointer' : 'not-allowed',
+                boxShadow: canContinue ? 'var(--shadow-button-primary)' : 'none',
+              }}
+            >
+              Continue to Scenarios →
+            </button>
+          </div>
         </div>
 
         {sessionExpired ? (
@@ -322,114 +366,216 @@ export function DiscoverJourneys({
 
         {journeys.length > 0 && (
           <div
-            style={{
-              display: 'flex',
-              gap: 'var(--space-5)',
-              alignItems: 'flex-start',
-              marginTop: 'var(--space-4)',
-            }}
+            className="card-panel"
+            style={{ display: 'flex', overflow: 'hidden' }}
           >
-            <ul
+            <div
               style={{
-                listStyle: 'none',
-                margin: 0,
-                padding: 0,
-                flex: 1,
+                width: 260,
+                flexShrink: 0,
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 'var(--space-2)',
+                background: 'var(--canvas-wash-alt)',
+                borderRight: '1px solid var(--border)',
               }}
             >
-              {journeys.map((journey) => (
-                <li
-                  key={journey.id}
-                  className="card-panel card-clickable"
-                  onClick={() => setSelectedId(journey.id)}
+              <ul
+                style={{
+                  listStyle: 'none',
+                  margin: 0,
+                  padding: 'var(--space-6) var(--space-5) var(--space-3)',
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 'var(--space-2)',
+                }}
+              >
+                {pagedJourneys.map((journey) => (
+                  <li
+                    key={journey.id}
+                    className={`list-row card-clickable${selectedId === journey.id ? ' list-row-selected' : ''}`}
+                    onClick={() => setSelectedId(journey.id)}
+                    style={{
+                      padding: 'var(--space-3) var(--space-4)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {renamingId === journey.id ? (
+                      <JourneyRenameInput
+                        initialName={journey.name}
+                        onSave={(name) => handleRename(journey.id, name)}
+                        onCancel={() => setRenamingId(null)}
+                      />
+                    ) : (
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontSize: 13.5,
+                            fontWeight: 600,
+                            color: selectedId === journey.id ? 'var(--accent)' : 'var(--ink)',
+                          }}
+                        >
+                          {journey.name}
+                        </div>
+                        {journey.description && (
+                          <div className="caption" style={{ fontSize: 12, marginTop: 2 }}>
+                            {journey.description}
+                          </div>
+                        )}
+                        <div className="caption" style={{ fontSize: 12 }}>
+                          {journey.step_count} step{journey.step_count === 1 ? '' : 's'}
+                        </div>
+                      </div>
+                    )}
+                    <JourneyRowMenu
+                      onRename={() => setRenamingId(journey.id)}
+                      onDelete={() => handleDelete(journey.id)}
+                    />
+                  </li>
+                ))}
+                {pagedJourneys.length === 0 && (
+                  <p className="caption" style={{ textAlign: 'center', padding: '40px 14px', fontSize: 12.5 }}>
+                    No matches.
+                  </p>
+                )}
+              </ul>
+              {showPagination && (
+                <div
                   style={{
-                    padding: 'var(--space-3) var(--space-4)',
+                    flexShrink: 0,
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'space-between',
-                    cursor: 'pointer',
-                    borderColor: selectedId === journey.id ? 'var(--signal)' : undefined,
+                    gap: 'var(--space-3)',
+                    padding: 'var(--space-4) var(--space-5) var(--space-6)',
+                    borderTop: '1px solid var(--border-hairline)',
                   }}
                 >
-                  {renamingId === journey.id ? (
-                    <JourneyRenameInput
-                      initialName={journey.name}
-                      onSave={(name) => handleRename(journey.id, name)}
-                      onCancel={() => setRenamingId(null)}
-                    />
-                  ) : (
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 600 }}>{journey.name}</div>
-                      {journey.description && (
-                        <div className="caption" style={{ fontSize: 12, marginTop: 2 }}>
-                          {journey.description}
-                        </div>
-                      )}
-                      <div className="caption" style={{ fontSize: 12 }}>
-                        {journey.step_count} step{journey.step_count === 1 ? '' : 's'}
-                      </div>
-                    </div>
-                  )}
-                  <JourneyRowMenu
-                    onRename={() => setRenamingId(journey.id)}
-                    onDelete={() => handleDelete(journey.id)}
-                  />
-                </li>
-              ))}
-            </ul>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    disabled={pageClamped <= 0}
+                    onClick={() => setPage(pageClamped - 1)}
+                  >
+                    Prev
+                  </button>
+                  <span className="caption" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                    Page {pageClamped + 1} of {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    disabled={pageClamped >= totalPages - 1}
+                    onClick={() => setPage(pageClamped + 1)}
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+            </div>
 
             <div
-              className="card-panel"
               style={{
-                width: 340,
-                flexShrink: 0,
-                padding: 'var(--space-4)',
-                position: 'sticky',
-                top: 'var(--space-4)',
+                flex: 1,
+                minWidth: 0,
+                padding: 'var(--space-9) var(--content-x)',
+                display: 'flex',
+                gap: 'var(--space-9)',
               }}
             >
               {selectedJourney ? (
                 <>
-                  <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 'var(--space-1)' }}>
-                    {selectedJourney.name}
-                  </div>
-                  <div className="caption" style={{ fontSize: 13, fontWeight: 600, marginBottom: 'var(--space-4)' }}>
-                    Discovered flow · {selectedJourney.step_count} step
-                    {selectedJourney.step_count === 1 ? '' : 's'}
-                  </div>
-                  <div data-testid="journey-flow">
-                    {stages.map((stage, index) => (
-                      <div key={`${stage}-${index}`} style={{ display: 'flex', gap: 'var(--space-3)' }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                          <div
-                            style={{
-                              width: 26,
-                              height: 26,
-                              flexShrink: 0,
-                              borderRadius: 'var(--radius-full)',
-                              background: 'var(--signal-wash)',
-                              color: 'var(--signal)',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: 12,
-                              fontWeight: 700,
-                            }}
-                          >
-                            {index + 1}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 'var(--space-1)' }}>
+                      {selectedJourney.name}
+                    </div>
+                    <div className="caption" style={{ fontSize: 13, fontWeight: 600, marginBottom: 'var(--space-4)' }}>
+                      Discovered flow · {selectedJourney.step_count} step
+                      {selectedJourney.step_count === 1 ? '' : 's'}
+                    </div>
+                    <div data-testid="journey-flow">
+                      {stages.map((stage, index) => (
+                        <div key={`${stage}-${index}`} style={{ display: 'flex', gap: 'var(--space-3)' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                            <div
+                              style={{
+                                width: 26,
+                                height: 26,
+                                flexShrink: 0,
+                                borderRadius: 'var(--radius-full)',
+                                background: 'var(--accent-wash)',
+                                color: 'var(--accent)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                fontSize: 12,
+                                fontWeight: 700,
+                              }}
+                            >
+                              {index + 1}
+                            </div>
+                            {index < stages.length - 1 && (
+                              <div aria-hidden="true" style={{ width: 2, flex: 1, background: 'var(--border)' }} />
+                            )}
                           </div>
-                          {index < stages.length - 1 && (
-                            <div aria-hidden="true" style={{ width: 2, flex: 1, background: 'var(--border)' }} />
-                          )}
+                          <div style={{ paddingBottom: index < stages.length - 1 ? 'var(--space-5)' : 0 }}>
+                            <div style={{ fontSize: 14, fontWeight: 600 }}>{stage}</div>
+                          </div>
                         </div>
-                        <div style={{ paddingBottom: index < stages.length - 1 ? 'var(--space-5)' : 0 }}>
-                          <div style={{ fontSize: 14, fontWeight: 600 }}>{stage}</div>
-                        </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
+                  </div>
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      width: 260,
+                      flexShrink: 0,
+                      alignSelf: 'flex-start',
+                      position: 'sticky',
+                      top: 'var(--space-4)',
+                    }}
+                  >
+                    <div
+                      className="caption"
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                        marginBottom: 'var(--space-2)',
+                      }}
+                    >
+                      Reference screenshot
+                    </div>
+                    <div
+                      style={{
+                        height: 420,
+                        borderRadius: 'var(--radius-xl)',
+                        border: '1px solid var(--border)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        background:
+                          'repeating-linear-gradient(135deg, var(--canvas-wash-alt), var(--canvas-wash-alt) 10px, var(--canvas-wash) 10px, var(--canvas-wash) 20px)',
+                      }}
+                    >
+                      <span
+                        className="caption"
+                        style={{
+                          fontFamily: 'var(--font-mono)',
+                          fontSize: 11.5,
+                          background: 'var(--canvas)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 'var(--radius-xs)',
+                          padding: '4px 10px',
+                        }}
+                      >
+                        journey screenshot
+                      </span>
+                    </div>
                   </div>
                 </>
               ) : (
@@ -442,7 +588,13 @@ export function DiscoverJourneys({
         )}
 
         {journeys.length === 0 && liveStatus !== 'failed' && (
-          <ImportProgress stage={liveStage} applicationName={applicationName} />
+          hadJourneysRef.current ? (
+            <p style={{ textAlign: 'center', padding: '80px 24px', color: 'var(--ink-muted)', fontSize: 14 }}>
+              All journeys have been removed.
+            </p>
+          ) : (
+            <ImportProgress stage={liveStage} applicationName={applicationName} />
+          )
         )}
       </main>
     </>

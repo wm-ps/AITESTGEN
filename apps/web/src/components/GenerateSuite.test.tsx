@@ -94,7 +94,7 @@ describe('GenerateSuite', () => {
     render(<GenerateSuite applicationId="app-1" onGenerated={onGenerated} />)
 
     await waitFor(() => screen.getByText('Test Suite'))
-    fireEvent.click(screen.getByRole('button', { name: 'Generate Test Suite' }))
+    fireEvent.click(screen.getByRole('button', { name: /Generate Test Suite/ }))
 
     await waitFor(() => {
       expect(onGenerate).toHaveBeenCalledOnce()

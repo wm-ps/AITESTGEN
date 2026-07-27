@@ -338,6 +338,21 @@ describe('DiscoverJourneys', () => {
     expect(deleted).toBe(true)
   })
 
+  it('shows the bare "All journeys have been removed." empty state after deleting the last Journey, not the Discovery Progress spinner', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    stubFetch()
+    renderScreen()
+    await waitFor(() => screen.getByText('Checkout'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Journey actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('All journeys have been removed.')).toBeTruthy()
+    })
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+
   it('does not delete when the confirmation is declined', async () => {
     let deleted = false
     vi.spyOn(window, 'confirm').mockReturnValue(false)

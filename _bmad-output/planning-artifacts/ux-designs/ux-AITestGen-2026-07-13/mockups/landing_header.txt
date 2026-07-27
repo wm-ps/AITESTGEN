@@ -1,0 +1,17 @@
+x;height:7px;border-radius:9999px;background:{{accent}};animation:aitg-dot-bounce 1s ease-in-out infinite;animation-delay:0s;\"><\u002Fdiv>
+              <div style=\"width:7px;height:7px;border-radius:9999px;background:{{accent}};animation:aitg-dot-bounce 1s ease-in-out infinite;animation-delay:0.15s;\"><\u002Fdiv>
+              <div style=\"width:7px;height:7px;border-radius:9999px;background:{{accent}};animation:aitg-dot-bounce 1s ease-in-out infinite;animation-delay:0.3s;\"><\u002Fdiv>
+            <\u002Fdiv>
+          <\u002Fdiv>
+        <\u002Fdiv>
+      <\u002Fsc-if>
+
+      <sc-if value=\"{{showLandingScreen}}\" hint-placeholder-val=\"{{false}}\">
+        <div data-screen-label=\"Landing\" style=\"width:100%;box-sizing:border-box;height:calc(100vh - 64px);overflow:hidden;display:flex;flex-direction:column;background:radial-gradient(900px 500px at 85% -10%, {{accentSoft1}} 0%, transparent 55%), linear-gradient(180deg, #FBFCFE 0%, #F6F9FB 100%);\">
+
+          <div style=\"flex:1;min-width:0;overflow:hidden;padding:36px 44px;box-sizing:border-box;display:flex;flex-direction:column;gap:24px;\">
+
+            <div style=\"display:flex;align-items:center;justify-content:space-between;gap:20px;flex-shrink:0;animation:aitg-fade-up 0.4s ease-out both;\">
+              <div>
+                <div style=\"font-size:13px;font-weight:600;color:{{accent}};margin-bottom:4px;\">Welcome, Sarah Chen<\u002Fdiv>
+                <div style=\"font-size:26px;font-weight:700;color:#0F172A;letter-sp

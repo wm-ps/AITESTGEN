@@ -1,0 +1,36 @@
+or:#0F172A;letter-spacing:-0.02em;\">Projects<\u002Fdiv>
+              <\u002Fdiv>
+              <div style=\"display:flex;gap:10px;flex-shrink:0;\">
+                <button sc-camel-on-click=\"{{openDemoModal}}\" style=\"padding:11px 18px;background:#FFFFFF;color:#334155;border:1px solid #CBD5E1;box-shadow:0 1px 2px rgba(15,23,42,0.06);border-radius:9px;font-size:13.5px;font-weight:600;font-family:inherit;cursor:pointer;white-space:nowrap;\" style-hover=\"background:#F8FAFC;\">Watch Demo<\u002Fbutton>
+                <sc-if value=\"{{hasJourneys}}\" hint-placeholder-val=\"{{true}}\">
+                  <button sc-camel-on-click=\"{{startNewProjectFromLanding}}\" style=\"padding:11px 18px;background:{{accent}};color:#FFFFFF;border:none;border-radius:9px;font-size:13.5px;font-weight:600;font-family:inherit;cursor:pointer;white-space:nowrap;box-shadow:0 8px 16px -6px {{accentSoft1}};\" style-hover=\"opacity:0.92;\">+ Create New Project<\u002Fbutton>
+                <\u002Fsc-if>
+              <\u002Fdiv>
+            <\u002Fdiv>
+
+            <sc-if value=\"{{hasJourneys}}\" hint-placeholder-val=\"{{true}}\">
+              <div style=\"display:grid;grid-template-columns:repeat(auto-fill, minmax(300px, 1fr));gap:16px;flex:1;min-height:0;overflow-y:auto;align-content:start;animation:aitg-fade-up 0.4s ease-out 0.1s both;\">
+                <div sc-camel-on-click=\"{{exploreExistingApp}}\" style=\"background:#FFFFFF;border:1px solid #F1F5F9;border-radius:14px;box-shadow:0 4px 14px -3px rgba(15,23,42,0.12),0 1px 3px rgba(15,23,42,0.07);padding:20px 22px;box-sizing:border-box;cursor:pointer;transition:box-shadow 0.15s ease,transform 0.15s ease;\" style-hover=\"box-shadow:0 10px 24px -8px rgba(15,23,42,0.12);transform:translateY(-2px);\">
+                  <div style=\"display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px;\">
+                    <div style=\"width:42px;height:42px;border-radius:10px;background:{{accentSoft2}};display:flex;align-items:center;justify-content:center;color:{{accent}};flex-shrink:0;\">
+                      <svg width=\"19\" height=\"19\" sc-camel-view-box=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3.5 7.2A1.7 1.7 0 0 1 5.2 5.5h3.4l1.7 1.7h8a1.7 1.7 0 0 1 1.7 1.7v8.4a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7V7.2Z\"><\u002Fpath><\u002Fsvg>
+                    <\u002Fdiv>
+                    <span style=\"display:inline-block;padding:4px 10px;border-radius:9999px;font-size:11px;font-weight:600;background:{{accentSoft2}};color:{{accent}};white-space:nowrap;flex-shrink:0;\">{{landingStatusLabel}}<\u002Fspan>
+                  <\u002Fdiv>
+                  <div style=\"font-size:15px;font-weight:700;color:#0F172A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:3px;\">{{existingApp.name}}<\u002Fdiv>
+                  <div style=\"font-size:12.5px;color:#94A3B8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;\">{{landingJourneysCount}} journeys · {{landingScenariosCount}} scenarios<\u002Fdiv>
+                <\u002Fdiv>
+              <\u002Fdiv>
+            <\u002Fsc-if>
+
+            <sc-if value=\"{{hasNoJourneys}}\" hint-placeholder-val=\"{{false}}\">
+              <div style=\"border:1px dashed #E2E8F0;border-radius:14px;box-sizing:border-box;padding:32px;flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;animation:aitg-fade-up 0.4s ease-out 0.05s both;\">
+                <div style=\"width:52px;height:52px;border-radius:9999px;background:{{accentSoft2}};color:{{accent}};display:flex;align-items:center;justify-content:center;margin-bottom:18px;flex-shrink:0;\">
+                  <svg width=\"24\" height=\"24\" sc-camel-view-box=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M3.5 7.2A1.7 1.7 0 0 1 5.2 5.5h3.4l1.7 1.7h8a1.7 1.7 0 0 1 1.7 1.7v8.4a1.7 1.7 0 0 1-1.7 1.7H5.2a1.7 1.7 0 0 1-1.7-1.7V7.2Z\"><\u002Fpath><\u002Fsvg>
+                <\u002Fdiv>
+                <div style=\"font-size:16px;font-weight:700;color:#0F172A;margin-bottom:6px;\">No projects yet<\u002Fdiv>
+                <div style=\"font-size:13.5px;color:#64748B;margin-bottom:20px;max-width:420px;line-height:1.5;\">Connect your first application to start discovering journeys and generating tests — no scripts required.<\u002Fdiv>
+                <button sc-camel-on-click=\"{{startNewProjectFromLanding}}\" style=\"padding:10px 20px;background:{{accent}};color:#FFFFFF;border:none;border-radius:8px;font-size:13.5px;font-weight:600;font-family:inherit;cursor:pointer;\" style-hover=\"opacity:0.9;\">+ Create New Project<\u002Fbutton>
+              <\u002Fdiv>
+            <\u002Fsc-if>
+

@@ -52,7 +52,7 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
-last_updated: 2026-07-24  # Sprint Change Proposal (MinIO -> AWS S3 for production object storage).
+# 2026-07-24  # Sprint Change Proposal (MinIO -> AWS S3 for production object storage).
 #   Added Story 2-8 (Production Object Storage on AWS S3, backlog) — resolves the object-storage
 #   backend provider question AD-8/Operational Envelope explicitly deferred. Local-dev/CI docker-
 #   compose MinIO is unchanged. See sprint-change-proposal-2026-07-24.md.
@@ -61,6 +61,15 @@ last_updated: 2026-07-27  # Sprint Change Proposal (cut Story 4.3, FR-18 — see
 #   Same-day follow-up: added new Story 4.3 (Download a Generated Test Suite, FR-34), reusing the vacated
 #   slot for a different feature — see sprint-change-proposal-2026-07-27-2.md.
 #   Same-day follow-up: Story 4.3 story file created via bmad-create-story, moved to ready-for-dev.
+#   Same-day follow-up: UX redirected to prototype-v3.html (full visual-identity redirect, dark-mode-parity
+#   dropped, Suite Generated screen gap resolved, Scenario readiness filter added, Home persistence rule
+#   corrected) — see sprint-change-proposal-2026-07-27-3.md. Stories 1-2, 1-4, 4-1, 4-2 moved back to
+#   in-progress for AC rework. Same-day correction: every other already-built UI-bearing story
+#   (1-3, 1-6, 2-1, 2-4, 2-7, 3-1, 3-4) also moved back to in-progress for a visual-restyle pass
+#   (new accent/font/shadow tokens, plus now-formally-specified badge/kebab-menu/icon-button/top-bar
+#   components) — no AC change for these seven, tracked explicitly rather than left as an implicit
+#   side effect of the shared token file. Backend/infra-only stories (1-1, 2-2, 2-3, 2-5, 2-6, 2-8)
+#   and not-yet-built 4-3 are unaffected. No epics/stories added or removed.
 # 2026-07-21 note (below) kept for history:
 #   implemented and moved to review: Story 1-3's Task 7 (reachability validation + favicon
 #   auto-fetch, FR-31/FR-32), Story 1-6 (Dynamic Browser Tab Branding, new), Story 2-1's Task 7
@@ -79,20 +88,27 @@ development_status:
   # Story 1-5 (Discovery Scope & Time Budget) removed 2026-07-15 — FR-4/FR-5 confirmed removed
   #   concepts. Its submit/navigate behavior absorbed into 1-3.
   1-1-repository-service-scaffold: done
-  1-2-sign-in-organization-scoped-workspace: done
-  1-3-onboard-an-application-basic-details: review  # Task 7 implemented 2026-07-21 — reachability
+  1-2-sign-in-organization-scoped-workspace: in-progress  # REOPENED 2026-07-27 (was done) — Home
+    # layout + dark-mode-parity-drop rework per UX v3 redirect; see sprint-change-proposal-2026-07-27-3.md.
+  1-3-onboard-an-application-basic-details: in-progress  # Task 7 implemented 2026-07-21 — reachability
     # validation AC (FR-31, CR-3) and best-effort favicon-fetch AC (FR-32, CR-1 capture half).
-    # See sprint-change-proposal-2026-07-21.md.
-  1-4-configure-application-authentication-method: review
-  1-6-dynamic-browser-tab-branding: review  # FR-32 (CR-1 display half) implemented 2026-07-21:
+    # See sprint-change-proposal-2026-07-21.md. REOPENED 2026-07-27 (was review) — visual restyle only,
+    # no AC change: new accent/font/shadow tokens on the Connect App form; see
+    # sprint-change-proposal-2026-07-27-3.md.
+  1-4-configure-application-authentication-method: in-progress  # REOPENED 2026-07-27 (was review) —
+    # concrete 3-option auth-method-set AC per UX v3 redirect; see sprint-change-proposal-2026-07-27-3.md.
+  1-6-dynamic-browser-tab-branding: in-progress  # FR-32 (CR-1 display half) implemented 2026-07-21:
     # tab title/favicon reflect the current Application across all pipeline screens that exist
     # today (connect-app, discover); generic keyed off view/application so Epic 4's remaining
-    # two screens need no revisit.
+    # two screens need no revisit. REOPENED 2026-07-27 (was review) — visual restyle only, no AC
+    # change: top-bar brand-mark/wordmark restyled per new tokens; see sprint-change-proposal-2026-07-27-3.md.
   epic-1-retrospective: optional
 
   epic-2: in-progress
-  2-1-start-a-discovery-run: review  # Task 7 implemented 2026-07-21 —
+  2-1-start-a-discovery-run: in-progress  # Task 7 implemented 2026-07-21 —
     # DiscoveryRun.stage=initializing AC (FR-33, CR-2). See sprint-change-proposal-2026-07-21.md.
+    # REOPENED 2026-07-27 (was review) — visual restyle only, no AC change: Discovery Progress
+    # spinner/card restyled per new tokens; see sprint-change-proposal-2026-07-27-3.md.
   2-2-autonomous-exploration-captures-evidence: review  # Task 6 implemented 2026-07-21 —
     # stage=authenticating/discovering transitions in discovery_activity. AC3 (raw live-feed)
     # walked back: typed-row capture is unchanged, but the raw feed is no longer user-facing
@@ -103,7 +119,8 @@ development_status:
     # story file title updated, filename unchanged.
   2-3-discovery-stop-conditions-completeness-status: review  # renamed "Discovery Completion" 2026-07-15; incomplete status removed.
     # Unaffected in substance by 2026-07-21 CR — clarifying note only (completion is what lets stage progress out of discovering).
-  2-4-session-expiry-handling: review
+  2-4-session-expiry-handling: in-progress  # REOPENED 2026-07-27 (was review) — visual restyle only,
+    # no AC change: re-authentication prompt restyled per new tokens; see sprint-change-proposal-2026-07-27-3.md.
   2-5-application-model-builder: review  # implemented 2026-07-18 — merges duplicate Page/Form/ApiEndpoint
     # rows (captured directly by 2-2, no Evidence table) into canonical, application-scoped rows via
     # merged_into_id; derives Component/ComponentLocator/Assertion; runs before AI inference (2-6).
@@ -114,7 +131,9 @@ development_status:
     # ahead of its own Application Model dependency — corrected) — reworked and re-verified that
     # session; reads canonical Page/Component rows built by 2-5, never raw Evidence (removed) or
     # a merged/superseded row.
-  2-7-business-oriented-import-progress-display: review  # FR-33 (CR-2) implemented 2026-07-21:
+  2-7-business-oriented-import-progress-display: in-progress  # REOPENED 2026-07-27 (was review) —
+    # visual restyle only, no AC change; see sprint-change-proposal-2026-07-27-3.md.
+    # FR-33 (CR-2) implemented 2026-07-21:
     # polls DiscoveryRun, maps stage to one of four business-language labels, zero technical
     # terminology. Also closes a real gap found during story creation: discovery status/failure_reason
     # are now genuinely polled live in the frontend (previously frozen at Application-creation time).
@@ -137,18 +156,26 @@ development_status:
   #   Journey Explorer (formerly Epic 6 Story 6-2) lives here too, folded into 3-1.
   # Story 3-5 (New-Journey Flagging on Re-Discovery) removed 2026-07-21 — cut in full for V1,
   #   explicit product decision to keep the first shipped version simple. Epic 3 for V1 is 3-1 + 3-4 only.
-  3-1-review-queue-candidate-list-evidence-panel: review  # implemented 2026-07-21 — Discover Journeys
-    # two-pane screen (candidate list + sticky 340px step-detail panel), journeys/steps read endpoints
-  3-4-rename-delete-a-journey-capability: review  # implemented 2026-07-21 — Edit (FR-28) added then cut
-    # same day; reverted to Rename & Delete. Soft-delete via Journey.status="deleted"
+  3-1-review-queue-candidate-list-evidence-panel: in-progress  # implemented 2026-07-21 — Discover Journeys
+    # two-pane screen (candidate list + sticky 340px step-detail panel), journeys/steps read endpoints.
+    # REOPENED 2026-07-27 (was review) — visual restyle (new tokens; badge/kebab-menu/icon-button now
+    # formally specified) plus a new, explicitly-non-committal reference-screenshot placeholder column
+    # (not an AC change — see EXPERIENCE.md#Component Patterns); see sprint-change-proposal-2026-07-27-3.md.
+  3-4-rename-delete-a-journey-capability: in-progress  # implemented 2026-07-21 — Edit (FR-28) added then cut
+    # same day; reverted to Rename & Delete. Soft-delete via Journey.status="deleted".
+    # REOPENED 2026-07-27 (was review) — visual restyle only, no AC change: kebab-menu now formally
+    # specified per new tokens; see sprint-change-proposal-2026-07-27-3.md.
   epic-3-retrospective: optional
 
   epic-4: in-progress
-  4-1-generate-scenarios-for-an-approved-journey: review  # implemented 2026-07-21 — button-triggered
+  4-1-generate-scenarios-for-an-approved-journey: in-progress  # implemented 2026-07-21 — button-triggered
     # generation (Continue to Scenarios), AI-defined test-data fields, reviewer completion gate
     # (Continue to Generate Test Suite). Also fixed InferenceActivity to stop auto-starting
-    # GenerationWorkflow, per this story's own corrected flow.
-  4-2-generate-playwright-test-assets-from-scenarios: ready-for-dev
+    # GenerationWorkflow, per this story's own corrected flow. REOPENED 2026-07-27 (was review) — adds
+    # Ready/Needs-Data readiness filter per UX v3 redirect; see sprint-change-proposal-2026-07-27-3.md.
+  4-2-generate-playwright-test-assets-from-scenarios: in-progress  # REOPENED 2026-07-27 (was
+    # ready-for-dev) — resolves the post-generation Suite Generated screen [GAP] per UX v3 redirect;
+    # see sprint-change-proposal-2026-07-27-3.md.
   # Story 4.3 (Full Regeneration of Test Assets on Request) removed 2026-07-27 — explicit product decision,
   #   not deferred; no code existed to build on despite tracking suggesting otherwise (the "4.3 has been
   #   completed" commit actually implemented Story 4.2, mislabeled). See sprint-change-proposal-2026-07-27.md.
