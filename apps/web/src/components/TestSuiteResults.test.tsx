@@ -24,12 +24,21 @@ const SUITES = [
   },
 ]
 
-function stubFetch(suites: typeof SUITES = SUITES) {
+const SCENARIOS = [
+  { id: 's1', journey_id: 'journey-1' },
+  { id: 's2', journey_id: 'journey-1' },
+]
+
+function stubFetch(overrides: { suites?: typeof SUITES; scenarios?: unknown[] } = {}) {
+  const { suites = SUITES, scenarios = SCENARIOS } = overrides
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) => {
       if (url.includes('/test-suites')) {
         return { ok: true, status: 200, json: async () => suites }
+      }
+      if (url.includes('/scenarios')) {
+        return { ok: true, status: 200, json: async () => scenarios }
       }
       return { ok: true, status: 200, json: async () => [] }
     }),
@@ -41,38 +50,61 @@ afterEach(() => {
 })
 
 describe('TestSuiteResults', () => {
-  it('shows a suite-level summary before revealing details', async () => {
-    stubFetch()
-    render(<TestSuiteResults applicationId="app-1" />)
+  it('shows a spinner and live progress while generation is still in flight', async () => {
+    stubFetch({ suites: [], scenarios: SCENARIOS })
+    render(<TestSuiteResults applicationId="app-1" onGoToDashboard={() => {}} />)
 
     await waitFor(() => {
-      expect(screen.getByText('Test details →')).toBeTruthy()
+      expect(screen.getByRole('status').textContent).toContain('Generating')
     })
-    expect(screen.queryByText('Checkout Test Suite')).toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('0/2')
   })
 
-  it('"Test details" reveals the per-suite breakdown with type badges and Code buttons', async () => {
+  it('shows the completed summary, stats, and reveals per-suite details by default', async () => {
     stubFetch()
-    render(<TestSuiteResults applicationId="app-1" />)
+    render(<TestSuiteResults applicationId="app-1" onGoToDashboard={() => {}} />)
 
-    await waitFor(() => screen.getByText('Test details →'))
-    fireEvent.click(screen.getByText('Test details →'))
-
-    expect(screen.getByText('Checkout Test Suite')).toBeTruthy()
+    await waitFor(() => {
+      expect(screen.getByText(/Generated 2 test cases across 1 journeys/)).toBeTruthy()
+    })
+    expect(screen.getByText('checkout.spec.ts')).toBeTruthy()
     expect(screen.getByText('Guest checkout')).toBeTruthy()
     expect(screen.getByText('Happy Path')).toBeTruthy()
     expect(screen.getByText('Negative Path')).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: 'Code' })).toHaveLength(2)
+    expect(screen.getAllByRole('button', { name: 'View Code' })).toHaveLength(2)
   })
 
-  it('clicking Code opens a modal with that row\'s own code; a different row shows its own code', async () => {
+  it('toggles test details visibility', async () => {
     stubFetch()
-    render(<TestSuiteResults applicationId="app-1" />)
+    render(<TestSuiteResults applicationId="app-1" onGoToDashboard={() => {}} />)
 
-    await waitFor(() => screen.getByText('Test details →'))
-    fireEvent.click(screen.getByText('Test details →'))
+    await waitFor(() => screen.getByText('Guest checkout'))
 
-    const codeButtons = screen.getAllByRole('button', { name: 'Code' })
+    fireEvent.click(screen.getByRole('button', { name: /Hide test details/ }))
+    expect(screen.queryByText('Guest checkout')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: /Show test details/ }))
+    expect(screen.getByText('Guest checkout')).toBeTruthy()
+  })
+
+  it('calls onGoToDashboard when the Go to Dashboard button is clicked', async () => {
+    stubFetch()
+    const onGoToDashboard = vi.fn()
+    render(<TestSuiteResults applicationId="app-1" onGoToDashboard={onGoToDashboard} />)
+
+    const button = await screen.findByRole('button', { name: 'Go to Dashboard →' })
+    fireEvent.click(button)
+
+    expect(onGoToDashboard).toHaveBeenCalledOnce()
+  })
+
+  it('clicking View Code opens a modal with that row\'s own code; a different row shows its own code', async () => {
+    stubFetch()
+    render(<TestSuiteResults applicationId="app-1" onGoToDashboard={() => {}} />)
+
+    await waitFor(() => screen.getByText('Guest checkout'))
+
+    const codeButtons = screen.getAllByRole('button', { name: 'View Code' })
     fireEvent.click(codeButtons[0])
     expect(screen.getByText(/test_guest_checkout/)).toBeTruthy()
 

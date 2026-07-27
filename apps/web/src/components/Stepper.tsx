@@ -7,8 +7,10 @@ const STEPS = [
 
 export function Stepper({
   current,
+  allComplete = false,
 }: {
   current: 'connect-app' | 'discover' | 'review' | 'generate'
+  allComplete?: boolean
 }) {
   const currentIndex = STEPS.findIndex((step) => step.key === current)
 
@@ -23,8 +25,8 @@ export function Stepper({
       }}
     >
       {STEPS.map((step, index) => {
-        const done = index < currentIndex
-        const active = index === currentIndex
+        const done = allComplete || index < currentIndex
+        const active = !allComplete && index === currentIndex
         return (
           <div key={step.key} style={{ display: 'flex', alignItems: 'center' }}>
             <div

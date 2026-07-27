@@ -1,7 +1,59 @@
 import { useEffect, useState } from 'react'
 import { api, type TestCaseRead, type TestSuiteRead } from '../api'
+import { Stepper } from './Stepper'
 
 const POLL_INTERVAL_MS = 1500
+const SECONDS_PER_TEST_CASE = 45
+
+function toSpecFileName(journeyName: string): string {
+  const slug = journeyName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return `${slug || 'journey'}.spec.ts`
+}
+
+function Spinner() {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        display: 'inline-block',
+        width: 14,
+        height: 14,
+        borderRadius: '50%',
+        border: '2px solid var(--border)',
+        borderTopColor: 'var(--signal)',
+        animation: 'aitg-spin 0.7s linear infinite',
+      }}
+    />
+  )
+}
+
+function StatCard({ icon, value, label }: { icon: string; value: string | number; label: string }) {
+  return (
+    <div className="card-panel" style={{ padding: 'var(--space-5)', textAlign: 'center' }}>
+      <span
+        aria-hidden="true"
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          width: 32,
+          height: 32,
+          borderRadius: 'var(--radius-full)',
+          background: 'var(--signal-wash)',
+          color: 'var(--signal)',
+          marginBottom: 'var(--space-3)',
+        }}
+      >
+        {icon}
+      </span>
+      <div style={{ fontSize: 24, fontWeight: 700 }}>{value}</div>
+      <div className="caption">{label}</div>
+    </div>
+  )
+}
 
 // Story 4.2 Task 4a (confirmed against the reference prototype, both by
 // direct file inspection and a live click-through): submitting Generate
@@ -89,10 +141,28 @@ function CodeModal({ testCase, onClose }: { testCase: TestCaseRead; onClose: () 
   )
 }
 
-export function TestSuiteResults({ applicationId }: { applicationId: string }) {
+export function TestSuiteResults({
+  applicationId,
+  onGoToDashboard,
+}: {
+  applicationId: string
+  onGoToDashboard: () => void
+}) {
   const [suites, setSuites] = useState<TestSuiteRead[]>([])
-  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [expectedTestCaseCount, setExpectedTestCaseCount] = useState(0)
+  const [detailsOpen, setDetailsOpen] = useState(true)
   const [activeCode, setActiveCode] = useState<TestCaseRead | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    api.listScenarios(applicationId).then((scenarios) => {
+      if (cancelled) return
+      setExpectedTestCaseCount(scenarios.length)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [applicationId])
 
   useEffect(() => {
     let cancelled = false
@@ -115,149 +185,231 @@ export function TestSuiteResults({ applicationId }: { applicationId: string }) {
   }, [applicationId])
 
   const testCaseCount = suites.reduce((sum, s) => sum + s.test_cases.length, 0)
+  const isComplete = expectedTestCaseCount > 0 && testCaseCount >= expectedTestCaseCount
+  const estRuntimeMin = Math.max(1, Math.ceil((testCaseCount * SECONDS_PER_TEST_CASE) / 60))
+
+  if (!isComplete) {
+    return (
+      <>
+        <Stepper current="generate" />
+        <main
+          style={{
+            maxWidth: 'var(--content-max)',
+            margin: '0 auto',
+            padding: `var(--content-top) var(--content-x)`,
+          }}
+        >
+          <h1 style={{ fontSize: 19, fontWeight: 650, margin: '0 0 8px' }}>Test Suites</h1>
+          <div className="card-panel" style={{ padding: 'var(--space-5)' }}>
+            <div style={{ display: 'flex', gap: 'var(--space-5)', marginBottom: 'var(--space-4)' }}>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 700 }}>{suites.length}</div>
+                <div className="caption" style={{ fontSize: 12 }}>
+                  Test Suite{suites.length === 1 ? '' : 's'}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 22, fontWeight: 700 }}>{testCaseCount}</div>
+                <div className="caption" style={{ fontSize: 12 }}>
+                  Test case{testCaseCount === 1 ? '' : 's'}
+                </div>
+              </div>
+            </div>
+            <p
+              className="caption"
+              role="status"
+              style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}
+            >
+              <Spinner />
+              Generating — {testCaseCount}/{expectedTestCaseCount || '…'} test cases so far…
+            </p>
+          </div>
+        </main>
+      </>
+    )
+  }
 
   return (
-    <main
-      style={{
-        maxWidth: 'var(--content-max)',
-        margin: '0 auto',
-        padding: `var(--content-top) var(--content-x)`,
-      }}
-    >
-      <h1 style={{ fontSize: 19, fontWeight: 650, margin: '0 0 8px' }}>Test Suites</h1>
-
-      <div
-        className="card-panel"
-        style={{ padding: 'var(--space-5)', marginBottom: 'var(--space-4)' }}
+    <>
+      <Stepper current="generate" allComplete />
+      <main
+        style={{
+          maxWidth: 'var(--content-max)',
+          margin: '0 auto',
+          padding: `var(--content-top) var(--content-x)`,
+        }}
       >
-        <div style={{ display: 'flex', gap: 'var(--space-5)', marginBottom: 'var(--space-4)' }}>
-          <div>
-            <div style={{ fontSize: 22, fontWeight: 700 }}>{suites.length}</div>
-            <div className="caption" style={{ fontSize: 12 }}>
-              Test Suite{suites.length === 1 ? '' : 's'}
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: 22, fontWeight: 700 }}>{testCaseCount}</div>
-            <div className="caption" style={{ fontSize: 12 }}>
-              Test case{testCaseCount === 1 ? '' : 's'}
-            </div>
-          </div>
+        <div style={{ textAlign: 'center', marginBottom: 'var(--space-6)' }}>
+          <span
+            aria-hidden="true"
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 48,
+              height: 48,
+              borderRadius: 'var(--radius-full)',
+              background: 'var(--good-wash)',
+              color: 'var(--good)',
+              fontSize: 20,
+              marginBottom: 'var(--space-4)',
+            }}
+          >
+            ✓
+          </span>
+          <h1 style={{ fontSize: 21, fontWeight: 700, margin: '0 0 6px' }}>Test Suites Generated</h1>
+          <p className="caption" style={{ margin: '0 0 var(--space-5)' }}>
+            Generated {testCaseCount} test cases across {suites.length} journeys · Est. runtime{' '}
+            {estRuntimeMin} min
+          </p>
+          <button
+            type="button"
+            onClick={onGoToDashboard}
+            style={{
+              padding: '10px 20px',
+              background: 'var(--signal)',
+              color: 'var(--signal-ink)',
+              border: 'none',
+              borderRadius: 'var(--radius)',
+              fontSize: 14,
+              fontWeight: 600,
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+            }}
+          >
+            Go to Dashboard →
+          </button>
         </div>
 
-        {suites.length === 0 ? (
-          <p className="caption" style={{ margin: 0 }}>
-            Generating — Test Suites will appear here as each Journey's Playwright tests finish.
-          </p>
-        ) : (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+            gap: 'var(--space-4)',
+            marginBottom: 'var(--space-6)',
+          }}
+        >
+          <StatCard icon="✓" value={testCaseCount} label="Test cases" />
+          <StatCard icon="◈" value={suites.length} label="Journeys covered" />
+          <StatCard icon="◷" value={`${estRuntimeMin} min`} label="Est. runtime" />
+        </div>
+
+        <div className="card-panel" style={{ padding: 0 }}>
           <button
             type="button"
             onClick={() => setDetailsOpen((o) => !o)}
             style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: 'var(--space-4)',
               background: 'none',
               border: 'none',
-              color: 'var(--signal)',
+              borderBottom: detailsOpen ? '1px solid var(--border)' : 'none',
+              width: '100%',
+              textAlign: 'left',
               fontSize: 13,
               fontWeight: 600,
-              cursor: 'pointer',
-              padding: 0,
+              color: 'var(--signal)',
               fontFamily: 'inherit',
+              cursor: 'pointer',
             }}
           >
-            {detailsOpen ? 'Hide test details' : 'Test details →'}
+            {detailsOpen ? 'Hide test details' : 'Show test details'}
+            <span aria-hidden="true">{detailsOpen ? '⌃' : '⌄'}</span>
           </button>
-        )}
-      </div>
 
-      {detailsOpen &&
-        suites.map((suite) => (
-          <div
-            key={suite.id}
-            className="card-panel"
-            style={{ padding: 0, marginBottom: 'var(--space-3)', overflow: 'hidden' }}
-          >
-            <div
-              style={{
-                padding: 'var(--space-3) var(--space-4)',
-                borderBottom: '1px solid var(--border)',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
-              <span style={{ fontSize: 13.5, fontWeight: 700 }}>{suite.name}</span>
-              <span className="caption" style={{ fontSize: 12 }}>
-                {suite.test_cases.length} test case{suite.test_cases.length === 1 ? '' : 's'}
-              </span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column' }}>
-              {suite.test_cases.map((testCase) => {
-                const badge = TYPE_BADGE[testCase.type] ?? TYPE_BADGE.happy
-                return (
+          {detailsOpen &&
+            suites.map((suite) => (
+              <div
+                key={suite.id}
+                style={{ padding: 'var(--space-4)', borderBottom: '1px solid var(--border)' }}
+              >
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginBottom: 'var(--space-2)',
+                  }}
+                >
                   <div
-                    key={testCase.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 'var(--space-3)',
-                      padding: '10px 16px',
-                      borderBottom: '1px solid var(--border)',
-                    }}
+                    style={{ fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-mono, monospace)' }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          padding: '2px 8px',
-                          borderRadius: 'var(--radius-sm)',
-                          fontSize: 10.5,
-                          fontWeight: 650,
-                          background: badge.background,
-                          color: badge.color,
-                          flexShrink: 0,
-                        }}
-                      >
-                        {badge.label}
-                      </span>
-                      <span
-                        style={{
-                          fontSize: 13,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {testCase.name}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setActiveCode(testCase)}
-                      style={{
-                        padding: '5px 12px',
-                        background: '#FFFFFF',
-                        color: 'var(--signal)',
-                        border: '1px solid var(--border)',
-                        borderRadius: 'var(--radius-sm)',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        fontFamily: 'inherit',
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                        flexShrink: 0,
-                      }}
-                    >
-                      Code
-                    </button>
+                    {toSpecFileName(suite.journey_name)}
                   </div>
-                )
-              })}
-            </div>
-          </div>
-        ))}
+                  <div className="caption" style={{ fontSize: 12 }}>
+                    {suite.test_cases.length} test{suite.test_cases.length === 1 ? '' : 's'}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  {suite.test_cases.map((testCase) => {
+                    const badge = TYPE_BADGE[testCase.type] ?? TYPE_BADGE.happy
+                    return (
+                      <div
+                        key={testCase.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 'var(--space-3)',
+                          padding: '8px 4px',
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                          <span
+                            style={{
+                              display: 'inline-block',
+                              padding: '2px 7px',
+                              borderRadius: 6,
+                              fontSize: 10.5,
+                              fontWeight: 600,
+                              background: badge.background,
+                              color: badge.color,
+                              flexShrink: 0,
+                            }}
+                          >
+                            {badge.label}
+                          </span>
+                          <span
+                            style={{
+                              fontSize: 13,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {testCase.name}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setActiveCode(testCase)}
+                          style={{
+                            padding: '5px 12px',
+                            background: 'var(--paper)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 6,
+                            fontSize: 12,
+                            fontWeight: 600,
+                            fontFamily: 'inherit',
+                            cursor: 'pointer',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
+                          }}
+                        >
+                          View Code
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+        </div>
 
-      {activeCode && <CodeModal testCase={activeCode} onClose={() => setActiveCode(null)} />}
-    </main>
+        {activeCode && <CodeModal testCase={activeCode} onClose={() => setActiveCode(null)} />}
+      </main>
+    </>
   )
 }

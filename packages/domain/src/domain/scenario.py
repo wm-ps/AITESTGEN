@@ -4,8 +4,9 @@
 `GenerationWorkflow` run belongs to (matching the `generation-{journey_id}-
 {attempt}` workflow-ID convention) — lets the workflow ID always be
 reconstructed from `journey_id` + `generation_run_id` for tracing, and gives
-Story 4.3's regeneration something to supersede by by flipping `current` to
-`False` rather than deleting.
+any future attempt-bump something to supersede by flipping `current` to
+`False` rather than deleting (no feature triggers a second attempt today —
+Story 4.3/FR-18 is cut in full, see sprint-change-proposal-2026-07-27.md).
 
 `test_data` is the AI-defined field schema (name + mandatory flag) a reviewer
 must fill in before this Scenario is considered complete — each entry's

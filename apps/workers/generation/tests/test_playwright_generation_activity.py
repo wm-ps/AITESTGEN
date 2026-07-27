@@ -162,9 +162,9 @@ def test_ensure_test_suite_activity_supersedes_prior_attempt_atomically() -> Non
             select(TestSuite).where(TestSuite.external_id == uuid.UUID(first.test_suite_id))
         ).one()
         # A prior attempt's Scenario row is never deleted (soft-superseded,
-        # Story 4.3 AC 2) — still current=True here, matching real
-        # conditions right before Story 4.3's own ScenarioGenerationActivity
-        # flips it False as part of writing the *next* attempt's Scenarios.
+        # AD-8) — still current=True here, matching real conditions right
+        # before a next attempt's ScenarioGenerationActivity flips it False
+        # as part of writing the *next* attempt's Scenarios.
         old_scenario = session.exec(select(Scenario).where(Scenario.journey_id == journey.id)).one()
         old_asset = TestAsset(
             scenario_id=old_scenario.id,
@@ -175,9 +175,11 @@ def test_ensure_test_suite_activity_supersedes_prior_attempt_atomically() -> Non
         session.add(old_asset)
         session.commit()
 
-        # Simulate Story 4.3 regeneration: Journey.attempt bumps. `journey`
-        # is detached (its own seeding session already closed) — re-fetch
-        # the live row in this session before mutating it.
+        # Simulate a Journey.attempt bump (AD-1/AD-8's versioning scaffold —
+        # no feature triggers this today, but EnsureTestSuiteActivity's
+        # supersede logic must hold if attempt ever changes). `journey` is
+        # detached (its own seeding session already closed) — re-fetch the
+        # live row in this session before mutating it.
         live_journey = session.get(Journey, journey.id)
         assert live_journey is not None
         live_journey.attempt += 1
