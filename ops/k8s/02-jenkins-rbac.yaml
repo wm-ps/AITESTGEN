@@ -1,0 +1,34 @@
+# Grants the Jenkins pipeline (system:serviceaccount:default:jenkins) enough
+# access in this namespace to run `kubectl exec` for the "Run Database
+# Migrations" stage (Jenkinsfile-api). Without this, kubectl exec fails with
+# "cannot create resource \"pods/exec\"" before alembic ever runs.
+#
+# Apply this manually with an admin kubeconfig — Jenkins's own service
+# account lacks pods/exec, so it cannot grant itself this Role via its normal
+# `kubectl apply` deploy stage (Kubernetes RBAC blocks self-escalation).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: jenkins-pod-exec
+  namespace: aitestgen
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jenkins-pod-exec
+  namespace: aitestgen
+subjects:
+  - kind: ServiceAccount
+    name: jenkins
+    namespace: default
+roleRef:
+  kind: Role
+  name: jenkins-pod-exec
+  apiGroup: rbac.authorization.k8s.io
