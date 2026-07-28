@@ -5,6 +5,17 @@ description: 'Bring up every local-dev dependency for AITestGen (Postgres/Tempor
 
 # /test — spin up AITestGen for validation
 
+**Fast path (no LLM tool calls, no tokens):** `scripts\dev-up.cmd` (Windows)
+or `scripts/dev-up.sh` (Mac/Linux) runs the whole bring-up below directly —
+Docker, API/workers/web starting in parallel, web install/type-gen. Windows
+gets each process its own titled console window; Mac/Linux backgrounds them
+instead and writes each to its own `logs/*.log` (`tail -f logs/*.log` to
+watch, `pkill -f <process>` to stop one — see the script's own final output
+for exact commands). Run the right one straight from a terminal instead of
+invoking this skill when nothing about the runbook itself needs to change.
+Re-run this skill (and update both scripts) only when the bring-up steps
+themselves change.
+
 The four long-lived processes (API, discovery worker, generation worker,
 web) each get their own **visible terminal window** via Windows' native
 `start` — not the Bash tool's background mode — so the user can watch logs

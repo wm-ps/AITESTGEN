@@ -108,10 +108,11 @@ in the `aitestgen` namespace — since `apps/api`/`apps/workers/discovery` call 
 at runtime to store onboarded Applications' target-app credentials; only its
 own root token moves to a k8s Secret instead of being hardcoded.
 
-`[UPDATED 2026-07-24]` Object storage for discovery evidence (screenshots/DOM
+`[UPDATED 2026-07-28]` Object storage for discovery evidence (screenshots/DOM
 snapshots) is AWS S3 in production (Story 2.8) — there is no in-cluster
-`minio` Deployment/Service. Local development still uses the docker-compose
-`minio` service below, unchanged (S3-compatible, dev ergonomics only).
+`minio` Deployment/Service. Local development now also points at real S3
+(`AWS_S3_BUCKET`/`AWS_REGION` + AWS creds in `.env`); the docker-compose
+`minio` service has been removed.
 
 | Service | Type | Port(s) | Usage |
 |---|---|---|---|
