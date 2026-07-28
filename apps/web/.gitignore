@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# local-only component preview scaffold
+preview.html
+src/preview-entry.tsx
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
