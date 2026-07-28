@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: discovery-worker
-          image: REPLACE_ECR_REGISTRY/aitestgen-discovery-worker:latest
+          image: REPLACE_IMAGE
           env:
             # $(VAR) below only expands against vars defined in this *env*
             # list (not envFrom), so POSTGRES_HOST/PORT/DB are re-declared

@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
         - name: generation-worker
-          image: REPLACE_ECR_REGISTRY/aitestgen-generation-worker:latest
+          image: REPLACE_IMAGE
           env:
             - name: ANTHROPIC_API_KEY
               valueFrom:
