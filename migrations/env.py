@@ -27,7 +27,7 @@ target_metadata = SQLModel.metadata
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
-    "postgresql+psycopg://postgres:postgres@localhost:5432/aitestgen",
+    "postgresql+psycopg://postgres:postgres@localhost:5433/aitestgen",
 )
 config.set_main_option("sqlalchemy.url", DATABASE_URL)
 

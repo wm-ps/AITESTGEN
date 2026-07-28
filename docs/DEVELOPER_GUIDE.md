@@ -180,7 +180,7 @@ cd apps/web && npm install && cd ../..     # install web deps
 docker compose up -d
 ```
 
-- Postgres → `localhost:5432`
+- Postgres → `localhost:5433`
 - Temporal Web UI → **http://localhost:8233**
 - Vault (dev-mode, root token `dev-only-root-token`) → **http://localhost:8200**
 
