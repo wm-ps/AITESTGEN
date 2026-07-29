@@ -4,7 +4,7 @@ baseline_commit: 48b6499e08423320a0156e02720f1e8e2ba7d66c
 
 # Story 2.1: Start a Discovery Run
 
-Status: review <!-- CR-2 rework (Task 7, stage=initializing) complete 2026-07-21, see notes below; original 2026-07-20 verification note: real Discovery Runs started from the UI, crawled, and completed successfully -->
+Status: done <!-- CLOSED 2026-07-29 after re-verification, see Change Log; CR-2 rework (Task 7, stage=initializing) complete 2026-07-21, see notes below; original 2026-07-20 verification note: real Discovery Runs started from the UI, crawled, and completed successfully -->
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -246,3 +246,13 @@ claude-sonnet-5
   "Discovery Progress" screen), and added full backend + frontend test coverage including a live
   Temporal CLI verification that the workflow actually completes end-to-end. Status moved to
   `review`.
+- 2026-07-29 — Re-verified for closure. `sprint-status.yaml` had this reopened `in-progress` since
+  2026-07-27 ("visual restyle only, no AC change" per `sprint-change-proposal-2026-07-27-3.md`),
+  but no corresponding note was ever added to this story file, and the restyle itself was never
+  independently confirmed. Checked directly: `StatusPill.tsx`'s colors (`--accent`/`--accent-wash`
+  for Running, `--good-wash`/`--good-strong` for Complete) are pure CSS custom properties, and
+  every one matches `DESIGN.md`'s current token values hex-for-hex — `DESIGN.md` was itself
+  redistilled directly from `prototype-v3.html` on 2026-07-27, so this confirms the restyle is
+  genuinely in place, not stale. No AC change, no code change needed. Full suite green (`apps/api`
+  tests, `apps/workers/discovery` 57/0-skip against real Postgres/Vault/S3, frontend 56/0).
+  Status moved to `done`.

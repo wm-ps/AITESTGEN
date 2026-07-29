@@ -4,7 +4,7 @@ baseline_commit: 48b6499e08423320a0156e02720f1e8e2ba7d66c
 
 # Story 2.4: Session Expiry Handling
 
-Status: done <!-- implementation and tests were already complete pre-session; not itself exercised by this session's live end-to-end runs (no session-expiry scenario occurred against the live test target) -->
+Status: done <!-- implementation and tests were already complete pre-session; not itself exercised by this session's live end-to-end runs (no session-expiry scenario occurred against the live test target); RE-VERIFIED 2026-07-29, sprint-status.yaml corrected from a stale "in-progress" to match this file's own "done" (see Change Log) -->
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -172,3 +172,14 @@ claude-sonnet-5
   re-authentication prompt, and the `failed` (red) status-pill variant distinct from `complete`
   (green). Verified against the live local target with a deterministic, request-counted
   expiry trigger. Status moved to `review`.
+- 2026-07-29 — Re-verified for closure. `sprint-status.yaml` had this reopened `in-progress` since
+  2026-07-27 for the same visual-restyle pass as Stories 2.1/2.7, but this story's own header
+  already said `done` and no restyle note was ever added here. Checked: the re-authentication
+  banner (`DiscoverJourneysPlaceholder.tsx`) uses `var(--danger)`, which matches `DESIGN.md`'s
+  current (post-2026-07-27, v3-redistilled) token value exactly — no stale color found. Note:
+  `prototype-v3.html` has no session-expiry/re-authentication screen at all (confirmed by
+  exhaustive search — the only "expired" hits in that file are unrelated MFA-test-scenario copy),
+  so this banner is necessarily an original design for a state the mockup doesn't depict, not
+  something gradable against a literal reference — but it correctly uses current tokens either
+  way. `sprint-status.yaml` corrected from `in-progress` to `done` to match this file's own
+  (previously accurate, just untracked) status.

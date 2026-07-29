@@ -12,7 +12,8 @@ updated: "2026-07-15 — see sprint-change-proposal-2026-07-15.md: Story 6.2 rel
   2026-07-19 [crawl engine follow-up] — Story 2.2 gains ACs 7-9, all within FR-6's existing scope: button-triggered navigation is now followed onward instead of dead-ending at the click; forms with an identical shape/starting values (hidden fields included) are sampled representatively across pages; a broken/error (network failure or 4xx/5xx) destination is skipped rather than captured; and AC 6's representative-action sampling is bounded to a small number of distinct labels per page, page-body content before nav/header/footer chrome. PRD FR-6/FR-7/§12 item 7 and Architecture AD-15 updated to match.
   2026-07-21 [Sprint Change Proposal — Import Experience & Progress UX Improvements] — see sprint-change-proposal-2026-07-21.md: new FR-31 (reachability validation) and FR-32 (browser tab branding) added to Epic 1 — Story 1.3 gains two ACs, new Story 1.6 added. New FR-33 (business-oriented import progress) added to Epic 2 — Story 2.2's AC3 walked back (raw live-feed no longer user-facing, capture itself unchanged), Stories 2.1/2.6 gain stage-transition ACs, new Story 2.7 added. Architecture AD-10 extended with DiscoveryRun.stage; domain model gains Application.favicon_url. Stories 1.3, 2.1, 2.2, 2.6 reverted to in-progress for rework per sprint-status.yaml.
   2026-07-27 — see sprint-change-proposal-2026-07-27.md: Story 4.3 (Full Regeneration of Test Assets on Request, FR-18) removed in full, not deferred — explicit product decision. No code existed to remove: despite sprint-status.yaml/commit history suggesting it was completed, it was never actually built (that work was Story 4.2's, mislabeled in the commit message). Story 4.3 section deleted, its story file removed, Epic 4 description and FR Coverage Map updated to drop FR-18; sprint-status.yaml entry removed; PRD FR-18/§5/§6.1/§9 and Architecture AD-1/AD-8/Module Map/Deferred updated to match.
-  2026-07-27 [follow-up, same day] — see sprint-change-proposal-2026-07-27-2.md: new Story 4.3 (Download a Generated Test Suite, FR-34) added to Epic 4, reusing the slot vacated above — a reviewer-triggered export of all current Test Suites for an Application into a single, suite-folder-organized, runnable Playwright project zip. Epic 4 description and FR Coverage Map updated to add FR-34; PRD §4.5/§6.1/§9 and Architecture Module Map (new Test Suite Export row)/Deferred updated to match."
+  2026-07-27 [follow-up, same day] — see sprint-change-proposal-2026-07-27-2.md: new Story 4.3 (Download a Generated Test Suite, FR-34) added to Epic 4, reusing the slot vacated above — a reviewer-triggered export of all current Test Suites for an Application into a single, suite-folder-organized, runnable Playwright project zip. Epic 4 description and FR Coverage Map updated to add FR-34; PRD §4.5/§6.1/§9 and Architecture Module Map (new Test Suite Export row)/Deferred updated to match.
+  2026-07-29 — see sprint-change-proposal-2026-07-29.md: Discovery Engine redesign — 11 new Epic 2 stories added (2.9 Page Readiness/Infinite Scroll, 2.10 State Identity Engine, 2.11 Exploration Planner/Action Priority, 2.12 Safety Engine, 2.13 Data Resolver, 2.14 Widget Coverage, 2.15 Blocked Frontier, 2.16 Blocked Mid-Exploration/Resume, 2.17 Save-as-Project, 2.18 Crash Recovery/Error Taxonomy, 2.19 Loop Prevention), new FR-35 through FR-47. Story 2.2's AC4/AC5/AC6 marked partially superseded (State Identity Engine, Action Priority Model); Story 2.3 gains a completion-reporting AC; Story 2.5 gains a clarifying note; Story 4.1 gains a test-data-carry-forward AC; Story 1.2 gains a flagged UX gap note (Save-as-Project dashboard). No epic added/removed/resequenced. Reverses PRD §12 Risk item 6's prior accepted-risk decision (destructive-action guardrail) — flagged for explicit PM sign-off. PRD FR-35-47/§12/§6.1/§9 and Architecture AD-16 through AD-23/Module Map/Deferred updated to match."
 ---
 
 # Application Intelligence Platform - Epic Breakdown
@@ -143,6 +144,9 @@ FR-31: Epic 1 - Application reachability validation `[ADDED 2026-07-21]` — Sto
 FR-32: Epic 1 - Dynamic browser tab branding `[ADDED 2026-07-21]` — Story 1.3 (capture) + Story 1.6 (display)
 FR-33: Epic 2 - Business-oriented import progress `[ADDED 2026-07-21]` — Stories 2.1, 2.2, 2.6 (stage transitions) + Story 2.7 (display)
 
+FR-35–FR-46: Epic 2 - Discovery engine redesign (page readiness, infinite scroll, State Identity Engine, Action Priority Model, Safety Engine, Data Resolver, widget coverage, Blocked Frontier + resume, Save-as-Project, crash recovery/error taxonomy, loop prevention) `[ADDED 2026-07-29]` — Stories 2.9-2.19
+FR-47: Epic 4 - Test data carry-forward from discovery into Scenario Generation defaults `[ADDED 2026-07-29]` — Story 4.1 amendment
+
 NFR-1 (Security): Epic 1 - Secret handling for stored discovery credentials
 NFR-2 (Reliability): Epic 2 - Graceful completion (exhaustive traversal) or failure (e.g., session expiry)
 NFR-4 (Accessibility): Cross-cutting - WCAG 2.1/2.2 AA applied within every epic's UI stories
@@ -155,16 +159,16 @@ A user can sign in, and onboard an Application (URL, environment, Dedicated Test
 **FRs covered:** FR-1, FR-2, FR-3, FR-31, FR-32
 
 ### Epic 2: Runtime Discovery & AI Journey Inference
-A user can start a Discovery Run, watch live progress (running/complete/failed-session-expired), and see AI-inferred candidate Journeys/Capabilities, each traceable to captured evidence. `[UPDATED 2026-07-15]` Every candidate Journey immediately enters the Trusted Knowledge Model and starts Scenario/Playwright generation as soon as it's created — no approval gate (FR-14, moved from the former Approve action). No `incomplete` status — a Discovery Run only ever completes (exhaustive traversal) or fails, since no time-budget cap exists. `[UPDATED 2026-07-18]` Raw discovery signal is normalized into a structured Application Model (Story 2.5, FR-30) before AI inference (Story 2.6) reads it — see `sprint-change-proposal-2026-07-18.md`. `[UPDATED 2026-07-21]` "Watch live progress" is now business-language staged progress (Initialization/Authentication/Discovery/Analysis, FR-33), not the raw crawl live-feed Story 2.2 originally specified — see Story 2.7 and `sprint-change-proposal-2026-07-21.md`.
-**FRs covered:** FR-6, FR-7, FR-8, FR-14, FR-30, FR-33
+A user can start a Discovery Run, watch live progress (running/complete/failed-session-expired), and see AI-inferred candidate Journeys/Capabilities, each traceable to captured evidence. `[UPDATED 2026-07-15]` Every candidate Journey immediately enters the Trusted Knowledge Model and starts Scenario/Playwright generation as soon as it's created — no approval gate (FR-14, moved from the former Approve action). No `incomplete` status — a Discovery Run only ever completes (exhaustive traversal) or fails, since no time-budget cap exists. `[UPDATED 2026-07-18]` Raw discovery signal is normalized into a structured Application Model (Story 2.5, FR-30) before AI inference (Story 2.6) reads it — see `sprint-change-proposal-2026-07-18.md`. `[UPDATED 2026-07-21]` "Watch live progress" is now business-language staged progress (Initialization/Authentication/Discovery/Analysis, FR-33), not the raw crawl live-feed Story 2.2 originally specified — see Story 2.7 and `sprint-change-proposal-2026-07-21.md`. `[UPDATED 2026-07-29]` The Discovery module's internal crawl-decision engine gains page-readiness gating, bounded infinite-scroll sampling, a three-way state-identity classification, tiered action ordering, a Safe/Destructive/Ambiguous Safety Engine, structured data resolution with deferral, first-class widget coverage (tabs/dialogs/multi-window/file-upload), a Blocked Frontier with cross-session pause/resume (Save-as-Project), and crash recovery with a machine-readable error taxonomy — see `sprint-change-proposal-2026-07-29.md`. No change to the FR-14 discovery-gates-generation pipeline or Epic 3/4's curation/generation flow.
+**FRs covered:** FR-6, FR-7, FR-8, FR-14, FR-30, FR-33, FR-35, FR-36, FR-37, FR-38, FR-39, FR-40, FR-41, FR-42, FR-43, FR-44, FR-45, FR-46
 
 ### Epic 3: Human Curation & Trusted Knowledge Model `[RENAMED 2026-07-15, was "Human Review & Trusted Knowledge Model"]`
 `[REWRITTEN 2026-07-15]` A reviewer curates discovered candidates — rename what's mislabeled, delete what doesn't belong — and inspects any candidate's discovered step/evidence detail inline. There is no approve/reject gate: every discovered Journey is already in the Trusted Knowledge Model and generating coverage before a reviewer looks at it (see Epic 2); deletion is the only exclusion mechanism. Re-running discovery only flags genuinely new Journeys.
 **FRs covered:** FR-9, FR-12, FR-13, FR-15, FR-23 (relocated 2026-07-15). `[CUT 2026-07-15]` FR-10 (Approve), FR-11 (Reject) — no story files retained (removed 2026-07-15); FR-28 (Edit) — see Story 3.4.
 
 ### Epic 4: Scenario & Playwright Test Generation
-`[UPDATED 2026-07-15]` Every discovered Journey automatically produces happy-path/negative Scenarios (rename/edit/removable pre-generation as of 2026-07-15) and executable Playwright Test Assets, generated as a named Test Suite — generation starts immediately on discovery, not on approval. `[UPDATED 2026-07-27]` No regeneration mechanism exists (FR-18 cut in full) — once generated, a Journey's coverage is refreshed only by deleting the Journey (Epic 3) and letting re-discovery produce a new one. `[UPDATED 2026-07-27]` The full set of current Test Suites can be downloaded as a single, suite-folder-organized, runnable Playwright project.
-**FRs covered:** FR-16, FR-17, FR-29 (added 2026-07-15), FR-34 (added 2026-07-27). `[CUT 2026-07-27]` FR-18 (Full regeneration) — no longer built, see Story 4.3's removal below.
+`[UPDATED 2026-07-15]` Every discovered Journey automatically produces happy-path/negative Scenarios (rename/edit/removable pre-generation as of 2026-07-15) and executable Playwright Test Assets, generated as a named Test Suite — generation starts immediately on discovery, not on approval. `[UPDATED 2026-07-27]` No regeneration mechanism exists (FR-18 cut in full) — once generated, a Journey's coverage is refreshed only by deleting the Journey (Epic 3) and letting re-discovery produce a new one. `[UPDATED 2026-07-27]` The full set of current Test Suites can be downloaded as a single, suite-folder-organized, runnable Playwright project. `[UPDATED 2026-07-29]` Test data used to unblock a discovery-time exploration path carries forward as the default Test Data value when a generated Scenario recreates that same step (FR-47) — see `sprint-change-proposal-2026-07-29.md`.
+**FRs covered:** FR-16, FR-17, FR-29 (added 2026-07-15), FR-34 (added 2026-07-27), FR-47 (added 2026-07-29). `[CUT 2026-07-27]` FR-18 (Full regeneration) — no longer built, see Story 4.3's removal below.
 
 *(Epic 5 "CI/CD Delivery," Epic 6 "Analytics & Executive Dashboards," and Epic 7 "Deployment & AI Provider Configuration" removed in full 2026-07-15 — none had any supporting screen in the current UX, and Epic 7's on-prem deployment is a confirmed parked-for-later-release decision, not current scope. Epic 6's Journey Explorer (FR-23) survives, relocated into Epic 3's Story 3.1. See `sprint-change-proposal-2026-07-15.md` for the original history.)*
 
@@ -211,6 +215,8 @@ So that my Applications and data are isolated from any other customer's.
 **And** the token system's `ink-muted` value is the only token used for real label/caption/metadata text anywhere in the shell, with `ink-faint` reserved exclusively for decorative marks — this rule, plus the no-exclamation-points/no-celebratory-language voice-and-tone rule, is treated as a standing constraint every later story's UI copy must follow, not a one-time fix
 
 *(Superseded 2026-07-15 — retained for history only: the prior AC described a persistent 236px nav rail with links grouped under Workspace/Onboard/Understand/Automate/Prove, Settings and sign-out pinned to the rail foot. No nav rail exists in the current IA; top-level navigation is the pipeline stepper introduced in Story 2.1.)*
+
+`[GAP — flagged 2026-07-29, not resolved here]` Story 2.17 (Save-as-Project) specifies a dashboard showing Confirmed/Blocked/Remaining-to-Explore counts and a "Paused — Action Needed" status for a paused project. The current Home screen's single persistent Application card (this story's 2026-07-27 AC) has no such counts or paused-state treatment. Needs a UX design pass before Story 2.17's frontend half can be built — do not read this note as authorizing ad hoc UI invention against it.
 
 ### Story 1.3: Onboard an Application — Basic Details
 
@@ -327,6 +333,8 @@ So that a structured record of it is captured as the basis for journey mapping.
 8. **`[ADDED 2026-07-19]`** **Given** a `Form` with an identical shape and starting field values (hidden fields included) is reachable identically from more than one page, **when** the crawler encounters it again, **then** it is captured once (representative-form sampling, mirrors AC 6) (FR-6, AD-15).
 9. **`[ADDED 2026-07-19]`** **Given** a destination fails to load or responds 4xx/5xx, **when** the crawler reaches it, **then** it is marked visited and skipped — no `Page` row, no further exploration (FR-6, FR-7, AD-15).
 
+`[PARTIALLY SUPERSEDED 2026-07-29]` AC 4 (page-fingerprint dedup) and AC 6 (representative-action sampling) remain in force as crawl-time, in-run optimizations, but are now read alongside Story 2.10's State Identity Engine (SAME/VARIANT/NEW), which is the authoritative cross-state comparison going forward. AC 5 (navigation-first) is superseded by Story 2.11's Action Priority Model for the untried-in-page-action-vs-unvisited-nav case — see `sprint-change-proposal-2026-07-29.md` and Architecture AD-17.
+
 ### Story 2.3: Discovery Completion `[RENAMED 2026-07-15, was "Discovery Stop Conditions & Completeness Status"]`
 
 *Rewritten 2026-07-15 — FR-5 (time budget) removed; there is no time-budget stop condition, no `incomplete` status, and no accompanying amber status-pill state. A Discovery Run only ever completes via exhaustive traversal or fails (Story 2.4). This is an accepted-risk tradeoff — see PRD §12 Risk item 7 (no safety cap against unbounded exploration).*
@@ -341,6 +349,9 @@ So that I know the map reflects everything discovery found.
 **When** no new pages, actions, or state transitions are found
 **Then** `DiscoveryRun.status` is set to `complete` (FR-7, AD-10)
 **And** completeness is read directly from `DiscoveryRun.status` everywhere it's shown, never inferred from the presence or absence of other data
+
+**`[ADDED 2026-07-29]` Given** a Discovery Run reaches `DiscoveryRun.status=complete`
+**Then** the completion report includes counts of Blocked items (Story 2.15), Skipped-Unsafe items (Story 2.12), and Errored branches (Story 2.18), alongside confirmed states/journeys — none of these categories block completion; a run can legitimately complete with open items in any of them (FR-42/FR-45)
 
 ### Story 2.4: Session Expiry Handling
 
@@ -371,6 +382,8 @@ So that journey inference and test generation work from reliable, deduplicated s
 4. Only `ApplicationModelBuilderActivity` ever sets an existing row's `merged_into_id`, and only it writes `Component`/`ComponentLocator`/`Assertion` rows — `DiscoveryActivity` never resolves duplicates or writes these three, and `InferenceActivity` only ever reads canonical rows (AD-14).
 
 **`[RESOLVED 2026-07-18]`** The Application Model's page-grouping concept is served by the existing `Capability` entity — no separate `Module` entity is introduced.
+
+`[NOTE — 2026-07-29]` Story 2.10's State Identity Engine (SAME/VARIANT/NEW) runs *during* the crawl, against an in-process cache — it does not replace this story's cross-run `merged_into_id` canonicalization, which still runs after Discovery completes and additionally catches duplicates across separate Discovery Runs (e.g. re-discovery) that the in-run cache never saw. The two mechanisms are complementary: Story 2.10 avoids over-exploring within one run; this story still owns cross-run canonicalization.
 
 ### Story 2.6: AI Journey/Capability Inference from the Application Model `[RENUMBERED 2026-07-18, was Story 2.5]`
 
@@ -432,6 +445,139 @@ So that the platform relies on managed, durable cloud storage rather than an in-
 **And** local development and CI continue to run against the existing docker-compose MinIO service unchanged (dev ergonomics only, per the architecture's local/production split) — `object_store.py` targets either backend through the same S3-compatible API, selected by endpoint configuration, not a code branch
 
 **Notes:** Local-dev behavior is intentionally out of scope — MinIO in `docker-compose.yml` remains the local/CI substitute (S3 wire-compatible). Only the production (`ops/k8s/`) deployment and its ConfigMap/Secret wiring change. See `sprint-change-proposal-2026-07-24.md` for the full impact analysis.
+
+### Story 2.9: Page Readiness & Infinite Scroll/Pagination Sampling `[ADDED 2026-07-29]`
+
+*Added per `sprint-change-proposal-2026-07-29.md`, triggered by the Discovery Engine redesign document. Full Tasks/Dev-Notes-level story file to be created via `bmad-create-story` when picked up for development, per this repo's existing convention (see Story 4.3's history).*
+
+As a user, I want the platform to wait for a page to genuinely finish loading before capturing it, and to sample rather than endlessly scroll/paginate a repeating list, so that discovery captures complete, accurate snapshots without stalling on unbounded content.
+
+**Acceptance Criteria:**
+
+**Given** a page transition, **when** the Observer is about to capture a snapshot, **then** it waits for DOM-mutation quiescence and network settling (application-relevant requests only) up to a configurable Page Load Timeout (project default + per-run override), proceeding with a best-effort snapshot and a DISC-004 log entry if the ceiling is reached first (FR-35).
+**Given** a scroll/"Load More" action, **when** newly revealed items fingerprint as SAME as already-seen items for a bounded number of consecutive samples, **then** the region is marked sampled and exploration continues elsewhere; a hard per-page scroll/pagination budget applies regardless (FR-36).
+
+### Story 2.10: State Identity Engine — SAME/VARIANT/NEW Classification `[ADDED 2026-07-29]`
+
+*Added per `sprint-change-proposal-2026-07-29.md`. Supersedes Story 2.2's page-fingerprint dedup (AC 4) as the authoritative cross-state comparison; see that story's amendment note and Architecture AD-16.*
+
+As a user, I want the platform to tell genuinely new application behavior apart from the same behavior with different data, so that discovery doesn't miss real variants or waste effort re-exploring duplicates.
+
+**Acceptance Criteria:**
+
+**Given** an observed state, **when** compared against previously-seen states sharing the same route template, **then** a weighted score (heading/action-set/form-set/nav/structural similarity) against two configurable thresholds yields SAME (discarded), VARIANT (new sibling Page row via `variant_of_page_id`), or NEW (full new Page/actions/transitions) (FR-37).
+**Given** a score between the two thresholds, **when** the classification is genuinely ambiguous, **then** the AI provider may supply a supporting, non-authoritative opinion — the State Identity Engine still owns the final verdict.
+**Given** the comparison runs during an active crawl, **when** checking prior states, **then** it reads from an in-process cache scoped to this Discovery Run's Activity execution (AD-16), not a new persistent cache tier.
+
+### Story 2.11: Exploration Planner & Action Priority Tiering `[ADDED 2026-07-29]`
+
+*Added per `sprint-change-proposal-2026-07-29.md`. Supersedes Story 2.2's navigation-first rule (AC 5) for the untried-in-page-action-vs-unvisited-nav case; see Architecture AD-17.*
+
+As a user, I want the platform to fully explore a page's own actions before navigating away from it, so that no page's behavior is left partially understood because the crawler moved on too soon.
+
+**Acceptance Criteria:**
+
+**Given** a candidate action, **when** it is tagged, **then** it is classified Tier 1 (in-page) or Tier 2 (navigation-intent) deterministically (ARIA/landmark role, href target, layout position), with AI as a fallback only for genuinely ambiguous cases (FR-38).
+**Given** a state with untried Tier 1 actions, **when** the Planner selects the next action, **then** every untried Tier 1 action (including finishing Story 2.9's scroll sampling) is exhausted before any Tier 2 action is attempted.
+**Given** all of a candidate action's specialist checks (State Identity, action history, transition-cycle, Safety Engine, Data Resolver), **when** the Planner combines their answers, **then** it reaches exactly one Execution Decision — EXECUTE / DEFER / SKIP — executed in tier order.
+
+### Story 2.12: Safety Engine — Action Classification & Post-Action Verification `[ADDED 2026-07-29]`
+
+*Added per `sprint-change-proposal-2026-07-29.md`. `[REVERSES PRD §12 Risk item 6's prior "accepted risk, no guardrail" decision — flagged for explicit Product Manager sign-off before this story leaves backlog.]`*
+
+As a user, I want the platform to never perform a clearly destructive action and to defer ambiguous ones for explicit authorization, so that discovery can't cause irreversible side effects in the target environment.
+
+**Acceptance Criteria:**
+
+**Given** a candidate action, **when** classified, **then** it is Safe (executed automatically), Clearly Destructive (never executed), or Ambiguous/state-changing (deferred to the Blocked Frontier, Story 2.15, not guessed) (FR-39).
+**Given** genuine uncertainty even after an AI-assisted opinion, **when** the Safety Engine can't confidently classify Safe, **then** it defaults to DEFER, never EXECUTE.
+**Given** a Safe action just executed, **when** a before/after indicator comparison (record count, status field) shows an unexpected change, **then** it is flagged as a safety-classification anomaly in the end-of-run report — visibility only, does not block the crawl.
+
+### Story 2.13: Data Resolver — Structured Input Resolution `[ADDED 2026-07-29]`
+
+*Added per `sprint-change-proposal-2026-07-29.md`. Formalizes and extends the existing generic-value-filling behavior built in Story 2.2.*
+
+As a user, I want the platform to reuse real or safely-synthesized data before ever guessing business-specific values, so that generated coverage uses trustworthy inputs and never fabricates data it shouldn't.
+
+**Acceptance Criteria:**
+
+**Given** an action needing input, **when** resolving a value, **then** the platform tries, in order: a value visible on the current page, a value observed earlier this run, safe synthetic data (or a placeholder file for uploads) for generic fields, then defers to the Blocked Frontier for business-specific data it can't resolve (FR-40).
+**Given** any value is used (including synthetic), **when** the action executes, **then** the value is logged against the run for later traceability (Story 2.18's reporting).
+
+### Story 2.14: Widget Coverage — Tabs, Dialogs, Multi-Window, File Upload `[ADDED 2026-07-29]`
+
+*Added per `sprint-change-proposal-2026-07-29.md`.*
+
+As a user, I want the platform to correctly handle tabs, modals, new browser windows, and file uploads across any frontend framework, so that discovery doesn't silently skip or get stranded by common enterprise UI patterns.
+
+**Acceptance Criteria:**
+
+**Given** a tab-group widget (ARIA `role="tablist"`/`"tab"`), **when** detected, **then** each tab is a Tier-1 candidate action whose resulting content is observed and fingerprinted as its own state (FR-41).
+**Given** an action opens a dialog/modal/popup, **when** its contents are observed, **then** they are fingerprinted as a nested state, and the dialog's own close action (Escape/"X"/Cancel) is reliably detected and exercised to safely return to the underlying page.
+**Given** an action opens a new browser tab/window, **when** it is same-origin and in-scope, **then** it is followed as a linked sub-flow; **when** cross-origin or out-of-scope, **then** it is deferred and focus returns to the original tab.
+**Given** a `type="file"` input, **when** encountered, **then** it is routed to the Data Resolver (Story 2.13) for a safe generated placeholder file, logged the same as any synthetic value.
+**Given** an element with no standard ARIA role, **when** detected, **then** structural heuristics apply as a fallback, flagged with lower confidence for later review.
+
+### Story 2.15: Blocked Frontier — Aggregated Deferral `[ADDED 2026-07-29]`
+
+*Added per `sprint-change-proposal-2026-07-29.md`.*
+
+As a user, I want blocked exploration areas that need the same missing data consolidated into one request, so that I'm not asked the same question once per page.
+
+**Acceptance Criteria:**
+
+**Given** the Planner reaches a DEFER decision, **when** a `BlockedTask` is created or updated, **then** it is checked against existing open requirements with identical required content and aggregated rather than duplicated (FR-42).
+**Given** a blocked area, **when** autonomous exploration is otherwise exhausted and the area is meaningful, **then** one consolidated request is presented, with an explicit option to finish without supplying it.
+**Given** a DEFER from the Safety Engine (approval needed) versus the Data Resolver (data needed), **when** a `BlockedTask` is written, **then** both use the identical `BlockedTask` structure and resume path — only `required_type` differs; a single blocked path may carry both requirements at once.
+
+### Story 2.16: Blocked Mid-Exploration — Path Persistence & Resume `[ADDED 2026-07-29]`
+
+*Added per `sprint-change-proposal-2026-07-29.md`. `ExplorationStep` is deliberately named to avoid collision with the existing `Journey` domain entity — see Architecture AD-20.*
+
+As a user, I want a blocked exploration path's full route from the start of the run to be remembered, so that supplying the missing data later resumes exactly where it left off instead of losing everything already discovered along the way.
+
+**Acceptance Criteria:**
+
+**Given** a block occurs after N successful steps, **when** the `BlockedTask` is written, **then** all N steps are persisted as ordered `ExplorationStep` rows referencing their already-confirmed `Page` (not duplicating it), including the exact input values used at each step, verbatim (FR-43).
+**Given** a user supplies the missing value, **when** resume begins, **then** the value is validated first (staleness check), a new browser session starts (no assumption the old one survived), and every already-succeeded step is replayed via its stored action/inputs — except a step that already caused a known-irreversible effect, which is instead skipped in favor of navigating directly to its resulting Page, to avoid creating a duplicate record.
+**Given** a resumed path reaches its previously-blocked step, **when** the new value/authorization is supplied, **then** the `BlockedTask` is marked Resolved and exploration continues downstream.
+**Given** a single exploration path, **when** it blocks a second time later in its own continuation, **then** the same `BlockedTask`/step-list record is extended, not replaced with a new, unrelated record.
+
+### Story 2.17: Save-as-Project — Cross-Session Pause & Resume `[ADDED 2026-07-29]`
+
+*Added per `sprint-change-proposal-2026-07-29.md`. `[GAP — flagged, not designed]` The Confirmed/Blocked/Remaining dashboard and Paused status have no equivalent in the current 6-screen IA; see Story 1.2's amendment note.*
+
+As a user, I want to pause an entire in-progress discovery effort and resume it later without losing progress or re-exploring what's already confirmed, so that missing test data doesn't force me to finish everything in one sitting.
+
+**Acceptance Criteria:**
+
+**Given** a running Discovery Run, **when** the user pauses it, **then** `DiscoveryRun.status` is set to `paused`; the confirmed Application Model, open `BlockedTask`s, and the remaining exploration queue are all already durable (no new persistence mechanism needed beyond what Stories 2.15/2.16/2.2 already write) (FR-44).
+**Given** a paused project, **when** the user resumes it (same or different session), **then** the platform re-authenticates fresh, loads the confirmed model and open Blocked items, and does not re-explore any already-canonical state.
+
+**`[GAP — flagged, not designed here]`** The dashboard surfacing Confirmed/Blocked/Remaining counts and Paused status (per the source document's worked example) has no equivalent screen in the current 6-screen IA (`DESIGN.md`/`EXPERIENCE.md`) — needs a UX pass before this AC's frontend half can be built; see Story 1.2's amendment note.
+
+### Story 2.18: Crash Recovery & Error Taxonomy `[ADDED 2026-07-29]`
+
+*Added per `sprint-change-proposal-2026-07-29.md`.*
+
+As an operator, I want engine crashes to recover automatically and target-application failures to be logged with both a machine-readable code and a plain-language explanation, so that transient infrastructure or target-app issues don't silently corrupt or truncate a discovery run's results.
+
+**Acceptance Criteria:**
+
+**Given** an engine-side crash (process/container restart mid-run), **when** the worker restarts, **then** `DiscoveryActivity` resumes from the last checkpointed (already-committed typed row) position, treating any in-flight action at crash time as unconfirmed and re-verifying rather than assuming success — no separate checkpoint mechanism beyond existing real-time typed-row writes (FR-45).
+**Given** a target-application failure (5xx, broken render, or a Story 2.9 Page Load Timeout), **when** it recurs after a small bounded number of retries, **then** the branch is written as a `DiscoveryError` row (`Errored`, not misclassified as NEW or silently dropped) and exploration continues elsewhere.
+**Given** any `DiscoveryError`, **when** surfaced, **then** it carries both a fixed `error_code` (DISC-001..006 starter taxonomy) and a human-readable message with a suggested next action — the end-of-run report lists Errored branches alongside Blocked and Skipped-Unsafe items.
+
+### Story 2.19: Loop Prevention Consolidation `[ADDED 2026-07-29]`
+
+*Added per `sprint-change-proposal-2026-07-29.md`.*
+
+As a user, I want all of the discovery engine's anti-loop safeguards to run consistently before any action executes, so that a pathological page pattern can't stall a run even when the primary sampling mechanisms (State Identity, infinite-scroll sampling) don't catch it.
+
+**Acceptance Criteria:**
+
+**Given** a candidate action about to execute, **when** the Planner checks it, **then** it applies, in order: state dedup (Story 2.10), action-history check, transition-cycle detection (A→B→A→B), route normalization (parameterized-duplicate sampling), the infinite-scroll/pagination budget (Story 2.9), and a final depth/action/scroll budget ceiling (FR-46).
+**Given** these checks are backstops, **when** Story 2.9/2.10's primary sampling mechanisms already prevent a specific loop, **then** this story does not duplicate that logic — it adds the checks not already covered (action-history tracker, transition-cycle detection are the two genuinely new pieces here).
 
 ## Epic 3: Human Curation & Trusted Knowledge Model `[RENAMED 2026-07-15, was "Human Review & Trusted Knowledge Model"]`
 
@@ -500,6 +646,9 @@ So that the map becomes actionable test coverage, not just documentation.
 **And** the Review Scenarios screen offers a 3-way filter (All / Ready / Needs Data) above the list, filtering which Scenarios are shown without altering which exist
 
 **`[GAP — flagged 2026-07-15]`** Whether an edited Scenario's Test data/steps actually feed Playwright generation, or the edit is display-only, is unconfirmed — flag for engineering before implementing the edit action's persistence behavior.
+
+**`[ADDED 2026-07-29]` Given** a generated Scenario recreates an exploration path that passed through a step which used discovery-time test data (a user-supplied unblocking value, Story 2.16, or a Data-Resolver-synthesized value, Story 2.13, including a placeholder upload file)
+**Then** that same value is surfaced as the default Test Data value for that step, not regenerated or left blank (FR-47)
 
 **`[NOTE — 2026-07-18]`** `ScenarioGenerationActivity`'s AI context now draws on canonical Application Model rows (Story 2.5) rather than raw Evidence (removed) — no AC change, only richer input to the same `AIProvider` call.
 

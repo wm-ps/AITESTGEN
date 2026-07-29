@@ -7,8 +7,8 @@ paradigm: 'Durable Orchestrated Pipeline with Ports & Adapters at the boundaries
 scope: 'Application Intelligence Platform V1 — discovery engine, AI journey/capability inference, human curation, scenario/Playwright test generation. CI/CD delivery, analytics dashboards, and on-prem deployment removed from V1 scope 2026-07-15 (see Module Map/Deferred); Journey-detail analytics retained.'
 status: final
 created: '2026-07-13'
-updated: '2026-07-27'
-binds: [FR-1, FR-2, FR-3, FR-6, FR-7, FR-8, FR-9, FR-12, FR-13, FR-14, FR-15, FR-16, FR-17, FR-23, FR-30, FR-31, FR-32, FR-33, FR-34]
+updated: '2026-07-29'
+binds: [FR-1, FR-2, FR-3, FR-6, FR-7, FR-8, FR-9, FR-12, FR-13, FR-14, FR-15, FR-16, FR-17, FR-23, FR-30, FR-31, FR-32, FR-33, FR-34, FR-35, FR-36, FR-37, FR-38, FR-39, FR-40, FR-41, FR-42, FR-43, FR-44, FR-45, FR-46, FR-47]
 sources:
   - '../../prds/prd-AITestGen-2026-07-13/prd.md'
   - '../../briefs/brief-AITestGen-2026-07-12/brief.md'
@@ -155,6 +155,8 @@ flowchart LR
 
 ### AD-15 — Crawl optimization heuristics are deliberate sampling, not incomplete coverage `[NEW 2026-07-18]` `[UPDATED 2026-07-19]`
 
+`[PARTIALLY SUPERSEDED 2026-07-29 — see AD-17]` Rule 5 ("navigation-first") is superseded by the Action Priority Model (AD-17/FR-38) for the untried-in-page-action-vs-unvisited-nav case; rules 1-4 (page-fingerprint dedup, representative-action/form sampling, error-destination handling, button-triggered-navigation-continuation) are unaffected and remain in force, now read alongside AD-16's SAME/VARIANT/NEW classification (FR-37) rather than as the sole dedup mechanism.
+
 - **Binds:** FR-6, FR-7
 - **Prevents:** FR-7's "exhaustive traversal" being misread as "every DOM instance of every action is individually exercised" — which would make page-fingerprint dedup and representative-action sampling look like a completeness regression instead of an intentional design decision.
 - **Rule:** Page-fingerprint deduplication (the same logical page reached via multiple navigation paths is processed once) and representative-action sampling (a repeated identical action pattern, e.g., an "Edit" button repeated per grid row, is exercised once) are AD-level decisions, not implementation shortcuts. `DiscoveryRun.status=complete` (AD-10) means exhaustive traversal of distinct pages and distinct action *patterns* — it does not mean every individual DOM instance of a repeated action was separately exercised. This narrows PRD §12 Risk item 7 (unbounded exploration from repeated actions) without affecting the accepted risk around unbounded *page* growth (infinite pagination, calendar next-links), which is unrelated to action repetition.
@@ -163,6 +165,51 @@ flowchart LR
   2. **Bounded per-page action budget** — representative-action sampling additionally caps the number of distinct action *labels* exercised per page (a small constant, page-body content prioritized over shared nav/header/footer chrome), so a site-wide button doesn't crowd out every page-specific call-to-action. This further narrows PRD §12 Risk item 7 beyond repeated-instance dedup: a page with many genuinely distinct actions, not just repeated ones, is now also bounded.
   3. **Error/broken-destination handling is exclusionary, not exploratory** — a destination that fails to load (network/DNS error) or returns a 4xx/5xx response is marked visited and never persisted as a `Page` or explored further. It was never a real business page, so excluding it isn't a completeness gap against FR-7.
   4. **Button-triggered navigation is followed onward** — a page reached only via a non-link action (e.g. a client-side "Add to Cart" button) is now enqueued for further traversal like any other discovered page, closing what was previously a structural blind spot: a flow reachable only through such an action was invisible to the crawler past the first click. This is a completeness *fix*, not a new sampling rule — flagged here because it changes what "exhaustive" (AD-10) actually covers.
+
+### AD-16 — State Identity Engine runs against an in-process runtime cache, not a new persistent tier `[NEW 2026-07-29]`
+
+- **Binds:** FR-37
+- **Prevents:** Introducing Redis (or any new stateful service) before it's proven necessary — YAGNI applied to infra, not just code.
+- **Rule:** The SAME/VARIANT/NEW comparison runs against a plain in-process cache scoped to one `DiscoveryActivity` execution, rebuilt from canonical (`merged_into_id IS NULL`) `Page` rows at Activity start. This is sufficient because Save-as-Project resume (AD-22) relies on the *permanent* DB's canonical rows for "don't re-explore what's confirmed," never on the runtime cache surviving a pause. Add a real distributed cache only if a single-process cache measurably can't keep up — not speculatively.
+
+### AD-17 — Action Priority Model supersedes AD-15's navigation-first rule `[NEW 2026-07-29]`
+
+- **Binds:** FR-38 (supersedes FR-6's navigation-first clause, AD-15 rule 5)
+- **Prevents:** Two competing action-ordering rules coexisting in the codebase — the old "prefer unvisited nav over repeating an already-done same-page action" and the new "finish all untried Tier-1 in-page actions before any Tier-2 navigation" disagree on the untried-in-page-action-vs-unvisited-nav case, which the old rule never actually addressed but which is exactly the case that motivated this change (a page left prematurely before its own actions are explored).
+- **Rule:** Every candidate action carries a Tier 1 (in-page) or Tier 2 (navigation-intent) tag, assigned deterministically (ARIA/landmark role, route-changing href, layout position) with AI as a fallback only for genuinely ambiguous cases (mirrors AD-3's AI-assists-deterministic pattern). The Exploration Planner exhausts all untried Tier 1 actions on a state — including finishing any AD-18 scroll/pagination sampling — before considering any Tier 2 action. AD-15's "navigation-first" label is retired; its underlying repeated-interaction-avoidance behavior is retained as one of AD-22's loop-prevention backstops, not as a competing priority rule.
+
+### AD-18 — Infinite scroll/pagination is sampled and validated, never crawled to exhaustion `[NEW 2026-07-29]`
+
+- **Binds:** FR-36
+- **Rule:** After a scroll/"Load More" action, a bounded sample (2-3 iterations) is compared via AD-16's State Identity Engine; consecutive SAME classifications confirm a repeating pattern, at which point the region is marked sampled and control returns to the Planner. A hard scroll/pagination budget per page applies regardless of validation outcome (AD-22 — Loop Prevention, see below).
+
+### AD-19 — Safety Engine classification is a distinct step, before Data Resolution `[NEW 2026-07-29]`
+
+- **Binds:** FR-39
+- **Prevents:** An action being executed (or its input resolved) before its safety classification is known — resolving data for an action that turns out to be destructive would be wasted work at best, a false sense of "we tried" at worst.
+- **Rule:** The Exploration Planner asks the Safety Engine before the Data Resolver. Clearly Destructive → SKIP immediately, Data Resolver never consulted. Safe or Ambiguous → proceed to Data Resolution; an Ambiguous action that *does* resolve its data still lands in the Blocked Frontier (AD-20) for approval, it is never executed on the strength of having data alone. A Safe action gets a lightweight before/after indicator check post-execution; a detected anomaly is logged, visibility-only, never blocking.
+
+### AD-20 — Blocked Frontier persists full exploration paths, referencing confirmed Pages, never duplicating them `[NEW 2026-07-29]`
+
+- **Binds:** FR-42, FR-43
+- **Prevents:** A resumed blocked path being unreconstructable because only the blocking step was recorded, or the path record duplicating already-confirmed Page data instead of referencing it.
+- **Rule:** `BlockedTask` is one row per blocked path; `ExplorationStep` is one row per step in it, ordered by `step_order`, each referencing (not duplicating) an already-confirmed `Page` via FK, and storing the exact action + input values used (synthetic values included verbatim). Aggregation of requirements with identical content into one consolidated ask (FR-42) is resolved at read time from open `BlockedTask` rows sharing the same `required_description`, not a separate aggregation table. `[NAMING]` This entity is `ExplorationStep`, deliberately not `JourneyStep` — it exists before, and independent of, whether `InferenceActivity` ever creates a `Journey` from this path; conflating the two names would be a standing source of confusion between a crawl-time path and the Trusted Knowledge Model's `Journey` entity.
+
+### AD-21 — Resume replays confirmed steps, skips non-idempotent ones already succeeded `[NEW 2026-07-29]`
+
+- **Binds:** FR-43
+- **Rule:** On resume, the supplied value is validated (staleness check) before any replay starts; a new browser session is always started (no assumption the blocking session survived); each `ExplorationStep` is replayed via its stored action/inputs, except a step that already caused a known-irreversible server-side effect (e.g. a "Create Order" submit), which is instead skipped in favor of navigating directly to its already-reached resulting Page — preventing a duplicate real-world record from a blind re-submit. Where this cannot be generalized across target applications, flag it as an app-specific open question at implementation time (matches the document's own acknowledged gap) rather than guessing.
+
+### AD-22 — Save-as-Project pause/resume maps onto the existing Application entity; no new Project table `[NEW 2026-07-29]`
+
+- **Binds:** FR-44
+- **Prevents:** A parallel "Project" concept duplicating what `Application` (already Organization-scoped, already the durable re-discovery unit per AD-13/FR-15) already provides.
+- **Rule:** `DiscoveryRun.status` gains `paused`. Every fingerprint-cache lookup (AD-16), `BlockedTask`, and remaining-exploration-queue entry is scoped by the existing `application_id` — pausing/resuming is a matter of filtering by that ID, not a new grouping mechanism. On resume: re-authenticate fresh (no live session assumed, matching AD-11's existing session-expiry philosophy), load canonical `Page`/`Journey` rows and open `BlockedTask` rows, and never re-explore an already-canonical state.
+
+### AD-23 — Crash recovery is continuous checkpointing; errors are typed, not silent `[NEW 2026-07-29]`
+
+- **Binds:** FR-45
+- **Rule:** Every `Page`/`Action`/`ApiEndpoint`/`PageTransition` write (already real-time per AD-8) doubles as the engine's crash checkpoint — no separate checkpoint mechanism. On worker restart, `DiscoveryActivity` resumes from the last confirmed-safe point via the same `paused`-aware resume path as AD-22, treating any action in-flight at crash time as unconfirmed and re-verifying rather than assuming success. A target-application failure (5xx, broken render, or a DISC-004 timeout past FR-35's Page Load Timeout) is retried a small bounded number of times, then written as a `DiscoveryError` row (not a `Page` row, not misclassified as NEW) and the crawl continues elsewhere. Every `DiscoveryError` carries both a fixed `error_code` (DISC-001..006 starter taxonomy) and a human-readable message — machine-readable for logs/support correlation, human-readable for the UI, never one without the other.
 
 ## Consistency Conventions
 
@@ -198,10 +245,15 @@ apps/
     generation/               # ScenarioGenerationActivity, PlaywrightGenerationActivity, CIDeliveryActivity (unbuilt — see below)
 packages/
   domain/                    # SQLModel entities: Organization, Application (gains favicon_url, nullable — FR-32, added
-                              #   2026-07-21, not secrets-managed: public asset reference, not a credential), DiscoveryRun (gains
-                              #   stage field — FR-33, added 2026-07-21, see AD-10 extension), Capability, Journey, Scenario,
-                              #   TestAsset, Page, Form, FormField, ValidationRule, Action, ApiEndpoint, PageTransition, Component,
-                              #   ComponentLocator, Assertion (added 2026-07-18, FR-30 — no generic Evidence table; see AD-8/AD-14)
+                              #   2026-07-21, not secrets-managed: public asset reference, not a credential; gains
+                              #   page_load_timeout_seconds default — FR-35, added 2026-07-29), DiscoveryRun (gains
+                              #   stage field — FR-33, added 2026-07-21, see AD-10 extension; gains paused status value and
+                              #   page_load_timeout_seconds override — FR-44/FR-35, added 2026-07-29), Capability, Journey, Scenario,
+                              #   TestAsset, Page (gains variant_of_page_id self-FK and observed behavior/scroll signals — FR-37,
+                              #   added 2026-07-29), Form, FormField, ValidationRule, Action, ApiEndpoint, PageTransition, Component,
+                              #   ComponentLocator, Assertion (added 2026-07-18, FR-30 — no generic Evidence table; see AD-8/AD-14),
+                              #   BlockedTask, ExplorationStep, SyntheticDataEntry, DiscoveryError (added 2026-07-29, FR-42/43/45 —
+                              #   see AD-20/AD-23; ExplorationStep deliberately not named JourneyStep, see AD-20's naming note)
   workflows/                  # DiscoveryWorkflow, GenerationWorkflow — orchestration only (AD-2)
   ai_provider/                 # AIProvider interface + hosted implementation (AD-3); on-prem implementation not built, see Deferred
   delivery_adapters/            # DeliveryAdapter interface — retained as a forward-compatible seam (AD-4); CI/CD Delivery feature removed 2026-07-15, no adapter implementations built
@@ -492,6 +544,7 @@ Every PRD feature area is one loosely-coupled module: a single Activity, endpoin
 | **Review**<br>`apps/api` review endpoints, `packages/domain` | `[UPDATED 2026-07-15]` Human rename / delete curation; sole path that can exclude a Journey from the Trusted Knowledge Model — no approve/reject, no longer starts `GenerationWorkflow` (moved to Inference, above) | FR-9, FR-12–14 | Candidate Journeys/Capabilities; reviewer action from `apps/web` | `status=deleted`, or updated name | `packages/domain` (AD-7) | A new curation action is isolated to this module — Discovery, Inference, and Generation only ever read `status`, never assume how it got there |
 | **Scenario Generation**<br>`apps/workers/generation` (`ScenarioGenerationActivity`) | Discovered Journey → happy-path + negative Scenarios, triggered immediately at creation (no approval gate) | FR-14, FR-16 | Discovered `Journey` + its attributed canonical Application Model rows (`[UPDATED 2026-07-18]` no Evidence) | `Scenario` rows | `AIProvider` port | Swapping the scenario strategy never touches Playwright generation — they share a workflow, not code |
 | **Playwright Generation**<br>`apps/workers/generation` (`PlaywrightGenerationActivity`) | Scenario → executable Playwright Test Asset | FR-17 | `Scenario` rows | `TestAsset` rows (code + `current` flag, AD-8) | `AIProvider` port | `[UPDATED 2026-07-27]` FR-18 (regeneration) cut in full — nothing regenerates today; the `current`-flag scaffold this module owns stays isolated here regardless, per Story 4.1/4.2's own idempotency needs |
+| **Discovery Decision Engine** `[NEW 2026-07-29]`<br>`apps/workers/discovery` (Exploration Planner, State Identity Engine, Safety Engine, Data Resolver) | Classify observed states (SAME/VARIANT/NEW), tag/order candidate actions by priority tier, classify action safety, resolve action input, decide EXECUTE/DEFER/SKIP | FR-36–FR-42, FR-46 | Observed page/action signal from `DiscoveryActivity` | Execution decisions; `BlockedTask`/`ExplorationStep`/`SyntheticDataEntry` rows on DEFER | `packages/domain` (AD-16, AD-19, AD-20) | A new safety verb, comparison threshold, or resolution rule is isolated here — never touches the crawl-walk mechanics (page traversal, form-filling primitives) `DiscoveryActivity` itself owns. |
 | **Test Suite Export** `[NEW 2026-07-27]`<br>`apps/api` (new download endpoint) | Assemble all current `TestSuite`/`TestAsset` rows for an Application into a runnable, suite-folder-organized **Python** (`pytest`/`pytest-playwright`) project and return it as a zip | FR-34 | `TestSuite`/`TestAsset` rows (`current=true` only) | Zip archive returned synchronously to the client — no new Postgres rows, no workflow | `packages/domain` (read-only) | Same isolation shape as Analytics — read-only over existing rows, no write path into the Trusted Knowledge Model, so a packaging/template change here can never corrupt generation state. A new project-scaffold file (e.g. a different `conftest.py` default) never touches `PlaywrightGenerationActivity` or `TestAsset.code` generation itself — export is a pure downstream read. `[CORRECTED 2026-07-27]` Scaffold language is Python, matching `TestAsset.code`'s actual generated language — no Python→TypeScript conversion exists or is planned; see Deferred. |
 | **CI Delivery** `[REMOVED 2026-07-15]`<br>`apps/workers/generation` (`CIDeliveryActivity`), `packages/delivery_adapters` | Push a Test Asset into the customer's repo (PR or direct commit) | — (previously FR-19–20, removed) | `TestAsset` + Application's configured Git host | PR/commit on the customer's Git host | `DeliveryAdapter` port (AD-4), AD-9 | Port contract retained as a forward-compatible seam (no harm keeping it ready); no story builds against it in current scope — see Deferred section |
 | **CI Instructions** `[REMOVED 2026-07-15]`<br>`packages/ci_instructions` | Produce the manual pipeline-wiring template for the Application's CI system | — (previously FR-21, removed) | Application's configured CI system | Instructions/template surfaced in `apps/web` | none — pure function of CI system | Port contract retained as a forward-compatible seam; not scheduled for V1 build — see Deferred section |
@@ -519,3 +572,6 @@ Every PRD feature area is one loosely-coupled module: a single Activity, endpoin
 - **Reviewer prioritization/importance-marking**: out of V1 scope per PRD §5; no architecture accommodation made.
 - **Tenant billing/plan model**: AD-12 fixes the data-isolation boundary (every query is Organization-scoped); billing, plan tiers, and seat management are unaddressed and out of this spine's scope.
 - **V2 source-code correlation / V3 change-impact prediction**: out of this spine's altitude entirely. AD-3's port boundary is the intentional seam — a future code-analysis/retrieval capability can be added as a new worker or service behind the existing `AIProvider`/`domain` boundaries rather than requiring a V1 rewrite.
+- **`[NEW — 2026-07-29]` Redis/distributed runtime cache**: deliberately not built now (AD-16) — an in-process cache scoped to one `DiscoveryActivity` execution is the V1 default. Revisit only if profiling shows a single-process cache is the actual bottleneck.
+- **`[NEW — 2026-07-29]` Save-as-Project dashboard UX & Blocked-item review/resume UI**: FR-44's Confirmed/Blocked/Remaining dashboard and FR-42/43's "supply missing data / authorize action" surface have no equivalent in the current 6-screen IA (`DESIGN.md`/`EXPERIENCE.md`). Flagged on Story 1.2 (dashboard) and new Story 2.17 (review/resume) — not designed in this architecture pass; needs a UX design pass before implementation.
+- **`[NEW — 2026-07-29]` Non-idempotent-replay generalization**: AD-21's "skip a step that already caused an irreversible effect" rule cannot be fully generalized across arbitrary target applications from architecture alone — flagged as an app-specific judgment call at implementation time, per the source document's own acknowledged gap (its Section 15.4).

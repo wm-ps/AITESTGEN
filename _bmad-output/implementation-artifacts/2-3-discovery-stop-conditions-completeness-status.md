@@ -20,6 +20,7 @@ so that I know the map reflects everything discovery found.
 
 1. **Given** a running Discovery Run, **when** no new pages, actions, or state transitions are found, **then** `DiscoveryRun.status` is set to `complete`. [Source: epics.md#Story 2.3; FR-7; architecture#AD-10]
 2. Completeness is read directly from `DiscoveryRun.status` everywhere it's shown, never inferred from the presence or absence of other data. [Source: architecture#AD-10]
+3. **`[ADDED 2026-07-29]` Given** a Discovery Run reaches `DiscoveryRun.status=complete`, **then** the completion report includes counts of Blocked items (Story 2.15), Skipped-Unsafe items (Story 2.12), and Errored branches (Story 2.18), alongside confirmed states/journeys — none of these categories block completion; a run can legitimately complete with open items in any of them. [Source: `sprint-change-proposal-2026-07-29.md`; FR-42, FR-45]
 
 ## Tasks / Subtasks
 
@@ -37,9 +38,17 @@ so that I know the map reflects everything discovery found.
   - [x] A Discovery Run against a small, fully-crawlable target reaches `status=complete` when no new evidence is found, with the pill showing the (gap-filled) `Complete` treatment
   - [x] Every surface showing run completeness reads `DiscoveryRun.status` directly (code-review-checkable, not just a runtime test)
   - [x] No code path anywhere computes or displays an `incomplete` state — a deliberate negative check, not just a positive functional test
+- [ ] **`[ADDED 2026-07-29, BLOCKED]`** Task 5: Extend the completion report with Blocked/Skipped-Unsafe/Errored counts (AC: 3)
+  - [ ] **Cannot be implemented yet.** AC 3 depends on `BlockedTask` (Story 2.15), the Safety Engine's skip classification (Story 2.12), and `DiscoveryError` (Story 2.18) — none of these exist yet (all `ready-for-dev` as of this note). This task is a placeholder to pick up once those three land; it does not block this story's own `done` status for ACs 1-2, which are fully implemented and independently verified today.
 
 ## Dev Notes
 
+- **`[ADDED 2026-07-29]` AC 3 is forward-looking and intentionally not yet implementable.** It was
+  added by `sprint-change-proposal-2026-07-29.md` as part of the Discovery Engine redesign, but its
+  three data sources (`BlockedTask`, Safety Engine skip events, `DiscoveryError`) are new entities
+  owned by Stories 2.12/2.15/2.18, all still `ready-for-dev`. This story remains `done` on the
+  strength of ACs 1-2 (fully implemented, independently verified — see Change Log); AC 3/Task 5
+  is picked up once its dependencies exist, not before.
 - **This story's job is narrowly "replace the placeholder with the real thing," not "build a new mechanism from scratch."** Story 2.2 deliberately left a simple iteration-cap placeholder specifically so this story could swap in the real FR-7 logic without restructuring `DiscoveryActivity`'s loop. Read Story 2.2's Dev Notes and File List before starting Task 1.
 - **AD-10 is a discipline requirement, not just a data-model one** — the failure mode it prevents is a screen quietly computing "is this run done?" from something other than `status` (e.g., "no new evidence in the last N seconds") and drifting out of sync with the authoritative field. Task 2's audit exists specifically to catch that.
 - **The `Complete` pill-color gap is a real, filled ambiguity** — flagged explicitly above so it isn't mistaken for a literal `DESIGN.md` citation. If this is later formalized in a design pass, treat that as the design system catching up to an implementation decision, not this story having gotten something wrong.
@@ -144,3 +153,12 @@ claude-sonnet-5
   gap-filled `Complete` (green) status-pill variant. Verified against a live local target reaching
   real `status=complete`, and a `grep`-based negative check that no `incomplete` state exists
   anywhere in source. Status moved to `review`.
+- 2026-07-29 — Re-verified for closure. Confirmed by direct code inspection: `crawler.py`'s loop
+  is `while page_queue:` with no cap (`MAX_ITERATIONS` fully removed, one grep hit only), and
+  `discovery_run.status = "complete"` is written in exactly one place in `activities.py`, matching
+  this story's Completion Notes exactly. `apps/api/src/api/main.py` still reads
+  `discovery_status=discovery_run.status` directly (Task 2's audit holds). AC 3 (added same day by
+  `sprint-change-proposal-2026-07-29.md`) is explicitly deferred — see Dev Notes and new Task 5 —
+  its dependencies (Stories 2.12/2.15/2.18) don't exist yet. Full `apps/workers/discovery/` suite
+  (real Postgres/Vault/S3, no mocks): 57 passed, 0 skipped (see Story 2.2's Change Log for the
+  environment fixes this required). Status remains `done`.

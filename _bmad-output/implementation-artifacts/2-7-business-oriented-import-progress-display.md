@@ -4,7 +4,7 @@ baseline_commit: 2b72ef3deaba32290fd3d65de027081a5c76f13b
 
 # Story 2.7: Business-Oriented Import Progress Display
 
-Status: review
+Status: done <!-- CLOSED 2026-07-29 after re-verification, see Change Log -->
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -18,7 +18,7 @@ so that I understand what's happening without needing to know how discovery work
 
 ## Acceptance Criteria
 
-1. **Given** a running `DiscoveryRun`, **when** the frontend polls its status, **then** it shows one of four business-language stage labels — Initialization, Authentication, Discovery, Analysis — mapped from `DiscoveryRun.stage`, each with a fixed percentage and a progress indicator (FR-33). `[UPDATED 2026-07-21, live UX correction]` The percentage is the *previous* stage's completion, not the in-progress stage's own target (0/10/25/75 while Initialization/Authentication/Discovery/Analysis are respectively in progress) — see Completion Notes below for why. [Source: epics.md#Story 2.7]
+1. **Given** a running `DiscoveryRun`, **when** the frontend polls its status, **then** a fixed percentage and a progress indicator are shown, derived internally from `DiscoveryRun.stage`'s four values (Initialization, Authentication, Discovery, Analysis) (FR-33). `[UPDATED 2026-07-21, live UX correction]` The percentage is the *previous* stage's completion, not the in-progress stage's own target (0/10/25/75 while Initialization/Authentication/Discovery/Analysis are respectively in progress) — see Completion Notes below for why. `[WALKED BACK 2026-07-21, same day, Second Post-Review Fix]` The stage label text itself (the literal words "Initialization"/"Authentication"/"Discovery"/"Analysis") is **not rendered** — live product feedback found a second, differently-named "in progress" indicator redundant with the existing `StatusPill` pulsing dot, and simplified the copy to a single generic "Discovering journeys in {Application name}" heading plus the percentage bar. `STAGE_PERCENT` stays as an internal lookup (still needed to compute the percentage) but its display label was cut — this AC's original "shows one of four... stage labels" wording is stale against the shipped, product-approved behavior; the percentage/indicator half still holds exactly as written. [Source: epics.md#Story 2.7]
 2. No technical terms (e.g. "crawling," "crawl queue," "page fingerprint," or any raw route/page/API text) appear anywhere in this view. [Source: epics.md#Story 2.7; sprint-change-proposal-2026-07-21.md CR-2]
 3. `DiscoveryRun.status=complete` transitions the display to 100% / Discover Journeys ready — in practice this is implicit (Journeys appear, this view unmounts), 100% is never itself rendered. [Source: epics.md#Story 2.7]
 4. `DiscoveryRun.status=failed` (e.g. `session_expired`, AD-11) shows the existing re-authentication prompt in place of stage progress. [Source: epics.md#Story 2.7]
@@ -117,8 +117,50 @@ No `project-context.md` exists yet in this repository.
 
 ### Agent Model Used
 
+claude-sonnet-5
+
 ### Debug Log References
+
+See the three dated sections above ("Completion Notes (2026-07-21)", "Post-Review Fix", "Second
+Post-Review Fix") for the full session-by-session debug/verification trail — written before this
+formal Dev Agent Record section was populated, not duplicated here. Summary: 71 backend + 33
+(later 31, then 35) frontend tests passing across the three passes; `ruff`/`pyright`/`tsc -b`/
+`oxlint` clean throughout; live end-to-end smoke test against the real running API.
 
 ### Completion Notes List
 
+See the three dated sections above for full detail. In brief: Task 1-2 exposed and started polling
+`discovery_stage` live (closing a real pre-existing gap — status/stage were frozen props, never
+re-fetched); Task 3-4 built `ImportProgress.tsx` and wired it into `DiscoverJourneys.tsx`, replacing
+the raw live-feed; two same-day post-review passes corrected the percentage-timing (previous-stage
+completion, not current-stage target) and removed the literal stage-label text entirely per live
+UX feedback (see this story's AC 1 amendment, 2026-07-29).
+
 ### File List
+
+See the three dated sections above and "Project Structure Notes" for the full file list from the
+original three implementation passes (2026-07-21). No files touched in the 2026-07-29 closure pass
+beyond this story file itself (no code change was needed — see Change Log).
+
+## Change Log
+
+- 2026-07-21 — Implemented Tasks 1-5 (ACs 1-4): live polling via `useDiscoveryProgress`, the
+  `ImportProgress` stage/percentage component, wired into Discover Journeys in place of the raw
+  live-feed. Status moved to `review`.
+- 2026-07-21 [same day, Post-Review Fix] — Corrected percentage timing (previous-stage completion,
+  not current-stage target) and rebuilt the visual treatment to match the reference prototype's
+  centered spinner+card pattern.
+- 2026-07-21 [same day, Second Post-Review Fix] — Removed the literal stage-label text per further
+  live UX feedback (redundant with `StatusPill`'s existing pulsing dot); added the shimmer-sweep
+  bar animation, reusing `SignIn.tsx`'s existing `aitg-shimmer-sweep` keyframe.
+- 2026-07-29 — Re-verified for closure. Confirmed `ImportProgress.tsx`'s current visual treatment
+  (shimmer-sweep bar, no stage-label text, "Discovering journeys in {name}" heading) is exactly
+  what the Second Post-Review Fix above describes — no drift since 2026-07-21. Corrected AC 1's
+  text, which still claimed the four stage labels are displayed (stale since the Second Post-Review
+  Fix removed them the same day they were added) — the percentage/indicator logic AC 1 also
+  describes is unaffected and confirmed correct. Cross-checked the shimmer-sweep animation against
+  `prototype-v3.html`: present in both, genuinely v3-sourced, not invented. Filled this story's
+  previously-empty formal Dev Agent Record section (content existed but lived under ad hoc headers
+  above it) and added this Change Log section, which didn't exist before. `sprint-status.yaml`
+  corrected from `in-progress` (reopened 2026-07-27 for a restyle already superseded by this
+  story's own 2026-07-21 rebuild) to `done`.

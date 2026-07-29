@@ -1,10 +1,13 @@
 # Story 1.2: Sign In & Organization-Scoped Workspace
 
-Status: done
+Status: done <!-- REOPENED 2026-07-27 for the UX v3 redirect rework below, RE-CLOSED 2026-07-29
+after confirming the rework was already implemented in commit 2212c71 ("Updated screens as per
+latest UX") — only this story file and sprint-status.yaml had never been updated to match. See
+Change Log. -->
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
-*Updated 2026-07-15 — IA changed from a persistent nav-rail shell to a top-bar + Home landing; see `sprint-change-proposal-2026-07-15.md`.*
+*Updated 2026-07-15 — IA changed from a persistent nav-rail shell to a top-bar + Home landing; see `sprint-change-proposal-2026-07-15.md`.* *Updated 2026-07-27 — Home layout and dark-mode-parity requirement changed per the UX v3 redirect; see `sprint-change-proposal-2026-07-27-3.md`.*
 
 ## Story
 
@@ -14,8 +17,8 @@ so that my Applications and data are isolated from any other customer's.
 
 ## Acceptance Criteria
 
-1. **Given** a registered user belonging to an Organization, **when** they sign in, **then** they land on Home, showing three action cards (Start a New Project, Managed Applications, Watch a Product Demo) beneath a top bar (brand mark + product name, left; user-initials avatar, right). [Source: epics.md#Story 1.2]
-2. The design-token system is applied with full light/dark parity (`:root` light defaults, `@media (prefers-color-scheme: dark)` override, explicit `data-theme` attribute override) — no component hardcodes a color. [Source: UX-DR1, DESIGN.md#Brand & Style]
+1. **Given** a registered user belonging to an Organization, **when** they sign in, **then** they land on Home. `[UPDATED 2026-07-27]` With zero Applications onboarded, Home shows an onboarding empty state (icon badge, "No projects yet" heading, one line of body copy, a primary "+ Create New Project" button). With at least one existing Application, Home instead shows that Application as a persistent card (name, journey/scenario counts, status) beside a "Watch Demo" action — clicking the card resumes the guided pipeline at that Application's Discover Journeys step, never resetting to Connect App. An Application's card remains on Home regardless of its Journey count, including zero after all Journeys are deleted — Home only reverts to the zero-Applications empty state when no Application has ever been onboarded. All of this sits beneath the existing top bar (brand mark + product name, left — click returns to Home from anywhere; user-initials avatar, right). [Source: epics.md#Story 1.2; sprint-change-proposal-2026-07-27-3.md]
+2. The design-token system is applied per `DESIGN.md`'s current token set — no component hardcodes a color. `[DECISION, 2026-07-27]` Full light/dark parity is dropped as a requirement (the reference UX no longer specifies dark values, and this was never a PRD/FR commitment) — the design-token system is light-mode only. The `@media (prefers-color-scheme: dark)`/`data-theme="dark"` overrides previously in `apps/web/src/tokens.css`/`theme.ts` have been removed, not left in place with stale pre-redirect colors. Reinstating dark mode later requires a fresh product decision and new `DESIGN.md` token values, not a revival of the old teal-based dark palette. [Source: UX-DR1, DESIGN.md#Brand & Style; sprint-change-proposal-2026-07-27-3.md]
 3. Clicking the avatar opens a menu showing the user's name, email, and a Log out action. [Source: epics.md#Story 1.2]
 4. Every API query the user's session triggers is scoped to their Organization via one central scoping mechanism (AD-12) — a second Organization's data is never returned. [Source: architecture#AD-12]
 5. The Home screen omits the top-bar Application-name breadcrumb (UX-DR16) — it is inherently pre-Application. [Source: UX-DR16, EXPERIENCE.md#Information Architecture]
@@ -23,6 +26,8 @@ so that my Applications and data are isolated from any other customer's.
 7. The token system's `ink-muted` value is the only token used for real label/caption/metadata text anywhere in the shell, with `ink-faint` reserved exclusively for decorative marks — this rule, plus the no-exclamation-points/no-celebratory-language voice-and-tone rule, is treated as a standing constraint every later story's UI copy must follow, not a one-time fix. [Source: UX-DR19, UX-DR20, DESIGN.md#Colors, EXPERIENCE.md#Voice and Tone]
 
 *(Superseded 2026-07-15 — retained for history only: the prior AC described a persistent 236px nav rail with links grouped under Workspace/Onboard/Understand/Automate/Prove, Settings and sign-out pinned to the rail foot. No nav rail exists in the current IA; top-level navigation is the pipeline stepper introduced in Story 2.1.)*
+
+`[GAP — flagged 2026-07-29, not resolved here]` Story 2.17 (Save-as-Project, see `sprint-change-proposal-2026-07-29.md`) specifies a dashboard showing Confirmed/Blocked/Remaining-to-Explore counts and a "Paused — Action Needed" status for a paused project. Home's current single persistent Application card (this story's 2026-07-27 AC) has no such counts or paused-state treatment. Needs a UX design pass before Story 2.17's frontend half can be built — do not read this note as authorizing ad hoc UI invention against it.
 
 ## Tasks / Subtasks
 
@@ -163,6 +168,33 @@ claude-sonnet-5
   reading the first Organization's Application while creating their own succeeds normally.
   Full `pytest`/`ruff`/`pyright` (Python) and `oxlint`/`tsc -b`/`vitest`/`vite build` (web) all
   green; `api-types.gen.ts` regenerated with zero drift against the running API (AD-6).
+- **2026-07-29 — reopened, verified, and re-closed.** `sprint-status.yaml` had this story marked
+  `in-progress` since the 2026-07-27 UX v3 redirect (`sprint-change-proposal-2026-07-27-3.md`),
+  but commit `2212c71` ("Updated screens as per latest UX," same day) had already implemented
+  both required changes in full:
+  - **Home layout (AC 1):** `apps/web/src/components/Home.tsx` already renders the zero-Application
+    empty state ("No projects yet", body copy, "+ Create New Project") and the persistent
+    `ApplicationCard` (name, journey/scenario counts, status, "Watch Demo") exactly as specified.
+  - **Dark-mode parity drop (AC 2):** `apps/web/src/theme.ts` no longer exists (deleted), and
+    `apps/web/src/tokens.css` carries an explicit header comment recording the removal — no
+    `@media (prefers-color-scheme: dark)` or `data-theme="dark"` selectors remain anywhere in the
+    file.
+
+  Only this story file and `sprint-status.yaml` had never been updated to reflect that the rework
+  was done — a documentation gap, not a code gap. Verifying the claim surfaced two real,
+  unrelated bugs, both now fixed:
+  1. `apps/web/src/preview-entry.tsx` failed `tsc -b` (`TS6133`, unused `init` parameter on the
+     preview harness's mocked `window.fetch`) — removed the unused parameter.
+  2. `App.test.tsx`'s "shows the persistent Application card on Home..." test crashed
+     (`StatusPill`'s `status.charAt(0)` on `undefined`) because its `fetchMock` catch-all returned
+     `[]` for `GET /applications/{id}` — the endpoint `useDiscoveryProgress`'s poll actually calls —
+     instead of a real Application shape. Added an explicit branch for that path. Root cause was
+     the test's mock, not `StatusPill`, `useDiscoveryProgress`, or the production API (which always
+     returns a well-formed `ApplicationRead`).
+  - Full verification after both fixes: `npm run build` clean, `npx vitest run` → 56/56 passed,
+    `npm run lint` clean, `uv run pytest apps/api/tests/test_auth.py apps/api/tests/test_onboarding.py`
+    → 13/13 passed (including the AD-12 cross-organization isolation case). Status restored to
+    `done`; `sprint-status.yaml` updated to match.
 
 ### File List
 
@@ -218,3 +250,24 @@ claude-sonnet-5
 **Workspace root**
 - `docker-compose.yml` (MODIFIED — adds Vault dev-mode service)
 - `.github/workflows/ci.yml` (MODIFIED — adds Vault service + Temporal dev server to Python job)
+
+**2026-07-29 closure pass**
+- `apps/web/src/preview-entry.tsx` (MODIFIED — removed unused `init` parameter, fixed `tsc -b`)
+- `apps/web/src/App.test.tsx` (MODIFIED — added a `GET /applications/{id}` branch to the
+  "persistent Application card" test's `fetchMock`, fixing an `undefined`-status crash)
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` (MODIFIED — `in-progress` → `done`)
+
+*(Everything else in this story's actual implementation — `Home.tsx`'s empty-state/persistent-card
+layout, `tokens.css`'s dark-mode-override removal, `theme.ts`'s deletion — was already committed
+2026-07-27/28 in `2212c71`, prior to this closure pass; see Completion Notes.)*
+
+## Change Log
+
+- 2026-07-17 — Initial implementation (sign-in, top bar, Home with three action cards, design
+  tokens with full light/dark parity, AD-12 Organization-scoping). Status moved to `done`.
+- 2026-07-27 — Reopened per `sprint-change-proposal-2026-07-27-3.md` (UX v3 redirect): AC 1
+  (Home layout) and AC 2 (dark-mode parity dropped) amended. Implemented same day/next day in
+  commit `2212c71`, but story tracking was never updated to reflect it.
+- 2026-07-29 — Verified the 2026-07-27 rework was already fully implemented; fixed two
+  unrelated bugs surfaced during verification (`preview-entry.tsx` build error, an
+  `App.test.tsx` mock gap); full suite green. Status restored to `done`.

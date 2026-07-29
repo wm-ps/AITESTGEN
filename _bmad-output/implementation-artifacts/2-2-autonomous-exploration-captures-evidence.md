@@ -6,7 +6,7 @@ baseline_commit: 48b6499e08423320a0156e02720f1e8e2ba7d66c
 
 *Renamed 2026-07-18, was "...Captures Evidence" — the generic `Evidence` table is removed in full, not merely renamed; this story now writes typed rows directly. See `sprint-change-proposal-2026-07-18.md`.*
 
-Status: review <!-- CR-2 rework (Task 6, stage transitions) complete 2026-07-21, see notes below; original 2026-07-20 verification note: multiple real crawls against shopbit.onwavemaker.com produced correct typed Page/Form/Action/ApiEndpoint/PageTransition rows -->
+Status: done <!-- CLOSED 2026-07-29 after re-verification (see Change Log); CR-2 rework (Task 6, stage transitions) complete 2026-07-21, see notes below; original 2026-07-20 verification note: multiple real crawls against shopbit.onwavemaker.com produced correct typed Page/Form/Action/ApiEndpoint/PageTransition rows -->
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -32,6 +32,8 @@ so that a structured record of it is captured as the basis for journey mapping.
 8. **`[ADDED 2026-07-19]`** **Given** a `Form` with an identical shape and starting field values (hidden fields included) is reachable identically from more than one page, **when** the crawler encounters it again, **then** it is captured once, not once per page it appears on (representative-form sampling, mirrors AC 6 for forms). Any observable difference — including a hidden field's value — means the forms are genuinely distinct and both get captured. [Source: FR-6; architecture#AD-15]
 9. **`[ADDED 2026-07-19]`** **Given** a destination fails to load (network/DNS error) or responds with a 4xx/5xx status, **when** the crawler reaches it, **then** it is marked visited and skipped — no `Page` row is written and it is never explored further, since it isn't a real business page to build a Journey/Scenario against. [Source: FR-6, FR-7; architecture#AD-15]
 10. **`[ADDED 2026-07-21]`** **Given** `DiscoveryActivity` begins session establishment, **then** `DiscoveryRun.stage` is set to `authenticating`; **given** session establishment succeeds and crawling begins, **then** `stage` is set to `discovering` and remains through `ApplicationModelBuilderActivity` (Story 2.5) — Model Builder is presented as part of "Discovery," not "Analysis," per explicit product decision (FR-33, AD-10 extension). [Source: epics.md#Story 2.2; sprint-change-proposal-2026-07-21.md CR-2; FR-33]
+
+`[PARTIALLY SUPERSEDED 2026-07-29]` AC 4 (page-fingerprint dedup) and AC 6 (representative-action sampling) remain in force as crawl-time, in-run optimizations, but are now read alongside new Story 2.10's State Identity Engine (SAME/VARIANT/NEW), which is the authoritative cross-state comparison going forward. AC 5 (navigation-first) is superseded by new Story 2.11's Action Priority Model for the untried-in-page-action-vs-unvisited-nav case — see `sprint-change-proposal-2026-07-29.md` and Architecture AD-17.
 
 ## Tasks / Subtasks
 
@@ -265,6 +267,16 @@ claude-sonnet-5
   `discovery_run_id`.
 - `_bmad-output/implementation-artifacts/sprint-status.yaml` — status tracking only.
 
+**2026-07-29 closure pass**
+- `apps/workers/discovery/src/discovery_worker/db.py` (MODIFIED — fixed stale `DATABASE_URL`
+  default port 5432 → 5433, matching `docker-compose.yml`)
+- `apps/workers/generation/src/generation_worker/db.py` (MODIFIED — same fix, same root cause)
+- `apps/workers/discovery/tests/test_discovery_activity_integration.py` (MODIFIED — replaced
+  `_minio_available()` with `_object_store_available()`, matching `object_store.py`'s actual
+  S3-vs-MinIO backend selection)
+- `apps/workers/discovery/tests/test_model_builder.py` (NEW — see Story 2.5's Change Log; filled
+  a test-coverage gap in the sibling story, discovered while verifying this one)
+
 ## Change Log
 
 - 2026-07-17 — Implemented all 5 tasks (AC 1–3): `Evidence` entity, MinIO-backed object storage,
@@ -308,3 +320,24 @@ claude-sonnet-5
   from the minority of interaction-triggered edges. Also fills quantity-like fields with `"1"`
   instead of a generic string (data-quality fix, no new AC). PRD FR-6/FR-7/§12 item 7, Architecture
   AD-15, and this story's ACs/Tasks/Dev Notes updated to match.
+- 2026-07-29 — Re-verified for closure. Confirmed by direct code inspection that ACs 1-9 are all
+  correctly implemented in the current `crawler.py`/`activities.py` (no `MAX_ITERATIONS` cap,
+  `merged_into_id`/`journey_id` always null at write time, page-fingerprint/representative-action/
+  representative-form/button-navigation/broken-destination logic all present and commented per
+  AC). Found and fixed a real, unrelated environment bug while verifying: `discovery_worker/db.py`
+  (and `generation_worker/db.py`, same defect) still defaulted `DATABASE_URL` to port 5432, while
+  `docker-compose.yml` maps Postgres to 5433 — the same class of bug fixed earlier in `apps/api`'s
+  `db.py`/`migrations/env.py`, just not propagated to the two worker packages at the time. Fixed
+  both. Also found and fixed a stale test gate in this story's own
+  `test_discovery_activity_integration.py` (Task 5's verification test): `_minio_available()`
+  unconditionally checked for a local MinIO health endpoint, but Story 2.8 (2026-07-24) removed
+  local MinIO from `docker-compose.yml` in favor of pointing local dev at real AWS S3 too
+  (`object_store.py` already correctly branches on `AWS_S3_BUCKET`) — the check was never updated
+  to match, so all 5 of this story's own object-storage integration tests (AC 2) silently skipped
+  in every run since 2026-07-24, including in CI (no MinIO or S3 credentials configured there
+  either — a pre-existing gap, not something this session introduced). Replaced with
+  `_object_store_available()`, mirroring `ObjectStore.__init__`'s own backend selection. Verified
+  against real production S3 (`uv run --env-file .env pytest ...`): all 5 previously-skipping
+  tests now genuinely pass. Full suite (`apps/workers/discovery/`, real Postgres/Vault/S3,
+  Playwright, no mocks): **57 passed, 0 skipped**. `ruff`/`pyright` clean on all touched files.
+  Status moved to `done`.

@@ -6,7 +6,7 @@ baseline_commit: acaa283a69798961a099674e00c02ecddaf9fd15
 
 *Renumbered 2026-07-18, was Story 2.6 — the initial draft numbered this story (Application Model Builder) AFTER the AI Inference story (2.5) that depends on its output, backwards from the actual pipeline order (Discovery → Model Builder → Inference). Corrected: this story is now 2.5, and AI Inference is renumbered to 2.6. Rewritten the same day, second pass: the generic `Evidence` table concept is removed — Story 2.2 now writes directly into typed tables (`Page`/`Form`/`Action`/`ApiEndpoint`/`PageTransition`), so this story's job shifts from "transform Evidence into structure" to "merge duplicate typed captures into canonical, reusable rows and derive Component/ComponentLocator/Assertion from them." See `sprint-change-proposal-2026-07-18.md`.*
 
-Status: done <!-- implemented and verified 2026-07-18 — see Change Log; verified live end-to-end again 2026-07-20 across multiple real Discovery Runs -->
+Status: done <!-- implemented and verified 2026-07-18 — see Change Log; verified live end-to-end again 2026-07-20 across multiple real Discovery Runs; RE-VERIFIED 2026-07-29, sprint-status.yaml corrected from a stale "review" to match this file's own "done" (see Change Log) -->
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
 
@@ -25,6 +25,8 @@ so that journey inference and test generation work from reliable, deduplicated s
 5. The Application Model's page-grouping concept reuses the existing `Capability` entity — no new `Module` entity is introduced. [Source: `sprint-change-proposal-2026-07-18.md` — resolved 2026-07-18]
 
 **Out of Scope:** Changing `InferenceActivity`'s input source, and re-wiring `DiscoveryWorkflow` to dispatch `InferenceActivity` after this story's Activity — that is Story 2.6's job (already updated for this rework). This story only needs to insert its own Activity dispatch between `DiscoveryActivity` and wherever `InferenceActivity` is (re-)wired in. Also out of scope: capturing real selector data during crawl (that's Story 2.2's job, flagged in its own Dev Notes as new scope needed for this story's `ComponentLocator` derivation to have real fidelity) — if that capture isn't in place yet, derive locators from whatever's available (label-based) rather than blocking on it.
+
+`[NOTE — 2026-07-29]` New Story 2.10's State Identity Engine (SAME/VARIANT/NEW, see `sprint-change-proposal-2026-07-29.md`) runs *during* the crawl, against an in-process cache — it does not replace this story's cross-run `merged_into_id` canonicalization, which still runs after Discovery completes and additionally catches duplicates across separate Discovery Runs (e.g. re-discovery) that the in-run cache never saw. The two mechanisms are complementary: Story 2.10 avoids over-exploring within one run; this story still owns cross-run canonicalization.
 
 ## Tasks / Subtasks
 
@@ -112,13 +114,22 @@ No `project-context.md` exists yet in this repository.
 
 ### Agent Model Used
 
+claude-sonnet-5
+
 ### Debug Log References
+
+- 2026-07-18 session: verified end-to-end against real Postgres — cross-run Page merge, idempotent
+  re-run (no duplicate Components, no `merged_into_id` flip-flop), Component/ComponentLocator
+  derivation for both button and form-field elements. `ruff`/`pyright` clean.
+- 2026-07-29 closure pass: `uv run pytest apps/workers/discovery/tests/test_model_builder.py -q`
+  → 7 passed (new file, see Completion Notes). Full `apps/workers/discovery/` suite against real
+  Postgres/Vault/S3 (`uv run --env-file .env pytest apps/workers/discovery/ -q`): 57 passed,
+  0 skipped. `ruff` clean on all touched/added files.
 
 ### Completion Notes List
 
-### File List
-- 2026-07-18 [this session] — Implemented from scratch: `Component`/`ComponentLocator`/`Assertion`
-  domain entities plus `FormField.component_id` (`packages/domain`), folded into migration
+- **2026-07-18**: Implemented from scratch — `Component`/`ComponentLocator`/`Assertion` domain
+  entities plus `FormField.component_id` (`packages/domain`), folded into migration
   `d1e9a4b6f2c3` alongside Story 2.2's typed tables. `model_builder.py`
   (`apps/workers/discovery/src/discovery_worker`): `merge_pages`/`merge_forms`/
   `merge_api_endpoints` resolve canonical rows via `url_template` grouping (idempotent — re-resolves
@@ -127,7 +138,46 @@ No `project-context.md` exists yet in this repository.
   form-field Components with preferred+fallback `ComponentLocator`s and derives `Assertion`s from
   canonical transitions/API calls. `ApplicationModelBuilderActivity` registered in `activities.py`
   and wired as the second dispatch in `DiscoveryWorkflow` (after `DiscoveryActivity`, gated on
-  `status=complete`). Verified end-to-end against real Postgres: cross-run Page merge, idempotent
-  re-run (no duplicate Components, no merged_into_id flip-flop), Component/ComponentLocator
-  derivation for both button and form-field elements. `ruff`/`pyright` clean. Status moved to
-  `review`.
+  `status=complete`). Status moved to `review`.
+- **2026-07-29 — closure pass, found and filled a real test-coverage gap.** This story's own
+  Debug Log claimed the merge/derive logic was "verified end-to-end" (cross-run merge, idempotency,
+  Component/Locator derivation), but no automated test ever actually exercised `model_builder.py`
+  directly — only `test_discovery_workflow.py`'s dispatch-order test (a fake Activity, proving
+  *when* `ApplicationModelBuilderActivity` runs, not *what it does*) and the full Playwright crawl
+  integration test (which never asserts on `Component`/`ComponentLocator`/`Assertion` rows at all)
+  touched this code path. Added `test_model_builder.py` (7 tests, direct Postgres access, no
+  Playwright/Vault/S3 needed since merge/derive is pure DB logic): cross-run page merge, idempotent
+  re-run (no duplicate Components, no `merged_into_id` flip-flop), button-Component + locator
+  derivation, form-field-Component derivation + `FormField.component_id` backfill, Assertion
+  derivation from transitions/API endpoints, and a composed page-merge-plus-form-merge case
+  (two "product/{id}"-template pages' identical forms correctly collapse to one canonical Form and
+  one Component). Also fixed the same stale `DATABASE_URL` port-5432 default in this worker's
+  `db.py` documented in Story 2.2's Change Log (this story's own module lives in the same worker
+  package, same root cause).
+
+### File List
+
+**2026-07-18 (original implementation — see epics.md#Story 2.5 Task list above for full scope)**
+- `packages/domain/src/domain/component.py`, `component_locator.py`, `assertion.py` (NEW)
+- `packages/domain/src/domain/form_field.py` (MODIFIED — adds `component_id`)
+- `migrations/versions/d1e9a4b6f2c3_*.py` (NEW — folded in alongside Story 2.2's tables)
+- `apps/workers/discovery/src/discovery_worker/model_builder.py` (NEW)
+- `apps/workers/discovery/src/discovery_worker/activities.py` (MODIFIED — registers
+  `ApplicationModelBuilderActivity`)
+- `packages/workflows/src/workflows/discovery_workflow.py` (MODIFIED — second dispatch)
+
+**2026-07-29 closure pass**
+- `apps/workers/discovery/tests/test_model_builder.py` (NEW — 7 tests, fills the gap above)
+- `apps/workers/discovery/src/discovery_worker/db.py` (MODIFIED — stale port-5432 default fixed;
+  see Story 2.2's Change Log for the full root-cause note)
+
+## Change Log
+
+- 2026-07-18 — Implemented Tasks 1-5 in full (ACs 1-5): merge/derive logic, domain entities,
+  workflow wiring. Verified manually against real Postgres. Status moved to `review`.
+- 2026-07-29 — Re-verified for closure. Confirmed by direct code inspection that AD-14's
+  writer-boundary invariant holds (only this Activity sets `merged_into_id`/writes
+  `Component`/`ComponentLocator`/`Assertion`). Found this story's own claimed "verified
+  end-to-end" behavior had zero regression-test coverage — added `test_model_builder.py` to close
+  that gap (see Completion Notes). Fixed a stale `DATABASE_URL` default shared with Story 2.2.
+  Status moved to `done`.

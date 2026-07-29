@@ -140,6 +140,96 @@ Platform surfaces Discovery Run progress via four business-language stages (Init
 
 **Notes:** Progress reaches the browser via polling (frontend polls the existing `DiscoveryRun` read endpoint) — no new streaming infrastructure. See `sprint-change-proposal-2026-07-21.md`.
 
+#### FR-35: Page Readiness & configurable page load timeout `[ADDED 2026-07-29]`
+Before the Runtime Observer captures a snapshot, the platform waits for a page to reach a "ready" state — DOM-mutation quiescence plus network settling (application-relevant requests only; polling/analytics patterns recognized and ignored) — up to a configurable maximum wait ceiling (Page Load Timeout). Reaching the ceiling without settling logs a DISC-004 event (FR-45) and proceeds with a best-effort snapshot rather than blocking the run.
+
+**Consequences (testable):**
+- A configurable Page Load Timeout exists at both a project (Application) default and a per-run override; V1 exposes it as a backend/config-level setting only — no UI control is built this pass (a future UI can read/write the same setting without further backend change).
+- Every infinite-scroll/pagination iteration (FR-36) also gates on this same readiness check.
+
+#### FR-36: Infinite scroll & pagination sampling `[ADDED 2026-07-29]`
+After a scroll or "Load More" action, the platform samples a bounded number of iterations (2-3), validates via the State Identity Engine (FR-37) that newly revealed items fingerprint as SAME as items already seen in that region, then stops and marks the region "sampled" — handing control back to the Planner — rather than scrolling/paginating indefinitely. A hard per-page scroll/pagination budget applies regardless of validation outcome.
+
+**Consequences (testable):**
+- A genuinely repeating list (e.g. a claims grid) is sampled, not exhaustively paginated.
+- A list whose structure changes every few items still terminates at the hard budget.
+
+#### FR-37: State Identity Engine — SAME / VARIANT / NEW classification `[ADDED 2026-07-29]`
+`[SUPERSEDES the page-fingerprint-dedup clause of FR-6 and extends FR-30's Application Model Builder]` Every observed state (page, dialog, or scrolled-in item) is classified against previously-seen states via a weighted comparison (route template, heading, action-set overlap, form-set overlap, nav breadcrumb match, structural similarity) against two configurable thresholds, yielding SAME (discarded — different data, identical behavior), VARIANT (a new Page row written, sibling of the route's existing state, via a new `variant_of_page_id` self-reference — distinct from `merged_into_id`'s "duplicate" meaning), or NEW (a full new Page/state/actions/transitions written). Ambiguous cases (score between the two thresholds) may consult the AI provider for a supporting, non-authoritative opinion (mirrors FR-8's existing AI-assists-deterministic-reasoning pattern).
+
+**Consequences (testable):**
+- `/claims/1001` and `/claims/1002`, both status=Pending, classify SAME and are not separately explored.
+- `/claims/1001` (Draft, Actions: Edit/Submit) and `/claims/1002` (Pending, Actions: Approve/Reject) classify VARIANT despite the shared route template, and both remain available to Inference (FR-8) as separate testable journeys.
+- Comparison thresholds are stored as configuration, not hardcoded, and are tunable per Application.
+
+**Notes:** Comparison happens against an in-process runtime cache scoped to one `DiscoveryActivity` execution (rebuilt from canonical `Page` rows on Activity start) — not a new persistent cache tier. See Architecture AD-16.
+
+#### FR-38: Action Priority Model `[ADDED 2026-07-29]`
+`[SUPERSEDES the "navigation-first" clause of FR-6]` Every candidate action is tagged Tier 1 (in-page: buttons, forms, expand/collapse, filters, in-page tab switches, scroll/"Load More" triggers) or Tier 2 (navigation-intent: primary nav links, sidebar/menu items, breadcrumb links). For a given state, all untried Tier 1 actions — including finishing any infinite-scroll sampling (FR-36) — are processed before any Tier 2 action, so a page is never abandoned before its own actions are explored. Tiering is decided deterministically (ARIA/landmark role, route-changing href vs. same-page anchor, layout position) with AI as a fallback for genuinely ambiguous cases only (mirrors FR-8's pattern).
+
+**Consequences (testable):**
+- A page with 3 untried buttons and 1 untried nav link processes all 3 buttons before the nav link, even though the previous "navigation-first" rule would have preferred an unvisited navigation target.
+
+**Notes:** This is a genuine priority-order reversal from the current AD-15 rule for the untried-in-page-action-vs-unvisited-nav case specifically — see Architecture note.
+
+#### FR-39: Safety Engine — action classification & post-action verification `[ADDED 2026-07-29]`
+`[REVERSES PRD §12 Risk item 6's "no guardrail, accepted risk" decision — flagged for explicit sign-off, see §12 below]` Every candidate action is classified Safe (View/Expand/Navigate/Filter/Search/Pagination — executed automatically), Clearly Destructive (Delete/Terminate/Payment/Transfer — never executed), or Ambiguous/state-changing (Submit/Approve/Reject/Save/Confirm — deferred to the Blocked Frontier, FR-42, not guessed). Classification is verb/pattern-based with an AI-assisted opinion for ambiguous language, but the Safety Engine owns the final verdict; the conservative default under genuine uncertainty is DEFER. After a Safe action executes, a lightweight before/after indicator comparison (record count, status field) flags an unexpected change as a safety-classification anomaly in the end-of-run report — visibility only, does not block the crawl.
+
+**Consequences (testable):**
+- A "Delete" button is never clicked by the crawler in V1, regardless of page context.
+- A "Submit"/"Approve" action is deferred (Blocked Frontier, "approval" reason) rather than executed speculatively.
+
+#### FR-40: Data Resolver — structured input resolution `[ADDED 2026-07-29]`
+`[Formalizes and extends the existing generic-value-filling behavior built in Story 2.2]` When an action needs input, resolution is attempted in strict order: (1) a usable value already visible on the current page, (2) a value observed earlier in this Discovery Run, (3) safe synthetic data for generic fields or a placeholder file for a file-upload widget, (4) business-specific data that can't be synthesized — the action is deferred to the Blocked Frontier ("data" reason, FR-42) rather than guessed. Every resolved value (including synthetic ones) is logged against the run for later traceability (FR-45's error/synthetic-data report).
+
+**Consequences (testable):**
+- A visible claim number on the current page is reused rather than re-synthesized.
+- A field requiring a real Policy Number blocks rather than receiving a fabricated value.
+
+#### FR-41: Widget coverage — tabs, dialogs, multi-window, file upload `[ADDED 2026-07-29]`
+The platform detects and handles, via ARIA/accessibility-tree signals first (structural heuristics as a lower-confidence fallback for non-standard markup): tab groups (each tab a Tier-1 candidate, FR-38), dialogs/modals/popups (contents observed as a nested state per FR-37, with reliable detection of the dialog's own close action), new browser tabs/windows (followed if same-origin/in-scope, deferred with focus returned to the original tab otherwise), and file upload inputs (routed to the Data Resolver, FR-40, using safe generated placeholder files).
+
+**Consequences (testable):**
+- Switching a tab reveals content that gets fingerprinted as its own state, not silently ignored.
+- A modal's Escape/Cancel/"X" is exercised to safely return to the underlying page rather than stranding the crawl inside the dialog.
+
+#### FR-42: Blocked Frontier `[ADDED 2026-07-29]`
+An action the Safety Engine (FR-39) defers, or a field the Data Resolver (FR-40) can't resolve, does not stop the run — it's parked, and the Planner continues elsewhere. Requirements with identical content (e.g. four pages all needing "Active Policy Number") are aggregated into one consolidated ask, presented to the user only after autonomous exploration is otherwise exhausted and the area is meaningful enough — the user may always choose to finish without supplying it.
+
+**Consequences (testable):**
+- Four pages needing the same missing field surface as one request, not four.
+- A blocked action never halts exploration of the rest of the Application.
+
+#### FR-43: Blocked mid-exploration — persistence & resume `[ADDED 2026-07-29]`
+When a block occurs after several steps have already succeeded, the platform persists the full step-by-step path from the start of the run to the block point — not just the blocking step — as an ordered `ExplorationStep` sequence referencing already-confirmed `Page` rows (not duplicating their content), including the exact input values used at each step (synthetic values included, verbatim, not "regenerate here"). On resume: the supplied value is validated first (staleness check), a new browser session is started (no assumption the old one survived), every already-succeeded step is replayed exactly as stored (or, where a step already caused an irreversible server-side effect, skipped in favor of navigating directly to its resulting state, to avoid a non-idempotent replay creating a duplicate record), the new value is supplied at the blocked step, and exploration continues downstream.
+
+**Consequences (testable):**
+- A 7-step path that blocks at step 7 stores all 7 steps; resuming replays 1–6 before attempting 7 again.
+- A step that already created a real record is not blindly re-executed on replay.
+
+#### FR-44: Save-as-Project — cross-session persistence `[ADDED 2026-07-29]`
+`["Project" maps onto the existing Application entity — no new entity]` A user may pause an entire discovery effort and resume it later, from any session, without re-exploring anything already confirmed. `DiscoveryRun.status` gains a `paused` value. On resume: the confirmed Application Model, the list of open Blocked items (FR-42/43), and the remaining exploration queue are loaded; the platform re-authenticates fresh (no live session assumed); already-confirmed states are never re-explored.
+
+**Consequences (testable):**
+- Pausing and resuming a project days later does not re-crawl already-confirmed pages.
+- The dashboard shows Confirmed/Blocked/Remaining counts for a paused project. `[GAP — no supporting screen in current UX; see Story 1.2 note]`
+
+#### FR-45: Crash recovery & error handling `[ADDED 2026-07-29]`
+Engine-side crashes (process/container restart mid-run) recover automatically via the same continuous checkpointing Save-as-Project (FR-44) already requires — no separate mechanism. Target-application-side failures (5xx, broken render, repeated timeouts past the Page Load Timeout, FR-35) are retried a small bounded number of times, then marked `Errored` (a new, explicit state category, not silently misclassified as NEW) and the crawl continues elsewhere. Every error surfaces both a fixed, documented machine-readable code (a starter taxonomy: DISC-001 engine crash, DISC-002 auth expired, DISC-003 app unresponsive, DISC-004 page load timeout, DISC-005 navigation lost, DISC-006 blocked-data, informational) and a human-readable message with a suggested next action.
+
+**Consequences (testable):**
+- A worker restart mid-crawl resumes from the last checkpoint rather than restarting the run.
+- A page that 500s twice is marked Errored and excluded from the exploration queue, not retried forever.
+
+#### FR-46: Loop prevention safeguards `[ADDED 2026-07-29]`
+`[Consolidates existing state-dedup/route-normalization behavior with new backstops]` Before any action executes: state dedup (FR-37), action-history check (already executed this exact action from this state?), transition-cycle detection (would this recreate A→B→A→B?), route normalization (parameterized-duplicate sampling), infinite-scroll/pagination budget (FR-36), and a final depth/action/scroll budget ceiling — in that order — are all deliberate, configured safeguards, not the primary anti-loop mechanism (FR-36/FR-37 are).
+
+#### FR-47: Test data carry-forward into Scenario Generation `[ADDED 2026-07-29]`
+`[Extends FR-16, Epic 4]` Any test data value used to unblock an exploration path during discovery (FR-43) — a user-supplied unblocking value or a Data-Resolver-synthesized value (FR-40), including placeholder upload files — is retained and surfaced as the default test-data value for that same input at Scenario Generation time, when a generated Scenario recreates a path through that step, rather than regenerated or left blank.
+
+**Consequences (testable):**
+- A Scenario recreating a Policy Search step defaults to the same Policy Number value used to unblock discovery, not a blank field.
+
 ### 4.3 Journey & Capability Intelligence
 
 **Description:** The AI layer that turns raw discovery signal into business understanding — the core of what makes this a "map," not a crawl log.
@@ -257,6 +347,7 @@ Platform provides Journey-explorer detail — a view of a Journey's screens, act
 - Human curation: rename/delete workflow (FR-9, FR-12, FR-13, FR-15). `[UPDATED 2026-07-15]` FR-10/FR-11 (approve/reject) and FR-28 (edit) cut — generation is no longer gated on review; deletion is the sole exclusion mechanism.
 - Scenario generation (happy-path + negative), with per-scenario rename/**edit**/remove (FR-16, FR-29), and Playwright test generation (FR-17) surfaced via a named Test Suite generation step. Generation starts immediately per discovered Journey, not on approval. `[UPDATED 2026-07-27]` FR-18 (full regeneration) cut — no regeneration mechanism exists. `[UPDATED 2026-07-27]` Once generated, the full set of current Test Suites can be downloaded as a runnable, suite-organized Playwright project (FR-34).
 - `[ADDED 2026-07-21]` Application-URL reachability validation at onboarding (FR-31), dynamic browser-tab branding reflecting the connected Application (FR-32), and business-language staged import progress replacing raw crawl detail (FR-33).
+- `[ADDED 2026-07-29]` The discovery engine's crawl-decision internals gain: page-readiness gating with a configurable load timeout, bounded infinite-scroll/pagination sampling, a three-way SAME/VARIANT/NEW state classification (FR-37, superseding the simpler page-fingerprint dedup), Tier-1-before-Tier-2 action ordering (FR-38, superseding navigation-first), a Safe/Destructive/Ambiguous Safety Engine (FR-39), a structured Data Resolver with deferral (FR-40), first-class tab/dialog/multi-window/file-upload handling (FR-41), a Blocked Frontier with mid-exploration persistence and resume (FR-42/43), cross-session Save-as-Project pause/resume (FR-44), crash recovery and a machine-readable error taxonomy (FR-45), and consolidated loop-prevention safeguards (FR-46). Test data used to unblock discovery carries forward into Scenario Generation defaults (FR-47).
 
 ### 6.2 Removed From Scope (2026-07-15)
 `[UPDATED 2026-07-15]` These moved from "moved out of MVP, deferred" to "removed in full" the same day, once it was confirmed none has any path back without a fresh product/UX decision:
@@ -314,6 +405,7 @@ Per the approved brief, V1 business success is **not** a customer-count or reven
 - **2026-07-27**: FR-18 (Full regeneration on request) cut in full — explicit product decision, not deferred. V1 ships with no customer-facing way to refresh a Journey's generated Scenarios/Test Assets once produced; deletion (FR-13) remains the sole reviewer lever, and it excludes rather than regenerates. No code existed to remove — despite `sprint-status.yaml`/commit history suggesting Story 4.3 was "completed," it was never actually built (that work was Story 4.2's, mislabeled in the commit message by the developer). Story 4.3 deleted from `epics.md` and its story file removed; `epics.md#Epic 4` description updated to drop the "regenerable from scratch on request" claim. Architecture AD-1/AD-8/Module Map updated to match — see `sprint-change-proposal-2026-07-27.md`.
 - **2026-07-27 [Follow-up]**: FR-34 (Download generated Test Suite as a Playwright project) added — reviewer-triggered export of all current Test Suites for an Application into a runnable, suite-folder-organized Playwright project zip. Explicitly scoped as an export, not a CI/CD delivery mechanism (that remains cut, see FR-19–21/§6.2) — reuses the Story 4.3 slot vacated by the regeneration cut above. §4.5, §6.1, §9 updated; new Story 4.3 ("Download a Generated Test Suite") added to `epics.md`; Architecture gains a new Module Map row (Test Suite Export) and a Deferred-section note distinguishing it from CI Delivery. See `sprint-change-proposal-2026-07-27-2.md`.
 - **2026-07-27 [Correction, during story creation]**: FR-34's project type corrected from Node/TypeScript (`package.json`/`playwright.config.ts`/`tsconfig.json`, as originally drafted from the requesting brief) to **Python** (`requirements.txt`/`pytest`/`pytest-playwright`) — discovered during `bmad-create-story` that `TestAsset.code` is generated as Python `playwright.sync_api` code (`HostedAIProvider.generate_playwright`'s prompt explicitly requests it, confirmed in `apps/workers/generation/tests/test_playwright_generation_activity.py`), and no Python→TypeScript conversion step exists anywhere in the pipeline. A TS/npm scaffold wrapping Python function bodies would not run. §4.5 FR-34 updated to match; Story 4.3 in `epics.md` updated to match.
+- **2026-07-29 [Sprint Change Proposal — Discovery Engine Redesign]**: A user-authored Discovery Engine design document triggered FR-35 through FR-47 (page readiness, infinite scroll, State Identity Engine, Action Priority Model, Safety Engine, Data Resolver, widget coverage, Blocked Frontier + resume, Save-as-Project, crash recovery/error taxonomy, loop prevention, test-data carry-forward). This **reverses** §12 Risk item 6's prior "accepted risk, no guardrail" decision (now mitigated by the Safety Engine) — flagged for explicit sign-off, not a quiet change. Two items are flagged, not resolved, by this pass: (a) a naming collision between the document's "Journey" (crawl-time exploration path) and the existing `Journey` domain entity (AI-inferred business journey) — resolved here by naming the new concept `ExplorationPath`/`ExplorationStep`; (b) Save-as-Project's dashboard (Confirmed/Blocked/Remaining counts) and the Blocked-item review/resume surface have no home in the current 6-screen UX — flagged as `[GAP]`s on Story 1.2 and new Story 2.17, not designed in this pass. No epic added/removed/resequenced; all new scope lives in 11 new Epic 2 stories (2.9–2.19) plus AC amendments to Stories 1.2, 2.2, 2.3, 2.5, 4.1. See `sprint-change-proposal-2026-07-29.md`.
 
 ## 10. Cross-Cutting NFRs
 
@@ -336,7 +428,7 @@ Per the approved brief, V1 business success is **not** a customer-count or reven
 3. **Risk**: Without any AI confidence signal, reviewers triaging a large discovery output have no prioritization aid, which could slow review at scale. **Mitigation**: None built into V1 — flagged for revisit if pilot feedback shows this is a real bottleneck (Open Question 5).
 4. `[MOOT 2026-07-15]` Previously: full-regeneration-on-request combined with direct-commit export could silently overwrite a customer's manually-edited test file. Moot — direct-commit export (previously FR-19) is removed; there is no delivery mechanism to carry this risk. Would need to be re-assessed if CI/CD delivery is ever redesigned.
 5. **Risk**: V1 has no differentiated technical moat (per brief); pilots may be won or lost on roadmap credibility rather than delivered capability. **Mitigation**: Sales motion leans on an honest, credible V2/V3 roadmap story — see `addendum.md`.
-6. **Risk**: `FR-6`'s autonomous form/API exercising has no destructive-action guardrail — even in a Non-Production environment, the discovery engine could trigger irreversible side effects (real emails sent, shared test data deleted, fraud-detection tripwires) if that environment isn't fully isolated from real-world systems. **Mitigation**: **Accepted risk** — V1 relies entirely on the customer providing a properly isolated Non-Production environment (§11); no platform-side guardrail is built in V1, by explicit decision.
+6. **Risk**: `[UPDATED 2026-07-29]` `FR-6`'s autonomous form/API exercising previously had no destructive-action guardrail — even in a Non-Production environment, the discovery engine could trigger irreversible side effects (real emails sent, shared test data deleted, fraud-detection tripwires) if that environment isn't fully isolated from real-world systems. **Mitigation**: `[REVERSED 2026-07-29]` No longer an accepted risk — the Safety Engine (FR-39) classifies every candidate action Safe/Destructive/Ambiguous and never executes a Clearly Destructive action; Ambiguous/state-changing actions defer to the Blocked Frontier (FR-42) rather than executing speculatively. **Residual risk**: a genuinely production-facing environment is still not technically verified as non-production (Open Question 3, unchanged) — the Safety Engine narrows *what* the crawler is willing to do, it does not verify *where* it's running.
 7. **`[NEW 2026-07-15]` Risk**: A Discovery Run has no time-budget safety cap (FR-5 removed) — an Application with infinite pagination, calendar "next" links, or another unbounded-traversal pattern could cause a Discovery Run to run indefinitely, consuming AI-generation cost and compute with no automatic stop other than genuine exhaustion. **Mitigation**: **Accepted risk**, by explicit product decision — no time-budget cap or other platform-side runaway-discovery guardrail is built in V1. `[UPDATED 2026-07-18]` FR-6's representative-action sampling (see `sprint-change-proposal-2026-07-18.md`) partially narrows this risk — a page with many repeated identical actions (e.g., a large grid of "Edit" buttons) no longer multiplies crawl work per instance. Unbounded *page* growth (infinite pagination, calendar next-links) is unaffected and remains a fully accepted risk. `[UPDATED 2026-07-19]` FR-6(g)'s explicit per-page action-label cap further narrows this risk beyond repeated-instance dedup — a page with many genuinely *distinct* action labels is now also bounded, not just one with a repeated pattern. Unbounded page growth remains the fully accepted part of this risk.
 
 ## 13. Integration and Dependencies
