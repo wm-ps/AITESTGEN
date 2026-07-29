@@ -180,14 +180,19 @@ def _fake_scenario(**overrides) -> Scenario:
 
 async def test_generate_playwright_returns_code(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _monkeypatch_post(
-        monkeypatch, "def test_guest_checkout():\n    pass\n"
+        monkeypatch,
+        "import { test, expect } from '@playwright/test'\n\n"
+        "test('guest checkout', async ({ page }) => {})\n",
     )
     scenario = _fake_scenario()
 
     result = await HostedAIProvider().generate_playwright(scenario)
 
     # Trailing whitespace is stripped by `generate_playwright` itself.
-    assert result.code == "def test_guest_checkout():\n    pass"
+    assert result.code == (
+        "import { test, expect } from '@playwright/test'\n\n"
+        "test('guest checkout', async ({ page }) => {})"
+    )
     assert "Guest checkout" in captured["json"]["messages"][0]["content"]
     assert "qa-user" in captured["json"]["messages"][0]["content"]
     # No response_format here — raw Playwright source, not JSON.
@@ -198,11 +203,12 @@ async def test_generate_playwright_strips_markdown_code_fences(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _monkeypatch_post(
-        monkeypatch, "```python\ndef test_guest_checkout():\n    pass\n```"
+        monkeypatch,
+        "```typescript\ntest('guest checkout', async ({ page }) => {})\n```",
     )
     scenario = _fake_scenario()
 
     result = await HostedAIProvider().generate_playwright(scenario)
 
-    assert result.code == "def test_guest_checkout():\n    pass"
+    assert result.code == "test('guest checkout', async ({ page }) => {})"
     assert "```" not in result.code

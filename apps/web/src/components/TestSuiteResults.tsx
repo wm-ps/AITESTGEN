@@ -5,15 +5,15 @@ import { Stepper } from './Stepper'
 const POLL_INTERVAL_MS = 1500
 const SECONDS_PER_TEST_CASE = 45
 
-// DESIGN.md's Suite Generated note: group by the real generated Python file
-// structure, not the reference prototype's literal `.spec.ts` filenames —
-// Story 4.3 (unbuilt) already prescribes this `test_<slug>.py` convention.
+// Generated Test Assets are Playwright (TypeScript, @playwright/test) — group
+// by that real generated file structure, matching the reference prototype's
+// `.spec.ts` filenames directly.
 function toTestFileName(journeyName: string): string {
   const slug = journeyName
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '')
-  return `test_${slug || 'journey'}.py`
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return `${slug || 'journey'}.spec.ts`
 }
 
 function ArrowRightIcon() {

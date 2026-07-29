@@ -112,7 +112,7 @@ Story 4.1 is now implemented (`review`) — see its File List for `GenerationWor
 
 ## Latest Technical Notes
 
-No new library decisions — extends the `litellm`-backed `HostedAIProvider` and the existing Temporal/FastAPI/SQLModel stack. Verify current Playwright Python code-generation conventions (e.g. current recommended locator/assertion style) at implementation time if the AI-generated code needs to target a specific Playwright API surface.
+No new library decisions — extends the `litellm`-backed `HostedAIProvider` and the existing Temporal/FastAPI/SQLModel stack. Verify current Playwright TypeScript (`@playwright/test`) code-generation conventions (e.g. current recommended locator/assertion style) at implementation time if the AI-generated code needs to target a specific Playwright API surface. `[CORRECTED 2026-07-29]` This story originally targeted Playwright Python (`playwright.sync_api`); `HostedAIProvider.generate_playwright` now generates TypeScript instead — see `packages/ai_provider/src/ai_provider/hosted.py:129-146` and Story 4.3's matching correction.
 
 ## Project Context Reference
 
@@ -252,6 +252,11 @@ No `project-context.md` exists yet in this repository.
   `GenerationWorkflow` dispatch per Journey, not one bundled call for the
   Application). No behavior change — a clarifying, verified restatement of
   what Tasks 2/3 already specified.
+- 2026-07-29 - `[CORRECTED]` `HostedAIProvider.generate_playwright` and its `_PLAYWRIGHT_PROMPT` now
+  generate Playwright TypeScript (`@playwright/test`) instead of Playwright Python (`playwright.sync_api`),
+  by explicit decision. No change to this story's `TestSuite`/`TestAsset`/`SuiteGenerationWorkflow`/
+  `PlaywrightGenerationActivity` architecture - only the generated code's language changed. Story 4.3's
+  (unbuilt) export scaffold was updated to match in the same pass.
 
 ## Dev Agent Record
 

@@ -9,18 +9,20 @@ Regeneration of Test Assets on Request" story (FR-18). This is a different featu
 triggered export of already-generated Test Suites into a downloadable, runnable project. See
 `sprint-change-proposal-2026-07-27-2.md`.*
 
-*`[CORRECTED 2026-07-27, same day, during this story's own creation]` The downloaded project is **Python**
-(`pytest` + `pytest-playwright`), not Node/TypeScript as the originating brief assumed — `TestAsset.code` is
-generated as Python `playwright.sync_api` code (confirmed against `HostedAIProvider.generate_playwright`'s
-prompt and the fixture in `test_playwright_generation_activity.py`), and no Python→TypeScript conversion
-step exists anywhere in the pipeline. PRD FR-34, `epics.md`, and the Architecture Module Map/Deferred
-section were all corrected to match before this story file was written. See the Addendum in
-`sprint-change-proposal-2026-07-27-2.md`.*
+*`[CORRECTED 2026-07-27, same day, during this story's own creation]` The downloaded project was **Python**
+(`pytest` + `pytest-playwright`), not Node/TypeScript as the originating brief assumed — `TestAsset.code` was
+generated as Python `playwright.sync_api` code at the time.*
+
+*`[CORRECTED 2026-07-29, reverses the entry above]` `HostedAIProvider.generate_playwright` now generates
+**TypeScript** (`@playwright/test`), by explicit decision. The downloaded project is an npm-based
+`@playwright/test` project, not Python — see `packages/ai_provider/src/ai_provider/hosted.py:129-146`
+(`_PLAYWRIGHT_PROMPT`) and ARCHITECTURE-SPINE.md's matching correction. This story's Tasks/Dev Notes below
+are updated to the TypeScript scaffold; the 2026-07-27 Python note above is retained only as history.*
 
 ## Story
 
 As a user,
-I want to download all current Test Suites for an Application as a single, ready-to-run Python Playwright
+I want to download all current Test Suites for an Application as a single, ready-to-run TypeScript Playwright
 project,
 so that I can run the generated tests locally, or fold them into my own regression process, without
 hand-assembling a project from copied code.
@@ -30,35 +32,31 @@ hand-assembling a project from copied code.
 1. **Given** an Application with at least one current (`current=true`) `TestSuite`, **when** the reviewer
    clicks Download on the Test Suites Generated screen (`TestSuiteResults.tsx`), **then** the platform
    assembles a zip containing one folder under `tests/` per current `TestSuite`, named from its Journey,
-   each holding one Python test file per current `TestAsset` in that suite (FR-34). [Source: epics.md#Story
+   each holding one TypeScript test file per current `TestAsset` in that suite (FR-34). [Source: epics.md#Story
    4.3; FR-34; architecture#Module Map — Test Suite Export]
-2. The archive also includes a generated `requirements.txt` (`pytest`, `pytest-playwright`), a
-   `conftest.py` and/or `pytest.ini` (whichever the verified code shape from Task 1 needs — see Dev Notes),
+2. The archive also includes a generated `package.json` (`@playwright/test` dependency) and
+   `playwright.config.ts` (whichever the verified code shape from Task 1 needs — see Dev Notes),
    empty `fixtures/` and `utils/` scaffold folders, and a `README.md` covering setup and run commands.
    [Source: epics.md#Story 4.3; FR-34]
 3. The assembled project is structurally validated before the zip is returned — every current `TestSuite`
    for the Application has a non-empty folder under `tests/`, and every current `TestAsset` in that suite
    has a corresponding file — never a partial or silently-dropped suite/test case. [Source: epics.md#Story
    4.3]
-4. After extracting the downloaded zip and running `pip install -r requirements.txt && playwright install`,
-   running `pytest` from the project root executes every test across every suite; running
-   `pytest tests/<suite-folder>` executes only that suite. [Source: FR-34]
+4. After extracting the downloaded zip and running `npm install && npx playwright install`,
+   running `npx playwright test` from the project root executes every test across every suite; running
+   `npx playwright test tests/<suite-folder>` executes only that suite. [Source: FR-34]
 5. This is a synchronous export only — no `TestSuite`/`TestAsset` rows are created, modified, or deleted by
    this action; no Temporal workflow is started; the endpoint only reads `current=true` rows. [Source:
    architecture#Module Map — Test Suite Export]
 
 **`[GAP — flag for verification at implementation time, do not silently assume]`** The exact code shape
 `HostedAIProvider.generate_playwright` produces is not confirmed against a real (non-test-double) AI
-response — the prompt (`packages/ai_provider/src/ai_provider/hosted.py:129-146`) asks for a `test_...`
-function "using `playwright.sync_api`" but does not specify whether it's self-contained (opens its own
-`with sync_playwright() as p:` block) or fixture-based (`def test_x(page):`, relying on
-`pytest-playwright`'s `page`/`browser` fixtures). This determines whether `conftest.py` needs anything at
-all: if self-contained, `pytest-playwright` isn't strictly required (plain `pytest` + `playwright` suffice)
-and `conftest.py` can be empty/omitted; if fixture-based, `pytest-playwright` is required and its plugin
-auto-registers the fixtures with no `conftest.py` content needed either way. **Action:** generate one real
-Test Suite end-to-end (or inspect a few live `TestAsset.code` rows) before finalizing `requirements.txt`
-and the `conftest.py`/`pytest.ini` template in Task 2 — do not guess which shape and ship untested
-boilerplate.
+response — the prompt (`packages/ai_provider/src/ai_provider/hosted.py:129-146`) asks for a test "using
+`import { test, expect } from '@playwright/test'`" but does not pin down every stylistic detail (e.g.
+whether it relies on a shared `playwright.config.ts` `baseURL`/project setup or is fully self-contained per
+file). **Action:** generate one real Test Suite end-to-end (or inspect a few live `TestAsset.code` rows)
+before finalizing `package.json` and the `playwright.config.ts` template in Task 2 — do not guess which
+shape and ship untested boilerplate.
 
 ## Tasks / Subtasks
 
@@ -66,28 +64,28 @@ boilerplate.
       `[GAP]` above)
   - [ ] Inspect several real (non-test-double) `TestAsset.code` values — either from an existing seeded
     Application that has gone through Story 4.2's generation, or by running generation once — to confirm
-    whether tests are self-contained (`with sync_playwright() as p: ...`) or fixture-based (`def
-    test_x(page): ...`)
-  - [ ] Decide `requirements.txt`'s exact contents and whether `conftest.py`/`pytest.ini` needs any real
-    content, based on this — do not ship a template built on an assumption
+    the exact `@playwright/test` shape (imports, whether it assumes a shared `playwright.config.ts`
+    `baseURL`/project setup or is fully self-contained per file)
+  - [ ] Decide `package.json`'s exact contents and `playwright.config.ts`'s real content, based on this — do
+    not ship a template built on an assumption
 - [ ] Task 2: Build the project-assembly module (AC: 1, 2, 3)
   - [ ] New module, e.g. `apps/api/src/api/test_suite_export.py` — a pure function taking the list of
     current `TestSuite` rows (with their journeys) and current `TestAsset` rows, returning an in-memory zip
     (`io.BytesIO` + stdlib `zipfile`, no new dependency)
-  - [ ] Suite-folder naming: adapt the existing `toSpecFileName` slug convention (`apps/web/src/components/TestSuiteResults.tsx`)
-    to a Python-safe form — lowercase, non-alphanumeric runs collapsed to `-` for the folder name (matching
-    what the UI already shows the reviewer for that suite), and to `test_<slug_with_underscores>.py` for
-    each test-case file within it (pytest only discovers `test_*.py`/`*_test.py` — the existing hyphenated
-    `.spec.ts`-style slug is not itself a legal Python module name and must be adapted, not reused verbatim)
+  - [ ] Suite-folder naming: reuse `toTestFileName`'s slug convention (`apps/web/src/components/TestSuiteResults.tsx`)
+    directly — lowercase, non-alphanumeric runs collapsed to `-` for the folder name (matching what the UI
+    already shows the reviewer for that suite), and `<slug>.spec.ts` for each test-case file within it
+    (Playwright's default test runner discovers `*.spec.ts`/`*.test.ts` — the same hyphenated slug the UI
+    already uses is a legal filename here, no adaptation needed, unlike the earlier Python-oriented plan)
   - [ ] Write each current `TestAsset.code` verbatim into its file — no code transformation, no reformatting
   - [ ] **Collision handling**: two Journeys whose names slugify to the same folder (e.g. "Claim Search!" vs
     "Claim Search?") must not silently overwrite one suite's files with another's — disambiguate by
     appending the `TestSuite`'s own short id/suffix to the folder name on collision (check-as-you-build, not
     a post-hoc fix)
-  - [ ] Generate `requirements.txt`, `conftest.py`/`pytest.ini` (per Task 1's finding), empty `fixtures/` and
-    `utils/` folders (empty folders need a `.gitkeep`-style placeholder file to survive zipping — `zipfile`
-    does not preserve truly empty directories reliably across all unzip tools), and a `README.md` with the
-    setup/run commands from AC 4
+  - [ ] Generate `package.json` (`@playwright/test` dependency), `playwright.config.ts` (per Task 1's
+    finding), empty `fixtures/` and `utils/` folders (empty folders need a `.gitkeep`-style placeholder file
+    to survive zipping — `zipfile` does not preserve truly empty directories reliably across all unzip
+    tools), and a `README.md` with the setup/run commands from AC 4
   - [ ] Validation per AC 3: assert the assembled in-memory structure has one folder per current `TestSuite`
     passed in and one file per current `TestAsset` in that suite before zipping — raise/500 rather than
     return a silently incomplete archive if the counts don't match what was queried
@@ -133,25 +131,23 @@ boilerplate.
   `TestSuite`/`TestAsset`.** It must not touch `PlaywrightGenerationActivity`, `SuiteGenerationWorkflow`, or
   `TestAsset.code` generation in any way. If a project-scaffold detail needs to change later (e.g. a
   different `conftest.py` default), that change is isolated entirely to this module.
-- **Do not build a Node/TypeScript scaffold.** This was the original (incorrect) draft of FR-34/Story 4.3,
-  based on the requesting brief before the actual generated-code language was checked. `TestAsset.code` is
-  Python. See the `[CORRECTED]` note at the top of this file and the Addendum in
-  `sprint-change-proposal-2026-07-27-2.md` for the full discovery. If a future story wants a genuine
-  TypeScript export, that requires a new Python→TypeScript (or a parallel TS-generation) capability — not a
-  packaging change here.
+- **Build a Node/TypeScript (`@playwright/test`) scaffold — not Python.** An earlier pass (2026-07-27)
+  corrected this story to Python because `TestAsset.code` was Python at the time; that has since reversed
+  (2026-07-29) — `TestAsset.code` is now TypeScript, so the scaffold must match it exactly (no
+  conversion step, no dual-language support). See the `[CORRECTED 2026-07-29]` note at the top of this file.
 - **Reuse `list_test_suites`'s exact query shape** (`main.py:787-855`) for finding current Journeys → current
   `TestSuite`s → current `TestAsset`s — don't re-derive the candidate-Journey/`current=true` filtering
   logic a second, possibly-divergent way.
-- **`toSpecFileName`'s slug (`TestSuiteResults.tsx`) is not directly reusable as a Python module name** —
-  it's hyphenated and suffixed `.spec.ts`. Adapt the *slugification logic* (lowercase, collapse
-  non-alphanumeric runs), not the literal function, and apply Python's `test_*.py` naming rule on top.
+- **`toTestFileName`'s slug (`TestSuiteResults.tsx`) is directly reusable as-is** — it already produces
+  `<slug>.spec.ts`, matching Playwright's own default test-file naming convention exactly; no adaptation
+  needed (unlike the earlier Python-oriented plan, which needed a separate `test_*.py`-safe transform).
 - **Zip assembly must be deterministic** — iterate suites/test-assets in a stable order (e.g. by `id` or by
   the same order the existing `list_test_suites` query already returns them in) so two downloads of
   unchanged data produce byte-identical output. Don't rely on dict/set iteration order incidentally being
   stable.
 - **No new pip/uv dependency for the zip itself** — `zipfile` and `io.BytesIO` are stdlib; only the
-  *generated project's own* `requirements.txt` lists `pytest`/`pytest-playwright` (those are what the
-  *downloaded* project needs, not `apps/api` itself).
+  *generated project's own* `package.json` lists `@playwright/test` (that's what the *downloaded* project
+  needs, not `apps/api` itself).
 - **The frontend's generic `request<T>()` helper cannot be reused for this call** — it unconditionally
   calls `response.json()` (`api.ts:24-36`), which throws on a binary body. This needs its own fetch +
   `.blob()` + object-URL-download function, matching how most browser download-a-file flows work; there is
@@ -190,13 +186,13 @@ boilerplate.
 
 - [Source: _bmad-output/planning-artifacts/epics.md#Story 4.3: Download a Generated Test Suite]
 - [Source: _bmad-output/planning-artifacts/prds/prd-AITestGen-2026-07-13/prd.md — FR-34]
-- [Source: _bmad-output/planning-artifacts/architecture/architecture-AITestGen-2026-07-13/ARCHITECTURE-SPINE.md#Module Map — Test Suite Export, #Deferred — Test Suite Export is not CI Delivery / No Python→TypeScript conversion]
-- [Source: _bmad-output/planning-artifacts/sprint-change-proposal-2026-07-27-2.md — full change history and the language-correction addendum]
+- [Source: _bmad-output/planning-artifacts/architecture/architecture-AITestGen-2026-07-13/ARCHITECTURE-SPINE.md#Module Map — Test Suite Export, #Deferred — Test Suite Export is not CI Delivery / TypeScript correction]
+- [Source: _bmad-output/planning-artifacts/sprint-change-proposal-2026-07-27-2.md — full change history and the original (now superseded) language-correction addendum]
 - [Source: apps/api/src/api/main.py:787-855 — `list_test_suites`, the exact query shape to reuse for finding current suites/assets]
-- [Source: apps/web/src/components/TestSuiteResults.tsx — `toSpecFileName`, the existing slug convention to adapt; the screen this story adds a button to]
+- [Source: apps/web/src/components/TestSuiteResults.tsx — `toTestFileName`, the existing `<slug>.spec.ts` convention this story reuses directly; the screen this story adds a button to]
 - [Source: apps/web/src/api.ts:24-36 — `request<T>()`, the generic JSON helper this story's download call must NOT use]
-- [Source: packages/ai_provider/src/ai_provider/hosted.py:129-146 — `_PLAYWRIGHT_PROMPT`, confirms generated code is Python `playwright.sync_api`]
-- [Source: apps/workers/generation/tests/test_playwright_generation_activity.py:247 — confirms `TestAsset.code`'s actual Python shape in a real assertion]
+- [Source: packages/ai_provider/src/ai_provider/hosted.py:129-146 — `_PLAYWRIGHT_PROMPT`, confirms generated code is TypeScript `@playwright/test`]
+- [Source: apps/workers/generation/tests/test_playwright_generation_activity.py — confirms `TestAsset.code`'s actual TypeScript shape in a real assertion]
 - [Source: packages/domain/src/domain/test_asset.py, packages/domain/src/domain/test_suite.py — `TestAsset`/`TestSuite` schemas this story reads, unmodified]
 - [Source: _bmad-output/implementation-artifacts/4-2-generate-playwright-test-assets-from-scenarios.md — Story 4.2, the story that produces the rows this one exports; confirms `TestAsset` has no `generation_run_id` of its own (derive via `test_suite_id`) if that's ever needed for display]
 
@@ -224,9 +220,9 @@ convention this story must filter on (`current=true` only, matching `list_test_s
 ## Latest Technical Notes
 
 No new external dependency for `apps/api` itself (stdlib `zipfile`/`io`). The *generated project's own*
-`requirements.txt` should pin reasonably current versions of `pytest` and `pytest-playwright` at
-implementation time — check PyPI for their current stable versions rather than hardcoding versions from
-this story's own authoring date, since this file may be implemented well after being written.
+`package.json` should pin a reasonably current version of `@playwright/test` at implementation time —
+check npm for its current stable version rather than hardcoding a version from this story's own authoring
+date, since this file may be implemented well after being written.
 
 ## Project Context Reference
 
@@ -241,6 +237,14 @@ No `project-context.md` exists yet in this repository.
   before this file was written. Flagged one unresolved `[GAP]` (Task 1) — the exact self-contained-vs-
   fixture-based shape of AI-generated Playwright code is not yet confirmed against a real (non-test-double)
   sample, and must be checked before the `requirements.txt`/`conftest.py` template is finalized.
+- 2026-07-29 — `[CORRECTED]` Reverses the 2026-07-27 Python correction above: `HostedAIProvider`'s
+  `_PLAYWRIGHT_PROMPT` now generates TypeScript (`@playwright/test`) by explicit decision, so this story's
+  scaffold changes back to an npm-based project (`package.json`/`playwright.config.ts`, `<slug>.spec.ts`
+  files) instead of Python (`requirements.txt`/`conftest.py`/`test_<slug>.py`). ACs, Tasks 1-2, Dev Notes,
+  and References updated to match; `apps/web/src/components/TestSuiteResults.tsx`'s `toTestFileName` is now
+  directly reusable for the export folder/file naming (previously needed a Python-safe adaptation). No
+  change to Tasks 3-5's structure (endpoint shape, download-button wiring, verification steps) — only the
+  scaffold's own language and file extensions changed.
 
 ## Dev Agent Record
 

@@ -12,13 +12,13 @@ const SUITES = [
         id: 'case-1',
         name: 'Guest checkout',
         type: 'happy',
-        code: 'def test_guest_checkout():\n    pass\n',
+        code: "import { test, expect } from '@playwright/test'\n\ntest('test_guest_checkout', async ({ page }) => {})\n",
       },
       {
         id: 'case-2',
         name: 'Checkout with expired card',
         type: 'negative',
-        code: 'def test_expired_card():\n    pass\n',
+        code: "import { test, expect } from '@playwright/test'\n\ntest('test_expired_card', async ({ page }) => {})\n",
       },
     ],
   },
@@ -69,14 +69,14 @@ describe('TestSuiteResults', () => {
     })
     expect(screen.getByText('Generated Tests')).toBeTruthy()
     expect(screen.getByText('2 tests across 1 file')).toBeTruthy()
-    expect(screen.queryByText('test_checkout.py')).toBeNull()
+    expect(screen.queryByText('checkout.spec.ts')).toBeNull()
     expect(screen.queryByText('Guest checkout')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: /View Tests/ }))
-    expect(screen.getByText('test_checkout.py')).toBeTruthy()
+    expect(screen.getByText('checkout.spec.ts')).toBeTruthy()
     expect(screen.queryByText('Guest checkout')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: /test_checkout\.py/ }))
+    fireEvent.click(screen.getByRole('button', { name: /checkout\.spec\.ts/ }))
     expect(screen.getByText('Guest checkout')).toBeTruthy()
     expect(screen.getByText('Happy Path')).toBeTruthy()
     expect(screen.getByText('Negative Path')).toBeTruthy()
@@ -90,12 +90,12 @@ describe('TestSuiteResults', () => {
     await waitFor(() => screen.getByText(/Generated 2 test cases across 1 journeys/))
 
     fireEvent.click(screen.getByRole('button', { name: /View Tests/ }))
-    fireEvent.click(screen.getByRole('button', { name: /test_checkout\.py/ }))
+    fireEvent.click(screen.getByRole('button', { name: /checkout\.spec\.ts/ }))
     expect(screen.getByText('Guest checkout')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: /Hide Tests/ }))
     expect(screen.queryByText('Guest checkout')).toBeNull()
-    expect(screen.queryByText('test_checkout.py')).toBeNull()
+    expect(screen.queryByText('checkout.spec.ts')).toBeNull()
   })
 
   it('calls onGoToDashboard when the Go to Dashboard button is clicked', async () => {
@@ -115,7 +115,7 @@ describe('TestSuiteResults', () => {
 
     await waitFor(() => screen.getByRole('button', { name: /View Tests/ }))
     fireEvent.click(screen.getByRole('button', { name: /View Tests/ }))
-    fireEvent.click(screen.getByRole('button', { name: /test_checkout\.py/ }))
+    fireEvent.click(screen.getByRole('button', { name: /checkout\.spec\.ts/ }))
     await waitFor(() => screen.getByText('Guest checkout'))
 
     const codeButtons = screen.getAllByRole('button', { name: 'Code' })

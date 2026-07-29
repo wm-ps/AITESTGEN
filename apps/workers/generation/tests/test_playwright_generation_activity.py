@@ -24,6 +24,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 from workflows import EnsureTestSuiteActivityInput, PlaywrightGenerationActivityInput
 
+_FAKE_CODE = "import { test, expect } from '@playwright/test'\n\ntest('test_x', async ({ page }) => {})\n"
+
 
 def _db_available() -> bool:
     try:
@@ -40,7 +42,7 @@ pytestmark = pytest.mark.skipif(
 
 
 class _FakeAIProvider:
-    def __init__(self, code: str = "def test_x():\n    pass\n") -> None:
+    def __init__(self, code: str = _FAKE_CODE) -> None:
         self._code = code
         self.calls: list[str] = []
 
@@ -169,7 +171,7 @@ def test_ensure_test_suite_activity_supersedes_prior_attempt_atomically() -> Non
         old_asset = TestAsset(
             scenario_id=old_scenario.id,
             test_suite_id=old_suite.id,
-            code="def test_old():\n    pass\n",
+            code=_FAKE_CODE,
             current=True,
         )
         session.add(old_asset)
@@ -228,7 +230,10 @@ def test_playwright_generation_activity_creates_a_test_asset(
             EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
         )
     )
-    fake_provider = _FakeAIProvider("def test_guest_checkout():\n    pass\n")
+    fake_provider = _FakeAIProvider(
+        "import { test, expect } from '@playwright/test'\n\n"
+        "test('test_guest_checkout', async ({ page }) => {})\n"
+    )
     monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
 
     asset_id = asyncio.run(
@@ -244,7 +249,10 @@ def test_playwright_generation_activity_creates_a_test_asset(
         test_asset = session.exec(
             select(TestAsset).where(TestAsset.external_id == uuid.UUID(asset_id))
         ).one()
-        assert test_asset.code == "def test_guest_checkout():\n    pass\n"
+        assert test_asset.code == (
+            "import { test, expect } from '@playwright/test'\n\n"
+            "test('test_guest_checkout', async ({ page }) => {})\n"
+        )
         assert test_asset.scenario_id == scenario.id
         assert test_asset.current is True
 

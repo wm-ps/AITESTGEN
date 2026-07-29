@@ -127,7 +127,7 @@ Respond with ONLY a JSON object of this shape, no prose: \
 "expected_result": "...", "test_data": [{{"name": "...", "mandatory": true}}]}}, ...]}}"""
 
 _PLAYWRIGHT_PROMPT = """You are converting one integration test Scenario into a single, \
-executable Playwright (Python, sync API) test function.
+executable Playwright (TypeScript, @playwright/test) test.
 
 Scenario: "{scenario_name}" ({scenario_type})
 
@@ -140,10 +140,10 @@ Test data (use these exact values in the generated code, they are already resolv
 either reviewer-provided or a sensible default):
 {test_data_listing}
 
-Write one complete, runnable `test_...` function using `playwright.sync_api`, following \
-the steps in order and asserting the expected result. Use the given test data values \
-literally where they'd naturally be used (form fields, query params, etc). Output ONLY \
-the Python code, no markdown fences, no prose, no explanation."""
+Write one complete, runnable test using `import {{ test, expect }} from '@playwright/test'`, \
+following the steps in order and asserting the expected result. Use the given test data \
+values literally where they'd naturally be used (form fields, query params, etc). Output \
+ONLY the TypeScript code, no markdown fences, no prose, no explanation."""
 
 
 def _describe_test_data(scenario: Scenario) -> str:
@@ -288,12 +288,12 @@ class HostedAIProvider:
         content = response.json()["choices"][0]["message"]["content"]
         # No JSON response_format here (unlike infer_journeys/generate_scenarios)
         # — the model's own code fences are the one common failure mode worth
-        # stripping defensively, since raw Python code has no equivalent
+        # stripping defensively, since raw TypeScript code has no equivalent
         # structured-output guarantee to lean on.
         code = content.strip()
         if code.startswith("```"):
             code = code.split("\n", 1)[1] if "\n" in code else code
             if code.endswith("```"):
                 code = code.rsplit("```", 1)[0]
-            code = code.removeprefix("python\n").strip()
+            code = code.removeprefix("typescript\n").removeprefix("ts\n").strip()
         return TestAssetCode(code=code)

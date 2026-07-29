@@ -134,7 +134,7 @@ def _add_test_suite_with_asset(journey: Journey, scenario: Scenario) -> None:
             TestAsset(
                 scenario_id=scenario.id,
                 test_suite_id=test_suite.id,
-                code="def test_guest_checkout():\n    pass\n",
+                code="import { test, expect } from '@playwright/test'\n\ntest('test_guest_checkout', async ({ page }) => {})\n",
             )
         )
         session.commit()
@@ -224,7 +224,7 @@ def test_list_test_suites_returns_journey_scoped_suites_with_test_cases() -> Non
     assert len(body[0]["test_cases"]) == 1
     assert body[0]["test_cases"][0]["name"] == "Guest checkout"
     assert body[0]["test_cases"][0]["type"] == "happy"
-    assert "def test_guest_checkout" in body[0]["test_cases"][0]["code"]
+    assert "test_guest_checkout" in body[0]["test_cases"][0]["code"]
 
 
 def test_list_test_suites_is_organization_scoped() -> None:
