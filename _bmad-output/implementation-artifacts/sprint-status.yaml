@@ -52,6 +52,11 @@
 # - Retrospective appends its action items to action_items; sprint-status surfaces open ones
 
 generated: 2026-07-13
+# 2026-07-30  # Story 4-3 enhanced (ACs 6-13: security/filename-safety/determinism/fail-closed/headers/
+#   standalone-auth) then implemented and moved ready-for-dev -> review. New apps/api/src/api/
+#   test_suite_export.py + download endpoint + frontend wiring; genuinely verified both auth_method
+#   branches end-to-end against a real HTTP fixture server and the real npm/playwright toolchain. See
+#   story file's own Change Log for full detail.
 # 2026-07-24  # Sprint Change Proposal (MinIO -> AWS S3 for production object storage).
 #   Added Story 2-8 (Production Object Storage on AWS S3, backlog) — resolves the object-storage
 #   backend provider question AD-8/Operational Envelope explicitly deferred. Local-dev/CI docker-
@@ -251,12 +256,20 @@ development_status:
   # Story 4.3 (Full Regeneration of Test Assets on Request) removed 2026-07-27 — explicit product decision,
   #   not deferred; no code existed to build on despite tracking suggesting otherwise (the "4.3 has been
   #   completed" commit actually implemented Story 4.2, mislabeled). See sprint-change-proposal-2026-07-27.md.
-  4-3-download-a-generated-test-suite: ready-for-dev  # ADDED 2026-07-27 — new Story 4.3, reuses the slot
+  4-3-download-a-generated-test-suite: review  # ADDED 2026-07-27 — new Story 4.3, reuses the slot
     # vacated above (different feature). FR-34: download all current Test Suites for an Application as a
-    # single, suite-folder-organized, runnable Python (pytest/pytest-playwright) project — corrected from
-    # an initially-drafted Node/TypeScript scaffold once TestAsset.code was confirmed to be Python.
-    # See sprint-change-proposal-2026-07-27-2.md. Story file created; one [GAP] flagged for dev-time
-    # verification (exact AI-generated code shape) before finalizing requirements.txt/conftest.py.
+    # single, suite-folder-organized, runnable TypeScript (@playwright/test) project (language corrected
+    # 2026-07-29, see story file). ENHANCED 2026-07-30 with security/filename-safety/determinism/fail-closed/
+    # header ACs (6-10) and standalone-authentication ACs (11-13: injected baseURL, a Playwright
+    # setup-project/storageState pattern for both auth_method values, no embedded credentials).
+    # IMPLEMENTED 2026-07-30 — apps/api/src/api/test_suite_export.py + download endpoint + frontend wiring;
+    # 22 new backend tests (12 pure unit, 5 live-DB) all passing against real Postgres/Vault/Temporal; full
+    # apps/api suite 62 passed; frontend 7/7 in TestSuiteResults.test.tsx; ruff/pyright/tsc/oxlint clean.
+    # Genuinely verified both auth_method branches end-to-end (real HTTP fixture server, real npm/playwright
+    # toolchain, real downloaded zip) — caught and fixed one real bug (.first vs .first() in generated
+    # code) in the process. One GAP only partially closed: no live AI provider call was made this session,
+    # so TestAsset.code's exact real (non-test-double) shape remains unconfirmed — see story file Change Log.
+    # Moved to review, not done — code-review workflow should run next.
   epic-4-retrospective: optional
 
   # Epic 5 (CI/CD Delivery), Epic 6 (Analytics & Executive Dashboards), and Epic 7 (Deployment &

@@ -228,6 +228,18 @@ export function TestSuiteResults({
   const [testsExpanded, setTestsExpanded] = useState(false)
   const [expandedSuiteIds, setExpandedSuiteIds] = useState<Set<string>>(new Set())
   const [activeCode, setActiveCode] = useState<TestCaseRead | null>(null)
+  const [downloading, setDownloading] = useState(false)
+
+  async function handleDownload() {
+    setDownloading(true)
+    try {
+      await api.downloadTestSuiteProject(applicationId)
+    } catch {
+      // best-effort — a failed download just leaves the button re-enabled
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   function toggleSuite(suiteId: string) {
     setExpandedSuiteIds((prev) => {
@@ -384,8 +396,8 @@ export function TestSuiteResults({
               <div style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>
                 <button
                   type="button"
-                  disabled
-                  title="Coming soon"
+                  disabled={downloading}
+                  onClick={handleDownload}
                   style={{
                     padding: '9px 20px',
                     background: 'rgba(255,255,255,0.16)',
@@ -395,15 +407,15 @@ export function TestSuiteResults({
                     fontSize: 13.5,
                     fontWeight: 700,
                     fontFamily: 'inherit',
-                    cursor: 'not-allowed',
-                    opacity: 0.75,
+                    cursor: downloading ? 'not-allowed' : 'pointer',
+                    opacity: downloading ? 0.75 : 1,
                     display: 'flex',
                     alignItems: 'center',
                     gap: 7,
                   }}
                 >
                   <DownloadIcon />
-                  Download Test Suite
+                  {downloading ? 'Downloading…' : 'Download Test Suite'}
                 </button>
                 <button
                   type="button"

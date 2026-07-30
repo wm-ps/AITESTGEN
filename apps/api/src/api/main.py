@@ -47,6 +47,12 @@ from api.auth import (
 from api.db import get_session
 from api.discovery import start_discovery_run
 from api.temporal_client import get_temporal_client
+from api.test_suite_export import (
+    TestSuiteExportError,
+    assemble_test_suite_project,
+    find_login_page_evidence,
+    sanitize_slug,
+)
 
 app = FastAPI(title="Application Intelligence Platform API")
 
@@ -853,3 +859,90 @@ def list_test_suites(
             )
         )
     return result
+
+
+@app.get("/applications/{external_id}/test-suites/download")
+def download_test_suite_project(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> Response:
+    # Same org-scoped lookup as every other Application endpoint (AD-12) —
+    # never by external_id alone, or one Organization could download
+    # another's generated tests (AC 6).
+    application = _get_org_application(session, organization_id, external_id)
+
+    journeys = session.exec(
+        select(Journey).where(
+            Journey.application_id == application.id,
+            Journey.status == "candidate",
+        )
+    ).all()
+    journeys_by_id = {j.id: j for j in journeys}
+
+    test_suites = (
+        session.exec(
+            select(TestSuite).where(
+                TestSuite.journey_id.in_(journeys_by_id.keys()),  # type: ignore[attr-defined]
+                TestSuite.current.is_(True),  # type: ignore[attr-defined]
+            )
+        ).all()
+        if journeys_by_id
+        else []
+    )
+    if not test_suites:
+        raise HTTPException(status_code=404, detail="no current test suites to export")
+    suite_ids = [ts.id for ts in test_suites]
+
+    test_assets = session.exec(
+        select(TestAsset).where(
+            TestAsset.test_suite_id.in_(suite_ids),  # type: ignore[attr-defined]
+            TestAsset.current.is_(True),  # type: ignore[attr-defined]
+        )
+    ).all()
+    assets_by_suite: dict[uuid.UUID, list[TestAsset]] = {}
+    for asset in test_assets:
+        assets_by_suite.setdefault(asset.test_suite_id, []).append(asset)
+
+    scenario_ids = {a.scenario_id for a in test_assets}
+    scenario_name_by_asset_id = {}
+    if scenario_ids:
+        scenarios_by_id = {
+            s.id: s
+            for s in session.exec(
+                select(Scenario).where(Scenario.id.in_(scenario_ids))  # type: ignore[attr-defined]
+            ).all()
+        }
+        for asset in test_assets:
+            scenario = scenarios_by_id.get(asset.scenario_id)
+            if scenario is not None:
+                scenario_name_by_asset_id[asset.id] = scenario.name
+
+    # Never resolves Application.secret_ref / calls SecretsClient — only
+    # reads non-secret auth_method and (for standard_login) the non-secret
+    # captured login-page evidence (AC 11-13).
+    login_evidence = (
+        find_login_page_evidence(session, application)
+        if application.auth_method == "standard_login"
+        else None
+    )
+
+    try:
+        zip_bytes = assemble_test_suite_project(
+            application,
+            test_suites,
+            journeys_by_id,
+            assets_by_suite,
+            scenario_name_by_asset_id,
+            login_evidence,
+        )
+    except TestSuiteExportError as exc:
+        # Fail closed (AC 9) — never a 200 with partial/corrupt zip bytes.
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    filename = sanitize_slug(application.name, fallback="application")
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}-tests.zip"'},
+    )

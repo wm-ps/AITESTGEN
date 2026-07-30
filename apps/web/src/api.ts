@@ -79,6 +79,33 @@ export const api = {
     }),
   listTestSuites: (applicationId: string) =>
     request<TestSuiteRead[]>(`/applications/${applicationId}/test-suites`),
+  // Not built on request<T>() — that helper always calls response.json(),
+  // which throws on a binary zip body (Story 4.3).
+  downloadTestSuiteProject: async (applicationId: string) => {
+    const response = await fetch(
+      `${API_BASE}/applications/${applicationId}/test-suites/download`,
+      { credentials: 'include' },
+    )
+    if (!response.ok) {
+      const body = await response.json().catch(() => null)
+      throw new ApiError(body?.detail ?? response.statusText, response.status)
+    }
+    const blob = await response.blob()
+    const disposition = response.headers.get('Content-Disposition') ?? ''
+    const match = /filename="([^"]+)"/.exec(disposition)
+    const filename = match?.[1] ?? 'tests.zip'
+    const url = URL.createObjectURL(blob)
+    try {
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  },
 }
 
 export { ApiError }

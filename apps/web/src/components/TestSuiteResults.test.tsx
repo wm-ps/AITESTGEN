@@ -29,11 +29,32 @@ const SCENARIOS = [
   { id: 's2', journey_id: 'journey-1' },
 ]
 
-function stubFetch(overrides: { suites?: typeof SUITES; scenarios?: unknown[] } = {}) {
-  const { suites = SUITES, scenarios = SCENARIOS } = overrides
+function stubFetch(
+  overrides: {
+    suites?: typeof SUITES
+    scenarios?: unknown[]
+    download?: { ok: boolean; status?: number }
+  } = {},
+) {
+  const { suites = SUITES, scenarios = SCENARIOS, download = { ok: true } } = overrides
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string) => {
+      if (url.includes('/test-suites/download')) {
+        if (!download.ok) {
+          return {
+            ok: false,
+            status: download.status ?? 500,
+            json: async () => ({ detail: 'export failed' }),
+          }
+        }
+        return {
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'Content-Disposition': 'attachment; filename="acme-tests.zip"' }),
+          blob: async () => new Blob(['zip-bytes']),
+        }
+      }
       if (url.includes('/test-suites')) {
         return { ok: true, status: 200, json: async () => suites }
       }
@@ -125,5 +146,42 @@ describe('TestSuiteResults', () => {
     fireEvent.click(screen.getByLabelText('Close'))
     fireEvent.click(codeButtons[1])
     expect(screen.getByText(/test_expired_card/)).toBeTruthy()
+  })
+
+  it('downloads the test suite project when Download Test Suite is clicked', async () => {
+    stubFetch()
+    vi.stubGlobal('URL', {
+      ...URL,
+      createObjectURL: vi.fn(() => 'blob:mock-url'),
+      revokeObjectURL: vi.fn(),
+    })
+    render(<TestSuiteResults applicationId="app-1" onGoToDashboard={() => {}} />)
+
+    const button = (await screen.findByRole('button', {
+      name: /Download Test Suite/,
+    })) as HTMLButtonElement
+    expect(button.disabled).toBe(false)
+
+    fireEvent.click(button)
+    await waitFor(() => expect(screen.getByRole('button', { name: /Downloading/ })).toBeTruthy())
+    await waitFor(() => {
+      const settled = screen.getByRole('button', { name: /Download Test Suite/ }) as HTMLButtonElement
+      expect(settled.disabled).toBe(false)
+    })
+    expect(URL.createObjectURL).toHaveBeenCalledOnce()
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock-url')
+  })
+
+  it('re-enables the Download button after a failed export', async () => {
+    stubFetch({ download: { ok: false, status: 500 } })
+    render(<TestSuiteResults applicationId="app-1" onGoToDashboard={() => {}} />)
+
+    const button = await screen.findByRole('button', { name: /Download Test Suite/ })
+    fireEvent.click(button)
+
+    await waitFor(() => {
+      const settled = screen.getByRole('button', { name: /Download Test Suite/ }) as HTMLButtonElement
+      expect(settled.disabled).toBe(false)
+    })
   })
 })
