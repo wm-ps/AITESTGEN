@@ -46,6 +46,9 @@ class DiscoveryRun(SQLModel, table=True):
     # only while status="running" (AD-10 extension, sprint-change-proposal
     # 2026-07-21 CR-2). Set by Stories 2.1/2.2/2.6; read by Story 2.7.
     stage: str | None = Field(default=None)
+    # Story 2.9: per-run override of Application.page_load_timeout_seconds —
+    # wins when set. Both null falls back to DEFAULT_PAGE_LOAD_TIMEOUT_SECONDS.
+    page_load_timeout_seconds: float | None = Field(default=None)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

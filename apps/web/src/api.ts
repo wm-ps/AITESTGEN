@@ -44,6 +44,10 @@ export const api = {
     request<ApplicationRead>('/applications', { method: 'POST', body: JSON.stringify(payload) }),
   getApplication: (applicationId: string) =>
     request<ApplicationRead>(`/applications/${applicationId}`),
+  pauseDiscovery: (applicationId: string) =>
+    request<ApplicationRead>(`/applications/${applicationId}/pause-discovery`, { method: 'POST' }),
+  resumeDiscovery: (applicationId: string) =>
+    request<ApplicationRead>(`/applications/${applicationId}/resume-discovery`, { method: 'POST' }),
   listJourneys: (applicationId: string) =>
     request<JourneyRead[]>(`/applications/${applicationId}/journeys`),
   listJourneySteps: (journeyId: string) =>

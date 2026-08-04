@@ -174,6 +174,13 @@ export function DiscoverJourneys({
   const [continuing, setContinuing] = useState(false)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
+  // Story 2.17: pause/resume already round-trips through the API — this
+  // just reflects the response immediately rather than waiting for
+  // useDiscoveryProgress's next poll tick (which stops polling entirely
+  // once Journeys exist, so it may never pick the change up on its own).
+  const [statusOverride, setStatusOverride] = useState<string | null>(null)
+  const [pauseResumeBusy, setPauseResumeBusy] = useState(false)
+  const [pauseResumeError, setPauseResumeError] = useState<string | null>(null)
   // Distinguishes "discovery hasn't produced any Journeys yet" (show
   // Discovery Progress) from "every Journey was deleted" (show the bare
   // "All journeys have been removed." empty state, EXPERIENCE.md State
@@ -194,7 +201,36 @@ export function DiscoverJourneys({
     journeys.length > 0,
   )
 
-  const sessionExpired = liveStatus === 'failed' && liveFailureReason === 'session_expired'
+  useEffect(() => setStatusOverride(null), [liveStatus])
+  const status = statusOverride ?? liveStatus
+
+  const sessionExpired = status === 'failed' && liveFailureReason === 'session_expired'
+
+  async function handlePause() {
+    setPauseResumeError(null)
+    setPauseResumeBusy(true)
+    try {
+      const application = await api.pauseDiscovery(applicationId)
+      setStatusOverride(application.discovery_status)
+    } catch {
+      setPauseResumeError('Could not pause discovery. Try again.')
+    } finally {
+      setPauseResumeBusy(false)
+    }
+  }
+
+  async function handleResume() {
+    setPauseResumeError(null)
+    setPauseResumeBusy(true)
+    try {
+      const application = await api.resumeDiscovery(applicationId)
+      setStatusOverride(application.discovery_status)
+    } catch {
+      setPauseResumeError('Could not resume discovery. Try again.')
+    } finally {
+      setPauseResumeBusy(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -302,7 +338,7 @@ export function DiscoverJourneys({
               <h1 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
                 Discover Journeys
               </h1>
-              <StatusPill status={liveStatus} />
+              <StatusPill status={status} />
             </div>
             <div className="caption" style={{ fontSize: 13, marginTop: 3 }}>
               {journeys.length} Journey{journeys.length === 1 ? '' : 's'} Discovered
@@ -329,6 +365,16 @@ export function DiscoverJourneys({
                 color: 'var(--ink)',
               }}
             />
+            {(status === 'running' || status === 'paused') && (
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={status === 'running' ? handlePause : handleResume}
+                disabled={pauseResumeBusy}
+              >
+                {status === 'running' ? 'Pause Discovery' : 'Resume Discovery'}
+              </button>
+            )}
             <button
               type="button"
               onClick={handleContinueToScenarios}
@@ -357,11 +403,23 @@ export function DiscoverJourneys({
             Session expired mid-crawl. Re-authenticate to continue discovery.
           </p>
         ) : (
-          liveStatus === 'failed' && (
+          status === 'failed' && (
             <p className="caption" role="alert" style={{ color: 'var(--danger)' }}>
               Discovery Run failed.
             </p>
           )
+        )}
+
+        {status === 'paused' && (
+          <p className="caption" style={{ color: 'var(--warn-strong)' }}>
+            Discovery paused. Resume to continue exploring from where it left off.
+          </p>
+        )}
+
+        {pauseResumeError && (
+          <p className="caption" role="alert" style={{ color: 'var(--danger)' }}>
+            {pauseResumeError}
+          </p>
         )}
 
         {journeys.length > 0 && (
@@ -587,7 +645,7 @@ export function DiscoverJourneys({
           </div>
         )}
 
-        {journeys.length === 0 && liveStatus !== 'failed' && (
+        {journeys.length === 0 && status !== 'failed' && (
           hadJourneysRef.current ? (
             <p style={{ textAlign: 'center', padding: '80px 24px', color: 'var(--ink-muted)', fontSize: 14 }}>
               All journeys have been removed.

@@ -312,6 +312,71 @@ def test_create_application_rejects_url_returning_5xx(monkeypatch: pytest.Monkey
         )
 
 
+def test_create_application_stores_and_returns_login_url() -> None:
+    init_db()
+    client = _signed_in_client("Org Login URL")
+
+    response = client.post(
+        "/applications",
+        json={
+            "name": "Login URL App",
+            "url": "https://app.example.com",
+            "login_url": "https://app.example.com/login",
+            "environment": "staging",
+            "username": "qa-test-account",
+            "password": "irrelevant",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["login_url"] == "https://app.example.com/login"
+    with Session(engine) as session:
+        app_row = session.exec(
+            select(Application).where(Application.name == "Login URL App")
+        ).first()
+        assert app_row is not None
+        assert app_row.login_url == "https://app.example.com/login"
+
+
+def test_create_application_never_reachability_checks_login_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """login_url is a navigation hint for the worker, not a health check
+    target — a login page can legitimately 500 without prior session state
+    (the shopbit.onwavemaker.com case that motivated this field). Only `url`
+    may gate creation."""
+    init_db()
+    login_url = "https://app.example.com/login"
+
+    class _RejectsLoginUrlClient(_FakeAsyncClient):
+        async def head(self, url: str) -> _FakeResponse:
+            if url == login_url:
+                raise httpx.RequestError("login_url must never be reachability-checked")
+            return await super().head(url)
+
+        async def get(self, url: str) -> _FakeResponse:
+            if url == login_url:
+                raise httpx.RequestError("login_url must never be reachability-checked")
+            return await super().get(url)
+
+    monkeypatch.setattr("api.main.httpx.AsyncClient", lambda **kwargs: _RejectsLoginUrlClient())
+    client = _signed_in_client("Org Login URL Not Checked")
+
+    response = client.post(
+        "/applications",
+        json={
+            "name": "Login URL Not Checked App",
+            "url": "https://app.example.com",
+            "login_url": login_url,
+            "environment": "staging",
+            "username": "qa-test-account",
+            "password": "irrelevant",
+        },
+    )
+
+    assert response.status_code == 201
+
+
 def test_create_application_sets_discovery_stage_initializing() -> None:
     """Story 2.1 (CR-2): DiscoveryRun.stage is set to "initializing" in the
     same request, round-tripping through ApplicationRead.discovery_stage."""

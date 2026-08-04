@@ -14,6 +14,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -44,6 +45,10 @@ class Action(SQLModel, table=True):
     )
     description: str
     captured_selector: str | None = Field(default=None)
+    # Story 2.21: ranked, fragility-aware candidate locators — a JSONB list
+    # of {"strategy", "value", "fragile"} dicts, loose by design since these
+    # feed Story 2.5's ComponentLocator derivation, not a fixed contract.
+    locator_candidates: list | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
     representative: bool = Field(default=True, sa_column=Column(Boolean, nullable=False))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

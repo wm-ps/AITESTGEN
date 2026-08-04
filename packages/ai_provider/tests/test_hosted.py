@@ -212,3 +212,46 @@ async def test_generate_playwright_strips_markdown_code_fences(
 
     assert result.code == "test('guest checkout', async ({ page }) => {})"
     assert "```" not in result.code
+
+
+async def test_infer_state_similarity_returns_the_raw_opinion_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Story 2.10 AC 3 — a short plain-language opinion, not JSON; the
+    caller records it as supporting evidence and never parses/branches on
+    it as a structured decision."""
+    captured = _monkeypatch_post(
+        monkeypatch, "VARIANT: state B shows Approve/Reject actions state A doesn't have."
+    )
+
+    result = await HostedAIProvider().infer_state_similarity(
+        heading_a="Claim Details",
+        actions_a=["Edit", "Submit"],
+        heading_b="Claim Details",
+        actions_b=["Approve", "Reject"],
+    )
+
+    assert result == "VARIANT: state B shows Approve/Reject actions state A doesn't have."
+    assert "Claim Details" in captured["json"]["messages"][0]["content"]
+    assert "Approve" in captured["json"]["messages"][0]["content"]
+    # Plain text opinion — no JSON response_format, matching generate_playwright.
+    assert "response_format" not in captured["json"]
+
+
+async def test_classify_action_safety_returns_the_raw_opinion_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Story 2.12 AC 3 — supporting evidence only, recorded in diagnostics;
+    the Safety Engine's posture-driven verdict never depends on this."""
+    captured = _monkeypatch_post(
+        monkeypatch, "AMBIGUOUS: archiving may trigger a downstream workflow."
+    )
+
+    result = await HostedAIProvider().classify_action_safety(
+        label="Archive", page_context="Claim Details page, status: Open"
+    )
+
+    assert result == "AMBIGUOUS: archiving may trigger a downstream workflow."
+    assert "Archive" in captured["json"]["messages"][0]["content"]
+    assert "Claim Details" in captured["json"]["messages"][0]["content"]
+    assert "response_format" not in captured["json"]

@@ -34,3 +34,18 @@ class AIProvider(Protocol):
     ) -> list[ScenarioCandidate]: ...
 
     async def generate_playwright(self, scenario: Scenario) -> TestAssetCode: ...
+
+    # Story 2.10 AC 3: called only when the State Identity Engine's score
+    # falls in the ambiguous band. Returns a short plain-language opinion —
+    # supporting evidence recorded in run diagnostics, never authoritative;
+    # the caller must not let this change the verdict it already computed.
+    async def infer_state_similarity(
+        self, heading_a: str, actions_a: list[str], heading_b: str, actions_b: list[str]
+    ) -> str: ...
+
+    # Story 2.12 AC 3: called only for an action the Safety Engine's own verb
+    # lists couldn't classify at all. Same contract as
+    # `infer_state_similarity` — a short plain-language opinion, supporting
+    # evidence recorded in diagnostics, never authoritative; the caller's
+    # posture-driven verdict is already decided before this is even awaited.
+    async def classify_action_safety(self, label: str, page_context: str) -> str: ...

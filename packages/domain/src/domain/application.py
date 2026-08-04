@@ -50,11 +50,36 @@ class Application(SQLModel, table=True):
     )
     name: str
     url: str
+    # Story: onboarding's Application URL is a home page, not necessarily the
+    # login page (auth_method=standard_login's login form can live behind a
+    # link, or on an endpoint that 500s without an existing session cookie —
+    # observed live: shopbit.onwavemaker.com's /login). Optional override so
+    # `establish_session` can navigate straight there instead of guessing;
+    # deliberately never reachability-checked at onboarding time (main.py) —
+    # the same cookie-dependent 500 that motivated this field would otherwise
+    # block onboarding again.
+    login_url: str | None = Field(default=None)
     environment: str
     secret_ref: str
     # str, not the AuthMethod Literal — SQLModel can't infer a column type from
     # Literal; the Literal is still the source of truth for callers (api layer).
     auth_method: str = Field(default="standard_login")
+    # Story 2.9: per-Application default for the crawler's readiness ceiling
+    # (`wait_for_page_ready`). Nullable — `None` means "use the DiscoveryRun's
+    # override, or the hardcoded default", not "wait forever". Backend/config
+    # only in V1, no API route or UI field.
+    page_load_timeout_seconds: float | None = Field(default=None)
+    # Story 2.10 AC 8: per-Application state-identity thresholds — never
+    # hardcoded constants in the comparison code. Expect these to need
+    # tuning on the first real pilot (Dev Notes).
+    state_identity_threshold_same: float = Field(default=0.75)
+    state_identity_threshold_new: float = Field(default=0.35)
+    # Story 2.12 AC 2: `non_production` (default) executes Ambiguous
+    # actions to maximise coverage; `production` defers them to the
+    # Blocked Frontier. A declaration by the user about how cautious to be
+    # — not a detection of where the crawler is actually running (Dev
+    # Notes: never conflate the two). Backend/config only in V1, no UI field.
+    safety_posture: str = Field(default="non_production")
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

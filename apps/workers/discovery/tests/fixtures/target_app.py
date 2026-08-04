@@ -21,6 +21,11 @@ _request_count = 0
 _expire_after: int | None = None
 _recoverable_expiry = False
 _already_expired_once = False
+# Story 2.16 Task 5: a linear 3-step wizard — step-a creates a real
+# business record (like a real "place an order" submit), step-b is a plain
+# waypoint, step-c has a required business-specific field that always
+# defers. Resuming must never replay step-a (the record-creating step).
+_wizard_orders: list[str] = []
 
 
 def configure(expire_after: int | None, recoverable_expiry: bool = False) -> None:
@@ -45,6 +50,11 @@ def configure(expire_after: int | None, recoverable_expiry: bool = False) -> Non
     _request_count = 0
     _items = ["Sample item", "Second item"]
     _valid_sessions = set()
+    # `.clear()`, not reassignment — a test that imports this list by name
+    # (`from fixtures.target_app import _wizard_orders`) holds a reference to
+    # the *same* list object; reassigning this global here would leave that
+    # import pointing at a stale, no-longer-current list.
+    _wizard_orders.clear()
 
 
 def _authenticated(request: Request) -> bool:
@@ -131,6 +141,7 @@ def home(request: Request) -> str:
       <button type="submit">Subscribe</button>
     </form>
     <a href="/broken">Broken Link</a>
+    <a href="/server-error">Server Error Link</a>
     <form method="post" action="/items">
       <input type="text" name="name">
       <input type="text" name="quantity">
@@ -300,6 +311,296 @@ def api_items(request: Request) -> dict:
     return {"items": _items}
 
 
+@app.get("/frames", response_class=HTMLResponse)
+def frames_page(request: Request) -> Response:
+    """Story 2.14 AC 1 — a same-origin iframe with its own form, plus a
+    cross-origin one. The cross-origin frame points at the *same* server
+    under the `localhost` hostname rather than `127.0.0.1` — different
+    origin per RFC 6454 (host differs) even though it's the identical
+    process, so the test stays fast/deterministic without a second server."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    port = request.url.port
+    return HTMLResponse(
+        f"""
+        <html><body>
+        <h1>Frames</h1>
+        <iframe title="same-origin" src="/frame-content"></iframe>
+        <iframe title="cross-origin" src="http://localhost:{port}/frame-content"></iframe>
+        </body></html>
+        """
+    )
+
+
+@app.get("/frame-content", response_class=HTMLResponse)
+def frame_content(request: Request) -> Response:
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(
+        """<html><body>
+        <form method="post" action="/items"><input type="text" name="name">
+        <button type="submit">Add from frame</button></form>
+        <button id="frame-button">Frame button</button>
+        </body></html>"""
+    )
+
+
+@app.get("/shadow-dom", response_class=HTMLResponse)
+def shadow_dom_page(request: Request) -> Response:
+    """Story 2.14 AC 2 — one custom element with an open shadow root
+    containing a button, one with a closed root (genuinely opaque, must be
+    logged as unreachable rather than found)."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(
+        """
+        <html><body>
+        <h1>Shadow DOM</h1>
+        <open-widget></open-widget>
+        <closed-widget></closed-widget>
+        <script>
+          customElements.define('open-widget', class extends HTMLElement {
+            connectedCallback() {
+              const root = this.attachShadow({ mode: 'open' });
+              root.innerHTML = '<button>Shadow button</button>';
+            }
+          });
+          customElements.define('closed-widget', class extends HTMLElement {
+            connectedCallback() {
+              const root = this.attachShadow({ mode: 'closed' });
+              root.innerHTML = '<button>Hidden button</button>';
+            }
+          });
+        </script>
+        </body></html>
+        """
+    )
+
+
+@app.get("/tabs", response_class=HTMLResponse)
+def tabs_page(request: Request) -> Response:
+    """Story 2.14 AC 3 — a plain ARIA tablist/tab pattern."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(
+        """
+        <html><body>
+        <h1>Tabs</h1>
+        <div role="tablist">
+          <button role="tab" onclick="setPanel('First panel')">First</button>
+          <button role="tab" onclick="setPanel('Second panel')">Second</button>
+        </div>
+        <script>function setPanel(t) { document.getElementById('panel').innerText = t; }</script>
+        <div id="panel">First panel</div>
+        </body></html>
+        """
+    )
+
+
+@app.get("/dialog", response_class=HTMLResponse)
+def dialog_page(request: Request) -> Response:
+    """Story 2.14 AC 4 — a closable, ARIA-correct dialog and a deliberately
+    unclosable one (no working close control, Escape does nothing) to prove
+    the forced-navigation fallback fires rather than stranding the run."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(
+        """
+        <html><body>
+        <h1>Dialog</h1>
+        <button onclick="showDialog('good-dialog')">Open dialog</button>
+        <button onclick="showDialog('stuck-dialog')">Open stuck dialog</button>
+        <script>
+          function showDialog(id) { document.getElementById(id).style.display = 'block'; }
+          function hideDialog(id) { document.getElementById(id).style.display = 'none'; }
+        </script>
+        <div id="good-dialog" role="dialog" aria-modal="true" style="display:none">
+          <p>A dialog</p>
+          <button onclick="hideDialog('good-dialog')">Close</button>
+        </div>
+        <div id="stuck-dialog" role="dialog" aria-modal="true" style="display:none">
+          <p>Cannot be closed</p>
+        </div>
+        </body></html>
+        """
+    )
+
+
+@app.get("/popups", response_class=HTMLResponse)
+def popups_page(request: Request) -> Response:
+    """Story 2.14 AC 5 — a same-origin popup (followed) and a cross-origin
+    one (flagged), using the same `localhost` vs `127.0.0.1` origin trick as
+    `/frames`."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    port = request.url.port
+    return HTMLResponse(
+        f"""
+        <html><body>
+        <h1>Popups</h1>
+        <button onclick="window.open('/items', '_blank')">Open same-origin popup</button>
+        <button onclick="openCrossOrigin()">Open cross-origin popup</button>
+        <script>
+          function openCrossOrigin() {{
+            window.open('http://localhost:{port}/items', '_blank');
+          }}
+        </script>
+        </body></html>
+        """
+    )
+
+
+@app.get("/upload", response_class=HTMLResponse)
+def upload_page(request: Request) -> Response:
+    """Story 2.14 AC 6 — a plain file-upload field."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(
+        """<html><body><h1>Upload</h1>
+        <form method="post" action="/items"><input type="file" name="doc">
+        <button type="submit">Upload</button></form>
+        <a href="/">Home</a></body></html>"""
+    )
+
+
+_stuck_visit_count = 0
+
+
+@app.get("/stuck", response_class=HTMLResponse)
+def stuck_page(request: Request) -> Response:
+    """Story 2.11 — a state that no return rung can reconstruct: every
+    visit renders a different heading (a visit counter), simulating an
+    application that holds state server-side with no deep-linkable URL
+    (ASP.NET WebForms postback, a server-driven wizard). Proves the State
+    Return ladder gives up honestly (rung 5, `unreached`) rather than
+    silently accepting a wrong landing or retrying forever."""
+    global _stuck_visit_count
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    _stuck_visit_count += 1
+    return HTMLResponse(
+        f"""<html><body><h1>Stuck {_stuck_visit_count}</h1>
+        <button onclick="window.location='/stuck-away'">Leave</button>
+        <button>Second button</button>
+        </body></html>""",
+        # Forces a fresh server hit on browser back-navigation too — the
+        # visit counter above is the whole point of this fixture (Story
+        # 2.11), and a cached bfcache render would silently defeat it.
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/stuck-away", response_class=HTMLResponse)
+def stuck_away_page(request: Request) -> Response:
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse("<html><body><h1>Away</h1></body></html>")
+
+
+@app.get("/records/{record_id}", response_class=HTMLResponse)
+def records_page(record_id: int, request: Request) -> Response:
+    """Story 2.10 — three numeric-id pages sharing one route template
+    (`/records/{id}`). Record 2 shows Approve/Reject instead of Edit/Submit
+    (a materially different state -> VARIANT); record 3 is identical to
+    record 1 (-> SAME). Linked from record 1 so a crawl starting there
+    discovers all three via plain BFS."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    if record_id == 2:
+        actions = '<button>Approve</button><button>Reject</button>'
+    else:
+        actions = '<button>Edit</button><button>Submit</button>'
+    links = ""
+    if record_id == 1:
+        links = '<a href="/records/2">Record 2</a><a href="/records/3">Record 3</a>'
+    return HTMLResponse(
+        f"<html><body><h1>Record</h1>{actions}{links}</body></html>"
+    )
+
+
+@app.get("/locators", response_class=HTMLResponse)
+def locators_page(request: Request) -> Response:
+    """Story 2.21 — one button per capture tier: a real `data-testid`, a
+    button whose only class is a CSS-in-JS-style hash but has a real ARIA
+    role+name (must rank the role above the hash), and a bare `div` with an
+    `onclick` and nothing else distinguishing (falls through to a CSS path)."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(
+        """
+        <html><body>
+        <h1>Locators</h1>
+        <button data-testid="save-button" onclick="void(0)">Save</button>
+        <button class="css-1x2y3z" onclick="void(0)">Confirm order</button>
+        <div id="bare-div" onclick="void(0)"></div>
+        </body></html>
+        """
+    )
+
+
+@app.get("/load-more", response_class=HTMLResponse)
+def load_more_page(request: Request) -> Response:
+    """Story 2.9 AC 5/6 — a "Load More" button that grows the DOM a fixed
+    amount per click up to a cap, entirely client-side (no server state
+    needed): 3 items per click, capped at 12. Sampling must stop once
+    clicking stops growing the list (the confirmed-pattern rule), not at
+    the very first click and not only once the cap is hit."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(
+        """
+        <html><body>
+        <h1>Load More</h1>
+        <div id="list"><div class="item">Item 1</div></div>
+        <button id="load-more-btn">Load More</button>
+        <script>
+          let count = 1;
+          const cap = 12;
+          document.getElementById('load-more-btn').addEventListener('click', () => {
+            const toAdd = Math.min(3, cap - count);
+            for (let i = 0; i < toAdd; i++) {
+              count++;
+              const div = document.createElement('div');
+              div.className = 'item';
+              div.innerText = 'Item ' + count;
+              document.getElementById('list').appendChild(div);
+            }
+          });
+        </script>
+        </body></html>
+        """
+    )
+
+
+@app.get("/polling", response_class=HTMLResponse)
+def polling_page(request: Request) -> Response:
+    """Story 2.9 AC 1a — emits a fixed-URL poll every 300ms. Readiness must
+    classify it as ignorable and settle well inside the timeout, not treat
+    it as perpetual application traffic."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(
+        """<html><body><h1>Polling</h1>
+        <script>setInterval(() => { fetch('/api/items'); }, 300);</script>
+        </body></html>"""
+    )
+
+
+@app.get("/never-settles", response_class=HTMLResponse)
+def never_settles_page(request: Request) -> Response:
+    """Story 2.9 AC 3 — the DOM mutates continuously; readiness must give
+    up at its configured ceiling rather than wait forever."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(
+        """<html><body><h1>Never settles</h1><div id="ticker"></div>
+        <script>
+          setInterval(() => { document.getElementById('ticker').innerText = Date.now(); }, 50);
+        </script>
+        </body></html>"""
+    )
+
+
 @app.get("/broken")
 def broken(request: Request) -> Response:
     """A dead link reachable from the dashboard nav — reproduces a real site's
@@ -309,3 +610,85 @@ def broken(request: Request) -> Response:
     if not _authenticated(request):
         return RedirectResponse(url="/login")  # see /items for why
     return Response(status_code=404, content="Not Found")
+
+
+@app.get("/server-error")
+def server_error(request: Request) -> Response:
+    """Story 2.18 AC 2/3: a destination that always 5xxs — proves the
+    crawler retries a small bounded number of times before writing a
+    `DiscoveryError` (DISC-003), unlike `/broken`'s plain 404 (never
+    retried, never logged as a target-application failure)."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")  # see /items for why
+    return Response(status_code=503, content="Service Unavailable")
+
+
+@app.get("/wizard/step-a", response_class=HTMLResponse)
+def wizard_step_a(request: Request) -> Response:
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(
+        """<html><body><h1>Wizard: Step A</h1>
+        <form method="post" action="/wizard/step-a">
+          <button type="submit">Continue</button>
+        </form>
+        </body></html>"""
+    )
+
+
+@app.post("/wizard/step-a")
+def wizard_step_a_submit(request: Request) -> RedirectResponse:
+    if _authenticated(request):
+        # Reproduces a real order-creating intermediate step — resume must
+        # never replay this (Story 2.16 AC 3/Task 5's specific regression).
+        _wizard_orders.append(f"order-{len(_wizard_orders) + 1}")
+    return RedirectResponse(url="/wizard/step-b", status_code=303)
+
+
+@app.get("/wizard/step-b", response_class=HTMLResponse)
+def wizard_step_b(request: Request) -> Response:
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(
+        """<html><body><h1>Wizard: Step B</h1>
+        <a href="/wizard/step-c">Continue to Step C</a>
+        </body></html>"""
+    )
+
+
+@app.get("/wizard/step-c", response_class=HTMLResponse)
+def wizard_step_c(request: Request) -> Response:
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(
+        """<html><body><h1>Wizard: Step C</h1>
+        <form method="post" action="/wizard/step-c">
+          <input type="text" name="Policy Number" required>
+          <button type="submit">Submit</button>
+        </form>
+        </body></html>"""
+    )
+
+
+@app.post("/wizard/step-c")
+def wizard_step_c_submit(request: Request) -> RedirectResponse:
+    return RedirectResponse(url="/wizard/step-c", status_code=303)
+
+
+@app.get("/safety-test", response_class=HTMLResponse)
+def safety_test(request: Request) -> Response:
+    """Story 2.12 Task 6: one button per classification bucket, none of
+    which navigate — proves the Safety Engine's verdict (never the DOM
+    itself) is what determines whether a click actually happens."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")  # see /items for why
+    return HTMLResponse(
+        """
+        <html><body>
+        <h1>Safety Test</h1>
+        <button onclick="return false;">Delete</button>
+        <button onclick="return false;">Submit</button>
+        <button onclick="return false;">Frobnicate</button>
+        </body></html>
+        """
+    )

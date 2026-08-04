@@ -1,11 +1,13 @@
-// `Complete` (green) and `Failed` (red, Story 2.4) have no documented pill
-// variant in DESIGN.md — only `Running` (signal, pulsing) is named. Filled
-// in here per DESIGN.md's own semantic-color rule (green = healthy/generated,
-// red = failing), not a literal citation.
+// `Complete` (green), `Failed` (red, Story 2.4), and `Paused` (amber, Story
+// 2.17) have no documented pill variant in DESIGN.md — only `Running`
+// (signal, pulsing) is named. Filled in here per DESIGN.md's own
+// semantic-color rule (green = healthy/generated, red = failing, amber =
+// attention/incomplete), not a literal citation.
 const COLORS: Record<string, { background: string; foreground: string }> = {
   running: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   complete: { background: 'var(--good-wash)', foreground: 'var(--good-strong)' },
   failed: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },
+  paused: { background: 'var(--warn-wash)', foreground: 'var(--warn-strong)' },
 }
 
 export function StatusPill({ status }: { status: string }) {

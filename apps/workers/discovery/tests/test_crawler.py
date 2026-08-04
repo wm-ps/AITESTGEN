@@ -40,7 +40,7 @@ class FakeObjectStore:
         return self.stored[key]
 
 
-async def _crawl(target_app_url: str):
+async def _crawl(target_app_url: str, on_diagnostic=None):
     credential = json.dumps({"username": "qa", "password": "qa-pass"}).encode()
     object_store = FakeObjectStore()
 
@@ -62,6 +62,7 @@ async def _crawl(target_app_url: str):
             uuid.uuid4(),
             auth_method="standard_login",
             credential=credential,
+            on_diagnostic=on_diagnostic,
         )
         await context.close()
         await browser.close()
@@ -117,6 +118,35 @@ async def test_establish_session_captures_the_login_page_and_form(
     ]
     assert password_fields
     assert password_fields[0].default_value != "qa-pass"
+
+
+@pytest.mark.asyncio
+async def test_establish_session_navigates_straight_to_explicit_login_url(
+    target_app_url: str,
+) -> None:
+    """An explicit `login_url` must be used for the initial navigation
+    instead of the base_url→link-following heuristic — proven here by
+    pointing `base_url` at a 404 (no password field, no login link at all,
+    so the heuristic alone could never authenticate) while `login_url`
+    points straight at the real login form."""
+    credential = json.dumps({"username": "qa", "password": "qa-pass"}).encode()
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch()
+        context = await establish_session(
+            browser,
+            auth_method="standard_login",
+            credential=credential,
+            base_url=f"{target_app_url}does-not-exist-xyz",
+            login_url=f"{target_app_url}login",
+        )
+        page = await context.new_page()
+        await page.goto(f"{target_app_url}items")
+        content = await page.content()
+        await context.close()
+        await browser.close()
+
+    assert "Edit" in content, "expected the authenticated /items page, not a redirect to /login"
 
 
 @pytest.mark.asyncio
@@ -336,6 +366,22 @@ async def test_crawl_exercises_both_body_and_chrome_buttons(
 
 
 @pytest.mark.asyncio
+async def test_crawl_exhausts_tier_1_before_tier_2(target_app_url: str) -> None:
+    """Story 2.11 AC 1/2: every Tier 1 (in-page, no landmark) candidate is
+    exhausted before any Tier 2 (nav/header/footer landmark) candidate is
+    attempted — the dashboard's "Wishlist"/"Recently viewed" (body, Tier 1)
+    must both be clicked before "Menu" (chrome nav, Tier 2), even though
+    "Menu" sits first in raw DOM order (see the regression this shares a
+    fixture with, above)."""
+    result, _ = await _crawl(target_app_url)
+
+    dashboard_labels = [a.description for a in result.actions if a.page_url == target_app_url]
+    menu_index = dashboard_labels.index("Menu")
+    assert dashboard_labels.index("Wishlist") < menu_index
+    assert dashboard_labels.index("Recently viewed") < menu_index
+
+
+@pytest.mark.asyncio
 async def test_crawl_keeps_trying_buttons_after_one_navigates_away(
     target_app_url: str,
 ) -> None:
@@ -493,6 +539,47 @@ async def test_crawl_discards_an_error_status_destination(target_app_url: str) -
 
     assert not any(page.url.endswith("/broken") for page in result.pages)
     assert not any(t.to_url.endswith("/broken") for t in result.transitions)
+
+
+@pytest.mark.asyncio
+async def test_crawl_retries_a_5xx_destination_then_logs_a_discovery_error(
+    target_app_url: str,
+) -> None:
+    """Story 2.18 AC 2/3: unlike `/broken`'s plain 404 above (never retried,
+    never logged), a 5xx destination is retried a small bounded number of
+    times and then written as a DISC-003 `discovery_error` diagnostic."""
+    diagnostics: list[tuple[str, dict]] = []
+    result, _ = await _crawl(
+        target_app_url, on_diagnostic=lambda kind, payload: diagnostics.append((kind, payload))
+    )
+
+    assert not any(page.url.endswith("/server-error") for page in result.pages)
+    server_errors = [
+        payload
+        for kind, payload in diagnostics
+        if kind == "discovery_error" and payload["error_code"] == "DISC-003"
+    ]
+    assert server_errors, diagnostics
+    assert any(p["page_url"].endswith("/server-error") for p in server_errors)
+    assert server_errors[0]["retry_count"] > 1
+
+
+@pytest.mark.asyncio
+async def test_crawl_does_not_log_a_discovery_error_for_a_plain_404(
+    target_app_url: str,
+) -> None:
+    """A 4xx destination is not a target-application *failure* (AC 2) — it
+    must not be retried or logged as a `discovery_error`, only skipped as
+    Story 2.2 AC 9 already does."""
+    diagnostics: list[tuple[str, dict]] = []
+    await _crawl(
+        target_app_url, on_diagnostic=lambda kind, payload: diagnostics.append((kind, payload))
+    )
+
+    assert not any(
+        kind == "discovery_error" and payload["page_url"].endswith("/broken")
+        for kind, payload in diagnostics
+    )
 
 
 @pytest.mark.asyncio

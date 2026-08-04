@@ -17,7 +17,7 @@ from sqlmodel import Session, SQLModel
 
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
-    "postgresql+psycopg://postgres:postgres@localhost:5432/aitestgen",
+    "postgresql+psycopg://postgres:postgres@localhost:5433/aitestgen",
 )
 engine = create_engine(DATABASE_URL, echo=False)
 

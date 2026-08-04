@@ -150,6 +150,35 @@ def _describe_test_data(scenario: Scenario) -> str:
     return "\n".join(f"- {f['name']}: {f.get('value')}" for f in scenario.test_data) or "(none)"
 
 
+# Story 2.10 AC 3: a short, plain-language (not JSON) opinion — this is
+# supporting evidence recorded in diagnostics, never a structured decision
+# the caller branches on, so there's nothing here worth a schema for.
+_STATE_SIMILARITY_PROMPT = """Two captured application states share the same URL route \
+pattern. Based only on their headings and the actions available on each, is state B the \
+SAME screen as state A with different data, a VARIANT (same route, materially different \
+behaviour — e.g. a different workflow stage with different actions available), or \
+genuinely a NEW/unrelated screen?
+
+State A — heading: "{heading_a}", actions: {actions_a}
+State B — heading: "{heading_b}", actions: {actions_b}
+
+Respond with one word (SAME, VARIANT, or NEW) followed by a one-sentence reason."""
+
+# Story 2.12 AC 3: called only when the verb-list classifier found no match
+# at all — supporting evidence only, recorded in diagnostics; the Safety
+# Engine's own posture-driven verdict never changes based on this opinion.
+_ACTION_SAFETY_PROMPT = """An automated web crawler found a clickable UI action with no \
+verb-based safety classification. Based on its accessible name and the surrounding page \
+context, is this action likely SAFE (read-only, no side effects), DESTRUCTIVE (deletes, \
+removes, or irreversibly changes data), or AMBIGUOUS (changes state, but not clearly \
+destructive)?
+
+Action label: "{label}"
+Page context: {page_context}
+
+Respond with one word (SAFE, DESTRUCTIVE, or AMBIGUOUS) followed by a one-sentence reason."""
+
+
 class HostedAIProvider:
     """`AIProvider` (Protocol) adapter backed by a LiteLLM proxy server."""
 
@@ -260,6 +289,53 @@ class HostedAIProvider:
                 )
             )
         return candidates
+
+    async def infer_state_similarity(
+        self, heading_a: str, actions_a: list[str], heading_b: str, actions_b: list[str]
+    ) -> str:
+        payload = {
+            "model": AI_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": _STATE_SIMILARITY_PROMPT.format(
+                        heading_a=heading_a,
+                        actions_a=actions_a,
+                        heading_b=heading_b,
+                        actions_b=actions_b,
+                    ),
+                }
+            ],
+        }
+        async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=30) as client:
+            response = await client.post(
+                "/chat/completions",
+                headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
+                json=payload,
+            )
+            response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"].strip()
+
+    async def classify_action_safety(self, label: str, page_context: str) -> str:
+        payload = {
+            "model": AI_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": _ACTION_SAFETY_PROMPT.format(
+                        label=label, page_context=page_context
+                    ),
+                }
+            ],
+        }
+        async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=30) as client:
+            response = await client.post(
+                "/chat/completions",
+                headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
+                json=payload,
+            )
+            response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"].strip()
 
     async def generate_playwright(self, scenario: Scenario) -> TestAssetCode:
         step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))

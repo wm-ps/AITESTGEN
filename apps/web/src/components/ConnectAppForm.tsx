@@ -25,6 +25,7 @@ export function ConnectAppForm({
 }) {
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
+  const [loginUrl, setLoginUrl] = useState('')
   const [environment, setEnvironment] = useState('staging')
   const [authMethod, setAuthMethod] = useState<AuthMethod>('standard_login')
   const [username, setUsername] = useState('')
@@ -41,6 +42,7 @@ export function ConnectAppForm({
       const application = await api.createApplication({
         name,
         url,
+        login_url: loginUrl || undefined,
         environment,
         auth_method: authMethod as ApplicationCreate['auth_method'],
         ...(authMethod === 'standard_login' ? { username, password } : {}),
@@ -79,7 +81,7 @@ export function ConnectAppForm({
             </label>
 
             <label className="field">
-              <FieldLabel>Base URL</FieldLabel>
+              <FieldLabel>Application URL</FieldLabel>
               <input
                 type="url"
                 required
@@ -89,6 +91,21 @@ export function ConnectAppForm({
               />
             </label>
           </div>
+
+          <label className="field">
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
+              Login URL (optional)
+            </span>
+            <input
+              type="url"
+              placeholder="https://staging.example.com/login"
+              value={loginUrl}
+              onChange={(e) => setLoginUrl(e.target.value)}
+            />
+            <span className="caption" style={{ fontSize: 11.5 }}>
+              Only needed if the login form isn't reachable from the Application URL.
+            </span>
+          </label>
 
           <div style={{ height: 1, background: 'var(--border-hairline)' }} />
 

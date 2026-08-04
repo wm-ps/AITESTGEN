@@ -103,6 +103,7 @@ async def establish_session(
     auth_method: str,
     credential: bytes,
     base_url: str,
+    login_url: str | None = None,
     heartbeat: Callable[[], None] | None = None,
     object_store: Any = None,
     discovery_run_id: uuid.UUID | None = None,
@@ -133,9 +134,15 @@ async def establish_session(
     # a shorter timeout each, heartbeating between every one, keeps the
     # worst case well under that ceiling while still tolerating the same
     # real-world slow-first-request case.
+    # An explicit `login_url` (Application's optional override, set when the
+    # link-following heuristic below can't be trusted — e.g. an icon-only
+    # link the current selectors miss, or a login endpoint that behaves
+    # differently depending on entry point) skips straight to it; the
+    # heuristic still runs afterwards as a safety net if that page doesn't
+    # actually have a password field yet (e.g. mid-OAuth-redirect).
     for attempt in range(4):
         try:
-            await page.goto(base_url, timeout=20000)
+            await page.goto(login_url or base_url, timeout=20000)
             break
         except PlaywrightTimeoutError:
             if heartbeat:

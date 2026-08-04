@@ -106,6 +106,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/{external_id}/pause-discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause Discovery
+         * @description Story 2.17 Task 1 (AC 1).
+         */
+        post: operations["pause_discovery_applications__external_id__pause_discovery_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/resume-discovery": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume Discovery
+         * @description Story 2.17 Task 2 (AC 2/3): starts a fresh `DiscoveryRun` — see
+         *     `api.discovery.resume_discovery_run`'s own docstring for why that's the
+         *     whole mechanism.
+         */
+        post: operations["resume_discovery_applications__external_id__resume_discovery_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/discovery-runs/{external_id}/captures": {
         parameters: {
             query?: never;
@@ -115,6 +157,28 @@ export interface paths {
         };
         /** List Captures */
         get: operations["list_captures_discovery_runs__external_id__captures_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/discovery-runs/{external_id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Discovery Report
+         * @description Story 2.22 AC 5: the structured coverage/diagnostics report, queryable
+         *     independent of any screen — no `[GAP]` UI exists for this yet (Task 4's
+         *     own disclosed scope), so this is the whole surface for now.
+         */
+        get: operations["get_discovery_report_discovery_runs__external_id__report_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -173,6 +237,42 @@ export interface paths {
         head?: never;
         /** Rename Journey */
         patch: operations["rename_journey_journeys__external_id__patch"];
+        trace?: never;
+    };
+    "/applications/{external_id}/test-data": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Test Data Entries */
+        get: operations["list_test_data_entries_applications__external_id__test_data_get"];
+        put?: never;
+        /** Create Test Data Entry */
+        post: operations["create_test_data_entry_applications__external_id__test_data_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/test-data/{external_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Test Data Entry */
+        delete: operations["delete_test_data_entry_test_data__external_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Test Data Entry */
+        patch: operations["update_test_data_entry_test_data__external_id__patch"];
         trace?: never;
     };
     "/applications/{external_id}/generate-scenarios": {
@@ -305,6 +405,11 @@ export interface components {
             name: string;
             /** Url */
             url: string;
+            /**
+             * Login Url
+             * @description Explicit login page URL, if the login form isn't reachable from the Application URL alone. Optional — omit to let discovery find it itself. Never reachability-checked (a login endpoint can legitimately misbehave without prior session state).
+             */
+            login_url?: string | null;
             /** Environment */
             environment: string;
             /**
@@ -340,6 +445,8 @@ export interface components {
             name: string;
             /** Url */
             url: string;
+            /** Login Url */
+            login_url: string | null;
             /** Environment */
             environment: string;
             /**
@@ -363,6 +470,10 @@ export interface components {
             discovery_stage: string | null;
             /** Discovery Failure Reason */
             discovery_failure_reason: string | null;
+            /** Discovery Coverage Summary */
+            discovery_coverage_summary?: {
+                [key: string]: number;
+            } | null;
         };
         /** CaptureRead */
         CaptureRead: {
@@ -479,6 +590,55 @@ export interface components {
             type: string;
             /** Code */
             code: string;
+        };
+        /** TestDataEntryCreate */
+        TestDataEntryCreate: {
+            /** Label */
+            label: string;
+            /** Field Name */
+            field_name: string;
+            /**
+             * Input Type
+             * @default text
+             */
+            input_type: string;
+            /**
+             * Route Family
+             * @default *
+             */
+            route_family: string;
+            /** Value */
+            value: string;
+            /**
+             * Is Sensitive
+             * @default false
+             */
+            is_sensitive: boolean;
+        };
+        /** TestDataEntryRead */
+        TestDataEntryRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Label */
+            label: string;
+            /** Normalized Key */
+            normalized_key: string;
+            /** Is Sensitive */
+            is_sensitive: boolean;
+            /** Value */
+            value: string | null;
+        };
+        /** TestDataEntryUpdate */
+        TestDataEntryUpdate: {
+            /** Label */
+            label?: string | null;
+            /** Value */
+            value?: string | null;
+            /** Is Sensitive */
+            is_sensitive?: boolean | null;
         };
         /** TestSuiteRead */
         TestSuiteRead: {
@@ -699,6 +859,72 @@ export interface operations {
             };
         };
     };
+    pause_discovery_applications__external_id__pause_discovery_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_discovery_applications__external_id__resume_discovery_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_captures_discovery_runs__external_id__captures_get: {
         parameters: {
             query?: never;
@@ -719,6 +945,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CaptureRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_discovery_report_discovery_runs__external_id__report_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -853,6 +1114,144 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["JourneyRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_test_data_entries_applications__external_id__test_data_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestDataEntryRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_test_data_entry_applications__external_id__test_data_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestDataEntryCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestDataEntryRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_test_data_entry_test_data__external_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_test_data_entry_test_data__external_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestDataEntryUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestDataEntryRead"];
                 };
             };
             /** @description Validation Error */

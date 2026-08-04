@@ -6,6 +6,8 @@ baseline_commit: dea7fc8fd61fa0d3e4fd4db2c491e763b149759d
 
 *Added per `sprint-change-proposal-2026-07-29.md`. "Project" maps onto the existing `Application` entity — no new `Project` table is introduced; see Architecture AD-22.*
 
+*`[2026-08-03]` Unaffected by the Discovery Engine v2 rewrite (`docs/DISCOVERY_ENGINE_V2.md`), and worth stating why: this story is "re-authenticate, load what's confirmed, don't re-explore canonical states" — it never depended on Story 2.16's step-replay mechanism, so replacing that mechanism does not change this story's scope. It is genuinely simpler than it looks. Its `[GAP]`-flagged dashboard should be designed in the same UX pass as Stories 2.20 and 2.22, which need adjacent screens.*
+
 Status: ready-for-dev
 
 <!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->

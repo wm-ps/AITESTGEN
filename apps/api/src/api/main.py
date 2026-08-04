@@ -8,7 +8,7 @@ Story 1.3 adds Application onboarding.
 import json
 import os
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated
 
 import httpx
@@ -26,13 +26,16 @@ from domain import (
     PlatformUser,
     Scenario,
     TestAsset,
+    TestDataEntry,
     TestSuite,
+    aggregation_key,
 )
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, model_validator
 from secrets_client import VaultSecretsClient
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from workflows import GENERATION_TASK_QUEUE, GenerationWorkflow, SuiteGenerationWorkflow
@@ -44,8 +47,9 @@ from api.auth import (
     issue_session_cookie,
     verify_password,
 )
+from api.coverage_report import build_coverage_report
 from api.db import get_session
-from api.discovery import start_discovery_run
+from api.discovery import pause_discovery_run, resume_discovery_run, start_discovery_run
 from api.temporal_client import get_temporal_client
 from api.test_suite_export import (
     TestSuiteExportError,
@@ -118,6 +122,13 @@ def me(user: CurrentUserDep) -> UserRead:
 class ApplicationCreate(BaseModel):
     name: str
     url: str
+    login_url: str | None = Field(
+        default=None,
+        description="Explicit login page URL, if the login form isn't reachable "
+        "from the Application URL alone. Optional — omit to let discovery find it "
+        "itself. Never reachability-checked (a login endpoint can legitimately "
+        "misbehave without prior session state).",
+    )
     environment: str
     auth_method: AuthMethod = "standard_login"
     username: str | None = Field(
@@ -151,6 +162,7 @@ class ApplicationRead(BaseModel):
     id: uuid.UUID
     name: str
     url: str
+    login_url: str | None
     environment: str
     auth_method: AuthMethod
     created_at: datetime
@@ -158,13 +170,35 @@ class ApplicationRead(BaseModel):
     discovery_status: str
     discovery_stage: str | None
     discovery_failure_reason: str | None
+    # Story 2.22 AC 2: `status` never travels alone — whenever it's
+    # "complete", these counts ride along in the same response so a bare
+    # "Complete" can't be misread as "the whole application was covered"
+    # (AD-15 is deliberate, non-exhaustive sampling). `None` for every other
+    # status, where the full report is more useful than a partial count.
+    discovery_coverage_summary: dict[str, int] | None = None
 
 
-def _to_application_read(application: Application, discovery_run: DiscoveryRun) -> ApplicationRead:
+def _coverage_counts(session: Session, discovery_run: DiscoveryRun) -> dict[str, int]:
+    coverage = build_coverage_report(session, discovery_run)["coverage"]
+    return {
+        "reached_pages": coverage["reached"]["pages"],
+        "reached_actions": coverage["reached"]["actions"],
+        "reached_forms": coverage["reached"]["forms"],
+        "blocked": len(coverage["blocked"]),
+        "skipped_for_safety": len(coverage["skipped_for_safety"]),
+        "unreached": len(coverage["unreached"]),
+        "errored": len(coverage["errored"]["items"]),
+    }
+
+
+def _to_application_read(
+    session: Session, application: Application, discovery_run: DiscoveryRun
+) -> ApplicationRead:
     return ApplicationRead(
         id=application.external_id,
         name=application.name,
         url=application.url,
+        login_url=application.login_url,
         environment=application.environment,
         auth_method=application.auth_method,  # type: ignore[arg-type]
         created_at=application.created_at,
@@ -172,6 +206,9 @@ def _to_application_read(application: Application, discovery_run: DiscoveryRun) 
         discovery_status=discovery_run.status,
         discovery_stage=discovery_run.stage,
         discovery_failure_reason=discovery_run.failure_reason,
+        discovery_coverage_summary=(
+            _coverage_counts(session, discovery_run) if discovery_run.status == "complete" else None
+        ),
     )
 
 
@@ -222,6 +259,7 @@ async def create_application(
         organization_id=organization_id,
         name=payload.name,
         url=payload.url,
+        login_url=payload.login_url,
         environment=payload.environment,
         auth_method=payload.auth_method,
         secret_ref=secret_ref.path,
@@ -234,7 +272,18 @@ async def create_application(
     # DiscoveryRun-creation logic itself is Story 2.1's (api.discovery).
     discovery_run = await start_discovery_run(session, application)
 
-    return _to_application_read(application, discovery_run)
+    return _to_application_read(session, application, discovery_run)
+
+
+def _latest_discovery_run(session: Session, application_id: uuid.UUID) -> DiscoveryRun | None:
+    """Story 2.17: an Application can now have more than one `DiscoveryRun`
+    (each pause/resume cycle starts a fresh one, AD-22) — always the most
+    recent, never the DB's arbitrary insertion order."""
+    return session.exec(
+        select(DiscoveryRun)
+        .where(DiscoveryRun.application_id == application_id)
+        .order_by(DiscoveryRun.created_at.desc())  # type: ignore[arg-type]
+    ).first()
 
 
 def _get_org_application(
@@ -258,11 +307,43 @@ def get_application(
     organization_id: CurrentOrgIdDep,
 ) -> ApplicationRead:
     application = _get_org_application(session, organization_id, external_id)
-    discovery_run = session.exec(
-        select(DiscoveryRun).where(DiscoveryRun.application_id == application.id)
-    ).first()
+    discovery_run = _latest_discovery_run(session, application.id)
     assert discovery_run is not None
-    return _to_application_read(application, discovery_run)
+    return _to_application_read(session, application, discovery_run)
+
+
+@app.post("/applications/{external_id}/pause-discovery", response_model=ApplicationRead)
+async def pause_discovery(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> ApplicationRead:
+    """Story 2.17 Task 1 (AC 1)."""
+    application = _get_org_application(session, organization_id, external_id)
+    discovery_run = _latest_discovery_run(session, application.id)
+    if discovery_run is None or discovery_run.status != "running":
+        raise HTTPException(status_code=409, detail="discovery run is not running")
+    discovery_run = await pause_discovery_run(session, discovery_run)
+    return _to_application_read(session, application, discovery_run)
+
+
+@app.post(
+    "/applications/{external_id}/resume-discovery", response_model=ApplicationRead, status_code=201
+)
+async def resume_discovery(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> ApplicationRead:
+    """Story 2.17 Task 2 (AC 2/3): starts a fresh `DiscoveryRun` — see
+    `api.discovery.resume_discovery_run`'s own docstring for why that's the
+    whole mechanism."""
+    application = _get_org_application(session, organization_id, external_id)
+    discovery_run = _latest_discovery_run(session, application.id)
+    if discovery_run is None or discovery_run.status != "paused":
+        raise HTTPException(status_code=409, detail="discovery run is not paused")
+    discovery_run = await resume_discovery_run(session, application)
+    return _to_application_read(session, application, discovery_run)
 
 
 class CaptureRead(BaseModel):
@@ -319,11 +400,45 @@ def list_captures(
     # actually done.
     if discovery_run.status == "complete":
         completed_at = captures[0].created_at if captures else discovery_run.created_at
+        # Story 2.22 AC 2: "Complete" never travels alone — the counts
+        # already computed above ride along in the same summary line rather
+        # than a bare status word (AD-15: sampling, not exhaustive coverage).
         captures.insert(
-            0, CaptureRead(kind="status", summary="Crawling complete", created_at=completed_at)
+            0,
+            CaptureRead(
+                kind="status",
+                summary=(
+                    f"Crawling complete — {len(pages)} pages, {len(actions)} actions, "
+                    f"{len(api_calls)} API calls reached. See the coverage report for "
+                    "blocked/skipped/unreached/errored detail."
+                ),
+                created_at=completed_at,
+            ),
         )
 
     return captures[:50]
+
+
+@app.get("/discovery-runs/{external_id}/report")
+def get_discovery_report(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> dict:
+    """Story 2.22 AC 5: the structured coverage/diagnostics report, queryable
+    independent of any screen — no `[GAP]` UI exists for this yet (Task 4's
+    own disclosed scope), so this is the whole surface for now."""
+    discovery_run = session.exec(
+        select(DiscoveryRun).where(DiscoveryRun.external_id == external_id)
+    ).first()
+    application = session.get(Application, discovery_run.application_id) if discovery_run else None
+    if (
+        discovery_run is None
+        or application is None
+        or application.organization_id != organization_id
+    ):
+        raise HTTPException(status_code=404, detail="discovery run not found")
+    return build_coverage_report(session, discovery_run)
 
 
 # --- Discover Journeys (Story 3.1) + Rename/Delete (Story 3.4) ---
@@ -523,6 +638,182 @@ def delete_journey(
         raise HTTPException(status_code=409, detail="journey already deleted")
     journey.status = "deleted"
     session.add(journey)
+    session.commit()
+
+
+# --- Test Data Pool (Story 2.20) ---
+# `[GAP — needs UX pass]` No screen for this exists in the current 6-screen
+# IA (DESIGN.md/EXPERIENCE.md) — this is backend + API only, independently
+# useful on its own (seed via API, or by answering a Blocked Frontier item
+# once Story 2.15 lands), same disclosed scope as Story 2.17/2.22's UI halves.
+#
+# `_POOL_WILDCARD_ROUTE_FAMILY`: Story 2.15's `aggregation_key` is (field
+# name, input type, route family) — but a user seeding data before a crawl
+# has ever run has no route family to give, and a value like "Policy Number"
+# is usually meant to apply everywhere, not to one specific route. Rather
+# than force a route family at seed time, entries are keyed under this
+# wildcard by default; the Data Resolver (Story 2.13) tries the candidate's
+# real route family first, then falls back to the wildcard. Still the same
+# shared `aggregation_key` function either way — this is a choice of what
+# value to pass for `route_family`, not a second normalizer.
+_POOL_WILDCARD_ROUTE_FAMILY = "*"
+
+
+class TestDataEntryCreate(BaseModel):
+    label: str
+    field_name: str
+    input_type: str = "text"
+    route_family: str = _POOL_WILDCARD_ROUTE_FAMILY
+    value: str
+    is_sensitive: bool = False
+
+
+class TestDataEntryUpdate(BaseModel):
+    label: str | None = None
+    value: str | None = None
+    is_sensitive: bool | None = None
+
+
+class TestDataEntryRead(BaseModel):
+    id: uuid.UUID
+    label: str
+    normalized_key: str
+    is_sensitive: bool
+    # AC 6: never the raw value for a sensitive entry, in any API response.
+    value: str | None
+
+
+def _mask(entry: TestDataEntry) -> str | None:
+    if entry.is_sensitive:
+        return None
+    return entry.value
+
+
+def _get_org_test_data_entry(
+    session: Session, organization_id: uuid.UUID, external_id: uuid.UUID
+) -> TestDataEntry:
+    entry = session.exec(
+        select(TestDataEntry).where(TestDataEntry.external_id == external_id)
+    ).first()
+    application = session.get(Application, entry.application_id) if entry else None
+    if entry is None or application is None or application.organization_id != organization_id:
+        raise HTTPException(status_code=404, detail="test data entry not found")
+    return entry
+
+
+@app.get("/applications/{external_id}/test-data", response_model=list[TestDataEntryRead])
+def list_test_data_entries(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[TestDataEntryRead]:
+    application = _get_org_application(session, organization_id, external_id)
+    entries = session.exec(
+        select(TestDataEntry).where(TestDataEntry.application_id == application.id)
+    ).all()
+    return [
+        TestDataEntryRead(
+            id=e.external_id,
+            label=e.label,
+            normalized_key=e.normalized_key,
+            is_sensitive=e.is_sensitive,
+            value=_mask(e),
+        )
+        for e in entries
+    ]
+
+
+@app.post(
+    "/applications/{external_id}/test-data", response_model=TestDataEntryRead, status_code=201
+)
+def create_test_data_entry(
+    external_id: uuid.UUID,
+    payload: TestDataEntryCreate,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> TestDataEntryRead:
+    application = _get_org_application(session, organization_id, external_id)
+    normalized_key = aggregation_key(payload.field_name, payload.input_type, payload.route_family)
+
+    value: str | None = payload.value
+    secret_ref: str | None = None
+    if payload.is_sensitive:
+        # AC 6: held via the existing Vault-backed client, not plain Postgres
+        # storage — mirrors Application.secret_ref (create_application above).
+        secret_ref = VaultSecretsClient().store(organization_id, payload.value.encode()).path
+        value = None
+
+    entry = TestDataEntry(
+        application_id=application.id,
+        label=payload.label,
+        normalized_key=normalized_key,
+        value=value,
+        secret_ref=secret_ref,
+        is_sensitive=payload.is_sensitive,
+    )
+    session.add(entry)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=409, detail="a test data entry for this field already exists"
+        ) from None
+    session.refresh(entry)
+    return TestDataEntryRead(
+        id=entry.external_id,
+        label=entry.label,
+        normalized_key=entry.normalized_key,
+        is_sensitive=entry.is_sensitive,
+        value=_mask(entry),
+    )
+
+
+@app.patch("/test-data/{external_id}", response_model=TestDataEntryRead)
+def update_test_data_entry(
+    external_id: uuid.UUID,
+    payload: TestDataEntryUpdate,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> TestDataEntryRead:
+    entry = _get_org_test_data_entry(session, organization_id, external_id)
+    if payload.label is not None:
+        entry.label = payload.label
+    is_sensitive = payload.is_sensitive if payload.is_sensitive is not None else entry.is_sensitive
+    if payload.value is not None:
+        if is_sensitive:
+            # `organization_id` here is already confirmed (by
+            # `_get_org_test_data_entry` above) to be this entry's own
+            # Application's org — no need to re-fetch the Application row.
+            entry.secret_ref = (
+                VaultSecretsClient().store(organization_id, payload.value.encode()).path
+            )
+            entry.value = None
+        else:
+            entry.value = payload.value
+            entry.secret_ref = None
+    entry.is_sensitive = is_sensitive
+    entry.updated_at = datetime.now(UTC)
+    session.add(entry)
+    session.commit()
+    session.refresh(entry)
+    return TestDataEntryRead(
+        id=entry.external_id,
+        label=entry.label,
+        normalized_key=entry.normalized_key,
+        is_sensitive=entry.is_sensitive,
+        value=_mask(entry),
+    )
+
+
+@app.delete("/test-data/{external_id}", status_code=204)
+def delete_test_data_entry(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> None:
+    entry = _get_org_test_data_entry(session, organization_id, external_id)
+    session.delete(entry)
     session.commit()
 
 

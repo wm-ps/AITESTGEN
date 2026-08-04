@@ -18,6 +18,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import Column, DateTime, ForeignKey, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -49,9 +50,24 @@ class Page(SQLModel, table=True):
         default=None,
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("page.id"), nullable=True, index=True),
     )
+    # Story 2.10: distinct from `merged_into_id` — this row is a live sibling
+    # of the referenced row (same route template, materially different
+    # behaviour), NOT a duplicate superseded by it. Both rows stay canonical
+    # (`merged_into_id IS NULL`) and both remain independently attributable
+    # to a Journey. Conflating the two silently deletes real behaviour.
+    variant_of_page_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("page.id"), nullable=True, index=True),
+    )
     url: str
     title: str = ""
     object_storage_key: str | None = Field(default=None)
+    # Story 2.10: the heading + structural-shape signals `state_identity.py`
+    # scores against — persisted so a *prior* Discovery Run's canonical
+    # pages can be re-fingerprinted when seeding a new run's in-process
+    # cache (Task 5), not just pages captured this run.
+    heading: str | None = Field(default=None)
+    structural_tokens: list | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
