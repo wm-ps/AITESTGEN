@@ -992,6 +992,26 @@ _CHROME_BUTTONS = (
 )
 
 
+async def _visible_content_size(page) -> int:
+    """`[FIXED 2026-08-05]` Started as a `_BODY_BUTTONS`/`_CHROME_BUTTONS`
+    element *count* — wrong signal, confirmed live: this app hides its
+    sidebar via a CSS class (`display: none`-equivalent), which never
+    removes the `<a>` elements from the DOM, only their visibility. A raw
+    `.count()` is a DOM-presence query, blind to CSS visibility, so it
+    reported the exact same number whether the drawer was open or closed —
+    the grow/shrink check below silently never fired, no matter what the
+    click actually did. `document.body.innerText` — like the
+    `text_still_present_anywhere` diagnostic already uses — naturally
+    excludes hidden elements, so its length is a cheap, single-call, holistic
+    stand-in for "how much is currently visible": revealing ~15 sidebar links
+    adds a few hundred characters, a real collapse removes them, a no-op
+    (clicking something unrelated) leaves it unchanged."""
+    try:
+        return await page.evaluate("() => document.body.innerText.length")
+    except Exception:
+        return 0
+
+
 @dataclass
 class CapturedFormField:
     name: str | None
@@ -1911,6 +1931,23 @@ async def _click_standalone_buttons(
     if seen_labels is None:
         seen_labels = set()
     discovered: list[str] = []
+    # `[ADDED 2026-08-05]` Caps the reload-and-retry-once escape hatch below
+    # (see its use site) at one attempt per candidate per page visit — a
+    # candidate that's still broken after a full reload isn't going to fix
+    # itself with a second one, and this bounds it against ever looping.
+    reload_retried_labels: set[str] = set()
+    # `[ADDED 2026-08-05]` Persists across the whole page visit (every tier/
+    # group iteration), not reset per candidate like `is_ambiguous_icon_toggle`
+    # below — confirmed live: two different ambiguous-icon candidates both
+    # toggle the *same* region (a `document.body.innerText`-based check at
+    # click-failure time showed the whole revealed sidebar gone from the page
+    # entirely, not merely this one element gone — a double-toggle net
+    # collapse, not a stale-handle/re-render problem). Once one of them has
+    # confirmed a reveal (grew the candidate count), trying a second one
+    # risks re-closing what the first one opened for no benefit — the reveal
+    # already happened, so there's nothing left to gain from opening it
+    # "again" via a different control.
+    revealed_via_icon_toggle = False
 
     # `state_identity` imports `_page_fingerprint` from this module —
     # deferred imports here, not module-level ones, are what avoid a
@@ -2067,6 +2104,15 @@ async def _click_standalone_buttons(
                     seen_key = f"{group_name}\x00{candidate_label}"
                     if not candidate_label or seen_key in seen_labels:
                         continue
+                    if candidate_is_ambiguous_icon and revealed_via_icon_toggle:
+                        # `[ADDED 2026-08-05]` A different ambiguous-icon
+                        # candidate already confirmed a reveal this page visit
+                        # (see `revealed_via_icon_toggle`'s definition) — the
+                        # nav is open; clicking a second icon-toggle control
+                        # risks being the same drawer's close action reached a
+                        # different way, undoing it for zero gain.
+                        seen_labels.add(seen_key)
+                        continue
                     # `[CHANGED 2026-08-04]` A prior fix unconditionally
                     # skipped any bare, generic "Icon" label (no other
                     # distinguishing text) — observed live on some other app:
@@ -2128,7 +2174,33 @@ async def _click_standalone_buttons(
                     # are exhausted for it.
                     break
 
+                # `[FIXED 2026-08-05]` `button` is a live `Locator` — every
+                # action on it re-runs `group_selector` and re-picks whatever
+                # is *currently* at index `i`, not the specific element just
+                # scanned above. Confirmed live: a real, always-visible sidebar
+                # link (`getBoundingClientRect()` non-zero, `visibility:
+                # visible`, checked directly) still measured a (0,0,0,0) rect
+                # at the exact moment `button.click()` ran, for 68 straight
+                # candidates across repeated runs — the several awaits between
+                # picking this candidate and clicking it (state-signal capture,
+                # selector capture, locator-candidate capture) are enough time
+                # for this app's own re-renders to reorder/remount the list out
+                # from under a position-based lookup. `element_handle()` pins
+                # the actual DOM node chosen above; clicking that instead of
+                # re-resolving by position is immune to the list changing
+                # shape in between. Only the click itself needs this — the
+                # selector/candidate-capture calls below stay on `button`
+                # (the descriptive `Locator` API), since they're for reporting,
+                # not for identifying what gets clicked.
                 seen_labels.add(seen_key)
+
+                button_handle = await button.element_handle()
+                if button_handle is None:
+                    # Vanished between being scanned and now — nothing to
+                    # click, and no point misattributing this as a visibility
+                    # failure. Already in `seen_labels` above, so this doesn't
+                    # loop forever re-picking the same vanished candidate.
+                    continue
 
                 # Story 2.11 AC 3/4/7: exactly one Execution Decision per
                 # candidate, before it runs — loop guards, then safety, then
@@ -2223,15 +2295,19 @@ async def _click_standalone_buttons(
                 before_signals = None
                 if verify_safe_action:
                     before_signals = await _capture_state_signals(page)
-                # Neither a synthetic `_ICON_LABEL_PREFIX`-tagged label nor a
-                # disambiguated "Icon#menuBtn"-style one (see the candidate
-                # scan above) is real DOM text — passing either as
-                # `fallback_text` would make `_capture_locator_candidates`
-                # emit a `text="..."` locator that can never actually match
-                # anything, ranked *above* the durable class/position
-                # candidates it computes independently from the live element.
-                # `None` here just means "no text fallback", not "no
-                # selector" — testid/id/name/class/position all still apply.
+                # `[MOVED 2026-08-04, REVERTED 2026-08-05]` Briefly moved
+                # after the click, on the theory that fewer awaits between
+                # "picked" and "clicked" would help — it didn't (the actual
+                # cause was `_visible_content_size`'s bug, see its docstring),
+                # and moving it after the click introduced a real regression:
+                # once the drawer correctly stayed open, the body group's
+                # candidate count legitimately grew past 100, and re-resolving
+                # `button` by its original index *after* the click (rather
+                # than right after it was chosen) hit a real element at a
+                # since-shifted index, timing out `get_attribute` for 30s and
+                # crashing the whole run uncaught. Back to capturing
+                # immediately after selection, before anything else can move
+                # the index out from under it.
                 selector_fallback_text = (
                     None
                     if is_ambiguous_icon_toggle or label.startswith(_ICON_LABEL_PREFIX)
@@ -2241,8 +2317,18 @@ async def _click_standalone_buttons(
                 candidates = await _capture_locator_candidates(
                     button, fallback_text=selector_fallback_text, frame_path=frame_path
                 )
+                # `[FIXED 2026-08-05]` Used to be captured only for ambiguous-
+                # icon candidates — but a plainly-labeled accordion header
+                # (e.g. "Catalog") reveals its children exactly the same way
+                # an icon toggle does, and those children got no settle-wait
+                # at all: confirmed live, 68 straight `initial_click_not_
+                # onscreen` failures on a real app, every one of them a just-
+                # revealed submenu item, none of them an icon toggle. Grow/
+                # shrink detection below now applies to every non-navigating
+                # click, not just icon ones.
+                visible_size_before_click = await _visible_content_size(page)
                 try:
-                    await button.click(timeout=1000)
+                    await button_handle.click(timeout=1000)
                 except Exception as first_exc:
                     # `[FIXED 2026-07-22]` Observed live: the *exact* same
                     # element, same selector, sometimes fails this click with
@@ -2263,40 +2349,139 @@ async def _click_standalone_buttons(
                     # case for real.
                     async def _capture_rect() -> dict | None:
                         try:
-                            return await button.evaluate(
+                            return await button_handle.evaluate(
                                 "el => { const r = el.getBoundingClientRect(); "
-                                "return {x: r.x, y: r.y, width: r.width, height: r.height}; }"
+                                "return {x: r.x, y: r.y, width: r.width, height: r.height, "
+                                "connected: el.isConnected, "
+                                "displayNone: window.getComputedStyle(el).display === 'none', "
+                                "ancestorWidth: (el.offsetParent ? el.offsetParent.getBoundingClientRect().width : null)}; }"
+                            )
+                        except Exception:
+                            return None
+
+                    async def _text_still_present_anywhere() -> bool | None:
+                        # `[ADDED 2026-08-04]` Distinguishes the two candidate
+                        # explanations for a zero rect: text findable nowhere
+                        # in `document.body.innerText` (which excludes hidden
+                        # elements) means the whole region got hidden again
+                        # after this candidate was scanned — a different
+                        # ambiguous-icon toggle click closing what an earlier
+                        # one opened is the leading suspect; text still
+                        # present means this specific element is genuinely
+                        # stale/detached while its sibling content survives,
+                        # pointing at a re-render swapping this one node.
+                        search_text = None
+                        if is_ambiguous_icon_toggle:
+                            search_text = label.split("#", 1)[0]
+                        elif not label.startswith(_ICON_LABEL_PREFIX):
+                            search_text = label
+                        if not search_text:
+                            return None
+                        try:
+                            return await page.evaluate(
+                                "t => document.body.innerText.includes(t)", search_text
                             )
                         except Exception:
                             return None
 
                     rect = await _capture_rect()
                     has_real_size = bool(rect) and rect["width"] > 0 and rect["height"] > 0
-                    # `[ADDED 2026-08-04]` A rect of *exactly* (0,0,0,0) — not
-                    # just small, all four fields zero — is the signature of a
-                    # detached DOM node: this exact element's text was read
-                    # correctly moments earlier (the batched scan above), so
-                    # it existed then; a sibling widget's async data arriving
-                    # and re-rendering a shared ancestor (observed live: this
-                    # app's Home dashboard card loads its content behind a
-                    # spinner) can unmount-and-remount the whole layout region
-                    # around it in between. `button` is a live/lazy Locator —
-                    # re-clicking it after a brief wait re-resolves fresh
-                    # against the current DOM rather than replaying a stale
-                    # handle, so if the re-render has settled by then, this
-                    # succeeds without needing to re-discover the candidate.
+                    # `[CHANGED 2026-08-05]` A rect of *exactly* (0,0,0,0) —
+                    # not just small, all four fields zero — is the signature
+                    # of a detached DOM node: this exact element's text was
+                    # read correctly moments earlier (the batched scan above),
+                    # so it existed then; a sibling widget's async data
+                    # arriving and re-rendering a shared ancestor (observed
+                    # live: this app's Home dashboard card loads its content
+                    # behind a spinner) can unmount-and-remount the whole
+                    # layout region around it in between. `button_handle` now
+                    # pins the specific node chosen at scan time (see its
+                    # capture above) rather than a live/lazy `Locator` that
+                    # re-resolves by position on every action — re-clicking
+                    # the *same* handle after a brief wait catches the case
+                    # where this node itself was just mid-layout and has
+                    # since settled, without the earlier position-based retry
+                    # risking a silent hit on a since-shifted, unrelated node.
+                    # `[CHANGED 2026-08-05]` A single 400ms wait wasn't the
+                    # right order of magnitude — confirmed live: this
+                    # particular app can take 3-6+ seconds to finish
+                    # re-rendering its nav after a full navigation (initial
+                    # login *and* a State Return ladder's `page.goto()` back
+                    # to a prior page both go through it), varying run to
+                    # run. Backing off across a few retries covers that
+                    # range without paying the full ~5s tax on every normal,
+                    # fast-rendering candidate — most still resolve on the
+                    # first try.
                     retry_click_succeeded = False
                     if not has_real_size and rect == {"x": 0, "y": 0, "width": 0, "height": 0}:
-                        await page.wait_for_timeout(400)
-                        rect = await _capture_rect()
-                        has_real_size = bool(rect) and rect["width"] > 0 and rect["height"] > 0
+                        for retry_wait_ms in (400, 800, 1600, 2200, 2500, 2500):
+                            await page.wait_for_timeout(retry_wait_ms)
+                            rect = await _capture_rect()
+                            has_real_size = bool(rect) and rect["width"] > 0 and rect["height"] > 0
+                            if has_real_size:
+                                break
                         if has_real_size:
                             try:
-                                await button.click(timeout=1000)
+                                await button_handle.click(timeout=1000)
                                 retry_click_succeeded = True
                             except Exception:
                                 has_real_size = False
                     if not has_real_size:
+                        # `[ADDED 2026-08-05]` `rect`'s extra fields (added
+                        # alongside this same-day fix) distinguish a specific
+                        # case: `connected: true` + `displayNone: false` on
+                        # the element itself, but `ancestorWidth: null` (i.e.
+                        # `offsetParent` is `null`) — confirmed live, this is
+                        # an *ancestor* container collapsed out of layout
+                        # (this app's left-nav drawer, after an earlier
+                        # candidate's click toggled it shut), not this element
+                        # itself being hidden or detached. Every backoff/retry
+                        # above already proved this specific signature never
+                        # self-heals by waiting longer — the only thing that's
+                        # ever restored it live is a full page reload (same
+                        # mechanism the shrink-detected-reload path already
+                        # uses successfully). One attempt per candidate: undo
+                        # via reload, drop it from `seen_labels` so the next
+                        # scan re-discovers it fresh (a new `button_handle` —
+                        # the reload invalidated this one), and let the outer
+                        # loop retry it instead of recording a permanent miss.
+                        ancestor_collapsed = (
+                            bool(rect)
+                            and rect.get("connected") is True
+                            and rect.get("displayNone") is False
+                            and rect.get("ancestorWidth") is None
+                        )
+                        if ancestor_collapsed and seen_key not in reload_retried_labels:
+                            reload_retried_labels.add(seen_key)
+                            logger.info(
+                                "  %s: %s button %r looks ancestor-collapsed — "
+                                "reloading once to retry it fresh",
+                                before_url,
+                                group_name,
+                                label,
+                            )
+                            try:
+                                await page.goto(before_url)
+                                await wait_for_page_ready(
+                                    page, timeout_seconds, network_tracker, heartbeat
+                                )
+                                for recover_wait_ms in (500, 1000, 1500, 2000, 2500, 2500):
+                                    if (
+                                        await _visible_content_size(page)
+                                        >= visible_size_before_click
+                                    ):
+                                        break
+                                    await page.wait_for_timeout(recover_wait_ms)
+                                seen_labels.discard(seen_key)
+                                continue
+                            except Exception as exc:
+                                logger.warning(
+                                    "  %s: could not reload to retry ancestor-"
+                                    "collapsed %r — recording as a miss (%s)",
+                                    before_url,
+                                    label,
+                                    exc,
+                                )
                         logger.info(
                             "  %s: %s button click failed, not on-screen: %r (%s)",
                             before_url,
@@ -2323,12 +2508,13 @@ async def _click_standalone_buttons(
                                     "stage": "initial_click_not_onscreen",
                                     "error": repr(first_exc)[:500],
                                     "rect": rect,
+                                    "text_still_present_anywhere": await _text_still_present_anywhere(),
                                 },
                             )
                         continue
                     if not retry_click_succeeded:
                         try:
-                            await button.click(timeout=1500, force=True)
+                            await button_handle.click(timeout=1500, force=True)
                         except Exception as exc:
                             logger.info(
                                 "  %s: %s button click failed even with force=True: %r (%s)",
@@ -2348,6 +2534,7 @@ async def _click_standalone_buttons(
                                         "stage": "force_click_failed",
                                         "error": repr(exc)[:500],
                                         "rect": rect,
+                                        "text_still_present_anywhere": await _text_still_present_anywhere(),
                                     },
                                 )
                             continue
@@ -2430,6 +2617,47 @@ async def _click_standalone_buttons(
                     if heartbeat:
                         heartbeat()
                     if return_result.succeeded:
+                        # `[ADDED 2026-08-05]` `return_to_state`'s own match
+                        # check (`planner.return_to_state`) only verifies a
+                        # heading/structural-token fingerprint — enough to
+                        # confirm "the right page's main content is back",
+                        # but blind to a nav/sidebar that a lighter-weight
+                        # rung (rung 2, `page.go_back()`) can leave broken.
+                        # Confirmed live: this app's sidebar never properly
+                        # re-mounts on browser-back — every candidate after
+                        # a successful-by-fingerprint `browser_back` return
+                        # measured a permanent zero rect, even though nothing
+                        # here ever detected a click-triggered shrink (that
+                        # path never fired — the break was always this one).
+                        # `visible_size_before_click` is this same page's own
+                        # last-known-good size, captured right before the
+                        # click that navigated away from it — reuse it as the
+                        # recovery target instead of threading a new baseline
+                        # through.
+                        recovered_size = await _visible_content_size(page)
+                        for return_wait_ms in (500, 1000, 1500, 2000, 2500, 2500):
+                            if recovered_size >= visible_size_before_click:
+                                break
+                            await page.wait_for_timeout(return_wait_ms)
+                            recovered_size = await _visible_content_size(page)
+                        if recovered_size < visible_size_before_click:
+                            # Still short — the fingerprint-matched rung
+                            # (typically `browser_back`) left real content
+                            # missing. A genuine full re-navigation (rung 3's
+                            # own mechanism) is the one path confirmed live to
+                            # always fully remount this app; force it here
+                            # rather than trusting a return that measurably
+                            # isn't whole.
+                            try:
+                                await page.goto(before_url)
+                                await _settle()
+                                for return_wait_ms in (500, 1000, 1500, 2000, 2500, 2500):
+                                    recovered_size = await _visible_content_size(page)
+                                    if recovered_size >= visible_size_before_click:
+                                        break
+                                    await page.wait_for_timeout(return_wait_ms)
+                            except Exception:
+                                pass
                         if on_diagnostic:
                             await _emit_diagnostic(
                                 on_diagnostic,
@@ -2439,6 +2667,8 @@ async def _click_standalone_buttons(
                                     "rung": return_result.rung,
                                     "attempts_used": return_result.attempts_used,
                                     "opener": label,
+                                    "recovered_size": recovered_size,
+                                    "expected_size": visible_size_before_click,
                                 },
                             )
                         if loop_guard_state:
@@ -2510,64 +2740,98 @@ async def _click_standalone_buttons(
                                     "composite_score": anomaly_score.composite,
                                 },
                             )
-                if is_ambiguous_icon_toggle:
-                    # `[FIXED 2026-08-04]` A bare "Icon" label (no other
-                    # distinguishing text — exactly the accessible name a
-                    # left-nav collapse/reveal toggle reports) is genuinely
-                    # ambiguous: on one app it's a *collapse* toggle (an
-                    # already-open sidebar, clicking it hid everything and it
-                    # never came back — the reason a blanket skip existed
-                    # here before); on another it's a *reveal* toggle (a
-                    # collapsed-by-default sidebar, clicking it is the only
-                    # way to reach 10+ nav sections otherwise invisible to
-                    # this whole crawl). Blanket-skipping always loses the
-                    # second case; blanket-allowing always loses the first.
-                    # Check instead: did this group's own candidate count
-                    # grow or shrink? Shrink means it just destroyed access
-                    # to whatever was there before this click — reload to
-                    # undo, same restore already used for a failed State
-                    # Return rung, and don't try it again this page visit.
-                    after_button_count = await page.locator(group_selector).count()
-                    if after_button_count < button_count:
-                        logger.info(
-                            "  %s: %s button %r shrank the candidate count "
-                            "(%d -> %d) — reloading to undo",
-                            before_url,
-                            group_name,
-                            label,
-                            button_count,
-                            after_button_count,
+                # `[CHANGED 2026-08-05]` Was gated to `is_ambiguous_icon_toggle`
+                # only — generalized to every non-navigating click (see
+                # `visible_size_before_click`'s comment above for why: a
+                # plain-text accordion header reveals/collapses its children
+                # exactly like an icon toggle does, and needs the same
+                # shrink-undo and reveal-settle handling).
+                # A bare "Icon" label was the original motivating case (it's
+                # genuinely ambiguous: on one app it's a *collapse* toggle —
+                # an already-open sidebar, clicking it hid everything and it
+                # never came back; on another it's a *reveal* toggle — a
+                # collapsed-by-default sidebar, clicking it is the only way to
+                # reach 10+ nav sections otherwise invisible to this whole
+                # crawl). Blanket-skipping always loses the second case;
+                # blanket-allowing always loses the first. Check instead: did
+                # the page's visible content grow or shrink? Shrink means it
+                # just destroyed access to whatever was there before this
+                # click — reload to undo, same restore already used for a
+                # failed State Return rung, and don't try it again this page
+                # visit.
+                visible_size_after_click = await _visible_content_size(page)
+                if visible_size_after_click < visible_size_before_click:
+                    logger.info(
+                        "  %s: %s button %r shrank visible content "
+                        "(%d -> %d chars) — reloading to undo",
+                        before_url,
+                        group_name,
+                        label,
+                        visible_size_before_click,
+                        visible_size_after_click,
+                    )
+                    try:
+                        await page.goto(before_url)
+                        await wait_for_page_ready(
+                            page, timeout_seconds, network_tracker, heartbeat
                         )
-                        try:
-                            await page.goto(before_url)
-                            await wait_for_page_ready(
-                                page, timeout_seconds, network_tracker, heartbeat
+                        # `[ADDED 2026-08-05]` `wait_for_page_ready` checks
+                        # network-quiet/DOM-stable/content-present, not "this
+                        # specific app's nav has actually re-rendered" — this
+                        # app has been confirmed live to take 3-9+ seconds to
+                        # rehydrate its nav after a full reload, so treating
+                        # `wait_for_page_ready` as sufficient here left every
+                        # candidate on the *next* attempt at this page zero-
+                        # size, permanently, for the rest of the run. Poll
+                        # `_visible_content_size` back up towards (not
+                        # necessarily past — a reload can legitimately land
+                        # on a slightly different byte count) its pre-click
+                        # baseline before resuming the scan.
+                        recovered_size = visible_size_after_click
+                        for reload_wait_ms in (500, 1000, 1500, 2000, 2500, 2500):
+                            recovered_size = await _visible_content_size(page)
+                            if recovered_size >= visible_size_before_click:
+                                break
+                            await page.wait_for_timeout(reload_wait_ms)
+                        if on_diagnostic:
+                            await _emit_diagnostic(
+                                on_diagnostic,
+                                "shrink_reload",
+                                {
+                                    "url": before_url,
+                                    "group": group_name,
+                                    "label": label,
+                                    "before": visible_size_before_click,
+                                    "after_click": visible_size_after_click,
+                                    "recovered": recovered_size,
+                                },
                             )
-                        except Exception as exc:
-                            logger.warning(
-                                "  %s: could not reload after undoing %r — stopping "
-                                "%s group early (%s)",
-                                before_url,
-                                label,
-                                group_name,
-                                exc,
-                            )
-                            break
-                        continue
-                    if after_button_count > button_count:
-                        # Grew — a reveal, not a collapse. `wait_for_page_ready`
-                        # (just above, before this block) checks network-quiet/
-                        # DOM-stable/content-present, none of which cover a
-                        # pure CSS transition (a drawer sliding open changes no
-                        # network activity and no DOM structure, just computed
-                        # style over time) — the newly revealed items can still
-                        # be mid-slide, genuinely zero/partial-size for a
-                        # moment, exactly the class of intermittent failure the
-                        # click retry above already exists for, just triggered
-                        # differently. A short, bounded wait here is cheap insurance
-                        # against attempting the very next candidate while
-                        # this one's reveal is still animating.
-                        await page.wait_for_timeout(300)
+                    except Exception as exc:
+                        logger.warning(
+                            "  %s: could not reload after undoing %r — stopping "
+                            "%s group early (%s)",
+                            before_url,
+                            label,
+                            group_name,
+                            exc,
+                        )
+                        break
+                    continue
+                if visible_size_after_click > visible_size_before_click:
+                    # Grew — a reveal, not a collapse. `wait_for_page_ready`
+                    # (just above, before this block) checks network-quiet/
+                    # DOM-stable/content-present, none of which cover a
+                    # pure CSS transition (a drawer/accordion opening changes
+                    # no network activity and no DOM structure, just computed
+                    # style over time) — the newly revealed items can still
+                    # be mid-slide, genuinely zero/partial-size for a
+                    # moment, exactly the class of intermittent failure the
+                    # click retry above already exists for, just triggered
+                    # differently. A short, bounded wait here is cheap insurance
+                    # against attempting the very next candidate while
+                    # this one's reveal is still animating.
+                    await page.wait_for_timeout(300)
+                    revealed_via_icon_toggle = True
                 if rescan:
                     # Didn't navigate — likely a toggle/dropdown/drawer/accordion.
                     # Whatever it revealed may include new <a href> nav links
@@ -3040,13 +3304,24 @@ async def run_discovery_crawl(
                 resolution_log=resolution_log,
             )
             _maybe_enqueue(new_url, current_url)
-            if _page_fingerprint(page.url) != url:
-                await page.goto(url)
-                if not await _recover_login_if_needed(page, url, credential, heartbeat):
+            # `[FIXED 2026-08-05]` Compared against `url` — the raw queue
+            # entry — instead of `current_url` (already computed above, at
+            # the top of this iteration): whenever the *initial* navigation
+            # to `url` itself lands somewhere else (a server-side redirect —
+            # confirmed live: this app's bare origin 302s an authenticated
+            # session straight to `/Dashboard`), `page.url` never equals `url`
+            # even immediately after loading, with nothing to do with the form
+            # submit at all. Every same-page form submit on such a page then
+            # misfired this as "lost track", restored to the wrong (never-
+            # actually-visited) `url` instead of the real `current_url`, and
+            # DISC-005'd out of the rest of that page's forms.
+            if _page_fingerprint(page.url) != current_url:
+                await page.goto(current_url)
+                if not await _recover_login_if_needed(page, current_url, credential, heartbeat):
                     logger.warning(
                         "  %s: session appears lost restoring after a form submit — "
                         "stopping form loop early",
-                        url,
+                        current_url,
                     )
                     if on_diagnostic:
                         # Story 2.18 AC 3: DISC-005 — the browser lost track
@@ -3058,10 +3333,11 @@ async def run_discovery_crawl(
                             {
                                 "error_code": "DISC-005",
                                 "message": (
-                                    f"Lost track of {url} after a form submit and could not "
-                                    "restore to it — stopping this page's form loop early."
+                                    f"Lost track of {current_url} after a form submit and "
+                                    "could not restore to it — stopping this page's form "
+                                    "loop early."
                                 ),
-                                "page_url": url,
+                                "page_url": current_url,
                                 "retry_count": 0,
                             },
                         )
