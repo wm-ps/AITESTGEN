@@ -17,6 +17,7 @@ from ai_provider.hosted import HostedAIProvider
 from domain import (
     ApiEndpoint,
     Component,
+    ComponentLocator,
     Form,
     Journey,
     JourneyStep,
@@ -293,9 +294,11 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
     # precedence; a still-blank field (mandatory or optional) gets a
     # field-name-pattern default, persisted back onto Scenario.test_data
     # before the AI call reads it.
-    scenario = await asyncio.to_thread(_resolve_scenario_defaults_sync, input.scenario_id)
+    scenario, known_pages, known_locators = await asyncio.to_thread(
+        _resolve_scenario_defaults_sync, input.scenario_id
+    )
 
-    code = await HostedAIProvider().generate_playwright(scenario)
+    code = await HostedAIProvider().generate_playwright(scenario, known_pages, known_locators)
 
     return await asyncio.to_thread(
         _persist_test_asset_sync, input.scenario_id, input.test_suite_id, code.code
@@ -316,7 +319,122 @@ def _existing_test_asset_id_sync(scenario_external_id: str) -> str | None:
         return str(existing.external_id) if existing is not None else None
 
 
-def _resolve_scenario_defaults_sync(scenario_external_id: str) -> Scenario:
+def _resolve_known_application_model_sync(
+    session: Session, journey_id: uuid.UUID
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Grounds Playwright generation in what Discovery actually captured for
+    this Journey, mirroring `scenario_generation_activity`'s own
+    steps->components->pages resolution above (duplicated rather than
+    shared — that function serves a different Activity and touching it for
+    marginal reuse isn't worth the regression risk here).
+
+    Returns `(known_pages, known_locators)`, both plain dicts (never ORM
+    objects, so the result stays valid once this function's caller's session
+    closes):
+    - `known_pages`: one entry per distinct Page actually visited by this
+      Journey's steps, in step order, `{"stage_label", "url"}` — a page
+      revisited by a later step keeps its first stage_label.
+    - `known_locators`: every Component on those same Pages (not just
+      step-referenced ones — a real JourneyStep today only ever sets
+      `page_id`, never `component_id`, so restricting to step-referenced
+      Components would starve this of almost everything) that has at least
+      one `ComponentLocator`, picking its `kind="preferred"` row if one
+      exists, else the `kind="fallback"` row with the lowest `priority`
+      (`discovery_worker/model_builder.py` assigns `priority` in
+      already-durability-ranked order, so the lowest-priority fallback is
+      always the most durable survivor)."""
+    steps = list(
+        session.exec(
+            select(JourneyStep)
+            .where(JourneyStep.journey_id == journey_id)
+            .order_by(JourneyStep.step_order)  # type: ignore[arg-type]
+        ).all()
+    )
+    if not steps:
+        return [], []
+
+    component_ids = {s.component_id for s in steps if s.component_id}
+    components_by_id = {
+        c.id: c
+        for c in (
+            session.exec(
+                select(Component).where(Component.id.in_(component_ids))  # type: ignore[attr-defined]
+            ).all()
+            if component_ids
+            else []
+        )
+    }
+    page_ids = {s.page_id for s in steps if s.page_id} | {
+        c.page_id for c in components_by_id.values()
+    }
+    if not page_ids:
+        return [], []
+
+    pages_by_id = {
+        p.id: p
+        for p in session.exec(select(Page).where(Page.id.in_(page_ids))).all()  # type: ignore[attr-defined]
+    }
+
+    known_pages: list[dict[str, str]] = []
+    stage_label_by_page_id: dict[uuid.UUID, str] = {}
+    for step in steps:
+        step_page_id = step.page_id
+        if step_page_id is None and step.component_id:
+            component = components_by_id.get(step.component_id)
+            step_page_id = component.page_id if component else None
+        if step_page_id is None or step_page_id not in pages_by_id:
+            continue
+        if step_page_id not in stage_label_by_page_id:
+            stage_label_by_page_id[step_page_id] = step.stage_label
+            known_pages.append(
+                {"stage_label": step.stage_label, "url": pages_by_id[step_page_id].url}
+            )
+
+    all_components = list(
+        session.exec(
+            select(Component)
+            .where(Component.page_id.in_(page_ids))  # type: ignore[attr-defined]
+            .order_by(Component.name)  # deterministic prompt/test ordering
+        ).all()
+    )
+    if not all_components:
+        return known_pages, []
+
+    locators = list(
+        session.exec(
+            select(ComponentLocator).where(
+                ComponentLocator.component_id.in_(  # type: ignore[attr-defined]
+                    [c.id for c in all_components]
+                )
+            )
+        ).all()
+    )
+    locators_by_component: dict[uuid.UUID, list[ComponentLocator]] = {}
+    for locator in locators:
+        locators_by_component.setdefault(locator.component_id, []).append(locator)
+
+    known_locators: list[dict[str, str]] = []
+    for component in all_components:
+        candidates = locators_by_component.get(component.id, [])
+        preferred = next((loc for loc in candidates if loc.kind == "preferred"), None)
+        fallbacks = [loc for loc in candidates if loc.kind == "fallback"]
+        chosen = preferred or (min(fallbacks, key=lambda loc: loc.priority) if fallbacks else None)
+        if chosen is None:
+            continue
+        known_locators.append(
+            {
+                "stage_label": stage_label_by_page_id.get(component.page_id, ""),
+                "component_type": component.type,
+                "component_name": component.name,
+                "selector": chosen.value,
+            }
+        )
+    return known_pages, known_locators
+
+
+def _resolve_scenario_defaults_sync(
+    scenario_external_id: str,
+) -> tuple[Scenario, list[dict[str, str]], list[dict[str, str]]]:
     with Session(engine) as session:
         scenario = session.exec(
             select(Scenario).where(Scenario.external_id == uuid.UUID(scenario_external_id))
@@ -333,11 +451,16 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> Scenario:
             session.add(scenario)
             session.commit()
             session.refresh(scenario)
+
+        known_pages, known_locators = _resolve_known_application_model_sync(
+            session, scenario.journey_id
+        )
+
         # Detach so the caller can read its attributes (name/type/steps/
         # test_data/expected_result — everything generate_playwright needs)
         # after this session closes, without triggering a lazy DB reload.
         session.expunge(scenario)
-        return scenario
+        return scenario, known_pages, known_locators
 
 
 def _persist_test_asset_sync(scenario_external_id: str, test_suite_external_id: str, code: str) -> str:
