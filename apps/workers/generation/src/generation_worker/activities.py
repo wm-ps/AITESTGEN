@@ -16,6 +16,7 @@ import uuid
 from ai_provider.hosted import HostedAIProvider
 from domain import (
     ApiEndpoint,
+    Application,
     Component,
     Form,
     Journey,
@@ -333,6 +334,15 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> Scenario:
             session.add(scenario)
             session.commit()
             session.refresh(scenario)
+
+        # Transient attribute (Scenario has no such column) — same technique
+        # ScenarioGenerationActivity uses for Page.forms/.api_endpoints/.stage_label.
+        # generate_playwright needs the Application's base URL to anchor generated
+        # navigation at a real, current session-establishing entry point.
+        journey = session.get(Journey, scenario.journey_id)
+        application = session.get(Application, journey.application_id) if journey else None
+        object.__setattr__(scenario, "base_url", application.url if application else None)
+
         # Detach so the caller can read its attributes (name/type/steps/
         # test_data/expected_result — everything generate_playwright needs)
         # after this session closes, without triggering a lazy DB reload.

@@ -129,6 +129,8 @@ Respond with ONLY a JSON object of this shape, no prose: \
 _PLAYWRIGHT_PROMPT = """You are converting one integration test Scenario into a single, \
 executable Playwright (TypeScript, @playwright/test) test.
 
+Application base URL: {base_url}
+
 Scenario: "{scenario_name}" ({scenario_type})
 
 Test steps:
@@ -142,8 +144,143 @@ either reviewer-provided or a sensible default):
 
 Write one complete, runnable test using `import {{ test, expect }} from '@playwright/test'`, \
 following the steps in order and asserting the expected result. Use the given test data \
-values literally where they'd naturally be used (form fields, query params, etc). Output \
-ONLY the TypeScript code, no markdown fences, no prose, no explanation."""
+values literally where they'd naturally be used (form fields, query params, etc).
+
+Timeout rules — target applications vary widely in how long they take to load or process \
+a submission. Define one constant near the top of the file and use it everywhere a timeout \
+applies, rather than relying on Playwright's default:
+const TIMEOUT_MS = 180000;
+Pass `{{ timeout: TIMEOUT_MS }}` to every `page.goto(...)`, `page.waitForLoadState(...)`, \
+`expect(...).toBeVisible(...)`/other `expect` assertions, and every locator action \
+(`.click(...)`, `.fill(...)`, etc). In particular, after clicking a form's submit button, \
+explicitly wait (with `TIMEOUT_MS`) for the resulting navigation or state change to \
+complete before asserting anything about the outcome — do not assume it resolves instantly.
+
+Not every Playwright method accepts a `timeout` option — do not add `{{ timeout: TIMEOUT_MS \
+}}` to a call unless that specific method's signature actually has an options parameter. \
+Most notably, `page.content()`, `page.url()`, and `response.status()` take NO arguments at \
+all — calling e.g. `page.content({{ timeout: TIMEOUT_MS }})` is a compile error, not a slower \
+call. When in doubt, only pass `{{ timeout: ... }}` to navigation (`page.goto`), waiting \
+(`page.waitForLoadState`, `page.waitForURL`), locator actions (`.click`, `.fill`, `.check`, \
+etc), and `expect(...)` assertions — never to a plain getter/accessor method.
+
+Critical: Playwright's own overall per-test timeout defaults to 30000ms regardless of any \
+`{{ timeout: TIMEOUT_MS }}` passed to individual calls — a longer per-assertion timeout does \
+NOT extend how long the test as a whole is allowed to run, and the test will still be killed \
+at 30 seconds even while an individual `expect(...)` is still legitimately waiting within its \
+own 180000ms budget. There is no `playwright.config.ts` to raise this globally, so every \
+generated test MUST raise its own timeout as the very first line inside the test body:
+test('...', async ({{ page }}) => {{
+  test.setTimeout(TIMEOUT_MS);
+  // ...rest of the test
+}});
+
+Session/navigation rules — many target applications are session-dependent and will return \
+a server error or broken markup if a deep link is the very first thing opened in a fresh \
+browser context with no prior cookies. Follow these rules for every test, not just login \
+Scenarios:
+
+1. Before navigating anywhere else, first visit the application's base URL ({base_url}) with \
+`{{ timeout: TIMEOUT_MS }}` and wait for it to finish loading with `await \
+page.waitForLoadState('networkidle', {{ timeout: TIMEOUT_MS }})`. This establishes the \
+session/cookies a real user's browser would already have. Only after that initial visit \
+should the test navigate on to whatever page the Scenario's steps actually need (via \
+`page.goto`, or by clicking a discovered link/button). Never `page.goto()` straight to a \
+deep URL as the first action of the test.
+
+2. After every `page.goto(...)` call, capture the returned response and verify it \
+succeeded before doing anything else with the page:
+const response = await page.goto(url, {{ timeout: TIMEOUT_MS }});
+if (!response || response.status() >= 400) {{
+  throw new Error(`Failed to load page. HTTP status: ${{response?.status()}}`);
+}}
+
+3. Before locating or asserting on any element, confirm the page did not render a server \
+error page in place of real application markup (this can happen even after a 200 \
+response, if the app fails server-side while rendering). Define and call a small helper \
+for this, e.g.:
+async function assertNoServerError(page) {{
+  const bodyText = await page.content();
+  const errorMarkers = ['Internal Server Error', 'Exception Report', 'HTTP Status 500', \
+'HTTP Status 404', 'Service Unavailable'];
+  for (const marker of errorMarkers) {{
+    if (bodyText.includes(marker)) {{
+      throw new Error(`Server returned an error page instead of the expected content: \
+${{marker}}`);
+    }}
+  }}
+}}
+Call `await assertNoServerError(page)` right after each navigation, before locating any \
+element — this turns a misleading "element not found" failure into a clear, actionable \
+error when the real cause is a server-side failure rather than a bad locator.
+
+Locator rules — accessible-name-based locators (`getByLabel`, `getByRole` on non-button \
+elements) are NOT safe for form fields: a name/label regex like `/password/i` will also \
+match unrelated controls that merely mention the same word (e.g. a "Show password" \
+visibility-toggle button), causing a Playwright strict-mode violation ("resolved to N \
+elements"). For every form field, prefer a CSS attribute locator restricted to the \
+correct element type over any accessibility-based locator, in this priority order:
+
+For a password field: `input[name="password"]`, then `input[type="password"]`, then \
+`input[id="password"]`, then `getByPlaceholder(/password/i)`, and only as a last resort \
+`getByLabel(/password/i)`.
+
+For a username/email field: `input[name="username"]`, `input[name="email"]`, \
+`input[type="email"]`, then `getByPlaceholder(/user|email/i)`, and only as a last resort \
+`getByLabel(/user|email/i)`.
+
+Combine the CSS-attribute options as one comma-separated selector passed to `page.locator(...)` \
+and take `.first()`, so any one of them matching resolves the field unambiguously. Assert \
+visibility (with `{{ timeout: TIMEOUT_MS }}`) before interacting, so a locator mismatch fails \
+clearly instead of a confusing fill/click error. For example, instead of:
+await page.getByLabel(/password/i).fill(password);
+generate:
+const passwordField = page.locator(
+  'input[name="password"], input[type="password"], input[id="password"]'
+).first();
+await expect(passwordField).toBeVisible({{ timeout: TIMEOUT_MS }});
+await passwordField.fill(password);
+
+Never treat a button (e.g. `<button aria-label="Show password">`, `<button aria-label="Hide \
+password">`, or any other visibility-toggle control) as a candidate for a text/password \
+input locator — always constrain field locators to `input` elements only. Only fall back to \
+an accessibility-based locator (`getByLabel`/`getByPlaceholder`) for a field when no \
+CSS attribute selector for it is available, and even then only if that locator's regex is \
+specific enough that it would not plausibly also match a button or other non-field control.
+
+Field-level validation rules — when a step checks that a field shows a validation/error \
+state (e.g. "shows required field error", "marks the field invalid"), do NOT search the \
+page for arbitrary validation-message text. Assert on the field's own state/attributes \
+instead, using whichever of these is applicable: `input[name="..."][aria-invalid="true"]`, \
+`input[name="..."][data-validate="..."]` (or any other application-specific validation \
+attribute implied by the step), or the native `:invalid` pseudo-class. Only assert on \
+visible error text if that exact text is given to you via the Test data or Expected result \
+above — never invent your own generic message (e.g. "This field is required") and search \
+for it.
+
+Failure-outcome assertion rules — the same "don't invent wording" rule applies to any \
+failure/error outcome, not just field validation (e.g. an invalid-login message). Use the \
+literal text ONLY if it is explicitly given to you via the Test data or Expected result \
+above — copy it verbatim, never paraphrase or invent your own phrasing. If no literal \
+expected message text is given, do not assert on any specific fabricated wording at all; \
+instead assert on an observable, application-agnostic signal that the action failed. Prefer \
+checking that the page did NOT navigate away from where the failing action was attempted \
+(e.g. compare `page.url()` before and after, or assert the same form/field is still present) \
+as the primary signal — this is always queryable regardless of the application's markup \
+conventions. Only additionally assert a generic error/alert container becoming visible \
+(e.g. `page.locator('[role="alert"], .error, [aria-live]').first()`) when you have reason to \
+believe the application actually renders one — never assert on that locator as your ONLY \
+failure signal, since many applications validate via native browser dialogs or custom markup \
+this pattern won't match, and a test that only waits on it will time out even though the \
+action genuinely failed as expected. Never hardcode a message like "Invalid username or \
+password" unless that exact string was given to you as data.
+
+Step-ordering rule — perform every listed Test step, in order, BEFORE asserting the Expected \
+result. Never assert the Expected result (or any failure/success signal derived from it) \
+before the actions that are supposed to produce it have actually been executed — e.g. do not \
+check for a login-error indicator before filling in credentials and clicking submit.
+
+Output ONLY the TypeScript code, no markdown fences, no prose, no explanation."""
 
 
 def _describe_test_data(scenario: Scenario) -> str:
@@ -339,12 +476,14 @@ class HostedAIProvider:
 
     async def generate_playwright(self, scenario: Scenario) -> TestAssetCode:
         step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
+        base_url = getattr(scenario, "base_url", None) or ""
         payload = {
             "model": AI_MODEL,
             "messages": [
                 {
                     "role": "user",
                     "content": _PLAYWRIGHT_PROMPT.format(
+                        base_url=base_url,
                         scenario_name=scenario.name,
                         scenario_type=scenario.type,
                         step_listing=step_listing,
