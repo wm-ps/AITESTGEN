@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api, type ApplicationRead, type UserRead } from '../api'
+import { StatusPill } from './StatusPill'
+
+const POLL_INTERVAL_MS = 15000
 
 function FolderIcon({ size }: { size: number }) {
   return (
@@ -22,40 +25,59 @@ function FolderIcon({ size }: { size: number }) {
 function ApplicationCard({
   application,
   onResume,
+  onBlocked,
 }: {
   application: ApplicationRead
   onResume: () => void
+  onBlocked: () => void
 }) {
   const [journeyCount, setJourneyCount] = useState<number | null>(null)
   const [scenarioCount, setScenarioCount] = useState<number | null>(null)
+  const [suiteCount, setSuiteCount] = useState<number | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([api.listJourneys(application.id), api.listScenarios(application.id)]).then(
-      ([journeys, scenarios]) => {
+    async function poll() {
+      try {
+        const [journeys, scenarios, suites] = await Promise.all([
+          api.listJourneys(application.id),
+          api.listScenarios(application.id),
+          api.listTestSuites(application.id),
+        ])
         if (cancelled) return
         setJourneyCount(journeys.length)
         setScenarioCount(scenarios.length)
-      },
-    )
+        setSuiteCount(suites.length)
+      } catch {
+        // best-effort poll — a transient failure just skips this tick
+      }
+    }
+    poll()
+    const interval = setInterval(poll, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
+      clearInterval(interval)
     }
   }, [application.id])
 
-  // ponytail: the prototype's third status ("Suite generated") can't be
-  // derived — ApplicationRead has no suite-generation flag — so this
-  // approximates with the two states the API actually supports. Upgrade
-  // once the backend tracks whether a suite has been generated.
-  const statusLabel =
-    application.discovery_status === 'completed' && (scenarioCount ?? 0) > 0
-      ? 'Ready for suite'
-      : 'Mapping in progress'
+  const discoveryStatus = application.discovery_status
+  const stage =
+    discoveryStatus === 'failed' || discoveryStatus === 'paused'
+      ? discoveryStatus
+      : (suiteCount ?? 0) > 0
+        ? 'suite_generated'
+        : (scenarioCount ?? 0) > 0
+          ? 'scenarios_generated'
+          : (journeyCount ?? 0) > 0
+            ? 'journeys_generated'
+            : discoveryStatus === 'complete'
+              ? 'discovery_completed'
+              : 'running'
 
   return (
     <button
       type="button"
-      onClick={onResume}
+      onClick={stage === 'running' ? onBlocked : onResume}
       className="card-panel home-app-card"
       style={{
         textAlign: 'left',
@@ -93,20 +115,7 @@ function ApplicationCard({
         >
           <FolderIcon size={19} />
         </span>
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            background: 'var(--accent-wash)',
-            color: 'var(--accent)',
-            borderRadius: 'var(--radius-full)',
-            padding: '4px 10px',
-            whiteSpace: 'nowrap',
-            flexShrink: 0,
-          }}
-        >
-          {statusLabel}
-        </span>
+        <StatusPill status={stage} pulsing={discoveryStatus === 'running'} />
       </div>
       <div
         style={{
@@ -126,23 +135,52 @@ function ApplicationCard({
       >
         {journeyCount ?? '…'} journeys · {scenarioCount ?? '…'} scenarios
       </div>
+      {application.discovery_status === 'running' && (
+        <div className="caption" style={{ fontSize: 12, marginTop: 4 }}>
+          Discovery in progress — this may take a few minutes.
+        </div>
+      )}
     </button>
   )
 }
 
 export function Home({
   user,
-  application,
   onConnectApp,
   onResumeApplication,
 }: {
   user: UserRead
-  application: ApplicationRead | null
   onConnectApp: () => void
-  onResumeApplication: () => void
+  onResumeApplication: (application: ApplicationRead) => void
 }) {
   const firstName = user.name.trim().split(/\s+/)[0]
   const [showDemo, setShowDemo] = useState(false)
+  const [applications, setApplications] = useState<ApplicationRead[] | null>(null)
+  const [snackbar, setSnackbar] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!snackbar) return
+    const timeout = setTimeout(() => setSnackbar(null), 3000)
+    return () => clearTimeout(timeout)
+  }, [snackbar])
+
+  useEffect(() => {
+    let cancelled = false
+    async function poll() {
+      try {
+        const apps = await api.listApplications()
+        if (!cancelled) setApplications(apps)
+      } catch {
+        // best-effort poll — a transient failure just skips this tick
+      }
+    }
+    poll()
+    const interval = setInterval(poll, POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [])
 
   return (
     <main
@@ -194,12 +232,35 @@ export function Home({
             >
               Watch Demo
             </button>
+            {applications && applications.length > 0 && (
+              <button type="button" className="button-primary" onClick={onConnectApp} style={{ padding: '11px 18px' }}>
+                + New Project
+              </button>
+            )}
           </div>
         </div>
 
-        {application ? (
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', animation: 'aitg-fade-up 0.4s ease-out 0.1s both' }}>
-            <ApplicationCard application={application} onResume={onResumeApplication} />
+        {applications === null ? null : applications.length > 0 ? (
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignContent: 'flex-start',
+              gap: 'var(--space-6)',
+              animation: 'aitg-fade-up 0.4s ease-out 0.1s both',
+            }}
+          >
+            {applications.map((application) => (
+              <ApplicationCard
+                key={application.id}
+                application={application}
+                onResume={() => onResumeApplication(application)}
+                onBlocked={() => setSnackbar('Discovery is in progress.')}
+              />
+            ))}
           </div>
         ) : (
           <div
@@ -307,6 +368,27 @@ export function Home({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {snackbar && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            left: '50%',
+            bottom: 'var(--space-9)',
+            transform: 'translateX(-50%)',
+            background: 'var(--ink)',
+            color: '#FFFFFF',
+            padding: '10px 18px',
+            borderRadius: 'var(--radius)',
+            fontSize: 13.5,
+            boxShadow: '0 12px 28px rgba(15,23,42,0.25)',
+            zIndex: 60,
+          }}
+        >
+          {snackbar}
         </div>
       )}
     </main>

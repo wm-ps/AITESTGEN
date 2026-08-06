@@ -30,6 +30,7 @@ from domain.discovery_run import DiscoveryRun
 from domain.exploration_step import ExplorationStep
 from domain.form import Form
 from domain.form_field import FormField
+from domain.invite import Invite
 from domain.journey import Journey, JourneyStatus
 from domain.journey_step import JourneyStep
 from domain.key_normalization import aggregation_key
@@ -64,6 +65,7 @@ __all__ = [
     "ExplorationStep",
     "Form",
     "FormField",
+    "Invite",
     "Journey",
     "JourneyStatus",
     "JourneyStep",

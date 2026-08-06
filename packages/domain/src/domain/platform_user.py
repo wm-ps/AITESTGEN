@@ -10,6 +10,9 @@ an API response as of this story (the avatar menu shows name/email only) —
 if a future story needs to expose it, apply the UUIDv7-internal /
 UUIDv4-external split established by `Application` (Story 1.3) rather than
 leaking this table's PK.
+
+`role` gates who can send Invites (see `domain.invite`) — "admin" or
+"member", never a free-form string beyond those two.
 """
 
 import uuid
@@ -42,6 +45,7 @@ class PlatformUser(SQLModel, table=True):
     email: str = Field(unique=True, index=True, nullable=False)
     name: str
     hashed_password: str
+    role: str = Field(default="member", nullable=False)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

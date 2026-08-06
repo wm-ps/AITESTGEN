@@ -202,6 +202,14 @@ textarea:focus-visible,
   background: var(--danger-wash);
 }
 
+.menu-item {
+  transition: background-color 0.15s ease;
+}
+
+.menu-item:hover {
+  background: var(--canvas-wash-alt);
+}
+
 .button-primary:hover:not(:disabled) {
   opacity: 0.9;
 }

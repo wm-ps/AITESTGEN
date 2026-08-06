@@ -26,6 +26,7 @@ def seed(
     password: str = DEFAULT_PASSWORD,
     org_name: str = DEFAULT_ORG_NAME,
     name: str = DEFAULT_NAME,
+    role: str = "admin",
 ) -> PlatformUser:
     init_db()
     with Session(engine) as session:
@@ -43,6 +44,7 @@ def seed(
             email=email,
             name=name,
             hashed_password=hash_password(password),
+            role=role,
         )
         session.add(user)
         session.commit()

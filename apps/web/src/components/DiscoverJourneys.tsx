@@ -478,11 +478,6 @@ export function DiscoverJourneys({
                         >
                           {journey.name}
                         </div>
-                        {journey.description && (
-                          <div className="caption" style={{ fontSize: 12, marginTop: 2 }}>
-                            {journey.description}
-                          </div>
-                        )}
                         <div className="caption" style={{ fontSize: 12 }}>
                           {journey.step_count} step{journey.step_count === 1 ? '' : 's'}
                         </div>
@@ -550,6 +545,11 @@ export function DiscoverJourneys({
                     <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 'var(--space-1)' }}>
                       {selectedJourney.name}
                     </div>
+                    {selectedJourney.description && (
+                      <div className="caption" style={{ fontSize: 13, marginBottom: 'var(--space-2)' }}>
+                        {selectedJourney.description}
+                      </div>
+                    )}
                     <div className="caption" style={{ fontSize: 13, fontWeight: 600, marginBottom: 'var(--space-4)' }}>
                       Discovered flow · {selectedJourney.step_count} step
                       {selectedJourney.step_count === 1 ? '' : 's'}

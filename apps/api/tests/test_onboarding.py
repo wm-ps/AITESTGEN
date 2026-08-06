@@ -121,6 +121,50 @@ def test_create_application_defaults_to_standard_login() -> None:
     assert response.json()["auth_method"] == "standard_login"
 
 
+def test_list_applications_scopes_to_org_and_orders_newest_first() -> None:
+    init_db()
+    client = _signed_in_client("Org List Applications")
+    other_org_client = _signed_in_client("Org List Applications Other")
+
+    other_org_client.post(
+        "/applications",
+        json={
+            "name": "Other Org App",
+            "url": "https://staging.example.com",
+            "environment": "staging",
+            "username": "qa-test-account",
+            "password": PLAINTEXT_PASSWORD,
+        },
+    )
+    client.post(
+        "/applications",
+        json={
+            "name": "First App",
+            "url": "https://staging.example.com",
+            "environment": "staging",
+            "username": "qa-test-account",
+            "password": PLAINTEXT_PASSWORD,
+        },
+    )
+    client.post(
+        "/applications",
+        json={
+            "name": "Second App",
+            "url": "https://staging.example.com",
+            "environment": "staging",
+            "username": "qa-test-account",
+            "password": PLAINTEXT_PASSWORD,
+        },
+    )
+
+    response = client.get("/applications")
+
+    assert response.status_code == 200
+    names = [app["name"] for app in response.json()]
+    assert names == ["Second App", "First App"]
+    assert "Other Org App" not in names
+
+
 def test_create_application_standard_login_requires_credentials() -> None:
     init_db()
     client = _signed_in_client("Org Auth Method Missing Creds")

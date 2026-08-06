@@ -17,11 +17,13 @@ export function TopBar({
   applicationBadge,
   onLogout,
   onGoHome,
+  onInviteTeammate,
 }: {
   user: UserRead
   applicationBadge?: { name: string; environment: string }
   onLogout: () => void
   onGoHome?: () => void
+  onInviteTeammate?: () => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -128,6 +130,32 @@ export function TopBar({
                 <div style={{ fontSize: 13, fontWeight: 600 }}>{user.name}</div>
                 <div style={{ fontSize: 12, marginTop: 1, color: 'var(--ink-faint)' }}>{user.email}</div>
               </div>
+              {user.role === 'admin' && onInviteTeammate && (
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    onInviteTeammate()
+                  }}
+                  className="menu-item"
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    textAlign: 'left',
+                    padding: '10px 14px',
+                    background: 'none',
+                    border: 'none',
+                    borderBottom: '1px solid var(--canvas-wash-alt)',
+                    fontSize: 13,
+                    color: 'var(--ink)',
+                    cursor: 'pointer',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  Invite teammate
+                </button>
+              )}
               <button
                 type="button"
                 role="menuitem"

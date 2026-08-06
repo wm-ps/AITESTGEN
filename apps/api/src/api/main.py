@@ -20,6 +20,7 @@ from domain import (
     Component,
     DiscoveryRun,
     Form,
+    Invite,
     Journey,
     JourneyStep,
     Page,
@@ -41,6 +42,7 @@ from temporalio.exceptions import WorkflowAlreadyStartedError
 from workflows import GENERATION_TASK_QUEUE, GenerationWorkflow, SuiteGenerationWorkflow
 
 from api.auth import (
+    CurrentAdminDep,
     CurrentOrgIdDep,
     CurrentUserDep,
     clear_session_cookie,
@@ -50,6 +52,7 @@ from api.auth import (
 from api.coverage_report import build_coverage_report
 from api.db import get_session
 from api.discovery import pause_discovery_run, resume_discovery_run, start_discovery_run
+from api.invites import InviteAcceptError, accept_invite, create_invite, org_name, send_invite_email
 from api.temporal_client import get_temporal_client
 from api.test_suite_export import (
     TestSuiteExportError,
@@ -97,6 +100,11 @@ class LoginRequest(BaseModel):
 class UserRead(BaseModel):
     name: str
     email: str
+    role: str
+
+
+def _to_user_read(user: PlatformUser) -> UserRead:
+    return UserRead(name=user.name, email=user.email, role=user.role)
 
 
 @app.post("/auth/login", response_model=UserRead)
@@ -105,7 +113,7 @@ def login(payload: LoginRequest, response: Response, session: SessionDep) -> Use
     if user is None or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="invalid email or password")
     issue_session_cookie(response, user.id)
-    return UserRead(name=user.name, email=user.email)
+    return _to_user_read(user)
 
 
 @app.post("/auth/logout")
@@ -116,7 +124,107 @@ def logout(response: Response) -> dict[str, str]:
 
 @app.get("/auth/me", response_model=UserRead)
 def me(user: CurrentUserDep) -> UserRead:
-    return UserRead(name=user.name, email=user.email)
+    return _to_user_read(user)
+
+
+# --- Invite-only Sign-up ---
+# No open self-service registration — an admin sends an Invite (email +
+# role), the invitee accepts it via a one-time token link and sets their own
+# password. Always joins the inviting admin's existing Organization; there
+# is no "create a new org" flow (single-tenant-per-deployment, though the
+# schema itself is multi-tenant per AD-12).
+
+
+class InviteCreate(BaseModel):
+    email: str
+    role: str = "member"
+
+    @model_validator(mode="after")
+    def _valid_role(self) -> InviteCreate:
+        if self.role not in ("admin", "member"):
+            raise ValueError("role must be 'admin' or 'member'")
+        return self
+
+
+class InviteRead(BaseModel):
+    id: uuid.UUID
+    email: str
+    role: str
+    expires_at: datetime
+
+
+@app.post("/invites", response_model=InviteRead, status_code=201)
+def send_invite(
+    payload: InviteCreate,
+    session: SessionDep,
+    admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> InviteRead:
+    existing = session.exec(
+        select(PlatformUser).where(PlatformUser.email == payload.email)
+    ).first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="a user with this email already exists")
+
+    invite, token = create_invite(session, organization_id, admin.id, payload.email, payload.role)
+    send_invite_email(payload.email, org_name(session, organization_id), token)
+    return InviteRead(
+        id=invite.external_id, email=invite.email, role=invite.role, expires_at=invite.expires_at
+    )
+
+
+@app.get("/invites", response_model=list[InviteRead])
+def list_pending_invites(
+    session: SessionDep,
+    admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[InviteRead]:
+    invites = session.exec(
+        select(Invite).where(
+            Invite.organization_id == organization_id,
+            Invite.used_at.is_(None),  # type: ignore[attr-defined]
+        )
+    ).all()
+    return [
+        InviteRead(id=i.external_id, email=i.email, role=i.role, expires_at=i.expires_at)
+        for i in invites
+    ]
+
+
+@app.delete("/invites/{external_id}", status_code=204)
+def revoke_invite(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> None:
+    invite = session.exec(
+        select(Invite).where(
+            Invite.external_id == external_id, Invite.organization_id == organization_id
+        )
+    ).first()
+    if invite is None:
+        raise HTTPException(status_code=404, detail="invite not found")
+    session.delete(invite)
+    session.commit()
+
+
+class AcceptInviteRequest(BaseModel):
+    token: str
+    name: str
+    password: str = Field(min_length=8)
+
+
+@app.post("/invites/accept", response_model=UserRead)
+def accept_invite_route(
+    payload: AcceptInviteRequest, response: Response, session: SessionDep
+) -> UserRead:
+    try:
+        user = accept_invite(session, payload.token, payload.name, payload.password)
+    except InviteAcceptError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    issue_session_cookie(response, user.id)
+    return _to_user_read(user)
 
 
 class ApplicationCreate(BaseModel):
@@ -310,6 +418,24 @@ def get_application(
     discovery_run = _latest_discovery_run(session, application.id)
     assert discovery_run is not None
     return _to_application_read(session, application, discovery_run)
+
+
+@app.get("/applications", response_model=list[ApplicationRead])
+def list_applications(
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[ApplicationRead]:
+    applications = session.exec(
+        select(Application)
+        .where(Application.organization_id == organization_id)
+        .order_by(Application.created_at.desc())  # type: ignore[arg-type]
+    ).all()
+    result = []
+    for application in applications:
+        discovery_run = _latest_discovery_run(session, application.id)
+        assert discovery_run is not None
+        result.append(_to_application_read(session, application, discovery_run))
+    return result
 
 
 @app.post("/applications/{external_id}/pause-discovery", response_model=ApplicationRead)

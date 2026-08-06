@@ -1,7 +1,13 @@
 import type { components } from './api-types.gen'
 
-export type UserRead = components['schemas']['UserRead']
+// `role` isn't in api-types.gen.ts yet (that file is generated from a
+// running API's OpenAPI schema, regenerate via `npm run generate:api-types`)
+// — added by hand for now rather than blocking this on a live server.
+export type UserRead = components['schemas']['UserRead'] & { role: 'admin' | 'member' }
 export type LoginRequest = components['schemas']['LoginRequest']
+export type InviteCreate = { email: string; role: 'admin' | 'member' }
+export type InviteRead = { id: string; email: string; role: 'admin' | 'member'; expires_at: string }
+export type AcceptInviteRequest = { token: string; name: string; password: string }
 export type ApplicationCreate = components['schemas']['ApplicationCreate']
 export type ApplicationRead = components['schemas']['ApplicationRead']
 export type JourneyRead = components['schemas']['JourneyRead']
@@ -40,8 +46,16 @@ export const api = {
     request<UserRead>('/auth/login', { method: 'POST', body: JSON.stringify(payload) }),
   logout: () => request<{ status: string }>('/auth/logout', { method: 'POST' }),
   me: () => request<UserRead>('/auth/me'),
+  sendInvite: (payload: InviteCreate) =>
+    request<InviteRead>('/invites', { method: 'POST', body: JSON.stringify(payload) }),
+  listInvites: () => request<InviteRead[]>('/invites'),
+  revokeInvite: (inviteId: string) =>
+    request<undefined>(`/invites/${inviteId}`, { method: 'DELETE' }),
+  acceptInvite: (payload: AcceptInviteRequest) =>
+    request<UserRead>('/invites/accept', { method: 'POST', body: JSON.stringify(payload) }),
   createApplication: (payload: ApplicationCreate) =>
     request<ApplicationRead>('/applications', { method: 'POST', body: JSON.stringify(payload) }),
+  listApplications: () => request<ApplicationRead[]>('/applications'),
   getApplication: (applicationId: string) =>
     request<ApplicationRead>(`/applications/${applicationId}`),
   pauseDiscovery: (applicationId: string) =>

@@ -1,13 +1,24 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api, type ApplicationRead, type UserRead } from './api'
+import { AcceptInvite } from './components/AcceptInvite'
 import { ConnectAppForm } from './components/ConnectAppForm'
 import { DiscoverJourneys } from './components/DiscoverJourneys'
 import { GenerateSuite } from './components/GenerateSuite'
 import { Home } from './components/Home'
+import { InviteTeammateModal } from './components/InviteTeammateModal'
 import { ReviewScenarios } from './components/ReviewScenarios'
 import { SignIn } from './components/SignIn'
 import { TestSuiteResults } from './components/TestSuiteResults'
 import { TopBar } from './components/TopBar'
+
+// Invite links point at /accept-invite?token=... — handled before the
+// signed-in check below since accepting an invite never requires an
+// existing session.
+function getInviteTokenFromUrl(): string | null {
+  return window.location.pathname === '/accept-invite'
+    ? new URLSearchParams(window.location.search).get('token')
+    : null
+}
 
 type View =
   | 'home'
@@ -21,8 +32,11 @@ function App() {
   const [user, setUser] = useState<UserRead | null | undefined>(undefined)
   const [view, setView] = useState<View>('home')
   const [application, setApplication] = useState<ApplicationRead | null>(null)
+  const [inviteModalOpen, setInviteModalOpen] = useState(false)
+  const [inviteToken, setInviteToken] = useState(getInviteTokenFromUrl)
 
   useEffect(() => {
+    if (inviteToken) return
     api
       .me()
       .then(setUser)
@@ -33,7 +47,17 @@ function App() {
           setUser(null)
         }
       })
-  }, [])
+  }, [inviteToken])
+
+  function handleSignedIn(signedInUser: UserRead) {
+    window.history.replaceState({}, '', '/')
+    setUser(signedInUser)
+    setInviteToken(null)
+  }
+
+  if (inviteToken) {
+    return <AcceptInvite token={inviteToken} onSignedIn={handleSignedIn} />
+  }
 
   if (user === undefined) return null
 
@@ -57,21 +81,22 @@ function App() {
         }
         onLogout={handleLogout}
         onGoHome={() => setView('home')}
+        onInviteTeammate={() => setInviteModalOpen(true)}
       />
+      {inviteModalOpen && <InviteTeammateModal onClose={() => setInviteModalOpen(false)} />}
       {view === 'home' && (
         <Home
           user={user}
-          application={application}
           onConnectApp={() => setView('connect-app')}
-          onResumeApplication={() => setView('discover')}
+          onResumeApplication={(app) => {
+            setApplication(app)
+            setView('discover')
+          }}
         />
       )}
       {view === 'connect-app' && (
         <ConnectAppForm
-          onConnected={(app) => {
-            setApplication(app)
-            setView('discover')
-          }}
+          onConnected={() => setView('home')}
           onCancel={() => setView('home')}
         />
       )}
