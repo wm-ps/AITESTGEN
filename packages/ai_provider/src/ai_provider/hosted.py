@@ -142,6 +142,19 @@ Test data (use these exact values in the generated code, they are already resolv
 either reviewer-provided or a sensible default):
 {test_data_listing}
 
+Known pages (real URLs discovered on this application during crawling, listed as \
+"business stage name -> URL"). When a step navigates to, or asserts being on, a page \
+matching one of these, use `page.goto("<url>")` / assert against this exact URL — only \
+invent your own URL for a step with no match here:
+{known_pages_listing}
+
+Known element locators (real Playwright selector strings discovered on this application, \
+listed as "business stage name / component type:component name -> selector"). When a step \
+interacts with an element matching one of these, use `page.locator("<selector>")` with this \
+exact selector string — only invent your own selector (e.g. `page.getByRole(...)`) for an \
+element with no match here:
+{known_locators_listing}
+
 Write one complete, runnable test using `import {{ test, expect }} from '@playwright/test'`, \
 following the steps in order and asserting the expected result. Use the given test data \
 values literally where they'd naturally be used (form fields, query params, etc).
@@ -285,6 +298,22 @@ Output ONLY the TypeScript code, no markdown fences, no prose, no explanation.""
 
 def _describe_test_data(scenario: Scenario) -> str:
     return "\n".join(f"- {f['name']}: {f.get('value')}" for f in scenario.test_data) or "(none)"
+
+
+def _describe_known_pages(known_pages: list[dict[str, str]] | None) -> str:
+    if not known_pages:
+        return "(none)"
+    return "\n".join(f"- {p['stage_label']} -> {p['url']}" for p in known_pages)
+
+
+def _describe_known_locators(known_locators: list[dict[str, str]] | None) -> str:
+    if not known_locators:
+        return "(none)"
+    return "\n".join(
+        f"- {loc['stage_label']} / {loc['component_type']}:{loc['component_name']} -> "
+        f"{loc['selector']}"
+        for loc in known_locators
+    )
 
 
 # Story 2.10 AC 3: a short, plain-language (not JSON) opinion — this is
@@ -474,7 +503,12 @@ class HostedAIProvider:
             response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"].strip()
 
-    async def generate_playwright(self, scenario: Scenario) -> TestAssetCode:
+    async def generate_playwright(
+        self,
+        scenario: Scenario,
+        known_pages: list[dict[str, str]] | None = None,
+        known_locators: list[dict[str, str]] | None = None,
+    ) -> TestAssetCode:
         step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
         base_url = getattr(scenario, "base_url", None) or ""
         payload = {
@@ -489,6 +523,8 @@ class HostedAIProvider:
                         step_listing=step_listing,
                         expected_result=scenario.expected_result,
                         test_data_listing=_describe_test_data(scenario),
+                        known_pages_listing=_describe_known_pages(known_pages),
+                        known_locators_listing=_describe_known_locators(known_locators),
                     ),
                 }
             ],

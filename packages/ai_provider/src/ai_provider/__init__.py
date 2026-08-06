@@ -14,7 +14,10 @@ Activity, not this port, converts candidates into real `Scenario` rows.
 declared sync in this Protocol, which never matched `infer_journeys`'s real
 (network I/O) shape. `[ADDED 2026-07-23]` `generate_playwright` (Story 4.2)
 now has its real `Scenario -> TestAssetCode` signature, `async` for the same
-reason.
+reason. `[ADDED 2026-08-05]` `generate_playwright` also takes optional
+`known_pages`/`known_locators` — real crawled Pages/ComponentLocators for the
+Scenario's Journey, letting the AI ground generated code in discovered URLs/
+selectors instead of inventing its own.
 """
 
 from typing import Protocol
@@ -33,7 +36,12 @@ class AIProvider(Protocol):
         self, journey: Journey, pages: list[Page]
     ) -> list[ScenarioCandidate]: ...
 
-    async def generate_playwright(self, scenario: Scenario) -> TestAssetCode: ...
+    async def generate_playwright(
+        self,
+        scenario: Scenario,
+        known_pages: list[dict[str, str]] | None = None,
+        known_locators: list[dict[str, str]] | None = None,
+    ) -> TestAssetCode: ...
 
     # Story 2.10 AC 3: called only when the State Identity Engine's score
     # falls in the ambiguous band. Returns a short plain-language opinion —

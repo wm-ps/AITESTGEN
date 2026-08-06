@@ -214,6 +214,79 @@ async def test_generate_playwright_strips_markdown_code_fences(
     assert "```" not in result.code
 
 
+async def test_generate_playwright_includes_known_pages_in_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(
+        monkeypatch, "test('guest checkout', async ({ page }) => {})"
+    )
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(
+        scenario,
+        known_pages=[{"stage_label": "Checkout", "url": "https://app.example.com/checkout"}],
+    )
+
+    content = captured["json"]["messages"][0]["content"]
+    assert "Known pages" in content
+    assert "Checkout -> https://app.example.com/checkout" in content
+
+
+async def test_generate_playwright_degrades_gracefully_with_no_known_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(
+        monkeypatch, "test('guest checkout', async ({ page }) => {})"
+    )
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(scenario)
+
+    content = captured["json"]["messages"][0]["content"]
+    assert "Known pages" in content
+    assert "(none)" in content
+
+
+async def test_generate_playwright_includes_known_locators_in_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(
+        monkeypatch, "test('guest checkout', async ({ page }) => {})"
+    )
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(
+        scenario,
+        known_locators=[
+            {
+                "stage_label": "Checkout",
+                "component_type": "button",
+                "component_name": "Save button",
+                "selector": '[data-testid="save"]',
+            }
+        ],
+    )
+
+    content = captured["json"]["messages"][0]["content"]
+    assert "Known element locators" in content
+    assert 'Checkout / button:Save button -> [data-testid="save"]' in content
+
+
+async def test_generate_playwright_degrades_gracefully_with_no_known_locators(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(
+        monkeypatch, "test('guest checkout', async ({ page }) => {})"
+    )
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(scenario)
+
+    content = captured["json"]["messages"][0]["content"]
+    assert "Known element locators" in content
+    assert "(none)" in content
+
+
 async def test_infer_state_similarity_returns_the_raw_opinion_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
