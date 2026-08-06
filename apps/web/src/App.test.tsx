@@ -47,7 +47,7 @@ describe('App', () => {
     expect(screen.getByRole('menuitem', { name: 'Log out' })).toBeTruthy()
   })
 
-  it('shows the Application-name breadcrumb and a Running status pill on Discover Journeys after connecting an Application', async () => {
+  it('shows the Application-name breadcrumb and a Discovery in Progress status pill on Discover Journeys after connecting an Application', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({
@@ -92,7 +92,7 @@ describe('App', () => {
     })
     expect(screen.getByText('My App')).toBeTruthy()
     expect(screen.getByText('Staging')).toBeTruthy()
-    expect(screen.getByText('Running')).toBeTruthy()
+    expect(screen.getByText('Discovery in Progress')).toBeTruthy()
 
     // Tab title/favicon are static platform branding — unaffected by the Application.
     expect(document.title).toBe('AITestGen')
@@ -161,8 +161,11 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Go to Home' }))
 
     await waitFor(() => {
-      expect(screen.getByText('2 journeys · 3 scenarios')).toBeTruthy()
+      expect(screen.getByText('journeys')).toBeTruthy()
     })
+    expect(screen.getByText('2')).toBeTruthy()
+    expect(screen.getByText('scenarios')).toBeTruthy()
+    expect(screen.getByText('3')).toBeTruthy()
     expect(screen.getByText('Ready for suite')).toBeTruthy()
     expect(screen.getByText('Watch Demo')).toBeTruthy()
 

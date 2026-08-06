@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type ScenarioRead } from '../api'
-import { Stepper } from './Stepper'
+import { Stepper, type StepKey } from './Stepper'
 
 const POLL_INTERVAL_MS = 1500
 const SCENARIOS_PER_PAGE = 6
@@ -164,9 +164,17 @@ function ScenarioRowMenu({ onRename, onDelete }: { onRename: () => void; onDelet
 export function ReviewScenarios({
   applicationId,
   onContinueToGenerate,
+  furthestCount,
+  onStepClick,
+  onPrevious,
+  onNext,
 }: {
   applicationId: string
   onContinueToGenerate: () => void
+  furthestCount: number
+  onStepClick?: (key: StepKey) => void
+  onPrevious?: () => void
+  onNext?: () => void
 }) {
   const [scenarios, setScenarios] = useState<ScenarioRead[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -198,6 +206,13 @@ export function ReviewScenarios({
       clearInterval(interval)
     }
   }, [applicationId])
+
+  // Land on the first Scenario selected by default, not an empty canvas —
+  // also re-picks the first one if the selected Scenario was deleted.
+  useEffect(() => {
+    if (selectedId && scenarios.some((s) => s.id === selectedId)) return
+    setSelectedId(scenarios[0]?.id ?? null)
+  }, [scenarios, selectedId])
 
   async function handleRename(id: string, name: string) {
     setRenamingId(null)
@@ -247,7 +262,7 @@ export function ReviewScenarios({
 
   return (
     <>
-      <Stepper current="review" />
+      <Stepper current="review" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
       <main
         style={{
           maxWidth: 'var(--content-max)',

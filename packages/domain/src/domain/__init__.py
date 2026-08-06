@@ -27,6 +27,7 @@ from domain.component_locator import ComponentLocator
 from domain.diagnostic_record import DiagnosticRecord
 from domain.discovery_error import DiscoveryError, ErrorCode
 from domain.discovery_run import DiscoveryRun
+from domain.discovery_settings import DiscoverySettings, InteractionLevel
 from domain.exploration_step import ExplorationStep
 from domain.form import Form
 from domain.form_field import FormField
@@ -62,6 +63,8 @@ __all__ = [
     "DiscoveryError",
     "ErrorCode",
     "DiscoveryRun",
+    "DiscoverySettings",
+    "InteractionLevel",
     "ExplorationStep",
     "Form",
     "FormField",

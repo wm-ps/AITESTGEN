@@ -3,6 +3,9 @@
 Thumbs.db
 Desktop.ini
 $RECYCLE.BIN/
+# Git Bash on Windows treats `> nul` as a literal filename, not the null
+# device (that's `/dev/null`) — a stray redirect leaves this file behind.
+/nul
 
 # --- Editor/IDE ---
 .vscode/*

@@ -19,6 +19,7 @@ const COLORS: Record<string, { background: string; foreground: string }> = {
 }
 
 const LABELS: Record<string, string> = {
+  running: 'Discovery in Progress',
   discovery_completed: 'Discovery completed',
   journeys_generated: 'Journeys generated',
   scenarios_generated: 'Scenarios generated',

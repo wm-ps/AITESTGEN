@@ -19,7 +19,9 @@ from domain import (
     AuthMethod,
     Component,
     DiscoveryRun,
+    DiscoverySettings,
     Form,
+    InteractionLevel,
     Invite,
     Journey,
     JourneyStep,
@@ -33,6 +35,7 @@ from domain import (
 )
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from object_store import ObjectStore
 from pydantic import BaseModel, Field, model_validator
 from secrets_client import VaultSecretsClient
 from sqlalchemy import func
@@ -585,6 +588,7 @@ class JourneyStepRead(BaseModel):
     stage_label: str
     route: str
     method: str
+    screenshot_url: str | None = None
 
 
 class JourneyRenamePayload(BaseModel):
@@ -725,6 +729,24 @@ def list_journey_steps(
                 step_order=step.step_order, stage_label=step.stage_label, route=route, method=method
             )
         )
+
+    # Only the final step gets a screenshot (product decision — not every
+    # step, just the journey's end state). Form/API-endpoint steps have no
+    # associated Page, so no screenshot is available for those.
+    if result:
+        last_step = steps[-1]
+        last_page = (
+            pages.get(last_step.page_id)
+            if last_step.page_id
+            else pages.get(components[last_step.component_id].page_id)
+            if last_step.component_id
+            else None
+        )
+        if last_page is not None and last_page.object_storage_key:
+            result[-1].screenshot_url = ObjectStore().presigned_get_url(
+                last_page.object_storage_key
+            )
+
     return result
 
 
@@ -1363,3 +1385,53 @@ def download_test_suite_project(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}-tests.zip"'},
     )
+
+
+class SettingsRead(BaseModel):
+    max_pages: int
+    max_discovery_duration_minutes: int
+    navigation_timeout_seconds: float
+    interaction_level: InteractionLevel
+
+
+class SettingsUpdate(BaseModel):
+    max_pages: int | None = None
+    max_discovery_duration_minutes: int | None = None
+    navigation_timeout_seconds: float | None = None
+    interaction_level: InteractionLevel | None = None
+
+
+def _to_settings_read(settings: DiscoverySettings) -> SettingsRead:
+    return SettingsRead(
+        max_pages=settings.max_pages,
+        max_discovery_duration_minutes=settings.max_discovery_duration_minutes,
+        navigation_timeout_seconds=settings.navigation_timeout_seconds,
+        interaction_level=settings.interaction_level,  # type: ignore[arg-type]
+    )
+
+
+@app.get("/settings", response_model=SettingsRead)
+def get_settings(session: SessionDep, _admin: CurrentAdminDep) -> SettingsRead:
+    settings = session.exec(select(DiscoverySettings)).one()
+    return _to_settings_read(settings)
+
+
+@app.patch("/settings", response_model=SettingsRead)
+def update_settings(
+    payload: SettingsUpdate,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+) -> SettingsRead:
+    settings = session.exec(select(DiscoverySettings)).one()
+    if payload.max_pages is not None:
+        settings.max_pages = payload.max_pages
+    if payload.max_discovery_duration_minutes is not None:
+        settings.max_discovery_duration_minutes = payload.max_discovery_duration_minutes
+    if payload.navigation_timeout_seconds is not None:
+        settings.navigation_timeout_seconds = payload.navigation_timeout_seconds
+    if payload.interaction_level is not None:
+        settings.interaction_level = payload.interaction_level
+    session.add(settings)
+    session.commit()
+    session.refresh(settings)
+    return _to_settings_read(settings)

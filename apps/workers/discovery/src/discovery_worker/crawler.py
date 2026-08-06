@@ -706,6 +706,7 @@ async def _capture_frame_widgets(
     data_resolver_pool: dict[str, data_resolver.PoolEntry] | None = None,
     resolution_log: data_resolver.ResolutionLog | None = None,
     safety: planner.SpecialistFn | None = None,
+    interaction_level: planner.SpecialistFn | None = None,
 ) -> None:
     """Runs the same form/button capture routines used for a top-level page,
     scoped to one frame — Dev Notes: extend the existing capture path, don't
@@ -747,6 +748,7 @@ async def _capture_frame_widgets(
             frame_path=frame_path,
             loop_guard_state=loop_guard_state,
             safety=safety,
+            interaction_level=interaction_level,
         )
     except Exception:
         logger.warning("frame button capture failed at depth %d on %s", depth, page_url)
@@ -1898,6 +1900,7 @@ async def _click_standalone_buttons(
     safety: planner.SpecialistFn | None = None,
     data_resolver: planner.SpecialistFn | None = None,
     loop_guard_state: planner.LoopGuardState | None = None,
+    interaction_level: planner.SpecialistFn | None = None,
 ) -> list[str]:
     """Clicks every distinct-labeled standalone button — page-body content
     tried before nav/header/footer chrome, no numeric cap on either (see the
@@ -2223,6 +2226,7 @@ async def _click_standalone_buttons(
                     loop_guard=loop_guard,
                     safety=safety,
                     data_resolver=data_resolver,
+                    interaction_level=interaction_level,
                 )
                 # Story 2.12 AC 6: one diagnostic per safety verdict actually
                 # reached — `deciding_specialist == "loop_guard"` means safety
@@ -2880,6 +2884,9 @@ async def run_discovery_crawl(
     on_diagnostic: DiagnosticCallback | None = None,
     max_frame_depth: int = DEFAULT_MAX_FRAME_DEPTH,
     page_load_timeout_seconds: float = DEFAULT_PAGE_LOAD_TIMEOUT_SECONDS,
+    max_pages: int | None = None,
+    max_duration_seconds: float | None = None,
+    interaction_level: str = "normal",
     data_resolver_pool: dict[str, data_resolver.PoolEntry] | None = None,
     safety: planner.SpecialistFn | None = None,
     already_confirmed_urls: frozenset[str] | None = None,
@@ -2901,6 +2908,10 @@ async def run_discovery_crawl(
     result = CrawlResult()
     sink = _CaptureSink(result, on_capture)
     loop_guard_state = planner.LoopGuardState()
+    # Settings page's Max Discovery Duration — `None` means no wall-clock cap.
+    deadline = time.monotonic() + max_duration_seconds if max_duration_seconds else None
+    # Settings page's Interaction Level — orthogonal to `safety` (Story 2.12).
+    interaction_level_gate = planner.InteractionLevelGate(interaction_level)
     # Story 2.13: one resolution log for the whole run, alongside the loop
     # guard — `data_resolver_pool` is loaded once by the caller (Story
     # 2.20's pool, seeded at Activity start) and passed straight through;
@@ -3052,6 +3063,16 @@ async def run_discovery_crawl(
         visited_pages.add(url)
         queued_urls.discard(url)
 
+        # Settings page's Max Pages / Max Discovery Duration — stop cleanly
+        # and keep everything already captured in `result` (a `break`, not a
+        # raise) rather than the exhaustive-traversal default below.
+        if max_pages is not None and len(visited_pages) > max_pages:
+            logger.info("discovery stopped early: max_pages (%d) reached", max_pages)
+            break
+        if deadline is not None and time.monotonic() >= deadline:
+            logger.info("discovery stopped early: max_discovery_duration reached")
+            break
+
         # Exhaustive traversal (Story 2.3) has no cap and a real site can
         # take far longer than any fixed timeout — heartbeating each
         # iteration lets Temporal tell "still working" apart from "worker
@@ -3146,7 +3167,7 @@ async def run_discovery_crawl(
         try:
             screenshot = await page.screenshot()
             title = await page.title()
-            # Synchronous MinIO upload — off the event loop for the same
+            # Synchronous S3 upload — off the event loop for the same
             # reason as the DB commit above (see `_CaptureSink.add`).
             key = await asyncio.to_thread(object_store.put, screenshot, discovery_run_id)
         except Exception as exc:
@@ -3363,6 +3384,7 @@ async def run_discovery_crawl(
             entry_url=base_url,
             loop_guard_state=loop_guard_state,
             safety=safety,
+            interaction_level=interaction_level_gate,
         ):
             _maybe_enqueue(discovered_url, current_url)
 
@@ -3388,6 +3410,7 @@ async def run_discovery_crawl(
                 data_resolver_pool=data_resolver_pool,
                 resolution_log=resolution_log,
                 safety=safety,
+                interaction_level=interaction_level_gate,
             )
         shadow_widgets = await _collect_shadow_dom_widgets(page, current_url, on_diagnostic)
         if shadow_widgets:

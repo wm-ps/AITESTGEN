@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type TestCaseRead, type TestSuiteRead } from '../api'
-import { Stepper } from './Stepper'
+import { Stepper, type StepKey } from './Stepper'
 
 const POLL_INTERVAL_MS = 1500
 const SECONDS_PER_TEST_CASE = 45
@@ -219,9 +219,15 @@ function CodeModal({ testCase, onClose }: { testCase: TestCaseRead; onClose: () 
 export function TestSuiteResults({
   applicationId,
   onGoToDashboard,
+  furthestCount,
+  onStepClick,
+  onPrevious,
 }: {
   applicationId: string
   onGoToDashboard: () => void
+  furthestCount: number
+  onStepClick?: (key: StepKey) => void
+  onPrevious?: () => void
 }) {
   const [suites, setSuites] = useState<TestSuiteRead[]>([])
   const [expectedTestCaseCount, setExpectedTestCaseCount] = useState(0)
@@ -288,7 +294,7 @@ export function TestSuiteResults({
   if (!isComplete) {
     return (
       <>
-        <Stepper current="generate" />
+        <Stepper current="generate" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} />
         <main style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, boxSizing: 'border-box' }}>
           <div role="status" style={{ textAlign: 'center' }}>
             <div
@@ -328,7 +334,7 @@ export function TestSuiteResults({
 
   return (
     <>
-      <Stepper current="generate" allComplete />
+      <Stepper current="generate" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} />
       <main style={{ display: 'flex', justifyContent: 'center', padding: '28px 24px' }}>
         <div style={{ maxWidth: 'clamp(760px, 68vw, 1080px)', width: '100%' }}>
           <div

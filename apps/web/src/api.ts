@@ -15,6 +15,16 @@ export type JourneyStepRead = components['schemas']['JourneyStepRead']
 export type ScenarioRead = components['schemas']['ScenarioRead']
 export type TestCaseRead = components['schemas']['TestCaseRead']
 export type TestSuiteRead = components['schemas']['TestSuiteRead']
+// Not in api-types.gen.ts yet (backend schema is new, regenerate via
+// `npm run generate:api-types` once the API is running) — added by hand.
+export type InteractionLevel = 'passive' | 'normal' | 'aggressive'
+export type SettingsRead = {
+  max_pages: number
+  max_discovery_duration_minutes: number
+  navigation_timeout_seconds: number
+  interaction_level: InteractionLevel
+}
+export type SettingsUpdate = Partial<SettingsRead>
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
@@ -97,6 +107,9 @@ export const api = {
     }),
   listTestSuites: (applicationId: string) =>
     request<TestSuiteRead[]>(`/applications/${applicationId}/test-suites`),
+  getSettings: () => request<SettingsRead>('/settings'),
+  updateSettings: (payload: SettingsUpdate) =>
+    request<SettingsRead>('/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
   // Not built on request<T>() — that helper always calls response.json(),
   // which throws on a binary zip body (Story 4.3).
   downloadTestSuiteProject: async (applicationId: string) => {

@@ -12,7 +12,6 @@ import uuid
 import pytest
 from discovery_worker.activities import discovery_activity
 from discovery_worker.db import engine, init_db
-from discovery_worker.object_store import MINIO_ENDPOINT, ObjectStore
 from discovery_worker.resume import resume_blocked_task
 from domain import (
     Application,
@@ -24,6 +23,7 @@ from domain import (
     TestDataEntry,
 )
 from fixtures.target_app import _wizard_orders, configure
+from object_store.client import ObjectStore
 from playwright.async_api import async_playwright
 from secrets_client.vault_client import VAULT_ADDR, VAULT_TOKEN, SecretRef, VaultSecretsClient
 from sqlalchemy import text
@@ -50,28 +50,9 @@ def _vault_available() -> bool:
         return False
 
 
-def _object_store_available() -> bool:
-    # `ObjectStore` itself selects real S3 over MinIO whenever `AWS_S3_BUCKET`
-    # is set (Story 2.8) — trust the same selection here rather than probing a
-    # MinIO health endpoint no container in this repo's docker-compose.yml
-    # actually serves (local dev points at real S3, see that file's own
-    # comment). boto3 resolves credentials via its normal chain; if they're
-    # missing/bad, `ObjectStore().put()` inside the test fails loudly, the
-    # same way it would in production, rather than a silent skip here.
-    if os.environ.get("AWS_S3_BUCKET"):
-        return True
-    import urllib.request
-
-    try:
-        urllib.request.urlopen(f"http://{MINIO_ENDPOINT}/minio/health/live", timeout=2)
-        return True
-    except Exception:
-        return False
-
-
 pytestmark = pytest.mark.skipif(
-    not (_db_available() and _vault_available() and _object_store_available()),
-    reason="requires PostgreSQL + Vault + object storage (S3 or MinIO) reachable",
+    not (_db_available() and _vault_available() and os.environ.get("AWS_S3_BUCKET")),
+    reason="requires PostgreSQL + Vault + AWS_S3_BUCKET configured",
 )
 
 

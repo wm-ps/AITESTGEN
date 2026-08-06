@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { StatusPill } from './StatusPill'
 
 describe('StatusPill', () => {
-  it('shows Running with a pulsing dot in signal color', () => {
+  it('shows Discovery in Progress with a pulsing dot in signal color', () => {
     render(<StatusPill status="running" />)
-    const pill = screen.getByText('Running')
+    const pill = screen.getByText('Discovery in Progress')
     expect((pill as HTMLElement).style.color).toBe('var(--accent)')
     expect(document.querySelector('.status-pill-pulse-dot')).toBeTruthy()
   })

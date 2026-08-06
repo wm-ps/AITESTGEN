@@ -165,9 +165,9 @@ textarea:focus-visible,
 
 .status-pill {
   display: inline-block;
-  border-radius: var(--radius-xs);
-  font-size: 10.5px;
-  font-weight: 700;
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 600;
   padding: 3px 8px;
 }
 

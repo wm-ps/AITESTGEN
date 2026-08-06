@@ -1,18 +1,18 @@
 """Story 2.10 Task 8 integration bullets — the real `discovery_activity`
-end-to-end (Postgres + Vault + MinIO + a live local target), same
+end-to-end (Postgres + Vault + S3 + a live local target), same
 skip-cleanly convention as test_discovery_activity_integration.py. Scoped
 to `/records/{id}` (a dead-end fixture linking only to itself) so this
 doesn't re-run the whole dashboard crawl per test.
 """
 
 import json
+import os
 import uuid
 
 import pytest
 from discovery_worker.activities import discovery_activity
 from discovery_worker.crawler import _SHADOW_TRACKING_INIT_SCRIPT, _capture_state_signals
 from discovery_worker.db import engine, init_db
-from discovery_worker.object_store import MINIO_ENDPOINT
 from discovery_worker.session import establish_session
 from domain import Application, DiagnosticRecord, DiscoveryRun, Organization, Page
 from fixtures.target_app import configure
@@ -42,19 +42,9 @@ def _vault_available() -> bool:
         return False
 
 
-def _minio_available() -> bool:
-    import urllib.request
-
-    try:
-        urllib.request.urlopen(f"http://{MINIO_ENDPOINT}/minio/health/live", timeout=2)
-        return True
-    except Exception:
-        return False
-
-
 pytestmark = pytest.mark.skipif(
-    not (_db_available() and _vault_available() and _minio_available()),
-    reason="requires PostgreSQL + Vault + MinIO reachable — start docker compose",
+    not (_db_available() and _vault_available() and os.environ.get("AWS_S3_BUCKET")),
+    reason="requires PostgreSQL + Vault + AWS_S3_BUCKET configured",
 )
 
 

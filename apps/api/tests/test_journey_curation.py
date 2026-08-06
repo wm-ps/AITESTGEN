@@ -177,6 +177,76 @@ def test_journey_steps_returns_ordered_route_method_stage_label() -> None:
     assert body[0]["method"] == "GET"
 
 
+def test_journey_steps_returns_screenshot_url_on_final_step_only(monkeypatch) -> None:
+    """Only the last step (highest step_order) gets a screenshot — and only
+    when its Page actually captured one (`object_storage_key` set)."""
+    import api.main as main_module
+
+    class _FakeObjectStore:
+        def presigned_get_url(self, key: str, expires_seconds: int = 900) -> str:
+            return f"https://fake-store/{key}"
+
+    monkeypatch.setattr(main_module, "ObjectStore", _FakeObjectStore)
+
+    init_db()
+    client = _signed_in_client("Org Journey Screenshot")
+    application = _create_application(client, "Journey Screenshot App")
+
+    with Session(engine) as session:
+        discovery_run = session.exec(
+            select(DiscoveryRun).where(
+                DiscoveryRun.external_id == uuid.UUID(application["discovery_run_id"])
+            )
+        ).one()
+        login_page = Page(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            url="https://staging.example.com/login",
+            title="Login",
+        )
+        checkout_page = Page(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            url="https://staging.example.com/checkout",
+            title="Checkout",
+            object_storage_key="discovery-runs/some-run/some-key",
+        )
+        session.add_all([login_page, checkout_page])
+        session.flush()
+
+        journey = Journey(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            name="Checkout Flow",
+            identity_key=f"identity-{uuid.uuid4()}",
+        )
+        session.add(journey)
+        session.flush()
+
+        session.add_all(
+            [
+                JourneyStep(
+                    journey_id=journey.id, page_id=login_page.id, step_order=1, stage_label="Login"
+                ),
+                JourneyStep(
+                    journey_id=journey.id,
+                    page_id=checkout_page.id,
+                    step_order=2,
+                    stage_label="Checkout",
+                ),
+            ]
+        )
+        session.commit()
+        session.refresh(journey)
+        journey_id = str(journey.external_id)
+
+    response = client.get(f"/journeys/{journey_id}/steps")
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["screenshot_url"] is None
+    assert body[1]["screenshot_url"] == "https://fake-store/discovery-runs/some-run/some-key"
+
+
 def test_rename_journey_updates_name() -> None:
     init_db()
     client = _signed_in_client("Org Journey Rename")

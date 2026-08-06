@@ -448,6 +448,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Settings */
+        get: operations["get_settings_settings_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Settings */
+        patch: operations["update_settings_settings_patch"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -610,6 +628,8 @@ export interface components {
             route: string;
             /** Method */
             method: string;
+            /** Screenshot Url */
+            screenshot_url?: string | null;
         };
         /** LoginRequest */
         LoginRequest: {
@@ -665,6 +685,31 @@ export interface components {
             name: string;
             /** Value */
             value: string;
+        };
+        /** SettingsRead */
+        SettingsRead: {
+            /** Max Pages */
+            max_pages: number;
+            /** Max Discovery Duration Minutes */
+            max_discovery_duration_minutes: number;
+            /** Navigation Timeout Seconds */
+            navigation_timeout_seconds: number;
+            /**
+             * Interaction Level
+             * @enum {string}
+             */
+            interaction_level: "passive" | "normal" | "aggressive";
+        };
+        /** SettingsUpdate */
+        SettingsUpdate: {
+            /** Max Pages */
+            max_pages?: number | null;
+            /** Max Discovery Duration Minutes */
+            max_discovery_duration_minutes?: number | null;
+            /** Navigation Timeout Seconds */
+            navigation_timeout_seconds?: number | null;
+            /** Interaction Level */
+            interaction_level?: ("passive" | "normal" | "aggressive") | null;
         };
         /** TestCaseRead */
         TestCaseRead: {
@@ -1778,6 +1823,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_settings_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_settings_settings_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsRead"];
                 };
             };
             /** @description Validation Error */

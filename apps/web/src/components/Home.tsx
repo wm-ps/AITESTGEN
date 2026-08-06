@@ -74,10 +74,12 @@ function ApplicationCard({
               ? 'discovery_completed'
               : 'running'
 
+  const isRunning = discoveryStatus === 'running'
+
   return (
     <button
       type="button"
-      onClick={stage === 'running' ? onBlocked : onResume}
+      onClick={isRunning ? onBlocked : onResume}
       className="card-panel home-app-card"
       style={{
         textAlign: 'left',
@@ -115,13 +117,13 @@ function ApplicationCard({
         >
           <FolderIcon size={19} />
         </span>
-        <StatusPill status={stage} pulsing={discoveryStatus === 'running'} />
+        <StatusPill status={stage} pulsing={isRunning} />
       </div>
       <div
         style={{
           fontSize: 15,
           fontWeight: 700,
-          marginBottom: 3,
+          marginBottom: 'var(--space-5)',
           whiteSpace: 'nowrap',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
@@ -129,17 +131,21 @@ function ApplicationCard({
       >
         {application.name}
       </div>
-      <div
-        className="caption"
-        style={{ fontSize: 12.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-      >
-        {journeyCount ?? '…'} journeys · {scenarioCount ?? '…'} scenarios
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-4)' }}>
+        <span>
+          <span style={{ fontSize: 15, fontWeight: 700 }}>{journeyCount ?? '…'}</span>{' '}
+          <span className="caption" style={{ fontSize: 12 }}>
+            journeys
+          </span>
+        </span>
+        <span aria-hidden="true" style={{ width: 1, height: 12, background: 'var(--border)' }} />
+        <span>
+          <span style={{ fontSize: 15, fontWeight: 700 }}>{scenarioCount ?? '…'}</span>{' '}
+          <span className="caption" style={{ fontSize: 12 }}>
+            scenarios
+          </span>
+        </span>
       </div>
-      {application.discovery_status === 'running' && (
-        <div className="caption" style={{ fontSize: 12, marginTop: 4 }}>
-          Discovery in progress — this may take a few minutes.
-        </div>
-      )}
     </button>
   )
 }
@@ -258,7 +264,7 @@ export function Home({
                 key={application.id}
                 application={application}
                 onResume={() => onResumeApplication(application)}
-                onBlocked={() => setSnackbar('Discovery is in progress.')}
+                onBlocked={() => setSnackbar('Please wait while the discovery process completes.')}
               />
             ))}
           </div>
@@ -376,18 +382,55 @@ export function Home({
           role="status"
           style={{
             position: 'fixed',
-            left: '50%',
+            right: 'var(--space-9)',
             bottom: 'var(--space-9)',
-            transform: 'translateX(-50%)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-4)',
             background: 'var(--ink)',
             color: '#FFFFFF',
-            padding: '10px 18px',
+            padding: '12px 18px',
             borderRadius: 'var(--radius)',
             fontSize: 13.5,
             boxShadow: '0 12px 28px rgba(15,23,42,0.25)',
             zIndex: 60,
           }}
         >
+          <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+            <span
+              aria-hidden="true"
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: 'var(--radius-full)',
+                background: '#FFFFFF',
+                animation: 'aitg-dot-bounce 1s ease-in-out infinite',
+                animationDelay: '0s',
+              }}
+            />
+            <span
+              aria-hidden="true"
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: 'var(--radius-full)',
+                background: '#FFFFFF',
+                animation: 'aitg-dot-bounce 1s ease-in-out infinite',
+                animationDelay: '0.15s',
+              }}
+            />
+            <span
+              aria-hidden="true"
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: 'var(--radius-full)',
+                background: '#FFFFFF',
+                animation: 'aitg-dot-bounce 1s ease-in-out infinite',
+                animationDelay: '0.3s',
+              }}
+            />
+          </div>
           {snackbar}
         </div>
       )}

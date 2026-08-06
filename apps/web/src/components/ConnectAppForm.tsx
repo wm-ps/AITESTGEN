@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ApiError, api, type ApplicationCreate, type ApplicationRead } from '../api'
-import { Stepper } from './Stepper'
+import { Stepper, type StepKey } from './Stepper'
 
 // The dropdown's confirmed 3-option set (DESIGN.md "Connect App form"): Username & Password,
 // API Key, OAuth Client Credentials. Only 'standard_login' is backend-supported today
@@ -16,12 +16,53 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
+function ConnectedAppSummary({ application }: { application: ApplicationRead }) {
+  const rows: [string, string][] = [
+    ['Application name', application.name],
+    ['Application URL', application.url],
+    ...(application.login_url ? ([['Login URL', application.login_url]] as [string, string][]) : []),
+    ['Environment', application.environment],
+    ['Authentication method', application.auth_method === 'standard_login' ? 'Username & Password' : application.auth_method],
+  ]
+  return (
+    <main style={{ maxWidth: 'clamp(720px, 68vw, 1080px)', margin: '0 auto', padding: '32px 24px' }}>
+      <h1 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 12px', textAlign: 'center' }}>
+        Connected application
+      </h1>
+      <div
+        className="card-panel"
+        style={{ padding: '14px 22px', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', boxShadow: 'var(--shadow-dropdown-lg)' }}
+      >
+        {rows.map(([label, value]) => (
+          <div key={label} className="field">
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>{label}</span>
+            <span style={{ fontSize: 14 }}>{value}</span>
+          </div>
+        ))}
+        <p className="caption" style={{ margin: 0, fontSize: 12 }}>
+          Credentials are stored in the secrets vault and aren't shown here.
+        </p>
+      </div>
+    </main>
+  )
+}
+
 export function ConnectAppForm({
+  application,
   onConnected,
   onCancel,
+  furthestCount,
+  onStepClick,
+  onPrevious,
+  onNext,
 }: {
+  application?: ApplicationRead | null
   onConnected: (application: ApplicationRead) => void
   onCancel: () => void
+  furthestCount: number
+  onStepClick?: (key: StepKey) => void
+  onPrevious?: () => void
+  onNext?: () => void
 }) {
   const [name, setName] = useState('')
   const [url, setUrl] = useState('')
@@ -55,9 +96,24 @@ export function ConnectAppForm({
     }
   }
 
+  if (application) {
+    return (
+      <>
+        <Stepper
+          current="connect-app"
+          furthestCount={furthestCount}
+          onStepClick={onStepClick}
+          onPrevious={onPrevious}
+          onNext={onNext}
+        />
+        <ConnectedAppSummary application={application} />
+      </>
+    )
+  }
+
   return (
     <>
-      <Stepper current="connect-app" />
+      <Stepper current="connect-app" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
       <main style={{ maxWidth: 'clamp(720px, 68vw, 1080px)', margin: '0 auto', padding: '32px 24px' }}>
         <h1 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 12px', textAlign: 'center' }}>
           Connect to your live application

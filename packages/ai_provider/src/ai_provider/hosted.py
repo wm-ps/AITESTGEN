@@ -35,6 +35,12 @@ from ai_provider.test_asset_code import TestAssetCode
 AI_MODEL = os.environ.get("AI_MODEL", "anthropic/claude-sonnet-5")
 LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "")
 LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "")
+# Low, near-deterministic — these calls extract structured data or follow
+# prescriptive rules, not creative writing. Some proxy-routed models (e.g.
+# reasoning models) reject any non-default temperature — set AI_TEMPERATURE=""
+# to omit the field entirely and let the model use its own default.
+_AI_TEMPERATURE_RAW = os.environ.get("AI_TEMPERATURE", "0.2")
+AI_TEMPERATURE = float(_AI_TEMPERATURE_RAW) if _AI_TEMPERATURE_RAW else None
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +50,10 @@ logger = logging.getLogger(__name__)
 # prompting, not the primary enforcement mechanism.
 _ROUTE_SHAPED_NAME = re.compile(r"^(/|https?://)")
 
-_PROMPT = """You are analyzing a structured Application Model (canonical pages, their \
+_PROMPT_SYSTEM = """You are analyzing a structured Application Model (canonical pages, their \
 forms, automatable components, API calls, and how users actually navigate between \
 pages) discovered from a web application, to identify the underlying business \
 workflows ("Journeys") a QA engineer would care about.
-
-Pages (indexed):
-{page_listing}
 
 Each page's "outgoing_transitions" lists the URLs a user actually reached from it \
 during crawling (a real navigation path, not a guess) — use this to sequence pages \
@@ -71,6 +74,9 @@ entry per page (from the indexed list above) that supports this Journey, in flow
 Respond with ONLY a JSON object of this shape, no prose: \
 {{"journeys": [{{"name": "...", "capability_name": "...", "description": "...", "steps": [ \
 {{"page_index": 0, "stage_label": "..."}}, {{"page_index": 2, "stage_label": "..."}}]}}, ...]}}"""
+
+_PROMPT_USER = """Pages (indexed):
+{page_listing}"""
 
 
 def _describe_page(page: Page) -> str:
@@ -100,15 +106,9 @@ def _describe_page(page: Page) -> str:
     return json.dumps(description)
 
 
-_SCENARIO_PROMPT = """You are writing integration test Scenarios for a specific business \
+_SCENARIO_PROMPT_SYSTEM = """You are writing integration test Scenarios for a specific business \
 Journey in a web application, based on its discovered steps and the underlying captured \
 pages/forms/API calls.
-
-Journey: "{journey_name}"
-
-Steps (in order — each is a business-language stage of this Journey, with the captured \
-page/form/API/component detail behind it):
-{step_listing}
 
 Generate integration test Scenarios covering this Journey, including a Happy Path, at \
 least one Negative Path (a validation/error condition), and at least one Edge Case. Each \
@@ -126,10 +126,13 @@ Respond with ONLY a JSON object of this shape, no prose: \
 {{"scenarios": [{{"name": "...", "type": "happy", "steps": ["...", "..."], \
 "expected_result": "...", "test_data": [{{"name": "...", "mandatory": true}}]}}, ...]}}"""
 
-_PLAYWRIGHT_PROMPT = """You are converting one integration test Scenario into a single, \
-executable Playwright (TypeScript, @playwright/test) test.
+_SCENARIO_PROMPT_USER = """Journey: "{journey_name}"
 
-Application base URL: {base_url}
+Steps (in order — each is a business-language stage of this Journey, with the captured \
+page/form/API/component detail behind it):
+{step_listing}"""
+
+_PLAYWRIGHT_PROMPT_USER = """Application base URL: {base_url}
 
 Scenario: "{scenario_name}" ({scenario_type})
 
@@ -153,7 +156,10 @@ listed as "business stage name / component type:component name -> selector"). Wh
 interacts with an element matching one of these, use `page.locator("<selector>")` with this \
 exact selector string — only invent your own selector (e.g. `page.getByRole(...)`) for an \
 element with no match here:
-{known_locators_listing}
+{known_locators_listing}"""
+
+_PLAYWRIGHT_PROMPT_SYSTEM = """You are converting one integration test Scenario into a single, \
+executable Playwright (TypeScript, @playwright/test) test.
 
 Write one complete, runnable test using `import {{ test, expect }} from '@playwright/test'`, \
 following the steps in order and asserting the expected result. Use the given test data \
@@ -345,24 +351,41 @@ Page context: {page_context}
 Respond with one word (SAFE, DESTRUCTIVE, or AMBIGUOUS) followed by a one-sentence reason."""
 
 
+async def _chat_completion(
+    messages: list[dict[str, str]], *, response_format: dict[str, str] | None = None, timeout: int = 60
+) -> str:
+    payload = {
+        "model": AI_MODEL,
+        "messages": messages,
+    }
+    if "gpt" in AI_MODEL.lower():
+        payload["reasoning_effort"] = "high"
+    elif AI_TEMPERATURE is not None:
+        payload["temperature"] = AI_TEMPERATURE
+    if response_format is not None:
+        payload["response_format"] = response_format
+    async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=timeout) as client:
+        response = await client.post(
+            "/chat/completions",
+            headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
+            json=payload,
+        )
+        response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
+
+
 class HostedAIProvider:
     """`AIProvider` (Protocol) adapter backed by a LiteLLM proxy server."""
 
     async def infer_journeys(self, pages: list[Page]) -> list[JourneyCandidate]:
         listing = "\n".join(f"{i}: {_describe_page(p)}" for i, p in enumerate(pages))
-        payload = {
-            "model": AI_MODEL,
-            "messages": [{"role": "user", "content": _PROMPT.format(page_listing=listing)}],
-            "response_format": {"type": "json_object"},
-        }
-        async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=60) as client:
-            response = await client.post(
-                "/chat/completions",
-                headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
-                json=payload,
-            )
-            response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+        content = await _chat_completion(
+            [
+                {"role": "system", "content": _PROMPT_SYSTEM},
+                {"role": "user", "content": _PROMPT_USER.format(page_listing=listing)},
+            ],
+            response_format={"type": "json_object"},
+        )
         groups = json.loads(content)["journeys"]
 
         candidates = []
@@ -418,26 +441,18 @@ class HostedAIProvider:
         # listing below doubles as both the step sequence and the supporting
         # capture detail, no separate steps argument needed.
         listing = "\n".join(f"{i + 1}: {_describe_page(p)}" for i, p in enumerate(pages))
-        payload = {
-            "model": AI_MODEL,
-            "messages": [
+        content = await _chat_completion(
+            [
+                {"role": "system", "content": _SCENARIO_PROMPT_SYSTEM},
                 {
                     "role": "user",
-                    "content": _SCENARIO_PROMPT.format(
+                    "content": _SCENARIO_PROMPT_USER.format(
                         journey_name=journey.name, step_listing=listing
                     ),
-                }
+                },
             ],
-            "response_format": {"type": "json_object"},
-        }
-        async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=60) as client:
-            response = await client.post(
-                "/chat/completions",
-                headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
-                json=payload,
-            )
-            response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+            response_format={"type": "json_object"},
+        )
         raw_scenarios = json.loads(content)["scenarios"]
 
         candidates = []
@@ -459,9 +474,8 @@ class HostedAIProvider:
     async def infer_state_similarity(
         self, heading_a: str, actions_a: list[str], heading_b: str, actions_b: list[str]
     ) -> str:
-        payload = {
-            "model": AI_MODEL,
-            "messages": [
+        content = await _chat_completion(
+            [
                 {
                     "role": "user",
                     "content": _STATE_SIMILARITY_PROMPT.format(
@@ -472,20 +486,13 @@ class HostedAIProvider:
                     ),
                 }
             ],
-        }
-        async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=30) as client:
-            response = await client.post(
-                "/chat/completions",
-                headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
-                json=payload,
-            )
-            response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
+            timeout=30,
+        )
+        return content.strip()
 
     async def classify_action_safety(self, label: str, page_context: str) -> str:
-        payload = {
-            "model": AI_MODEL,
-            "messages": [
+        content = await _chat_completion(
+            [
                 {
                     "role": "user",
                     "content": _ACTION_SAFETY_PROMPT.format(
@@ -493,15 +500,9 @@ class HostedAIProvider:
                     ),
                 }
             ],
-        }
-        async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=30) as client:
-            response = await client.post(
-                "/chat/completions",
-                headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
-                json=payload,
-            )
-            response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
+            timeout=30,
+        )
+        return content.strip()
 
     async def generate_playwright(
         self,
@@ -511,12 +512,12 @@ class HostedAIProvider:
     ) -> TestAssetCode:
         step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
         base_url = getattr(scenario, "base_url", None) or ""
-        payload = {
-            "model": AI_MODEL,
-            "messages": [
+        content = await _chat_completion(
+            [
+                {"role": "system", "content": _PLAYWRIGHT_PROMPT_SYSTEM.format(base_url=base_url)},
                 {
                     "role": "user",
-                    "content": _PLAYWRIGHT_PROMPT.format(
+                    "content": _PLAYWRIGHT_PROMPT_USER.format(
                         base_url=base_url,
                         scenario_name=scenario.name,
                         scenario_type=scenario.type,
@@ -526,17 +527,9 @@ class HostedAIProvider:
                         known_pages_listing=_describe_known_pages(known_pages),
                         known_locators_listing=_describe_known_locators(known_locators),
                     ),
-                }
-            ],
-        }
-        async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=60) as client:
-            response = await client.post(
-                "/chat/completions",
-                headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
-                json=payload,
-            )
-            response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+                },
+            ]
+        )
         # No JSON response_format here (unlike infer_journeys/generate_scenarios)
         # — the model's own code fences are the one common failure mode worth
         # stripping defensively, since raw TypeScript code has no equivalent

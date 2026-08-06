@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, type JourneyRead, type JourneyStepRead } from '../api'
 import { useDiscoveryProgress } from '../hooks/useDiscoveryProgress'
 import { ImportProgress } from './ImportProgress'
-import { Stepper } from './Stepper'
+import { Stepper, type StepKey } from './Stepper'
 import { StatusPill } from './StatusPill'
 
 const POLL_INTERVAL_MS = 1500
@@ -159,6 +159,10 @@ export function DiscoverJourneys({
   discoveryStage,
   discoveryFailureReason,
   onContinueToScenarios,
+  furthestCount,
+  onStepClick,
+  onPrevious,
+  onNext,
 }: {
   applicationId: string
   applicationName: string
@@ -166,6 +170,10 @@ export function DiscoverJourneys({
   discoveryStage: string | null
   discoveryFailureReason: string | null
   onContinueToScenarios: () => void
+  furthestCount: number
+  onStepClick?: (key: StepKey) => void
+  onPrevious?: () => void
+  onNext?: () => void
 }) {
   const [journeys, setJourneys] = useState<JourneyRead[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -174,6 +182,7 @@ export function DiscoverJourneys({
   const [continuing, setContinuing] = useState(false)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
   // Story 2.17: pause/resume already round-trips through the API — this
   // just reflects the response immediately rather than waiting for
   // useDiscoveryProgress's next poll tick (which stops polling entirely
@@ -261,6 +270,13 @@ export function DiscoverJourneys({
     }
   }, [applicationId, liveStatus])
 
+  // Land on the first Journey selected by default, not an empty canvas —
+  // also re-picks the first one if the selected Journey was deleted.
+  useEffect(() => {
+    if (selectedId && journeys.some((j) => j.id === selectedId)) return
+    setSelectedId(journeys[0]?.id ?? null)
+  }, [journeys, selectedId])
+
   useEffect(() => {
     if (!selectedId) {
       setSteps([])
@@ -316,7 +332,7 @@ export function DiscoverJourneys({
 
   return (
     <>
-      <Stepper current="discover" />
+      <Stepper current="discover" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
       <main
         style={{
           maxWidth: 'var(--content-max)',
@@ -587,9 +603,8 @@ export function DiscoverJourneys({
                     </div>
                   </div>
                   <div
-                    aria-hidden="true"
                     style={{
-                      width: 260,
+                      width: 480,
                       flexShrink: 0,
                       alignSelf: 'flex-start',
                       position: 'sticky',
@@ -608,32 +623,47 @@ export function DiscoverJourneys({
                     >
                       Reference screenshot
                     </div>
-                    <div
-                      style={{
-                        height: 420,
-                        borderRadius: 'var(--radius-xl)',
-                        border: '1px solid var(--border)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        background:
-                          'repeating-linear-gradient(135deg, var(--canvas-wash-alt), var(--canvas-wash-alt) 10px, var(--canvas-wash) 10px, var(--canvas-wash) 20px)',
-                      }}
-                    >
-                      <span
-                        className="caption"
+                    {steps.at(-1)?.screenshot_url ? (
+                      <img
+                        src={steps.at(-1)?.screenshot_url ?? undefined}
+                        alt="Journey's final step screenshot"
+                        onClick={() => setLightboxUrl(steps.at(-1)?.screenshot_url ?? null)}
                         style={{
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: 11.5,
-                          background: 'var(--canvas)',
+                          width: '100%',
+                          height: 'auto',
+                          objectFit: 'contain',
+                          cursor: 'zoom-in',
                           border: '1px solid var(--border)',
-                          borderRadius: 'var(--radius-xs)',
-                          padding: '4px 10px',
+                        }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          height: 420,
+                          borderRadius: 'var(--radius-xl)',
+                          border: '1px solid var(--border)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          background:
+                            'repeating-linear-gradient(135deg, var(--canvas-wash-alt), var(--canvas-wash-alt) 10px, var(--canvas-wash) 10px, var(--canvas-wash) 20px)',
                         }}
                       >
-                        journey screenshot
-                      </span>
-                    </div>
+                        <span
+                          className="caption"
+                          style={{
+                            fontFamily: 'var(--font-mono)',
+                            fontSize: 11.5,
+                            background: 'var(--canvas)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 'var(--radius-xs)',
+                            padding: '4px 10px',
+                          }}
+                        >
+                          no screenshot available
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </>
               ) : (
@@ -655,6 +685,50 @@ export function DiscoverJourneys({
           )
         )}
       </main>
+      {lightboxUrl && (
+        <div
+          onClick={() => setLightboxUrl(null)}
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15,23,42,0.85)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100,
+          }}
+        >
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setLightboxUrl(null)}
+            style={{
+              position: 'fixed',
+              top: 'var(--space-5)',
+              right: 'var(--space-5)',
+              width: 40,
+              height: 40,
+              borderRadius: 'var(--radius-full)',
+              border: '1px solid rgba(255,255,255,0.3)',
+              background: 'rgba(255,255,255,0.1)',
+              color: '#fff',
+              fontSize: 20,
+              lineHeight: 1,
+              cursor: 'pointer',
+            }}
+          >
+            ×
+          </button>
+          <img
+            src={lightboxUrl}
+            alt="Journey's final step screenshot, enlarged"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '90vw', maxHeight: '90vh', objectFit: 'contain' }}
+          />
+        </div>
+      )}
     </>
   )
 }

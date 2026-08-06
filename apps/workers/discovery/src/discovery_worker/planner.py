@@ -42,6 +42,13 @@ class ActionCandidate:
     # tiering; defaults to `source_route_template` when a caller doesn't set
     # it (every pre-Story-2.19 caller/test).
     state_key: str | None = None
+    # Settings page's Interaction Level: what kind of action this is, so
+    # `InteractionLevelGate` can decide whether the configured tier permits
+    # it. Defaults to "click" — the only kind any real caller constructs
+    # today (`_click_standalone_buttons`); "view"/"form_fill"/"modal"/
+    # "drag_drop"/"multi_step" exist for future callers to tag once other
+    # interaction types are threaded through the specialist chain too.
+    action_kind: str = "click"
 
 
 def classify_tier(candidate: ActionCandidate) -> int:
@@ -232,6 +239,41 @@ class LoopGuardState:
         self._edges.append((from_state, to_state, label))
 
 
+_INTERACTION_LEVEL_ALLOWED_KINDS = {
+    "passive": frozenset({"view"}),
+    "normal": frozenset({"view", "click", "form_fill"}),
+    "aggressive": frozenset({"view", "click", "form_fill", "modal", "drag_drop", "multi_step"}),
+}
+
+
+class InteractionLevelGate:
+    """Settings page's Interaction Level (Passive/Normal/Aggressive) — a
+    specialist independent of `SafetyState` (orthogonal by design): this
+    gates *which kinds* of action are attempted at all; safety gates
+    *whether a specific label* is safe to run once a kind is already
+    permitted. Only `_click_standalone_buttons` (action_kind="click")
+    routes through the specialist chain today, so Passive is the only tier
+    with an observable effect right now — Aggressive's extra kinds
+    (modal/drag_drop/multi_step) take effect once those interactions are
+    also tagged and threaded through `decide()`.
+    """
+
+    def __init__(self, level: str) -> None:
+        self.level = level
+
+    def __call__(self, candidate: ActionCandidate) -> SpecialistVerdict:
+        allowed = _INTERACTION_LEVEL_ALLOWED_KINDS.get(
+            self.level, _INTERACTION_LEVEL_ALLOWED_KINDS["normal"]
+        )
+        if candidate.action_kind not in allowed:
+            return SpecialistVerdict(
+                "SKIP",
+                f"interaction_level={self.level!r} does not permit "
+                f"action_kind={candidate.action_kind!r}",
+            )
+        return SpecialistVerdict(None, "interaction level clear")
+
+
 def default_safety(candidate: ActionCandidate) -> SpecialistVerdict:
     """Pass-through — Story 2.12 replaces this with the real Safety
     Engine. Treats everything as Safe, exactly today's behaviour."""
@@ -258,18 +300,23 @@ def decide(
     loop_guard: SpecialistFn = default_loop_guard,
     safety: SpecialistFn = default_safety,
     data_resolver: SpecialistFn = default_data_resolver,
+    interaction_level: SpecialistFn | None = None,
 ) -> ExecutionDecision:
-    """AC 3/7: asks exactly three specialists, in this fixed order — loop
-    guards, then safety (before data resolution, per AD-19: resolving
-    inputs for an action that will never run is wasted work), then the
-    data resolver — and takes the first one with an opinion. No opinion
-    from any of them means EXECUTE (AC 4's default, and today's actual
-    behaviour via the pass-through defaults above)."""
-    for name, specialist in (
-        ("loop_guard", loop_guard),
-        ("safety", safety),
-        ("data_resolver", data_resolver),
-    ):
+    """AC 3/7: asks loop guards, then safety (before data resolution, per
+    AD-19: resolving inputs for an action that will never run is wasted
+    work), then the data resolver, and takes the first one with an
+    opinion. `interaction_level` (Settings page) is optional and, when
+    given, is asked right after loop guards — both are coarse "should this
+    kind of action even be tried" gates, cheaper to check than safety's
+    label-content matching. No opinion from any of them means EXECUTE (AC
+    4's default, and today's actual behaviour via the pass-through
+    defaults above)."""
+    specialists = [("loop_guard", loop_guard)]
+    if interaction_level is not None:
+        specialists.append(("interaction_level", interaction_level))
+    specialists.append(("safety", safety))
+    specialists.append(("data_resolver", data_resolver))
+    for name, specialist in specialists:
         verdict = specialist(candidate)
         if verdict.decision is not None:
             return ExecutionDecision(verdict.decision, name, verdict.reason)

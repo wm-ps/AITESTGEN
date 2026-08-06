@@ -193,8 +193,9 @@ async def test_generate_playwright_returns_code(monkeypatch: pytest.MonkeyPatch)
         "import { test, expect } from '@playwright/test'\n\n"
         "test('guest checkout', async ({ page }) => {})"
     )
-    assert "Guest checkout" in captured["json"]["messages"][0]["content"]
-    assert "qa-user" in captured["json"]["messages"][0]["content"]
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "Guest checkout" in content
+    assert "qa-user" in content
     # No response_format here — raw Playwright source, not JSON.
     assert "response_format" not in captured["json"]
 
@@ -227,7 +228,7 @@ async def test_generate_playwright_includes_known_pages_in_prompt(
         known_pages=[{"stage_label": "Checkout", "url": "https://app.example.com/checkout"}],
     )
 
-    content = captured["json"]["messages"][0]["content"]
+    content = "".join(m["content"] for m in captured["json"]["messages"])
     assert "Known pages" in content
     assert "Checkout -> https://app.example.com/checkout" in content
 
@@ -242,7 +243,7 @@ async def test_generate_playwright_degrades_gracefully_with_no_known_pages(
 
     await HostedAIProvider().generate_playwright(scenario)
 
-    content = captured["json"]["messages"][0]["content"]
+    content = "".join(m["content"] for m in captured["json"]["messages"])
     assert "Known pages" in content
     assert "(none)" in content
 
@@ -267,7 +268,7 @@ async def test_generate_playwright_includes_known_locators_in_prompt(
         ],
     )
 
-    content = captured["json"]["messages"][0]["content"]
+    content = "".join(m["content"] for m in captured["json"]["messages"])
     assert "Known element locators" in content
     assert 'Checkout / button:Save button -> [data-testid="save"]' in content
 
@@ -282,7 +283,7 @@ async def test_generate_playwright_degrades_gracefully_with_no_known_locators(
 
     await HostedAIProvider().generate_playwright(scenario)
 
-    content = captured["json"]["messages"][0]["content"]
+    content = "".join(m["content"] for m in captured["json"]["messages"])
     assert "Known element locators" in content
     assert "(none)" in content
 

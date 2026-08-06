@@ -9,6 +9,7 @@ members = [
     "packages/delivery_adapters",
     "packages/ci_instructions",
     "packages/secrets_client",
+    "packages/object_store",
 ]
 
 [dependency-groups]
@@ -46,4 +47,5 @@ include = [
     "packages/delivery_adapters",
     "packages/ci_instructions",
     "packages/secrets_client",
+    "packages/object_store",
 ]

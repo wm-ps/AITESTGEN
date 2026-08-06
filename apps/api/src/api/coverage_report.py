@@ -9,7 +9,7 @@ by `kind` (AC 3) for producers that don't fit one of the five.
 Lives in `apps/api`, not `apps/workers/discovery` — `apps/api` and
 `apps/workers/discovery` are separate deployables (see
 `discovery_worker/db.py`'s own docstring), and this module only ever needs
-`domain` + a `Session`, never Playwright/MinIO/the rest of the worker's
+`domain` + a `Session`, never Playwright/boto3/the rest of the worker's
 heavier dependencies. Duplicates `discovery_worker.blocked_frontier`'s small
 grouping query rather than adding a cross-deployable dependency for it.
 

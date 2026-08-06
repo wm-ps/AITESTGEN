@@ -585,7 +585,7 @@ async def test_crawl_does_not_log_a_discovery_error_for_a_plain_404(
 @pytest.mark.asyncio
 async def test_capture_sink_add_does_not_block_the_event_loop() -> None:
     """2026-07-21 fix: `on_capture` (real shape: a synchronous Postgres
-    commit, or a synchronous MinIO upload upstream of it) must run off the
+    commit, or a synchronous S3 upload upstream of it) must run off the
     event loop. Before this fix, a slow `on_capture` call froze the whole
     worker process — not just the current crawl — since Temporal's
     heartbeat/poll loop for every concurrent workflow shares this same

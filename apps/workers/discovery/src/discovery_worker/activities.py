@@ -33,6 +33,7 @@ from domain import (
     Component,
     DiscoveryError,
     DiscoveryRun,
+    DiscoverySettings,
     ExplorationStep,
     Form,
     FormField,
@@ -44,6 +45,7 @@ from domain import (
     TestDataEntry,
     ValidationRule,
 )
+from object_store import ObjectStore
 from playwright.async_api import async_playwright
 from secrets_client.vault_client import SecretRef, VaultSecretsClient
 from sqlalchemy import func
@@ -60,7 +62,6 @@ from workflows import (
 
 from discovery_worker import blocked_frontier
 from discovery_worker.crawler import (
-    DEFAULT_PAGE_LOAD_TIMEOUT_SECONDS,
     CapturedAction,
     CapturedApiCall,
     CapturedForm,
@@ -77,7 +78,6 @@ from discovery_worker.diagnostics import record_diagnostic
 from discovery_worker.identity_key import compute_identity_key
 from discovery_worker.journey_clustering import cluster_and_batch
 from discovery_worker.model_builder import build_application_model
-from discovery_worker.object_store import ObjectStore
 from discovery_worker.safety_engine import SafetyState
 from discovery_worker.session import establish_session
 from discovery_worker.state_identity import (
@@ -324,6 +324,7 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                 DiscoveryRun.external_id == uuid.UUID(input.discovery_run_id)
             )
         ).one()
+        discovery_settings = session.exec(select(DiscoverySettings)).one()
 
         # Captured now, before any incremental commit below expires the ORM
         # object — rows are persisted as they're captured (`_persist`), not
@@ -857,8 +858,8 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
             )
 
         try:
-            # Both are synchronous network clients (hvac/requests, minio/
-            # urllib3) — off the event loop so a slow Vault/MinIO response
+            # Both are synchronous network clients (hvac/requests, boto3/
+            # urllib3) — off the event loop so a slow Vault/S3 response
             # stalls only this activity, not the heartbeat/poll loop this
             # worker owes Temporal for every other concurrent workflow.
             vault_client = VaultSecretsClient()
@@ -920,12 +921,17 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                     credential=credential,
                     login_page_url=login_page_url,
                     on_diagnostic=_record_diagnostic,
-                    # Story 2.9 AC 4: run-level override wins when set.
+                    # Story 2.9 AC 4: run-level override wins when set, then
+                    # per-Application, then the global DiscoverySettings
+                    # fallback (Settings page Navigation Timeout).
                     page_load_timeout_seconds=(
                         discovery_run.page_load_timeout_seconds
                         or application.page_load_timeout_seconds
-                        or DEFAULT_PAGE_LOAD_TIMEOUT_SECONDS
+                        or discovery_settings.navigation_timeout_seconds
                     ),
+                    max_pages=discovery_settings.max_pages,
+                    max_duration_seconds=discovery_settings.max_discovery_duration_minutes * 60,
+                    interaction_level=discovery_settings.interaction_level,
                     data_resolver_pool=test_data_pool,
                     # Story 2.12 Task 3: replaces the Planner's pass-through
                     # `default_safety` — a real per-Application posture from

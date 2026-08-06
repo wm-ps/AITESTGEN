@@ -1,7 +1,8 @@
 // Business-language import progress (FR-33, sprint-change-proposal-2026-07-21
 // CR-2) — replaces the raw capture live-feed. No internal stage naming
-// (Initialization/Authentication/Discovery/Analysis) is shown — the "Running"
-// StatusPill already rendered above this component (DiscoverJourneys.tsx) is
+// (Initialization/Authentication/Discovery/Analysis) is shown — the
+// "Discovery in Progress" StatusPill already rendered above this component
+// (DiscoverJourneys.tsx) is
 // the page's one "in progress" indicator; this only needs the fill + percent.
 //
 // `[UPDATED 2026-07-21, live UX correction]` The percentage shown while a
