@@ -76,6 +76,7 @@ function stubFetch(overrides: {
 function renderScreen(onContinueToScenarios: () => void = () => {}) {
   return render(
     <DiscoverJourneys
+      furthestCount={1}
       applicationId="app-1"
       applicationName="Test App"
       discoveryStatus="complete"
@@ -220,6 +221,7 @@ describe('DiscoverJourneys', () => {
     )
     render(
       <DiscoverJourneys
+        furthestCount={1}
         applicationId="app-1"
         applicationName="Test App"
         discoveryStatus="running"

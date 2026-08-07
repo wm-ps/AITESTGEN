@@ -16,7 +16,7 @@ afterEach(() => {
 
 describe('ConnectAppForm', () => {
   it('defaults the Authentication method select to Username & Password with credential fields visible', () => {
-    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+    render(<ConnectAppForm furthestCount={0}onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     const select = screen.getByLabelText('Authentication method') as HTMLSelectElement
     expect(select.tagName).toBe('SELECT')
@@ -27,7 +27,7 @@ describe('ConnectAppForm', () => {
   })
 
   it('offers exactly the confirmed 3-option auth method set, API Key and OAuth disabled pending backend support', () => {
-    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+    render(<ConnectAppForm furthestCount={0}onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     const select = screen.getByLabelText('Authentication method') as HTMLSelectElement
     const options = Array.from(select.options).map((o) => ({ value: o.value, disabled: o.disabled }))
@@ -39,7 +39,7 @@ describe('ConnectAppForm', () => {
   })
 
   it('swaps to the API Key field when the API Key method is selected', () => {
-    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+    render(<ConnectAppForm furthestCount={0}onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     fireEvent.change(screen.getByLabelText('Authentication method'), {
       target: { value: 'api_key' },
@@ -51,7 +51,7 @@ describe('ConnectAppForm', () => {
   })
 
   it('reveals no additional fields for OAuth Client Credentials (unconfirmed by the prototype)', () => {
-    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+    render(<ConnectAppForm furthestCount={0}onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     fireEvent.change(screen.getByLabelText('Authentication method'), {
       target: { value: 'oauth_client_credentials' },
@@ -70,7 +70,7 @@ describe('ConnectAppForm', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const onConnected = vi.fn()
-    render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
+    render(<ConnectAppForm furthestCount={0}onConnected={onConnected} onCancel={vi.fn()} />)
 
     fillCommonFields()
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
@@ -93,7 +93,7 @@ describe('ConnectAppForm', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const onConnected = vi.fn()
-    render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
+    render(<ConnectAppForm furthestCount={0}onConnected={onConnected} onCancel={vi.fn()} />)
 
     fillCommonFields()
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
@@ -109,7 +109,7 @@ describe('ConnectAppForm', () => {
 
   it('calls onCancel when Cancel is clicked, matching prototype-v3.html Import screen', () => {
     const onCancel = vi.fn()
-    render(<ConnectAppForm onConnected={vi.fn()} onCancel={onCancel} />)
+    render(<ConnectAppForm furthestCount={0}onConnected={vi.fn()} onCancel={onCancel} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 
