@@ -9,7 +9,7 @@ metadata:
   namespace: aitestgen
 data:
   CORS_ALLOWED_ORIGINS: "https://aitestgen-app.onwavemaker.com"
-  AI_MODEL: "anthropic/claude-sonnet-5"
+  AI_MODEL: "gpt-5.6-luna"
   AWS_S3_BUCKET: "wmps-ai-testgen"
   AWS_REGION: "us-east-1"
   TEMPORAL_ADDRESS: "temporal:7233"
@@ -26,3 +26,10 @@ data:
   # Flip to "true" only after HTTPS is in place (ACM cert + ALB Ingress,
   # or an NLB with a certificate) in front of the api Service.
   COOKIE_SECURE: "false"
+  AI_TEMPERATURE: ""
+  LITELLM_BASE_URL: "https://wmps-litellm.onwavemaker.com"
+
+  SMTP_HOST: "smtp.gmail.com"
+  SMTP_PORT: "587"
+  SMTP_USER: "ps-tools@wavemaker.com"
+  SMTP_FROM: "ps-tools@wavemaker.com"  
