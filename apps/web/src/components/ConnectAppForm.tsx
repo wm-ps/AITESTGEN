@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ApiError, api, type ApplicationCreate, type ApplicationRead } from '../api'
 import { Stepper, type StepKey } from './Stepper'
+import { PasswordInput } from './PasswordInput'
 
 // The dropdown's confirmed 3-option set (DESIGN.md "Connect App form"): Username & Password,
 // API Key, OAuth Client Credentials. Only 'standard_login' is backend-supported today
@@ -204,8 +205,7 @@ export function ConnectAppForm({
               </label>
               <label className="field">
                 <FieldLabel>Password</FieldLabel>
-                <input
-                  type="password"
+                <PasswordInput
                   required
                   autoComplete="off"
                   value={password}

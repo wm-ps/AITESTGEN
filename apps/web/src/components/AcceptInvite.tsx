@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ApiError, api, type UserRead } from '../api'
 import { Logo } from './Logo'
+import { PasswordInput } from './PasswordInput'
 
 export function AcceptInvite({
   token,
@@ -74,8 +75,7 @@ export function AcceptInvite({
             <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
               Password <span style={{ color: 'var(--danger)' }}>*</span>
             </span>
-            <input
-              type="password"
+            <PasswordInput
               required
               minLength={8}
               autoComplete="new-password"

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api, type UserRead } from '../api'
 import { Logo } from './Logo'
+import { PasswordInput } from './PasswordInput'
 
 const WIZARD_STEPS = [
   { label: 'Scan', desc: 'Reads every screen in your app.', kind: 'scan' },
@@ -440,8 +441,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
                 <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
                   Password <span style={{ color: 'var(--danger)' }}>*</span>
                 </span>
-                <input
-                  type="password"
+                <PasswordInput
                   required
                   autoComplete="current-password"
                   placeholder="••••••••"

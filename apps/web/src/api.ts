@@ -68,6 +68,13 @@ export const api = {
   listApplications: () => request<ApplicationRead[]>('/applications'),
   getApplication: (applicationId: string) =>
     request<ApplicationRead>(`/applications/${applicationId}`),
+  renameApplication: (applicationId: string, name: string) =>
+    request<ApplicationRead>(`/applications/${applicationId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+  deleteApplication: (applicationId: string) =>
+    request<undefined>(`/applications/${applicationId}`, { method: 'DELETE' }),
   pauseDiscovery: (applicationId: string) =>
     request<ApplicationRead>(`/applications/${applicationId}/pause-discovery`, { method: 'POST' }),
   resumeDiscovery: (applicationId: string) =>

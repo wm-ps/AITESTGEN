@@ -106,12 +106,30 @@ def _describe_page(page: Page) -> str:
     return json.dumps(description)
 
 
+# A single "generate everything for this Journey" call let the model's own
+# output budget silently cap the whole response (observed: a large "digital
+# banking" Journey stopped at 40 Scenarios with no error). Splitting by
+# Scenario type bounds each call's output separately and isolates a
+# truncated/failed type instead of losing the whole Journey's Scenarios.
+_SCENARIO_TYPE_INSTRUCTIONS = {
+    "happy": "ONLY Happy Path Scenarios — the successful, intended way a user completes this "
+    "Journey. Usually just one; include more only if there are genuinely distinct successful "
+    "paths through this Journey (e.g. two different valid ways to reach the same outcome).",
+    "negative": "ONLY Negative Path Scenarios — every validation/error condition a QA engineer "
+    "would want covered (e.g. missing required field, invalid format, expired/declined input). "
+    "Cover each meaningfully distinct failure condition implied by the captured forms/fields; "
+    "do not pad with near-duplicate variations of the same condition.",
+    "edge": "ONLY Edge Case Scenarios — boundary/unusual-but-valid conditions distinct from "
+    "both the happy path and plain validation errors (e.g. a boundary value, a race condition, "
+    "an unusual but legitimate input). Cover each meaningfully distinct edge condition implied "
+    "by the captured forms/fields; do not pad with near-duplicates.",
+}
+
 _SCENARIO_PROMPT_SYSTEM = """You are writing integration test Scenarios for a specific business \
 Journey in a web application, based on its discovered steps and the underlying captured \
 pages/forms/API calls.
 
-Generate integration test Scenarios covering this Journey, including a Happy Path, at \
-least one Negative Path (a validation/error condition), and at least one Edge Case. Each \
+Generate {scenario_type_instructions} Each \
 Scenario needs:
 - "name": a short business-language name (e.g. "Guest checkout with an expired card")
 - "type": one of "happy", "negative", "edge"
@@ -352,7 +370,11 @@ Respond with one word (SAFE, DESTRUCTIVE, or AMBIGUOUS) followed by a one-senten
 
 
 async def _chat_completion(
-    messages: list[dict[str, str]], *, response_format: dict[str, str] | None = None, timeout: int = 60
+    messages: list[dict[str, str]],
+    *,
+    response_format: dict[str, str] | None = None,
+    timeout: int = 60,
+    max_tokens: int | None = None,
 ) -> str:
     payload = {
         "model": AI_MODEL,
@@ -364,6 +386,8 @@ async def _chat_completion(
         payload["temperature"] = AI_TEMPERATURE
     if response_format is not None:
         payload["response_format"] = response_format
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
     async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=timeout) as client:
         response = await client.post(
             "/chat/completions",
@@ -371,7 +395,19 @@ async def _chat_completion(
             json=payload,
         )
         response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"]
+    choice = response.json()["choices"][0]
+    # Without this, a response cut off by the token budget (finish_reason
+    # "length") either fails json.loads with a confusing error deep in the
+    # caller, or — worse — happens to still be valid-but-incomplete JSON
+    # (e.g. truncated right after a complete array element) and silently
+    # short-changes the caller (Story: "digital banking" scenario generation
+    # stopping at 40 items with no error at all).
+    if choice.get("finish_reason") == "length":
+        raise RuntimeError(
+            f"LLM response truncated by max_tokens (model={AI_MODEL}, "
+            f"max_tokens={max_tokens}) — increase max_tokens"
+        )
+    return choice["message"]["content"]
 
 
 class HostedAIProvider:
@@ -385,6 +421,8 @@ class HostedAIProvider:
                 {"role": "user", "content": _PROMPT_USER.format(page_listing=listing)},
             ],
             response_format={"type": "json_object"},
+            timeout=240,
+            max_tokens=20000,
         )
         groups = json.loads(content)["journeys"]
 
@@ -441,33 +479,68 @@ class HostedAIProvider:
         # listing below doubles as both the step sequence and the supporting
         # capture detail, no separate steps argument needed.
         listing = "\n".join(f"{i + 1}: {_describe_page(p)}" for i, p in enumerate(pages))
-        content = await _chat_completion(
-            [
-                {"role": "system", "content": _SCENARIO_PROMPT_SYSTEM},
-                {
-                    "role": "user",
-                    "content": _SCENARIO_PROMPT_USER.format(
-                        journey_name=journey.name, step_listing=listing
-                    ),
-                },
-            ],
-            response_format={"type": "json_object"},
-        )
-        raw_scenarios = json.loads(content)["scenarios"]
 
         candidates = []
-        for raw in raw_scenarios:
-            candidates.append(
-                ScenarioCandidate(
-                    name=raw["name"],
-                    type=raw["type"],
-                    steps=list(raw["steps"]),
-                    expected_result=raw["expected_result"],
-                    test_data=[
-                        TestDataFieldCandidate(name=f["name"], mandatory=bool(f["mandatory"]))
-                        for f in raw.get("test_data", [])
+        failures: list[str] = []
+        for scenario_type, instructions in _SCENARIO_TYPE_INSTRUCTIONS.items():
+            try:
+                content = await _chat_completion(
+                    [
+                        {
+                            "role": "system",
+                            "content": _SCENARIO_PROMPT_SYSTEM.format(
+                                scenario_type_instructions=instructions
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": _SCENARIO_PROMPT_USER.format(
+                                journey_name=journey.name, step_listing=listing
+                            ),
+                        },
                     ],
+                    response_format={"type": "json_object"},
+                    timeout=240,
+                    max_tokens=20000,
                 )
+                raw_scenarios = json.loads(content)["scenarios"]
+            except Exception:
+                # Fault isolation, same convention as elsewhere in this codebase
+                # (Story 4.2): one bad batch is logged and skipped, not fatal to
+                # the whole Journey's Scenarios — a truncated/failed "edge" call
+                # should not also throw away an already-good "happy" batch.
+                logger.exception(
+                    "HostedAIProvider: dropped %r scenarios for journey %r", scenario_type, journey.name
+                )
+                failures.append(scenario_type)
+                continue
+
+            for raw in raw_scenarios:
+                candidates.append(
+                    ScenarioCandidate(
+                        name=raw["name"],
+                        # Forced from the loop, not trusted from the model —
+                        # each call was already scoped to one type.
+                        type=scenario_type,
+                        steps=list(raw["steps"]),
+                        expected_result=raw["expected_result"],
+                        test_data=[
+                            TestDataFieldCandidate(name=f["name"], mandatory=bool(f["mandatory"]))
+                            for f in raw.get("test_data", [])
+                        ],
+                    )
+                )
+
+        if not candidates and failures:
+            # Every scenario-type call errored — nothing was silently "fine",
+            # the Journey just got zero Scenarios with no visible failure
+            # (observed live: GenerationWorkflow reports Completed either
+            # way, so Temporal's own retry_policy on the Activity never had
+            # a failure to retry). Raising here only in the all-failed case
+            # keeps the partial-success fault isolation above intact while
+            # giving Temporal's already-configured retries something to act on.
+            raise RuntimeError(
+                f"HostedAIProvider: all scenario types failed for journey {journey.name!r}: {failures}"
             )
         return candidates
 
@@ -528,7 +601,16 @@ class HostedAIProvider:
                         known_locators_listing=_describe_known_locators(known_locators),
                     ),
                 },
-            ]
+            ],
+            # A real Generate Suite submission fans out one Playwright call
+            # per Scenario across every candidate Journey at once (a dozen+
+            # Journeys x dozens of Scenarios isn't unusual) — the default
+            # 60s timeout gets exceeded once that concurrency is real,
+            # observed live as `httpx.ReadTimeout` for a chunk of Scenarios
+            # (silently dropped by SuiteGenerationWorkflow's per-Scenario
+            # fault isolation, no way to tell "slow" from "actually broken").
+            # Matches generate_scenarios' own timeout=240 for the same reason.
+            timeout=240,
         )
         # No JSON response_format here (unlike infer_journeys/generate_scenarios)
         # — the model's own code fences are the one common failure mode worth

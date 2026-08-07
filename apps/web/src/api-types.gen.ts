@@ -153,10 +153,19 @@ export interface paths {
         get: operations["get_application_applications__external_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Application
+         * @description Soft delete only (AD-15 disclosed scope) — child rows (discovery_run,
+         *     journey, page, ...) and the Vault secret are deliberately left behind;
+         *     nothing purges them yet. Blocked while discovery is running so a live
+         *     crawler doesn't keep writing rows for an application that just
+         *     disappeared from Home.
+         */
+        delete: operations["delete_application_applications__external_id__delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Rename Application */
+        patch: operations["rename_application_applications__external_id__patch"];
         trace?: never;
     };
     "/applications/{external_id}/pause-discovery": {
@@ -554,6 +563,11 @@ export interface components {
             discovery_coverage_summary?: {
                 [key: string]: number;
             } | null;
+        };
+        /** ApplicationRenamePayload */
+        ApplicationRenamePayload: {
+            /** Name */
+            name: string;
         };
         /** CaptureRead */
         CaptureRead: {
@@ -1135,6 +1149,74 @@ export interface operations {
             };
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_application_applications__external_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_application_applications__external_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplicationRenamePayload"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

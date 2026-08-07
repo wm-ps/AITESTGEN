@@ -84,3 +84,11 @@ class Application(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
+    # Soft-delete only — no cascade to child rows (discovery_run, journey,
+    # etc.) or the Vault secret. `_get_org_application` treats a non-null
+    # value as "not found" everywhere, so every existing route already
+    # respects it.
+    deleted_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )

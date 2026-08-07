@@ -14,7 +14,7 @@ import uuid
 import httpx
 import pytest
 from ai_provider.hosted import HostedAIProvider
-from domain import Page, Scenario
+from domain import Journey, Page, Scenario
 
 
 def _fake_page(url: str, title: str = "") -> Page:
@@ -176,6 +176,116 @@ def _fake_scenario(**overrides) -> Scenario:
     )
     defaults.update(overrides)
     return Scenario(**defaults)
+
+
+def _fake_journey(**overrides) -> Journey:
+    defaults = dict(
+        application_id=uuid.uuid4(),
+        discovery_run_id=uuid.uuid4(),
+        name="Guest checkout",
+        identity_key=f"identity-{uuid.uuid4()}",
+    )
+    defaults.update(overrides)
+    return Journey(**defaults)
+
+
+def _scenario_body(name: str) -> str:
+    return json.dumps(
+        {
+            "scenarios": [
+                {
+                    "name": name,
+                    "type": "SOMETHING-THE-MODEL-MADE-UP",
+                    "steps": ["step 1"],
+                    "expected_result": "it works",
+                    "test_data": [],
+                }
+            ]
+        }
+    )
+
+
+async def test_generate_scenarios_batches_by_type_and_forces_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies = iter(
+        [_scenario_body("Happy scenario"), _scenario_body("Negative scenario"), _scenario_body("Edge scenario")]
+    )
+    captured_calls: list[dict] = []
+
+    async def fake_post(self, url, *, headers=None, json=None):
+        captured_calls.append(json)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": next(bodies)}}]},
+            request=httpx.Request("POST", "https://fake-proxy.example.com/chat/completions"),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    candidates = await HostedAIProvider().generate_scenarios(_fake_journey(), [_fake_page("https://a.example.com")])
+
+    # One call per type, not one call for everything — bounds each call's
+    # output separately so a large Journey can't get silently capped.
+    assert len(captured_calls) == 3
+    assert [c.name for c in candidates] == ["Happy scenario", "Negative scenario", "Edge scenario"]
+    # Forced from which call produced it, never trusted from the model's own
+    # (possibly wrong) "type" field.
+    assert [c.type for c in candidates] == ["happy", "negative", "edge"]
+
+
+async def test_generate_scenarios_isolates_a_failed_type_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": ""}, "finish_reason": "length"}]},
+                request=httpx.Request("POST", "https://fake-proxy.example.com/chat/completions"),
+            ),
+            httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": _scenario_body("Negative scenario")}}]},
+                request=httpx.Request("POST", "https://fake-proxy.example.com/chat/completions"),
+            ),
+            httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": _scenario_body("Edge scenario")}}]},
+                request=httpx.Request("POST", "https://fake-proxy.example.com/chat/completions"),
+            ),
+        ]
+    )
+
+    async def fake_post(self, url, *, headers=None, json=None):
+        return next(responses)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    candidates = await HostedAIProvider().generate_scenarios(_fake_journey(), [_fake_page("https://a.example.com")])
+
+    # The truncated "happy" batch is dropped, but "negative"/"edge" still
+    # make it through — one bad batch doesn't lose the whole Journey.
+    assert [c.name for c in candidates] == ["Negative scenario", "Edge scenario"]
+
+
+async def test_generate_scenarios_raises_when_every_type_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_post(self, url, *, headers=None, json=None):
+        raise httpx.ConnectError("boom")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    # All 3 types erroring must raise, not return [] — a Journey with zero
+    # Scenarios and no error is indistinguishable from "the model legitimately
+    # found nothing", and it means GenerationWorkflow's retry_policy (which
+    # only retries a *failed* Activity) never gets a chance to retry a
+    # transient failure like this one.
+    with pytest.raises(RuntimeError, match="all scenario types failed"):
+        await HostedAIProvider().generate_scenarios(
+            _fake_journey(), [_fake_page("https://a.example.com")]
+        )
 
 
 async def test_generate_playwright_returns_code(monkeypatch: pytest.MonkeyPatch) -> None:

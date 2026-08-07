@@ -269,6 +269,10 @@ class ApplicationCreate(BaseModel):
         return self
 
 
+class ApplicationRenamePayload(BaseModel):
+    name: str
+
+
 class ApplicationRead(BaseModel):
     id: uuid.UUID
     name: str
@@ -404,6 +408,7 @@ def _get_org_application(
         select(Application).where(
             Application.external_id == external_id,
             Application.organization_id == organization_id,
+            Application.deleted_at.is_(None),  # type: ignore[attr-defined]
         )
     ).first()
     if application is None:
@@ -430,7 +435,10 @@ def list_applications(
 ) -> list[ApplicationRead]:
     applications = session.exec(
         select(Application)
-        .where(Application.organization_id == organization_id)
+        .where(
+            Application.organization_id == organization_id,
+            Application.deleted_at.is_(None),  # type: ignore[attr-defined]
+        )
         .order_by(Application.created_at.desc())  # type: ignore[arg-type]
     ).all()
     result = []
@@ -454,6 +462,44 @@ async def pause_discovery(
         raise HTTPException(status_code=409, detail="discovery run is not running")
     discovery_run = await pause_discovery_run(session, discovery_run)
     return _to_application_read(session, application, discovery_run)
+
+
+@app.patch("/applications/{external_id}", response_model=ApplicationRead)
+def rename_application(
+    external_id: uuid.UUID,
+    payload: ApplicationRenamePayload,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> ApplicationRead:
+    application = _get_org_application(session, organization_id, external_id)
+    application.name = payload.name
+    session.add(application)
+    session.commit()
+    discovery_run = _latest_discovery_run(session, application.id)
+    assert discovery_run is not None
+    return _to_application_read(session, application, discovery_run)
+
+
+@app.delete("/applications/{external_id}", status_code=204)
+def delete_application(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> None:
+    """Soft delete only (AD-15 disclosed scope) — child rows (discovery_run,
+    journey, page, ...) and the Vault secret are deliberately left behind;
+    nothing purges them yet. Blocked while discovery is running so a live
+    crawler doesn't keep writing rows for an application that just
+    disappeared from Home."""
+    application = _get_org_application(session, organization_id, external_id)
+    discovery_run = _latest_discovery_run(session, application.id)
+    if discovery_run is not None and discovery_run.status == "running":
+        raise HTTPException(status_code=409, detail="discovery run is still in progress")
+    application.deleted_at = datetime.now(UTC)
+    session.add(application)
+    session.commit()
 
 
 @app.post(
@@ -1195,25 +1241,42 @@ async def generate_suite(
     client = await get_temporal_client()
     triggered = 0
     for journey in journeys:
-        has_current_scenarios = session.exec(
+        current_scenarios = session.exec(
             select(Scenario).where(
                 Scenario.journey_id == journey.id,
                 Scenario.current.is_(True),  # type: ignore[attr-defined]
             )
-        ).first()
-        if has_current_scenarios is None:
+        ).all()
+        if not current_scenarios:
             continue
-        # Idempotent: skip a Journey that already has a TestSuite for its
-        # current attempt — Temporal's WorkflowAlreadyStartedError below is
-        # the second layer, covering the narrower race where the workflow
-        # started but hasn't written its TestSuite row yet.
-        already_generated = session.exec(
-            select(TestSuite).where(
+        # Idempotent, but scoped to "every current Scenario already has a
+        # TestAsset" rather than "a TestSuite row exists" — SuiteGeneration-
+        # Workflow's own fault isolation (one Scenario's PlaywrightGeneration
+        # failing all 3 retries doesn't fail the Journey) means a TestSuite
+        # can exist with some Scenarios never getting a TestAsset. Checking
+        # TestSuite existence alone made that permanent: re-clicking Generate
+        # Suite skipped the Journey forever, no way to resume. Re-running is
+        # safe either way — EnsureTestSuiteActivity/PlaywrightGenerationActivity
+        # are both idempotent per Journey/Scenario.
+        suite_ids = session.exec(
+            select(TestSuite.id).where(
                 TestSuite.journey_id == journey.id,
                 TestSuite.generation_run_id == journey.attempt,
             )
-        ).first()
-        if already_generated is not None:
+        ).all()
+        covered_scenario_ids = (
+            set(
+                session.exec(
+                    select(TestAsset.scenario_id).where(
+                        TestAsset.test_suite_id.in_(suite_ids),  # type: ignore[attr-defined]
+                        TestAsset.current.is_(True),  # type: ignore[attr-defined]
+                    )
+                ).all()
+            )
+            if suite_ids
+            else set()
+        )
+        if all(s.id in covered_scenario_ids for s in current_scenarios):
             continue
         try:
             await client.start_workflow(

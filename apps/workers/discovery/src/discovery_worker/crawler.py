@@ -64,6 +64,7 @@ from urllib.parse import parse_qsl, urldefrag, urlencode, urlparse, urlsplit, ur
 
 from domain import aggregation_key
 from playwright.async_api import BrowserContext, Frame, Locator, Page, Response
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from discovery_worker import widgets
 from discovery_worker.session import attempt_login
@@ -3309,21 +3310,47 @@ async def run_discovery_crawl(
             if form_key in visited_forms:
                 continue
             visited_forms.add(form_key)
-            new_url = await _fill_and_submit_form(
-                page,
-                f"form >> nth={form_index}",
-                _page_fingerprint(page.url),
-                sink,
-                seen_form_signatures,
-                rescan=_extract_and_enqueue_links,
-                heartbeat=heartbeat,
-                on_diagnostic=on_diagnostic,
-                popup_events=popup_events,
-                network_tracker=network_tracker,
-                timeout_seconds=effective_page_load_timeout,
-                data_resolver_pool=data_resolver_pool,
-                resolution_log=resolution_log,
-            )
+            try:
+                new_url = await _fill_and_submit_form(
+                    page,
+                    f"form >> nth={form_index}",
+                    _page_fingerprint(page.url),
+                    sink,
+                    seen_form_signatures,
+                    rescan=_extract_and_enqueue_links,
+                    heartbeat=heartbeat,
+                    on_diagnostic=on_diagnostic,
+                    popup_events=popup_events,
+                    network_tracker=network_tracker,
+                    timeout_seconds=effective_page_load_timeout,
+                    data_resolver_pool=data_resolver_pool,
+                    resolution_log=resolution_log,
+                )
+            except PlaywrightTimeoutError:
+                # A form's DOM position can shift or vanish between the
+                # `count()` above and this nth-index resolving (e.g. a
+                # Statement page's lazy-loaded rows) — same class of bug
+                # already fixed for buttons (see the "since-shifted index"
+                # comment below). Skip this one form instead of letting a
+                # raw Playwright timeout crash the whole discovery run.
+                logger.warning(
+                    "  %s: form #%d no longer resolves — skipping", current_url, form_index
+                )
+                if on_diagnostic:
+                    await _emit_diagnostic(
+                        on_diagnostic,
+                        "discovery_error",
+                        {
+                            "error_code": "DISC-006",
+                            "message": (
+                                f"Form #{form_index} on {current_url} timed out resolving "
+                                "(likely shifted/removed by page mutation) — skipped."
+                            ),
+                            "page_url": current_url,
+                            "retry_count": 0,
+                        },
+                    )
+                continue
             _maybe_enqueue(new_url, current_url)
             # `[FIXED 2026-08-05]` Compared against `url` — the raw queue
             # entry — instead of `current_url` (already computed above, at
