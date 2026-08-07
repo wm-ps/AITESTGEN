@@ -83,6 +83,7 @@ pipeline {
             sh """
               sed 's|REPLACE_IMAGE|${image}|' ${K8S_PATH}/06-api.yaml > ${K8S_PATH}/06-api.rendered.yaml
             """
+            sh "kubectl apply -f ${K8S_PATH}/01-configmap.yaml"
 
             sh "kubectl apply -f ${K8S_PATH}/06-api.rendered.yaml"
             sh "kubectl set image deployment/api api=${image} -n aitestgen"
