@@ -26,6 +26,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: aitestgen-config
+            - secretRef:
+                name: aitestgen-secrets      
           resources:
             requests:
               cpu: "10m"
