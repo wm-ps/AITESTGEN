@@ -42,6 +42,38 @@ def _invite_link(token: str) -> str:
     return f"{FRONTEND_BASE_URL}/accept-invite?token={token}"
 
 
+def _invite_html(org_name: str, link: str) -> str:
+    return f"""\
+<!DOCTYPE html>
+<html>
+<body style="margin:0;padding:0;background:#f4f5f6;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f6;padding:32px 0;">
+    <tr><td align="center">
+      <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+        <tr><td style="background:linear-gradient(135deg,#0f766e 0%,#0c5c56 100%);padding:28px 32px;">
+          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+            <td style="width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,0.15);text-align:center;vertical-align:middle;font-weight:700;color:#ffffff;font-size:15px;">AT</td>
+            <td style="padding-left:10px;color:#ffffff;font-size:18px;font-weight:600;">AITestGen</td>
+          </tr></table>
+        </td></tr>
+        <tr><td style="padding:32px;">
+          <p style="margin:0 0 16px;font-size:16px;color:#1a1a1a;">You've been invited to join</p>
+          <p style="margin:0 0 24px;font-size:22px;font-weight:700;color:#0f766e;">{org_name}</p>
+          <p style="margin:0 0 28px;font-size:14px;color:#555555;line-height:1.5;">Click below to accept your invite and set up your account. This link expires in 72 hours.</p>
+          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+            <td style="border-radius:8px;background:#0f766e;">
+              <a href="{link}" style="display:inline-block;padding:12px 28px;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;">Accept invite</a>
+            </td>
+          </tr></table>
+          <p style="margin:28px 0 0;font-size:12px;color:#999999;word-break:break-all;">Or paste this link into your browser: {link}</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
+
 def send_invite_email(to_email: str, org_name: str, token: str) -> None:
     link = _invite_link(token)
     if not SMTP_HOST:
@@ -59,6 +91,7 @@ def send_invite_email(to_email: str, org_name: str, token: str) -> None:
         f"Accept your invite: {link}\n\n"
         f"This link expires in 72 hours."
     )
+    message.add_alternative(_invite_html(org_name, link), subtype="html")
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
         smtp.starttls()
         if SMTP_USER and SMTP_PASSWORD:
