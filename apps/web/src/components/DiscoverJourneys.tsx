@@ -5,7 +5,7 @@ import { ImportProgress } from './ImportProgress'
 import { Stepper, type StepKey } from './Stepper'
 import { StatusPill } from './StatusPill'
 
-const POLL_INTERVAL_MS = 1500
+const POLL_INTERVAL_MS = 3000
 const JOURNEYS_PER_PAGE = 5
 
 // Collapses consecutive steps sharing a stage (e.g. a page visit + its form
@@ -241,8 +241,20 @@ export function DiscoverJourneys({
     }
   }
 
+  // Read via refs inside the poll tick rather than depending on `liveStatus`/
+  // `liveStage` directly — those flip through several transient values
+  // (initializing/authenticating/discovering/analyzing) during one run, and
+  // making the effect depend on them would tear down and recreate the
+  // interval (with an extra immediate `poll()`) on every one of those, not
+  // just the two terminal ones this actually needs to stop on.
+  const liveStatusRef = useRef(liveStatus)
+  liveStatusRef.current = liveStatus
+  const liveStageRef = useRef(liveStage)
+  liveStageRef.current = liveStage
+
   useEffect(() => {
     let cancelled = false
+    let interval: ReturnType<typeof setInterval> | undefined
 
     async function poll() {
       try {
@@ -251,24 +263,27 @@ export function DiscoverJourneys({
       } catch {
         // best-effort poll — a transient failure just skips this tick
       }
+      // `[FIXED 2026-07-22]` Inference writes Journeys one at a time (its own
+      // commit per candidate, Story 2.6) — stopping as soon as
+      // `journeys.length > 0` (the old condition) stopped polling the
+      // instant the *first* Journey landed, silently missing every one
+      // written after it (a real run producing 11 Journeys only ever showed
+      // 1). `discovery_stage` reaching "analyzed" (backend's terminal
+      // marker, written once InferenceActivity finishes creating all
+      // Journeys) is the real "analysis fully finished" signal; a failed
+      // run is the other stop case.
+      if (!cancelled && (liveStatusRef.current === 'failed' || liveStageRef.current === 'analyzed')) {
+        clearInterval(interval)
+      }
     }
 
     poll()
-    // `[FIXED 2026-07-22]` Inference writes Journeys one at a time (its own
-    // commit per candidate, Story 2.6) — stopping as soon as `journeys.length
-    // > 0` (the old condition) stopped polling the instant the *first*
-    // Journey landed, silently missing every one written after it (a real
-    // run producing 11 Journeys only ever showed 1). There's no
-    // "analysis fully finished" signal from the backend today (`stage` only
-    // ever reaches "analyzing" and never moves past it), so the only correct
-    // stop condition available is the run having failed outright.
-    if (liveStatus === 'failed') return
-    const interval = setInterval(poll, POLL_INTERVAL_MS)
+    interval = setInterval(poll, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
-  }, [applicationId, liveStatus])
+  }, [applicationId])
 
   // Land on the first Journey selected by default, not an empty canvas —
   // also re-picks the first one if the selected Journey was deleted.

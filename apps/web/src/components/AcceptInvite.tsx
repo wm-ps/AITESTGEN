@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ApiError, api, type UserRead } from '../api'
 import { Logo } from './Logo'
+import { LoadingDots } from './LoadingDots'
 import { PasswordInput } from './PasswordInput'
 
 export function AcceptInvite({
@@ -56,46 +57,48 @@ export function AcceptInvite({
           You've been invited to join a workspace on AITestGen.
         </p>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <label className="field">
-            <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
-              Full name <span style={{ color: 'var(--danger)' }}>*</span>
-            </span>
-            <input
-              type="text"
-              required
-              autoComplete="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              style={{ padding: '11px 14px', fontSize: 14.5 }}
-            />
-          </label>
+        <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <label className="field">
+              <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
+                Full name <span style={{ color: 'var(--danger)' }}>*</span>
+              </span>
+              <input
+                type="text"
+                required
+                autoComplete="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                style={{ padding: '11px 14px', fontSize: 14.5 }}
+              />
+            </label>
 
-          <label className="field">
-            <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
-              Password <span style={{ color: 'var(--danger)' }}>*</span>
-            </span>
-            <PasswordInput
-              required
-              minLength={8}
-              autoComplete="new-password"
-              placeholder="At least 8 characters"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={{ padding: '11px 14px', fontSize: 14.5 }}
-            />
-          </label>
+            <label className="field">
+              <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
+                Password <span style={{ color: 'var(--danger)' }}>*</span>
+              </span>
+              <PasswordInput
+                required
+                minLength={8}
+                autoComplete="new-password"
+                placeholder="At least 8 characters"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                style={{ padding: '11px 14px', fontSize: 14.5 }}
+              />
+            </label>
 
-          {error && (
-            <div style={{ color: 'var(--danger)', fontSize: 13 }} role="alert">
-              {error}
-            </div>
-          )}
+            {error && (
+              <div style={{ color: 'var(--danger)', fontSize: 13 }} role="alert">
+                {error}
+              </div>
+            )}
 
-          <button type="submit" className="button-primary" disabled={submitting} style={{ padding: 12, fontSize: 14.5 }}>
-            {submitting ? 'Setting up…' : 'Create account'}
-          </button>
-        </div>
+            <button type="submit" className="button-primary" disabled={submitting} style={{ padding: 12, fontSize: 14.5 }}>
+              {submitting ? <LoadingDots label="Setting up" /> : 'Create account'}
+            </button>
+          </div>
+        </fieldset>
       </form>
     </main>
   )

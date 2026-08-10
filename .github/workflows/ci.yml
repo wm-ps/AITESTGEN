@@ -1,8 +1,7 @@
 name: CI
 
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 # Cancel superseded runs on the same ref instead of running the full matrix twice.
 concurrency:

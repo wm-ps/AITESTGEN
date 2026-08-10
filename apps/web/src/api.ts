@@ -10,6 +10,13 @@ export type InviteRead = { id: string; email: string; role: 'admin' | 'member'; 
 export type AcceptInviteRequest = { token: string; name: string; password: string }
 export type ApplicationCreate = components['schemas']['ApplicationCreate']
 export type ApplicationRead = components['schemas']['ApplicationRead']
+// Not in api-types.gen.ts yet (backend schema is new, regenerate via
+// `npm run generate:api-types` once the API is running) — added by hand.
+export type HomeApplicationRead = ApplicationRead & {
+  journey_count: number
+  scenario_count: number
+  suite_count: number
+}
 export type JourneyRead = components['schemas']['JourneyRead']
 export type JourneyStepRead = components['schemas']['JourneyStepRead']
 export type ScenarioRead = components['schemas']['ScenarioRead']
@@ -66,6 +73,7 @@ export const api = {
   createApplication: (payload: ApplicationCreate) =>
     request<ApplicationRead>('/applications', { method: 'POST', body: JSON.stringify(payload) }),
   listApplications: () => request<ApplicationRead[]>('/applications'),
+  getHome: () => request<HomeApplicationRead[]>('/home'),
   getApplication: (applicationId: string) =>
     request<ApplicationRead>(`/applications/${applicationId}`),
   renameApplication: (applicationId: string, name: string) =>

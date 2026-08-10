@@ -293,6 +293,12 @@ class ApplicationRead(BaseModel):
     discovery_coverage_summary: dict[str, int] | None = None
 
 
+class HomeApplicationRead(ApplicationRead):
+    journey_count: int
+    scenario_count: int
+    suite_count: int
+
+
 def _coverage_counts(session: Session, discovery_run: DiscoveryRun) -> dict[str, int]:
     coverage = build_coverage_report(session, discovery_run)["coverage"]
     return {
@@ -446,6 +452,96 @@ def list_applications(
         discovery_run = _latest_discovery_run(session, application.id)
         assert discovery_run is not None
         result.append(_to_application_read(session, application, discovery_run))
+    return result
+
+
+@app.get("/home", response_model=list[HomeApplicationRead])
+def get_home(
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[HomeApplicationRead]:
+    """Home screen used to poll `/applications` plus journeys/scenarios/
+    test-suites per application (1+3N calls every tick). One aggregate
+    query set instead — the cards only ever needed counts, never the items."""
+    applications = session.exec(
+        select(Application)
+        .where(
+            Application.organization_id == organization_id,
+            Application.deleted_at.is_(None),  # type: ignore[attr-defined]
+        )
+        .order_by(Application.created_at.desc())  # type: ignore[arg-type]
+    ).all()
+    if not applications:
+        return []
+    app_ids = [a.id for a in applications]
+
+    # Batched in place of the N _latest_discovery_run() calls list_applications makes.
+    latest_run_by_app: dict[uuid.UUID, DiscoveryRun] = {}
+    for run in session.exec(
+        select(DiscoveryRun)
+        .where(DiscoveryRun.application_id.in_(app_ids))  # type: ignore[attr-defined]
+        .order_by(DiscoveryRun.created_at.desc())  # type: ignore[arg-type]
+    ).all():
+        latest_run_by_app.setdefault(run.application_id, run)
+
+    journey_counts = dict(
+        session.exec(
+            select(Journey.application_id, func.count())
+            .where(
+                Journey.application_id.in_(app_ids),  # type: ignore[attr-defined]
+                Journey.status == "candidate",
+            )
+            .group_by(Journey.application_id)  # type: ignore[arg-type]
+        ).all()
+    )
+
+    app_id_by_journey_id = dict(
+        session.exec(
+            select(Journey.id, Journey.application_id).where(
+                Journey.application_id.in_(app_ids),  # type: ignore[attr-defined]
+                Journey.status == "candidate",
+            )
+        ).all()
+    )
+    journey_ids = list(app_id_by_journey_id.keys())
+
+    scenario_counts: dict[uuid.UUID, int] = {}
+    suite_counts: dict[uuid.UUID, int] = {}
+    if journey_ids:
+        for journey_id, count in session.exec(
+            select(Scenario.journey_id, func.count())
+            .where(
+                Scenario.journey_id.in_(journey_ids),  # type: ignore[attr-defined]
+                Scenario.current.is_(True),  # type: ignore[attr-defined]
+            )
+            .group_by(Scenario.journey_id)  # type: ignore[arg-type]
+        ).all():
+            app_id = app_id_by_journey_id[journey_id]
+            scenario_counts[app_id] = scenario_counts.get(app_id, 0) + count
+        for journey_id, count in session.exec(
+            select(TestSuite.journey_id, func.count())
+            .where(
+                TestSuite.journey_id.in_(journey_ids),  # type: ignore[attr-defined]
+                TestSuite.current.is_(True),  # type: ignore[attr-defined]
+            )
+            .group_by(TestSuite.journey_id)  # type: ignore[arg-type]
+        ).all():
+            app_id = app_id_by_journey_id[journey_id]
+            suite_counts[app_id] = suite_counts.get(app_id, 0) + count
+
+    result = []
+    for application in applications:
+        discovery_run = latest_run_by_app.get(application.id)
+        assert discovery_run is not None
+        base = _to_application_read(session, application, discovery_run)
+        result.append(
+            HomeApplicationRead(
+                **base.model_dump(),
+                journey_count=journey_counts.get(application.id, 0),
+                scenario_count=scenario_counts.get(application.id, 0),
+                suite_count=suite_counts.get(application.id, 0),
+            )
+        )
     return result
 
 

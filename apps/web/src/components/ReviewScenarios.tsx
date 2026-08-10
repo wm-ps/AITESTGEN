@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, type ScenarioRead } from '../api'
 import { Stepper, type StepKey } from './Stepper'
 
-const POLL_INTERVAL_MS = 1500
+const POLL_INTERVAL_MS = 3000
 const SCENARIOS_PER_PAGE = 6
 
 const TYPE_BADGE: Record<string, { label: string; background: string; color: string }> = {
@@ -177,6 +177,7 @@ export function ReviewScenarios({
   onNext?: () => void
 }) {
   const [scenarios, setScenarios] = useState<ScenarioRead[]>([])
+  const [expectedJourneyCount, setExpectedJourneyCount] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [readinessFilter, setReadinessFilter] = useState<ReadinessFilter>('All')
@@ -186,6 +187,24 @@ export function ReviewScenarios({
   // running" and "every Scenario was removed" both look like an empty list.
   const hadScenariosRef = useRef(false)
   if (scenarios.length > 0) hadScenariosRef.current = true
+
+  // GenerationWorkflow runs one per Journey but each writes a variable
+  // number of Scenarios (happy/negative/edge) — so a raw scenario count
+  // can't signal "done" the way TestSuiteResults' test-case count does.
+  // Distinct Journeys covered vs total candidate Journeys is the signal
+  // that's actually stable: every Journey gets exactly one generation run.
+  useEffect(() => {
+    let cancelled = false
+    api.listJourneys(applicationId).then((journeys) => {
+      if (!cancelled) setExpectedJourneyCount(journeys.length)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [applicationId])
+
+  const journeysCovered = new Set(scenarios.map((s) => s.journey_id)).size
+  const isComplete = expectedJourneyCount > 0 && journeysCovered >= expectedJourneyCount
 
   useEffect(() => {
     let cancelled = false
@@ -200,12 +219,13 @@ export function ReviewScenarios({
     }
 
     poll()
+    if (isComplete) return
     const interval = setInterval(poll, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
-  }, [applicationId])
+  }, [applicationId, isComplete])
 
   // Land on the first Scenario selected by default, not an empty canvas —
   // also re-picks the first one if the selected Scenario was deleted.

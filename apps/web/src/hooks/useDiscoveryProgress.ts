@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 
-const POLL_INTERVAL_MS = 1500
+const POLL_INTERVAL_MS = 3000
 
 // Closes a real gap: `discoveryStatus`/`discoveryStage`/`discoveryFailureReason`
 // were previously static props frozen at Application-creation time — nothing

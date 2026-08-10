@@ -171,8 +171,9 @@ async def test_inference_activity_creates_journeys_and_attributes_pages(
             select(DiscoveryRun).where(DiscoveryRun.external_id == discovery_run_external_id)
         ).one()
         # AC8 (CR-2): InferenceActivity sets stage=analyzing at its start,
-        # independent of `status` (already "complete" from discovery_activity).
-        assert run.stage == "analyzing"
+        # independent of `status` (already "complete" from discovery_activity),
+        # then stage=analyzed once it's done creating Journeys.
+        assert run.stage == "analyzed"
 
     journey_uuids = [uuid.UUID(j) for j in journey_external_ids]
     with Session(engine) as session:

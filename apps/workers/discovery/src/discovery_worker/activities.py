@@ -1246,4 +1246,12 @@ async def inference_activity(input: InferenceActivityInput) -> list[str]:
                 # Task 5), fired by explicit user action, not automatically
                 # per candidate at discovery time.
 
+        # Terminal marker distinct from "analyzing": lets the frontend stop
+        # polling for new Journeys once analysis has actually finished,
+        # instead of only on a failed run (Story 2.6 gap — DiscoverJourneys.tsx
+        # previously had no way to tell "still analyzing" from "done").
+        discovery_run.stage = "analyzed"
+        session.add(discovery_run)
+        session.commit()
+
         return journey_external_ids

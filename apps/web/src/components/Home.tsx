@@ -1,6 +1,6 @@
 import { useEffect, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
-import { api, type ApplicationRead, type UserRead } from '../api'
+import { api, type ApplicationRead, type HomeApplicationRead, type UserRead } from '../api'
 import { StatusPill } from './StatusPill'
 
 const POLL_INTERVAL_MS = 15000
@@ -51,56 +51,28 @@ function ApplicationCard({
   onChanged,
   onError,
 }: {
-  application: ApplicationRead
+  application: HomeApplicationRead
   isAdmin: boolean
   onResume: () => void
   onBlocked: () => void
   onChanged: () => void
   onError: (message: string) => void
 }) {
-  const [journeyCount, setJourneyCount] = useState<number | null>(null)
-  const [scenarioCount, setScenarioCount] = useState<number | null>(null)
-  const [suiteCount, setSuiteCount] = useState<number | null>(null)
   const [editing, setEditing] = useState(false)
   const [nameDraft, setNameDraft] = useState(application.name)
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
-  useEffect(() => {
-    let cancelled = false
-    async function poll() {
-      try {
-        const [journeys, scenarios, suites] = await Promise.all([
-          api.listJourneys(application.id),
-          api.listScenarios(application.id),
-          api.listTestSuites(application.id),
-        ])
-        if (cancelled) return
-        setJourneyCount(journeys.length)
-        setScenarioCount(scenarios.length)
-        setSuiteCount(suites.length)
-      } catch {
-        // best-effort poll — a transient failure just skips this tick
-      }
-    }
-    poll()
-    const interval = setInterval(poll, POLL_INTERVAL_MS)
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [application.id])
-
   const discoveryStatus = application.discovery_status
   const stage =
     discoveryStatus === 'failed' || discoveryStatus === 'paused'
       ? discoveryStatus
-      : (suiteCount ?? 0) > 0
+      : application.suite_count > 0
         ? 'suite_generated'
-        : (scenarioCount ?? 0) > 0
+        : application.scenario_count > 0
           ? 'scenarios_generated'
-          : (journeyCount ?? 0) > 0
+          : application.journey_count > 0
             ? 'journeys_generated'
             : discoveryStatus === 'complete'
               ? 'discovery_completed'
@@ -367,14 +339,14 @@ function ApplicationCard({
       </div>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-4)' }}>
         <span>
-          <span style={{ fontSize: 15, fontWeight: 700 }}>{journeyCount ?? '…'}</span>{' '}
+          <span style={{ fontSize: 15, fontWeight: 700 }}>{application.journey_count}</span>{' '}
           <span className="caption" style={{ fontSize: 12 }}>
             journeys
           </span>
         </span>
         <span aria-hidden="true" style={{ width: 1, height: 12, background: 'var(--border)' }} />
         <span>
-          <span style={{ fontSize: 15, fontWeight: 700 }}>{scenarioCount ?? '…'}</span>{' '}
+          <span style={{ fontSize: 15, fontWeight: 700 }}>{application.scenario_count}</span>{' '}
           <span className="caption" style={{ fontSize: 12 }}>
             scenarios
           </span>
@@ -484,7 +456,7 @@ export function Home({
   const firstName = user.name.trim().split(/\s+/)[0]
   const isAdmin = user.role === 'admin'
   const [showDemo, setShowDemo] = useState(false)
-  const [applications, setApplications] = useState<ApplicationRead[] | null>(null)
+  const [applications, setApplications] = useState<HomeApplicationRead[] | null>(null)
   const [snackbar, setSnackbar] = useState<string | null>(null)
 
   useEffect(() => {
@@ -495,7 +467,7 @@ export function Home({
 
   async function refreshApplications() {
     try {
-      setApplications(await api.listApplications())
+      setApplications(await api.getHome())
     } catch {
       // best-effort — a transient failure just skips this refresh
     }

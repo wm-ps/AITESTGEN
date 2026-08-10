@@ -168,6 +168,28 @@ export interface paths {
         patch: operations["rename_application_applications__external_id__patch"];
         trace?: never;
     };
+    "/home": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Home
+         * @description Home screen used to poll `/applications` plus journeys/scenarios/
+         *     test-suites per application (1+3N calls every tick). One aggregate
+         *     query set instead — the cards only ever needed counts, never the items.
+         */
+        get: operations["get_home_home_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications/{external_id}/pause-discovery": {
         parameters: {
             query?: never;
@@ -585,6 +607,53 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HomeApplicationRead */
+        HomeApplicationRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Url */
+            url: string;
+            /** Login Url */
+            login_url: string | null;
+            /** Environment */
+            environment: string;
+            /**
+             * Auth Method
+             * @enum {string}
+             */
+            auth_method: "standard_login" | "sso_session_reuse";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Discovery Run Id
+             * Format: uuid
+             */
+            discovery_run_id: string;
+            /** Discovery Status */
+            discovery_status: string;
+            /** Discovery Stage */
+            discovery_stage: string | null;
+            /** Discovery Failure Reason */
+            discovery_failure_reason: string | null;
+            /** Discovery Coverage Summary */
+            discovery_coverage_summary?: {
+                [key: string]: number;
+            } | null;
+            /** Journey Count */
+            journey_count: number;
+            /** Scenario Count */
+            scenario_count: number;
+            /** Suite Count */
+            suite_count: number;
         };
         /** InviteCreate */
         InviteCreate: {
@@ -1225,6 +1294,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApplicationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_home_home_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HomeApplicationRead"][];
                 };
             };
             /** @description Validation Error */

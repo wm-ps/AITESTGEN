@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { ApiError, api, type ApplicationCreate, type ApplicationRead } from '../api'
 import { Stepper, type StepKey } from './Stepper'
 import { PasswordInput } from './PasswordInput'
+import { LoadingDots } from './LoadingDots'
 
 // The dropdown's confirmed 3-option set (DESIGN.md "Connect App form"): Username & Password,
 // API Key, OAuth Client Credentials. Only 'standard_login' is backend-supported today
@@ -131,6 +132,7 @@ export function ConnectAppForm({
             boxShadow: 'var(--shadow-dropdown-lg)',
           }}
         >
+          <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 'var(--space-7)' }}>
             <label className="field">
               <FieldLabel>Application name</FieldLabel>
@@ -247,9 +249,10 @@ export function ConnectAppForm({
               Cancel
             </button>
             <button type="submit" className="button-primary" disabled={submitting} style={{ padding: '9px 20px' }}>
-              {submitting ? 'Connecting…' : 'Connect Application →'}
+              {submitting ? <LoadingDots label="Connecting" /> : 'Connect Application →'}
             </button>
           </div>
+          </fieldset>
         </form>
       </main>
     </>

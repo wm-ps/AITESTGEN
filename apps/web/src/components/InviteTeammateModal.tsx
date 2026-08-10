@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ApiError, api } from '../api'
+import { LoadingDots } from './LoadingDots'
 
 export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
   const [email, setEmail] = useState('')
@@ -59,43 +60,45 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
             <p style={{ fontSize: 13.5, color: 'var(--ink-muted)', margin: '0 0 18px' }}>
               They'll get an email with a link to set up their account.
             </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <label className="field">
-                <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>Email</span>
-                <input
-                  type="email"
-                  required
-                  autoFocus
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  style={{ padding: '10px 12px', fontSize: 14 }}
-                />
-              </label>
-              <label className="field">
-                <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>Role</span>
-                <select
-                  value={role}
-                  onChange={(e) => setRole(e.target.value as 'admin' | 'member')}
-                  style={{ padding: '10px 12px', fontSize: 14 }}
-                >
-                  <option value="member">Member</option>
-                  <option value="admin">Admin</option>
-                </select>
-              </label>
-              {error && (
-                <div style={{ color: 'var(--danger)', fontSize: 13 }} role="alert">
-                  {error}
+            <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <label className="field">
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>Email</span>
+                  <input
+                    type="email"
+                    required
+                    autoFocus
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    style={{ padding: '10px 12px', fontSize: 14 }}
+                  />
+                </label>
+                <label className="field">
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>Role</span>
+                  <select
+                    value={role}
+                    onChange={(e) => setRole(e.target.value as 'admin' | 'member')}
+                    style={{ padding: '10px 12px', fontSize: 14 }}
+                  >
+                    <option value="member">Member</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </label>
+                {error && (
+                  <div style={{ color: 'var(--danger)', fontSize: 13 }} role="alert">
+                    {error}
+                  </div>
+                )}
+                <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                  <button type="button" className="button-secondary" onClick={onClose} style={{ flex: 1, padding: 11, fontSize: 14 }}>
+                    Cancel
+                  </button>
+                  <button type="submit" className="button-primary" disabled={submitting} style={{ flex: 1, padding: 11, fontSize: 14 }}>
+                    {submitting ? <LoadingDots label="Sending" /> : 'Send invite'}
+                  </button>
                 </div>
-              )}
-              <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-                <button type="button" className="button-secondary" onClick={onClose} style={{ flex: 1, padding: 11, fontSize: 14 }}>
-                  Cancel
-                </button>
-                <button type="submit" className="button-primary" disabled={submitting} style={{ flex: 1, padding: 11, fontSize: 14 }}>
-                  {submitting ? 'Sending…' : 'Send invite'}
-                </button>
               </div>
-            </div>
+            </fieldset>
           </>
         )}
       </form>

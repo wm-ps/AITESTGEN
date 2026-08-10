@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api, type InteractionLevel, type SettingsRead } from '../api'
+import { LoadingDots } from './LoadingDots'
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -41,8 +42,8 @@ export function Settings({ onCancel }: { onCancel: () => void }) {
 
   if (loading || !settings) {
     return (
-      <main style={{ maxWidth: 'clamp(720px, 68vw, 1080px)', margin: '0 auto', padding: '32px 24px' }}>
-        {error ?? 'Loading settings…'}
+      <main style={{ maxWidth: 'clamp(720px, 68vw, 1080px)', margin: '0 auto', padding: '32px 24px' }} role="status">
+        {error ?? <LoadingDots label="Loading settings" />}
       </main>
     )
   }
@@ -64,6 +65,7 @@ export function Settings({ onCancel }: { onCancel: () => void }) {
           boxShadow: 'var(--shadow-dropdown-lg)',
         }}
       >
+        <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
           <label className="field">
             <FieldLabel>Maximum pages</FieldLabel>
@@ -139,9 +141,10 @@ export function Settings({ onCancel }: { onCancel: () => void }) {
             Cancel
           </button>
           <button type="submit" className="button-primary" disabled={submitting} style={{ padding: '9px 20px' }}>
-            {submitting ? 'Saving…' : 'Save settings'}
+            {submitting ? <LoadingDots label="Saving" /> : 'Save settings'}
           </button>
         </div>
+        </fieldset>
       </form>
     </main>
   )

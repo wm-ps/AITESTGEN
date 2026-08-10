@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { api, type TestCaseRead, type TestSuiteRead } from '../api'
 import { Stepper, type StepKey } from './Stepper'
+import { LoadingDots } from './LoadingDots'
 
-const POLL_INTERVAL_MS = 1500
+const POLL_INTERVAL_MS = 3000
 const SECONDS_PER_TEST_CASE = 45
 
 // Generated Test Assets are Playwright (TypeScript, @playwright/test) — group
@@ -267,6 +268,9 @@ export function TestSuiteResults({
     }
   }, [applicationId])
 
+  const testCaseCount = suites.reduce((sum, s) => sum + s.test_cases.length, 0)
+  const isComplete = expectedTestCaseCount > 0 && testCaseCount >= expectedTestCaseCount
+
   useEffect(() => {
     let cancelled = false
 
@@ -280,15 +284,13 @@ export function TestSuiteResults({
     }
 
     poll()
+    if (isComplete) return
     const interval = setInterval(poll, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
-  }, [applicationId])
-
-  const testCaseCount = suites.reduce((sum, s) => sum + s.test_cases.length, 0)
-  const isComplete = expectedTestCaseCount > 0 && testCaseCount >= expectedTestCaseCount
+  }, [applicationId, isComplete])
   const estRuntimeMin = Math.max(1, Math.ceil((testCaseCount * SECONDS_PER_TEST_CASE) / 60))
 
   if (!isComplete) {
@@ -421,7 +423,7 @@ export function TestSuiteResults({
                   }}
                 >
                   <DownloadIcon />
-                  {downloading ? 'Downloading…' : 'Download Test Suite'}
+                  {downloading ? <LoadingDots label="Downloading" /> : 'Download Test Suite'}
                 </button>
                 <button
                   type="button"
