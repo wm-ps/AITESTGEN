@@ -89,19 +89,21 @@ function JourneyRowMenu({ onRename, onDelete }: { onRename: () => void; onDelete
         ⋯
       </button>
       {open && (
-        <div
-          role="menu"
-          className="card-panel"
-          style={{
-            position: 'absolute',
-            right: 0,
-            top: 30,
-            minWidth: 140,
-            boxShadow: '0 12px 28px rgba(15,23,42,0.14)',
-            overflow: 'hidden',
-            zIndex: 10,
-          }}
-        >
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9 }} onClick={() => setOpen(false)} />
+          <div
+            role="menu"
+            className="card-panel"
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: 30,
+              minWidth: 140,
+              boxShadow: '0 12px 28px rgba(15,23,42,0.14)',
+              overflow: 'hidden',
+              zIndex: 10,
+            }}
+          >
           <button
             type="button"
             role="menuitem"
@@ -146,7 +148,8 @@ function JourneyRowMenu({ onRename, onDelete }: { onRename: () => void; onDelete
           >
             Delete
           </button>
-        </div>
+          </div>
+        </>
       )}
     </div>
   )

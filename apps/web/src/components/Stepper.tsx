@@ -7,29 +7,6 @@ const STEPS = [
 
 export type StepKey = (typeof STEPS)[number]['key']
 
-function NavButton({
-  label,
-  onClick,
-  children,
-}: {
-  label: string
-  onClick?: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      className="button-secondary"
-      aria-label={label}
-      disabled={!onClick}
-      onClick={onClick}
-      style={{ padding: '6px 14px', opacity: onClick ? 1 : 0.4, cursor: onClick ? 'pointer' : 'default' }}
-    >
-      {children}
-    </button>
-  )
-}
-
 // `furthestCount` is how many steps (0-4) are fully completed — independent
 // of `current`, which is just whichever screen is being viewed right now.
 // They diverge once Previous/Next or a Stepper click lets you revisit an
@@ -39,8 +16,6 @@ export function Stepper({
   current,
   furthestCount,
   onStepClick,
-  onPrevious,
-  onNext,
 }: {
   current: StepKey
   furthestCount: number
@@ -52,9 +27,6 @@ export function Stepper({
 
   return (
     <div style={{ margin: '22px 32px 6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20 }}>
-      <NavButton label="Previous step" onClick={onPrevious}>
-        ← Previous
-      </NavButton>
       <div style={{ display: 'flex', alignItems: 'center' }}>
         {STEPS.map((step, index) => {
           const done = index < furthestCount
@@ -120,9 +92,6 @@ export function Stepper({
           )
         })}
       </div>
-      <NavButton label="Next step" onClick={onNext}>
-        Next →
-      </NavButton>
     </div>
   )
 }

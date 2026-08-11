@@ -6,6 +6,7 @@ import { DiscoverJourneys } from './components/DiscoverJourneys'
 import { GenerateSuite } from './components/GenerateSuite'
 import { Home } from './components/Home'
 import { InviteTeammateModal } from './components/InviteTeammateModal'
+import { LoadingDots } from './components/LoadingDots'
 import { ReviewScenarios } from './components/ReviewScenarios'
 import { Settings } from './components/Settings'
 import { SignIn } from './components/SignIn'
@@ -61,6 +62,16 @@ function App() {
   const [furthestCount, setFurthestCount] = useState(0)
   const [inviteModalOpen, setInviteModalOpen] = useState(false)
   const [inviteToken, setInviteToken] = useState(getInviteTokenFromUrl)
+  // Covers logout and resume-application — both involve an API round trip
+  // before the screen changes, and users were reading the pause as a hang.
+  const [globalLoading, setGlobalLoading] = useState<string | null>(null)
+  const [errorToast, setErrorToast] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!errorToast) return
+    const timeout = setTimeout(() => setErrorToast(null), 3000)
+    return () => clearTimeout(timeout)
+  }, [errorToast])
 
   useEffect(() => {
     if (inviteToken) return
@@ -93,10 +104,18 @@ function App() {
   }
 
   async function handleLogout() {
-    await api.logout()
-    setUser(null)
-    setView('home')
-    setApplication(null)
+    if (globalLoading) return
+    setGlobalLoading('Logging out')
+    try {
+      await api.logout()
+      setUser(null)
+      setView('home')
+      setApplication(null)
+    } catch {
+      setErrorToast('Failed to log out. Please try again.')
+    } finally {
+      setGlobalLoading(null)
+    }
   }
 
   // A test suite already generated means every wizard step is done —
@@ -105,13 +124,22 @@ function App() {
   // behavior), just with an accurate furthestCount for Previous/Next/Stepper
   // navigation once the user starts moving around.
   async function handleResumeApplication(app: ApplicationRead) {
-    setApplication(app)
-    const [scenarios, suites] = await Promise.all([
-      api.listScenarios(app.id),
-      api.listTestSuites(app.id),
-    ])
-    setFurthestCount(suites.length > 0 ? 4 : scenarios.length > 0 ? 2 : 1)
-    setView(suites.length > 0 ? 'test-suite-results' : 'discover')
+    if (globalLoading) return
+    setGlobalLoading('Loading project')
+    try {
+      setApplication(app)
+      const [scenarios, suites] = await Promise.all([
+        api.listScenarios(app.id),
+        api.listTestSuites(app.id),
+      ])
+      setFurthestCount(suites.length > 0 ? 4 : scenarios.length > 0 ? 2 : 1)
+      setView(suites.length > 0 ? 'test-suite-results' : 'discover')
+    } catch {
+      setApplication(null)
+      setErrorToast('Failed to load project. Please try again.')
+    } finally {
+      setGlobalLoading(null)
+    }
   }
 
   const viewingIndex = VIEW_ORDER.indexOf(view)
@@ -215,6 +243,43 @@ function App() {
         />
       )}
       {view === 'settings' && <Settings onCancel={() => setView(previousView)} />}
+
+      {globalLoading && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(15,23,42,0.15)',
+            zIndex: 100,
+          }}
+        >
+          <LoadingDots label={globalLoading} />
+        </div>
+      )}
+
+      {errorToast && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            right: 'var(--space-9)',
+            bottom: 'var(--space-9)',
+            background: 'var(--ink)',
+            color: '#FFFFFF',
+            padding: '12px 18px',
+            borderRadius: 'var(--radius)',
+            fontSize: 13.5,
+            boxShadow: '0 12px 28px rgba(15,23,42,0.25)',
+            zIndex: 100,
+          }}
+        >
+          {errorToast}
+        </div>
+      )}
     </>
   )
 }

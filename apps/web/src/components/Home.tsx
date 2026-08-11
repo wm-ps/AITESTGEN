@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { api, type ApplicationRead, type HomeApplicationRead, type UserRead } from '../api'
 import { StatusPill } from './StatusPill'
@@ -63,6 +63,7 @@ function ApplicationCard({
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const skipBlurRef = useRef(false)
 
   const discoveryStatus = application.discovery_status
   const stage =
@@ -124,11 +125,13 @@ function ApplicationCard({
   }
 
   function cancelRename() {
+    skipBlurRef.current = true
     setNameDraft(application.name)
     setEditing(false)
   }
 
   async function saveRename() {
+    skipBlurRef.current = true
     const trimmed = nameDraft.trim()
     if (!trimmed || trimmed === application.name) {
       cancelRename()
@@ -215,6 +218,13 @@ function ApplicationCard({
               onKeyDown={(e) => {
                 if (e.key === 'Enter') saveRename()
                 if (e.key === 'Escape') cancelRename()
+              }}
+              onBlur={() => {
+                if (skipBlurRef.current) {
+                  skipBlurRef.current = false
+                  return
+                }
+                saveRename()
               }}
               style={{
                 fontSize: 15,
@@ -348,7 +358,7 @@ function ApplicationCard({
         <span>
           <span style={{ fontSize: 15, fontWeight: 700 }}>{application.scenario_count}</span>{' '}
           <span className="caption" style={{ fontSize: 12 }}>
-            scenarios
+            test cases
           </span>
         </span>
       </div>
