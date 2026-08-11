@@ -1229,9 +1229,12 @@ async def _capture_selector(locator: Locator, fallback_text: str | None = None) 
     name = await locator.get_attribute("name")
     if name:
         return f'[name="{name}"]'
-    if fallback_text:
-        return f'text="{fallback_text}"'
     tag = await locator.evaluate("el => el.tagName.toLowerCase()")
+    # input/select/textarea never render fallback_text as real innerText —
+    # a `text=` selector built from it (a field's internal name/id) could
+    # never match real page content, unlike for a button/link.
+    if fallback_text and tag not in _NO_TEXT_TAGS:
+        return f'text="{fallback_text}"'
     return f"css={tag}"
 
 
@@ -1335,6 +1338,7 @@ _LOCATOR_INFO_SCRIPT = r"""
     name: (el.getAttribute('aria-label') || el.innerText || el.value || '').trim().slice(0, 80),
     label: label,
     text: (el.innerText || '').trim().slice(0, 80),
+    tag: el.tagName.toLowerCase(),
     idAttr: el.id || null,
     firstClass: (el.className || '').trim().split(/\s+/)[0] || null,
     scoped: scopedPath(el),
@@ -1344,13 +1348,21 @@ _LOCATOR_INFO_SCRIPT = r"""
 """
 
 
+_NO_TEXT_TAGS = {"input", "select", "textarea"}
+
+
 def _build_locator_candidates(info: dict, frame_path: str | None) -> list[dict]:
     candidates: list[dict] = []
 
     def add(strategy: str, value: str | None) -> None:
         if not value:
             return
-        full_value = f"{frame_path} >> {value}" if frame_path else value
+        # "label" isn't a real Playwright selector engine — its value is
+        # the raw label text for `getByLabel(...)`, not a `page.locator()`
+        # selector string, so it never gets a frame_path `>>` prefix either.
+        full_value = value if strategy == "label" else (
+            f"{frame_path} >> {value}" if frame_path else value
+        )
         candidates.append(
             {
                 "strategy": strategy,
@@ -1366,7 +1378,7 @@ def _build_locator_candidates(info: dict, frame_path: str | None) -> list[dict]:
     if info.get("text"):
         add("text", f'text="{info["text"]}"')
     if info.get("label"):
-        add("label", f'label="{info["label"]}"')
+        add("label", info["label"])
     if info.get("idAttr"):
         add("css_scoped", f"#{info['idAttr']}")
     if info.get("firstClass"):
@@ -1399,7 +1411,10 @@ async def _capture_locator_candidates(
         info = await locator.evaluate(_LOCATOR_INFO_SCRIPT)
     except Exception:
         return []
-    if not info.get("text") and fallback_text:
+    # input/select/textarea never render innerText — stamping a fallback
+    # (a field's internal name/id) in as "text" would produce a `text=`
+    # candidate that can never match real page content.
+    if not info.get("text") and fallback_text and info.get("tag") not in _NO_TEXT_TAGS:
         info["text"] = fallback_text
     return _build_locator_candidates(info, frame_path)
 
@@ -3094,7 +3109,7 @@ async def run_discovery_crawl(
             if attempt and heartbeat:
                 heartbeat()
             try:
-                response = await page.goto(url)
+                response = await page.goto(url, timeout=effective_page_load_timeout * 1000)
                 nav_exc = None
             except Exception as exc:
                 nav_exc = exc

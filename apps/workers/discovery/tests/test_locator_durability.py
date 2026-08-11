@@ -127,6 +127,55 @@ def test_frame_path_is_prefixed_onto_every_candidate_value() -> None:
     assert all(c["value"].startswith('iframe[src="http://x/frame"] >> ') for c in candidates)
 
 
+@pytest.mark.asyncio
+async def test_capture_locator_candidates_skips_text_backfill_for_input_tag() -> None:
+    """A `text="<fallback>"` candidate for an input/select/textarea would be
+    the field's internal name/id masquerading as visible text — it can
+    never match real page content, unlike for a button/link (below)."""
+    from discovery_worker.crawler import _capture_locator_candidates
+
+    class FakeLocator:
+        async def evaluate(self, script: str) -> dict:
+            return {
+                "testid": None,
+                "role": "textbox",
+                "name": "",
+                "label": None,
+                "text": "",
+                "tag": "input",
+                "idAttr": None,
+                "firstClass": None,
+                "scoped": None,
+                "absolute": "input:nth-child(1)",
+            }
+
+    candidates = await _capture_locator_candidates(FakeLocator(), fallback_text="txtUserName")
+    assert not any(c["strategy"] == "text" for c in candidates)
+
+
+@pytest.mark.asyncio
+async def test_capture_locator_candidates_still_backfills_text_for_button_tag() -> None:
+    from discovery_worker.crawler import _capture_locator_candidates
+
+    class FakeLocator:
+        async def evaluate(self, script: str) -> dict:
+            return {
+                "testid": None,
+                "role": "button",
+                "name": "",
+                "label": None,
+                "text": "",
+                "tag": "button",
+                "idAttr": None,
+                "firstClass": None,
+                "scoped": None,
+                "absolute": "button:nth-child(1)",
+            }
+
+    candidates = await _capture_locator_candidates(FakeLocator(), fallback_text="Save")
+    assert any(c["strategy"] == "text" and c["value"] == 'text="Save"' for c in candidates)
+
+
 def test_rank_locator_candidates_dedupes_and_sorts_fragile_last() -> None:
     ranked = _rank_locator_candidates(
         [

@@ -290,6 +290,44 @@ def test_ensure_test_suite_activity_supersedes_prior_attempt_atomically() -> Non
         assert new_suite.generation_run_id == journey.attempt
 
 
+def test_playwright_generation_activity_rejects_code_that_fails_typecheck(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checklist rule 3: a hallucinated matcher / undefined variable — real
+    failure modes seen this session — must fail the activity, never reach
+    `TestAsset`."""
+    init_db()
+    journey = _seed_journey()
+    scenario = _seed_scenario(journey)
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    fake_provider = _FakeAIProvider(
+        "import { test, expect } from '@playwright/test'\n\n"
+        "test('broken', async ({ page }) => {\n"
+        "  await expect(page.locator('#x')).toBeSuperVisible();\n"
+        "  console.log(undefinedVar);\n"
+        "});\n"
+    )
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    with pytest.raises(ValueError, match="failed typecheck"):
+        asyncio.run(
+            activities_module.playwright_generation_activity(
+                PlaywrightGenerationActivityInput(
+                    scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+                )
+            )
+        )
+
+    with Session(engine) as session:
+        assert session.exec(
+            select(TestAsset).where(TestAsset.scenario_id == scenario.id)
+        ).first() is None
+
+
 def test_playwright_generation_activity_creates_a_test_asset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -478,6 +516,7 @@ def test_playwright_generation_activity_passes_known_locator_to_ai_provider(
                 "component_type": "button",
                 "component_name": "Save button",
                 "selector": '[data-testid="save"]',
+                "strategy": "testid",
             }
         ]
     ]

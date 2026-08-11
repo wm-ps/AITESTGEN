@@ -36,9 +36,9 @@ class _FakeAIProvider:
         self._candidates = candidates
 
     async def generate_scenarios(
-        self, journey: Journey, pages: list[Page]
+        self, journey: Journey, pages: list[Page], limit: int | None = None
     ) -> list[ScenarioCandidate]:
-        return self._candidates
+        return self._candidates if limit is None else self._candidates[:limit]
 
 
 def _seed_journey() -> Journey:

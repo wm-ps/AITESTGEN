@@ -383,6 +383,35 @@ async def test_generate_playwright_includes_known_locators_in_prompt(
     assert 'Checkout / button:Save button -> [data-testid="save"]' in content
 
 
+async def test_generate_playwright_renders_label_strategy_as_getbylabel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`label=` isn't a real Playwright selector engine — a "label" strategy \
+    locator must render as a ready-to-call `getByLabel(...)`, never interpolated \
+    into a `page.locator("label=\\"...\\"")` string."""
+    captured = _monkeypatch_post(
+        monkeypatch, "test('guest checkout', async ({ page }) => {})"
+    )
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(
+        scenario,
+        known_locators=[
+            {
+                "stage_label": "Login",
+                "component_type": "input",
+                "component_name": "Username field",
+                "selector": "Username",
+                "strategy": "label",
+            }
+        ],
+    )
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert 'Login / input:Username field -> getByLabel("Username")' in content
+    assert 'label="Username"' not in content
+
+
 async def test_generate_playwright_degrades_gracefully_with_no_known_locators(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

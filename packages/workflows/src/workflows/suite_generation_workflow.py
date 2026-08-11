@@ -108,7 +108,11 @@ class SuiteGenerationWorkflow:
                 if isinstance(result, BaseException):
                     still_pending.append(scenario_id)
                     continue
-                test_asset_ids.append(result)
+                # Empty string is PlaywrightGenerationActivity's sentinel for
+                # "skipped, max_test_cases_per_application reached" — not a
+                # failure to retry, not a real TestAsset id either.
+                if result:
+                    test_asset_ids.append(result)
             pending = still_pending
 
             if pending and wave < MAX_SCENARIO_WAVES - 1:

@@ -9,7 +9,7 @@ import json
 import os
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 import httpx
 from domain import (
@@ -36,7 +36,7 @@ from domain import (
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from object_store import ObjectStore
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from secrets_client import VaultSecretsClient
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
@@ -259,6 +259,16 @@ class ApplicationCreate(BaseModel):
         "auth_method is 'sso_session_reuse'. The platform never performs the SSO/MFA "
         "handshake itself — it only reuses a session the customer supplies.",
     )
+
+    @field_validator("username", "password", mode="before")
+    @classmethod
+    def _strip_credential_whitespace(cls, value: str | None) -> str | None:
+        # A stray leading/trailing space (copy-paste artifact) silently
+        # breaks login at the target app with no useful error anywhere
+        # downstream — strip it here, at the one place these get persisted.
+        # Only leading/trailing: an internal space could be a real part of
+        # the credential, never touch that.
+        return value.strip() if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def _credentials_match_auth_method(self) -> ApplicationCreate:
@@ -1551,6 +1561,9 @@ class SettingsRead(BaseModel):
     max_discovery_duration_minutes: int
     navigation_timeout_seconds: float
     interaction_level: InteractionLevel
+    max_journeys: int | None
+    max_scenarios_per_journey: int | None
+    max_test_cases_per_application: int | None
 
 
 class SettingsUpdate(BaseModel):
@@ -1558,6 +1571,12 @@ class SettingsUpdate(BaseModel):
     max_discovery_duration_minutes: int | None = None
     navigation_timeout_seconds: float | None = None
     interaction_level: InteractionLevel | None = None
+    # Sentinel, not None: None already means "leave unchanged" for every
+    # other field here, but these three need "leave unchanged" AND "clear to
+    # unlimited" to be distinguishable.
+    max_journeys: int | None | Literal["__unset__"] = "__unset__"
+    max_scenarios_per_journey: int | None | Literal["__unset__"] = "__unset__"
+    max_test_cases_per_application: int | None | Literal["__unset__"] = "__unset__"
 
 
 def _to_settings_read(settings: DiscoverySettings) -> SettingsRead:
@@ -1566,6 +1585,9 @@ def _to_settings_read(settings: DiscoverySettings) -> SettingsRead:
         max_discovery_duration_minutes=settings.max_discovery_duration_minutes,
         navigation_timeout_seconds=settings.navigation_timeout_seconds,
         interaction_level=settings.interaction_level,  # type: ignore[arg-type]
+        max_journeys=settings.max_journeys,
+        max_scenarios_per_journey=settings.max_scenarios_per_journey,
+        max_test_cases_per_application=settings.max_test_cases_per_application,
     )
 
 
@@ -1590,6 +1612,12 @@ def update_settings(
         settings.navigation_timeout_seconds = payload.navigation_timeout_seconds
     if payload.interaction_level is not None:
         settings.interaction_level = payload.interaction_level
+    if payload.max_journeys != "__unset__":
+        settings.max_journeys = payload.max_journeys
+    if payload.max_scenarios_per_journey != "__unset__":
+        settings.max_scenarios_per_journey = payload.max_scenarios_per_journey
+    if payload.max_test_cases_per_application != "__unset__":
+        settings.max_test_cases_per_application = payload.max_test_cases_per_application
     session.add(settings)
     session.commit()
     session.refresh(settings)

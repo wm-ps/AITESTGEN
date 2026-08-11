@@ -24,3 +24,9 @@ class DiscoverySettings(SQLModel, table=True):
     # str, not the InteractionLevel Literal — SQLModel can't infer a column
     # type from Literal; the Literal is still the source of truth for callers.
     interaction_level: str = Field(default="normal")
+    # Generation-volume caps, for testing cost control. None = unlimited
+    # (today's behaviour). Each is a hard stop — generation halts mid-run
+    # once hit, rather than refusing upfront or truncating after the fact.
+    max_journeys: int | None = Field(default=None)
+    max_scenarios_per_journey: int | None = Field(default=None)
+    max_test_cases_per_application: int | None = Field(default=None)

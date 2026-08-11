@@ -130,6 +130,57 @@ export function Settings({ onCancel }: { onCancel: () => void }) {
           </label>
         </div>
 
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-7)' }}>
+          <label className="field">
+            <FieldLabel>Max journeys</FieldLabel>
+            <input
+              type="number"
+              min={1}
+              placeholder="Unlimited"
+              value={settings.max_journeys ?? ''}
+              onChange={(e) =>
+                setSettings({
+                  ...settings,
+                  max_journeys: e.target.value === '' ? null : Number(e.target.value),
+                })
+              }
+            />
+          </label>
+
+          <label className="field">
+            <FieldLabel>Max scenarios / journey</FieldLabel>
+            <input
+              type="number"
+              min={1}
+              placeholder="Unlimited"
+              value={settings.max_scenarios_per_journey ?? ''}
+              onChange={(e) =>
+                setSettings({
+                  ...settings,
+                  max_scenarios_per_journey: e.target.value === '' ? null : Number(e.target.value),
+                })
+              }
+            />
+          </label>
+
+          <label className="field">
+            <FieldLabel>Max test cases / application</FieldLabel>
+            <input
+              type="number"
+              min={1}
+              placeholder="Unlimited"
+              value={settings.max_test_cases_per_application ?? ''}
+              onChange={(e) =>
+                setSettings({
+                  ...settings,
+                  max_test_cases_per_application:
+                    e.target.value === '' ? null : Number(e.target.value),
+                })
+              }
+            />
+          </label>
+        </div>
+
         {error && (
           <div style={{ color: 'var(--danger)', fontSize: 13 }} role="alert">
             {error}

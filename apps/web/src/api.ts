@@ -30,6 +30,9 @@ export type SettingsRead = {
   max_discovery_duration_minutes: number
   navigation_timeout_seconds: number
   interaction_level: InteractionLevel
+  max_journeys: number | null
+  max_scenarios_per_journey: number | null
+  max_test_cases_per_application: number | null
 }
 export type SettingsUpdate = Partial<SettingsRead>
 

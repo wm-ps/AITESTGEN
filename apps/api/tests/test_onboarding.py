@@ -102,6 +102,41 @@ def test_create_application_never_stores_plaintext(caplog: pytest.LogCaptureFixt
         assert PLAINTEXT_PASSWORD not in record.getMessage()
 
 
+def test_create_application_strips_leading_trailing_credential_whitespace() -> None:
+    """A copy-paste artifact (stray leading/trailing space) silently breaks
+    login at the target app with no useful error anywhere downstream — must
+    be stripped before the credential is persisted. An internal space is a
+    real part of the credential and must survive untouched."""
+    init_db()
+    client = _signed_in_client("Org Credential Whitespace")
+
+    response = client.post(
+        "/applications",
+        json={
+            "name": "Whitespace Creds App",
+            "url": "https://staging.example.com",
+            "environment": "staging",
+            "username": " alice smith ",
+            "password": f"  {PLAINTEXT_PASSWORD}\t",
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+
+    with Session(engine) as session:
+        app_row = session.exec(
+            select(Application).where(Application.external_id == uuid.UUID(body["id"]))
+        ).first()
+        assert app_row is not None
+        from secrets_client.vault_client import SecretRef, VaultSecretsClient
+
+        stored = json.loads(
+            VaultSecretsClient().resolve(SecretRef(path=app_row.secret_ref)).decode()
+        )
+        assert stored == {"username": "alice smith", "password": PLAINTEXT_PASSWORD}
+
+
 def test_create_application_defaults_to_standard_login() -> None:
     init_db()
     client = _signed_in_client("Org Auth Method Default")

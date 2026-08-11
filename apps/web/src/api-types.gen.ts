@@ -782,6 +782,12 @@ export interface components {
              * @enum {string}
              */
             interaction_level: "passive" | "normal" | "aggressive";
+            /** Max Journeys */
+            max_journeys: number | null;
+            /** Max Scenarios Per Journey */
+            max_scenarios_per_journey: number | null;
+            /** Max Test Cases Per Application */
+            max_test_cases_per_application: number | null;
         };
         /** SettingsUpdate */
         SettingsUpdate: {
@@ -793,6 +799,21 @@ export interface components {
             navigation_timeout_seconds?: number | null;
             /** Interaction Level */
             interaction_level?: ("passive" | "normal" | "aggressive") | null;
+            /**
+             * Max Journeys
+             * @default __unset__
+             */
+            max_journeys: number | "__unset__" | null;
+            /**
+             * Max Scenarios Per Journey
+             * @default __unset__
+             */
+            max_scenarios_per_journey: number | "__unset__" | null;
+            /**
+             * Max Test Cases Per Application
+             * @default __unset__
+             */
+            max_test_cases_per_application: number | "__unset__" | null;
         };
         /** TestCaseRead */
         TestCaseRead: {

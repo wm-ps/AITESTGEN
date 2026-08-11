@@ -169,11 +169,32 @@ matching one of these, use `page.goto("<url>")` / assert against this exact URL 
 invent your own URL for a step with no match here:
 {known_pages_listing}
 
-Known element locators (real Playwright selector strings discovered on this application, \
-listed as "business stage name / component type:component name -> selector"). When a step \
-interacts with an element matching one of these, use `page.locator("<selector>")` with this \
-exact selector string — only invent your own selector (e.g. `page.getByRole(...)`) for an \
-element with no match here:
+Known element locators (real locators discovered on this application, listed as "business \
+stage name / component type:component name -> locator"). When a step interacts with an \
+element matching one of these, use the locator exactly as shown — most entries are a literal \
+`page.locator("<selector>")` selector string, use it verbatim; an entry already shown as \
+`getByLabel("<text>")` is a ready-to-use `page.getByLabel(...)` call, not a `page.locator(...)` \
+selector string — call it directly, do NOT wrap it as `page.locator('getByLabel("...")')` or \
+as `page.locator('label="..."')` (`label=` is not a real Playwright selector engine). Only \
+invent your own locator (e.g. `page.getByRole(...)`) for an element with no match here.
+
+Exception — do NOT trust a known locator for a form-field component (input/select/textarea) \
+whose value is an internal name/id/model-property string rather than real human-readable text \
+(e.g. `text="txtUserName"`, `getByLabel("model.email")`). An input/select/textarea never \
+renders its internal name as visible text and never has that string as its accessible label, \
+so that locator will never resolve — it is discovery-crawl noise, not a real selector/label. \
+Ignore it and build the field's locator yourself following the Locator rules below instead.
+
+Exception — do NOT use a known `role=<role>[name="..."]` locator's full quoted `name` as an \
+exact match when that name is visibly a concatenation of multiple fragments: an icon/emoji, \
+a stable entity/title fragment, a dynamic figure (price, date, count, rating), and/or a \
+decorative arrow/chevron glyph (e.g. `role=link[name="🏥\nHealth Plan\nFrom ₹ 12,500/yr · Up \
+to ₹50 L cover\n›"]`). That figure changes between runs/environments and the icon/chevron are \
+noise, so an exact match on the full string is guaranteed to break. Instead extract only the \
+stable entity-name fragment and match it with `getByRole(...)` using a partial/regex `name`, \
+e.g. `page.getByRole('link', {{ name: /Health Plan/ }})`. This applies to any card, list item, \
+or dashboard tile whose accessible name mixes an icon/title/dynamic-value/chevron this way — \
+not just this one example.
 {known_locators_listing}"""
 
 _PLAYWRIGHT_PROMPT_SYSTEM = """You are converting one integration test Scenario into a single, \
@@ -181,34 +202,88 @@ executable Playwright (TypeScript, @playwright/test) test.
 
 Write one complete, runnable test using `import {{ test, expect }} from '@playwright/test'`, \
 following the steps in order and asserting the expected result. Use the given test data \
-values literally where they'd naturally be used (form fields, query params, etc).
+values literally where they'd naturally be used (form fields, query params, etc) — except \
+where the Input-type fill rule, Credential rule, or Data-uniqueness rule below require \
+reformatting, sourcing from an environment variable, or appending a unique suffix instead.
+
+Input-type fill rule — before calling `.fill(...)`, match the value's format to the field's \
+actual input type. A native `<input type="date">` (and `type="month"`/`type="week"`/ \
+`type="time"`) only accepts its own format via `.fill(...)` — e.g. `YYYY-MM-DD` for a date \
+input — a human-readable string like "Jan 5, 2026" is silently rejected by the browser and \
+leaves the field empty. Reformat the given literal to match that specific input's required \
+format; never reuse one generic string across fields of different native input types.
+
+Credential rule — a login/authentication field's test-data value may be an automatically \
+resolved placeholder, not a real seeded account, and a generated test cannot know what \
+accounts actually exist on the target application. If the Scenario's Expected result requires \
+a genuine successful authentication (not merely submitting the form and checking a failure \
+path), read that field from an environment variable at runtime instead of hardcoding the given \
+literal, e.g. `const username = process.env.TEST_USERNAME ?? "<the given value>";` — falling \
+back to the given value only so the test still runs when the variable is unset. Only apply this to \
+Scenarios that need a real successful login; a negative-path Scenario expecting failure should \
+use the given literal as-is.
+
+Data-uniqueness rule — for a step that creates a new account/record (sign-up, registration, \
+"create new X"), never reuse the given test-data literal exactly if doing so risks colliding \
+with data left behind by a previous or concurrent run of this same test (e.g. a duplicate-email \
+error). Append a runtime-unique suffix built from the given literal's shape instead, e.g.:
+const email = `user_${{Date.now()}}@example.com`;
+so each run is self-sufficient and safe \
+under parallel execution — never assume another test already created, or will clean up, shared \
+data. Only skip this when the step authenticates as an EXISTING account (login, not creation), \
+where the given literal must be used exactly as provided.
 
 Timeout rules — target applications vary widely in how long they take to load or process \
-a submission. Define one constant near the top of the file and use it everywhere a timeout \
-applies, rather than relying on Playwright's default:
-const TIMEOUT_MS = 180000;
-Pass `{{ timeout: TIMEOUT_MS }}` to every `page.goto(...)`, `page.waitForLoadState(...)`, \
-`expect(...).toBeVisible(...)`/other `expect` assertions, and every locator action \
-(`.click(...)`, `.fill(...)`, etc). In particular, after clicking a form's submit button, \
-explicitly wait (with `TIMEOUT_MS`) for the resulting navigation or state change to \
-complete before asserting anything about the outcome — do not assume it resolves instantly.
+a submission. Define TWO constants near the top of the file — never reuse one constant for \
+both jobs, they solve different problems:
+const ASSERTION_TIMEOUT_MS = 15000;
+const TEST_TIMEOUT_MS = 180000;
+`ASSERTION_TIMEOUT_MS` is the per-step wait: real render/network latency needs a few seconds, \
+but a genuinely broken locator should fail fast, not stall — pass `{{ timeout: \
+ASSERTION_TIMEOUT_MS }}` to every `page.goto(...)`, `page.waitForLoadState(...)`, \
+`page.waitForURL(...)`, every locator action (`.click(...)`, `.fill(...)`, `.check(...)`, \
+etc), and every polling `expect(locator)` matcher (`toBeVisible()`, `toHaveText()`, \
+`toHaveURL()`, etc — anything that polls a locator/page until it matches or times out). \
+`TEST_TIMEOUT_MS` is ONLY the overall safety-net ceiling passed to `test.setTimeout()` — \
+never pass it to an individual call. Reusing the long constant everywhere turns every broken \
+locator into a multi-minute stall instead of a fast failure — across a whole suite that's the \
+difference between a run taking minutes versus hours.
 
-Not every Playwright method accepts a `timeout` option — do not add `{{ timeout: TIMEOUT_MS \
-}}` to a call unless that specific method's signature actually has an options parameter. \
-Most notably, `page.content()`, `page.url()`, and `response.status()` take NO arguments at \
-all — calling e.g. `page.content({{ timeout: TIMEOUT_MS }})` is a compile error, not a slower \
-call. When in doubt, only pass `{{ timeout: ... }}` to navigation (`page.goto`), waiting \
-(`page.waitForLoadState`, `page.waitForURL`), locator actions (`.click`, `.fill`, `.check`, \
-etc), and `expect(...)` assertions — never to a plain getter/accessor method.
+Rule — only a polling matcher accepts `{{ timeout }}`. `expect(locator).toBeVisible(...)`, \
+`.toHaveText(...)`, `.toHaveURL(...)` (and other locator/page pollers) poll until the \
+condition holds or the timeout elapses, so `{{ timeout: ASSERTION_TIMEOUT_MS }}` is correct \
+there. A plain-value matcher (`toBeTruthy()`, `toBe(...)`, `toEqual(...)`, \
+`toBeGreaterThan(...)`, etc.) checks an already-computed value exactly once — it has no \
+polling behavior, so passing it `{{ timeout: ... }}` is a matcher-usage error, not a slower \
+check. Never pass `{{ timeout }}` to a plain-value matcher.
+
+Matcher-existence rule — only use `expect(...)` matchers that are part of Playwright's real, \
+documented API (`toBeVisible`, `toHaveText`, `toHaveURL`, `toHaveValue`, `toHaveClass`, \
+`toHaveAttribute`, `toHaveCount`, `toBeChecked`, `toBeDisabled`, `toBeEnabled`, `toBeEditable`, \
+`toBeFocused`, `toBeTruthy`, `toBe`, `toEqual`, etc). Never invent a matcher name that sounds \
+plausible by analogy but does not exist (e.g. `toBeInvalid`, `toBeValid`) — if you need to \
+check a validity/error state, express it via a real matcher against the actual DOM signal \
+(`toHaveAttribute('aria-invalid', 'true')`, a CSS class via `toHaveClass(...)`, or a \
+`:invalid`/custom selector combined with `toBeVisible()`), never a matcher you are only \
+assuming must exist.
+
+Not every Playwright method accepts a `timeout` option either — do not add `{{ timeout: \
+ASSERTION_TIMEOUT_MS }}` to a call unless that specific method's signature actually has an \
+options parameter. Most notably, `page.content()`, `page.url()`, and `response.status()` take \
+NO arguments at all — calling e.g. `page.content({{ timeout: ASSERTION_TIMEOUT_MS }})` is a \
+compile error, not a slower call. When in doubt, only pass `{{ timeout: ... }}` to navigation \
+(`page.goto`), waiting (`page.waitForLoadState`, `page.waitForURL`), locator actions \
+(`.click`, `.fill`, `.check`, etc), and polling `expect(...)` matchers — never to a plain \
+getter/accessor method, and never to a plain-value matcher.
 
 Critical: Playwright's own overall per-test timeout defaults to 30000ms regardless of any \
-`{{ timeout: TIMEOUT_MS }}` passed to individual calls — a longer per-assertion timeout does \
-NOT extend how long the test as a whole is allowed to run, and the test will still be killed \
-at 30 seconds even while an individual `expect(...)` is still legitimately waiting within its \
-own 180000ms budget. There is no `playwright.config.ts` to raise this globally, so every \
+`{{ timeout: ASSERTION_TIMEOUT_MS }}` passed to individual calls — a per-assertion timeout \
+does NOT extend how long the test as a whole is allowed to run, and the test will still be \
+killed at 30 seconds even while an individual `expect(...)` is still legitimately waiting \
+within its own budget. There is no `playwright.config.ts` to raise this globally, so every \
 generated test MUST raise its own timeout as the very first line inside the test body:
 test('...', async ({{ page }}) => {{
-  test.setTimeout(TIMEOUT_MS);
+  test.setTimeout(TEST_TIMEOUT_MS);
   // ...rest of the test
 }});
 
@@ -218,8 +293,8 @@ browser context with no prior cookies. Follow these rules for every test, not ju
 Scenarios:
 
 1. Before navigating anywhere else, first visit the application's base URL ({base_url}) with \
-`{{ timeout: TIMEOUT_MS }}` and wait for it to finish loading with `await \
-page.waitForLoadState('networkidle', {{ timeout: TIMEOUT_MS }})`. This establishes the \
+`{{ timeout: ASSERTION_TIMEOUT_MS }}` and wait for it to finish loading with `await \
+page.waitForLoadState('networkidle', {{ timeout: ASSERTION_TIMEOUT_MS }})`. This establishes the \
 session/cookies a real user's browser would already have. Only after that initial visit \
 should the test navigate on to whatever page the Scenario's steps actually need (via \
 `page.goto`, or by clicking a discovered link/button). Never `page.goto()` straight to a \
@@ -227,7 +302,7 @@ deep URL as the first action of the test.
 
 2. After every `page.goto(...)` call, capture the returned response and verify it \
 succeeded before doing anything else with the page:
-const response = await page.goto(url, {{ timeout: TIMEOUT_MS }});
+const response = await page.goto(url, {{ timeout: ASSERTION_TIMEOUT_MS }});
 if (!response || response.status() >= 400) {{
   throw new Error(`Failed to load page. HTTP status: ${{response?.status()}}`);
 }}
@@ -251,6 +326,26 @@ Call `await assertNoServerError(page)` right after each navigation, before locat
 element — this turns a misleading "element not found" failure into a clear, actionable \
 error when the real cause is a server-side failure rather than a bad locator.
 
+4. After any step that changes auth/session state (logout, session expiry, a redirect), \
+never assume the next page has the element you expect it to. Either navigate to the known \
+target URL explicitly (`page.goto(...)`) or verify the landing page first — one \
+`expect(page).toHaveURL(..., {{ timeout: ASSERTION_TIMEOUT_MS }})` (or a content check) right \
+after the state-changing click, before touching any element on whatever page you land on. \
+Never guess a redirect target from convention (e.g. assuming a successful action lands on \
+`/` or "the home page") — if the destination isn't given by the Test steps or a Known page \
+match, verify the actual landing page via a content check rather than asserting an invented URL.
+
+Selector-collision rule — default `exact: true` on `getByLabel(...)`, `getByText(...)`, and \
+`getByRole(..., {{ name }})` whenever the given text/label could plausibly be a substring of \
+another label on the same page (e.g. `getByLabel('Password')` also matches "Confirm \
+Password" without `exact: true`, causing a strict-mode violation or the wrong field getting \
+filled). Only omit `exact: true` when you've confirmed the text is unique on the page, or \
+when the Multi-fragment accessible-name rule (below) applies — that rule requires a partial/ \
+regex match instead, since there the full name is never stable enough to write an exact \
+string at all. Separately: when an element has both an `id`/`name`/`data-testid` attribute \
+AND label/text, prefer the attribute — attributes can't collide via substring the way label \
+text can.
+
 Locator rules — accessible-name-based locators (`getByLabel`, `getByRole` on non-button \
 elements) are NOT safe for form fields: a name/label regex like `/password/i` will also \
 match unrelated controls that merely mention the same word (e.g. a "Show password" \
@@ -266,16 +361,23 @@ For a username/email field: `input[name="username"]`, `input[name="email"]`, \
 `input[type="email"]`, then `getByPlaceholder(/user|email/i)`, and only as a last resort \
 `getByLabel(/user|email/i)`.
 
+Never generate `text="<value>"` (in a `page.locator(...)`) against a form field's internal \
+name, id, or model-property string — input/select/textarea elements have no text content, \
+so that locator is guaranteed to never resolve, regardless of app state. When you do fall back \
+to `getByLabel(...)`, its argument must be the field's real visible label text/accessible \
+name (what a sighted user reads next to the field) — never the field's internal name, id, or \
+model-property string.
+
 Combine the CSS-attribute options as one comma-separated selector passed to `page.locator(...)` \
 and take `.first()`, so any one of them matching resolves the field unambiguously. Assert \
-visibility (with `{{ timeout: TIMEOUT_MS }}`) before interacting, so a locator mismatch fails \
+visibility (with `{{ timeout: ASSERTION_TIMEOUT_MS }}`) before interacting, so a locator mismatch fails \
 clearly instead of a confusing fill/click error. For example, instead of:
 await page.getByLabel(/password/i).fill(password);
 generate:
 const passwordField = page.locator(
   'input[name="password"], input[type="password"], input[id="password"]'
 ).first();
-await expect(passwordField).toBeVisible({{ timeout: TIMEOUT_MS }});
+await expect(passwordField).toBeVisible({{ timeout: ASSERTION_TIMEOUT_MS }});
 await passwordField.fill(password);
 
 Never treat a button (e.g. `<button aria-label="Show password">`, `<button aria-label="Hide \
@@ -285,15 +387,37 @@ an accessibility-based locator (`getByLabel`/`getByPlaceholder`) for a field whe
 CSS attribute selector for it is available, and even then only if that locator's regex is \
 specific enough that it would not plausibly also match a button or other non-field control.
 
+Multi-fragment accessible-name rule — the same "no exact match" reasoning applies whenever \
+you build your own `getByRole(...)`/`getByText(...)` locator (not just when reusing a known \
+locator, above) for a product card, list item, or dashboard tile whose accessible name \
+concatenates an icon/emoji, an entity/title fragment, a dynamic figure (price, date, count, \
+rating), and/or a decorative chevron/arrow. Never hard-code the full computed accessible name \
+as an exact match — it will break the moment the dynamic figure changes. Match only the \
+stable entity-name fragment via partial/regex `name`:
+Don't: `page.locator('role=link[name="🏥\nHealth Plan\nFrom ₹ 12,500/yr · Up to ₹50 L cover\n\
+›"]')`
+Do: `page.getByRole('link', {{ name: /Health Plan/ }})`
+
 Field-level validation rules — when a step checks that a field shows a validation/error \
 state (e.g. "shows required field error", "marks the field invalid"), do NOT search the \
-page for arbitrary validation-message text. Assert on the field's own state/attributes \
-instead, using whichever of these is applicable: `input[name="..."][aria-invalid="true"]`, \
-`input[name="..."][data-validate="..."]` (or any other application-specific validation \
-attribute implied by the step), or the native `:invalid` pseudo-class. Only assert on \
-visible error text if that exact text is given to you via the Test data or Expected result \
-above — never invent your own generic message (e.g. "This field is required") and search \
-for it.
+page for arbitrary validation-message text, and do NOT assume any single mechanism (e.g. \
+`aria-invalid`) is how THIS application signals it — apps signal an invalid field wildly \
+differently: native `:invalid`, `aria-invalid`, a CSS class, a sibling error element, a \
+page-level banner. None of those is a safe universal default. Assert on whichever mechanism \
+the step/page context actually implies (e.g. `input[name="..."][aria-invalid="true"]`, \
+`input[name="..."][data-validate="..."]`, the native `:invalid` pseudo-class, or an \
+application-specific attribute named in the step) — treat any one of these as an unverified \
+fallback guess, not a known-good default, and prefer whichever the Test steps/Expected result \
+actually name over guessing. Only assert on visible error text if that exact text is given to \
+you via the Test data or Expected result above — never invent your own generic message (e.g. \
+"This field is required") and search for it.
+
+Form-field value-persistence rule — never assert that a field "retains its value" after a \
+submit/postback (or that it was cleared) unless the Test steps or Expected result explicitly \
+say so. Frameworks differ deliberately here: some clear password fields for security, some \
+clear the whole form, some retain everything. Don't default to "text inputs usually keep \
+their value" — if persistence/clearing isn't the thing the Scenario is actually testing, \
+don't assert on it at all.
 
 Failure-outcome assertion rules — the same "don't invent wording" rule applies to any \
 failure/error outcome, not just field validation (e.g. an invalid-login message). Use the \
@@ -317,6 +441,14 @@ result. Never assert the Expected result (or any failure/success signal derived 
 before the actions that are supposed to produce it have actually been executed — e.g. do not \
 check for a login-error indicator before filling in credentials and clicking submit.
 
+Shared-state cleanup rule — if a Scenario's steps mutate state that isn't obviously scoped to \
+this one test run alone (e.g. changing a setting, editing a shared/reused record, updating a \
+profile field on an account other tests also log in as), add the matching restore step(s) at \
+the end of the SAME test, after the Expected result has been asserted — put the value back to \
+what it was before this test mutated it. Only skip the restore if the Scenario's own steps \
+already end in a state that undoes the change (e.g. the flow itself deletes what it created), \
+or if the Scenario's own point IS the mutation's permanence (e.g. "account is deleted").
+
 Output ONLY the TypeScript code, no markdown fences, no prose, no explanation."""
 
 
@@ -333,11 +465,18 @@ def _describe_known_pages(known_pages: list[dict[str, str]] | None) -> str:
 def _describe_known_locators(known_locators: list[dict[str, str]] | None) -> str:
     if not known_locators:
         return "(none)"
-    return "\n".join(
-        f"- {loc['stage_label']} / {loc['component_type']}:{loc['component_name']} -> "
-        f"{loc['selector']}"
-        for loc in known_locators
-    )
+
+    def _describe_one(loc: dict[str, str]) -> str:
+        prefix = f"{loc['stage_label']} / {loc['component_type']}:{loc['component_name']}"
+        # "label" strategy's value is real visible label text, not a
+        # `page.locator()` selector string — `label=` isn't a real
+        # Playwright selector engine, so this must render as a
+        # `getByLabel(...)` call, never interpolated into `page.locator(...)`.
+        if loc.get("strategy") == "label":
+            return f'- {prefix} -> getByLabel("{loc["selector"]}")'
+        return f"- {prefix} -> {loc['selector']}"
+
+    return "\n".join(_describe_one(loc) for loc in known_locators)
 
 
 # Story 2.10 AC 3: a short, plain-language (not JSON) opinion — this is
@@ -471,7 +610,7 @@ class HostedAIProvider:
         return candidates
 
     async def generate_scenarios(
-        self, journey: Journey, pages: list[Page]
+        self, journey: Journey, pages: list[Page], limit: int | None = None
     ) -> list[ScenarioCandidate]:
         # `pages` is already in step order, each carrying a transient
         # `.stage_label` (attached by ScenarioGenerationActivity the same way
@@ -483,6 +622,8 @@ class HostedAIProvider:
         candidates = []
         failures: list[str] = []
         for scenario_type, instructions in _SCENARIO_TYPE_INSTRUCTIONS.items():
+            if limit is not None and len(candidates) >= limit:
+                break
             try:
                 content = await _chat_completion(
                     [
@@ -516,6 +657,8 @@ class HostedAIProvider:
                 continue
 
             for raw in raw_scenarios:
+                if limit is not None and len(candidates) >= limit:
+                    break
                 candidates.append(
                     ScenarioCandidate(
                         name=raw["name"],

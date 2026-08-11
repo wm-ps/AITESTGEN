@@ -10,6 +10,7 @@ without re-generating.
 """
 
 import asyncio
+import logging
 import re
 import uuid
 
@@ -18,6 +19,7 @@ from domain import (
     ApiEndpoint,
     Component,
     ComponentLocator,
+    DiscoverySettings,
     Form,
     Journey,
     JourneyStep,
@@ -26,6 +28,7 @@ from domain import (
     TestAsset,
     TestSuite,
 )
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio import activity
@@ -37,6 +40,9 @@ from workflows import (
 )
 
 from generation_worker.db import engine
+from generation_worker.typecheck import typecheck_playwright_code
+
+logger = logging.getLogger(__name__)
 
 # Non-AI, deterministic default-value generator (Story 4.2) — mirrors
 # discovery_worker/crawler.py's `_generic_value` convention: a field's
@@ -49,14 +55,21 @@ _PASSWORD_FIELD_RE = re.compile(r"pass(word)?", re.IGNORECASE)
 _CARD_FIELD_RE = re.compile(r"card", re.IGNORECASE)
 
 
-def _default_test_data_value(field_name: str) -> str:
+def _default_test_data_value(field_name: str, used_values: set[str]) -> str:
     if _PASSWORD_FIELD_RE.search(field_name):
-        return "Password1$"
-    if _CARD_FIELD_RE.search(field_name):
-        return "4111111111111111"
-    if _EMAIL_FIELD_RE.search(field_name):
-        return "test@example.com"
-    return "Test value"
+        candidates = ("Password1$", "Password2$", "Password3$")
+    elif _CARD_FIELD_RE.search(field_name):
+        candidates = ("4111111111111111", "5555555555554444", "4000000000000002")
+    elif _EMAIL_FIELD_RE.search(field_name):
+        candidates = ("test@example.com", "test2@example.com", "test3@example.com")
+    else:
+        candidates = ("Test value", "Test value 2", "Test value 3")
+    # Checklist rule 6: a scenario whose whole point is "X and Y differ"
+    # (confirm-mismatch, before/after) needs genuinely distinct literals —
+    # reusing the same pattern-matched placeholder for every same-shaped
+    # field (e.g. "password" and "confirmPassword" both -> "Password1$")
+    # silently destroys that scenario.
+    return next((c for c in candidates if c not in used_values), candidates[-1])
 
 
 @activity.defn(name="ScenarioGenerationActivity")
@@ -140,7 +153,10 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
             object.__setattr__(page, "stage_label", step.stage_label)
             ordered_pages.append(page)
 
-        candidates = await HostedAIProvider().generate_scenarios(journey, ordered_pages)
+        settings = session.exec(select(DiscoverySettings)).one()
+        candidates = await HostedAIProvider().generate_scenarios(
+            journey, ordered_pages, limit=settings.max_scenarios_per_journey
+        )
 
         scenario_external_ids: list[str] = []
         for candidate in candidates:
@@ -289,6 +305,14 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
     if existing_id is not None:
         return existing_id
 
+    if await asyncio.to_thread(_test_case_limit_reached_sync, input.scenario_id):
+        logger.warning(
+            "PlaywrightGenerationActivity: max_test_cases_per_application reached — "
+            "skipping scenario_id=%s",
+            input.scenario_id,
+        )
+        return ""
+
     # Default test-data values, part of this same single flow (Story 4.2
     # AC 1) — never a second trigger. Reviewer-provided values always take
     # precedence; a still-blank field (mandatory or optional) gets a
@@ -299,6 +323,17 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
     )
 
     code = await HostedAIProvider().generate_playwright(scenario, known_pages, known_locators)
+
+    # Checklist rule 3: a spec isn't "generated successfully" until it
+    # compiles against real @playwright/test types — this catches
+    # undefined-variable/hallucinated-matcher bugs at generation time
+    # instead of at real-test-run time. Raising (rather than persisting
+    # anyway) lets Temporal's activity retry re-run generation.
+    typecheck_errors = await typecheck_playwright_code(code.code)
+    if typecheck_errors:
+        raise ValueError(
+            "Generated Playwright spec failed typecheck:\n" + "\n".join(typecheck_errors)
+        )
 
     return await asyncio.to_thread(
         _persist_test_asset_sync, input.scenario_id, input.test_suite_id, code.code
@@ -317,6 +352,31 @@ def _existing_test_asset_id_sync(scenario_external_id: str) -> str | None:
             )
         ).first()
         return str(existing.external_id) if existing is not None else None
+
+
+def _test_case_limit_reached_sync(scenario_external_id: str) -> bool:
+    with Session(engine) as session:
+        settings = session.exec(select(DiscoverySettings)).one()
+        if settings.max_test_cases_per_application is None:
+            return False
+
+        scenario = session.exec(
+            select(Scenario).where(Scenario.external_id == uuid.UUID(scenario_external_id))
+        ).one()
+        journey = session.get(Journey, scenario.journey_id)
+        assert journey is not None
+
+        current_count = session.exec(
+            select(func.count())
+            .select_from(TestAsset)
+            .join(Scenario, Scenario.id == TestAsset.scenario_id)  # type: ignore[arg-type]
+            .join(Journey, Journey.id == Scenario.journey_id)  # type: ignore[arg-type]
+            .where(
+                Journey.application_id == journey.application_id,
+                TestAsset.current.is_(True),  # type: ignore[attr-defined]
+            )
+        ).one()
+        return current_count >= settings.max_test_cases_per_application
 
 
 def _resolve_known_application_model_sync(
@@ -427,6 +487,7 @@ def _resolve_known_application_model_sync(
                 "component_type": component.type,
                 "component_name": component.name,
                 "selector": chosen.value,
+                "strategy": chosen.strategy,
             }
         )
     return known_pages, known_locators
@@ -442,9 +503,12 @@ def _resolve_scenario_defaults_sync(
 
         updated_fields = [dict(field) for field in scenario.test_data]
         changed = False
+        used_values = {field["value"] for field in updated_fields if field.get("value")}
         for field in updated_fields:
             if not field.get("value"):
-                field["value"] = _default_test_data_value(field["name"])
+                value = _default_test_data_value(field["name"], used_values)
+                field["value"] = value
+                used_values.add(value)
                 changed = True
         if changed:
             scenario.test_data = updated_fields

@@ -328,6 +328,16 @@ export function TestSuiteResults({
             <p className="caption" style={{ margin: 0, fontSize: 12.5 }}>
               {testCaseCount}/{expectedTestCaseCount || '…'} test cases so far
             </p>
+            <p className="caption" style={{ margin: '6px 0 0', fontSize: 12, opacity: 0.7 }}>
+              Stuck?{' '}
+              <button
+                type="button"
+                onClick={() => onStepClick?.('generate')}
+                style={{ font: 'inherit', color: 'var(--accent)', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
+              >
+                Resume generation
+              </button>
+            </p>
           </div>
         </main>
       </>

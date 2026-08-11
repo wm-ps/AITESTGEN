@@ -1136,15 +1136,24 @@ async def inference_activity(input: InferenceActivityInput) -> list[str]:
         journey_external_ids: list[str] = []
         candidates_processed = 0
 
+        # Settings.max_journeys is the operator-facing cap (Settings page);
+        # the env var stays as the deploy-time default when it's unset.
+        discovery_settings = session.exec(select(DiscoverySettings)).one()
+        max_journeys = (
+            discovery_settings.max_journeys
+            if discovery_settings.max_journeys is not None
+            else MAX_CANDIDATE_JOURNEYS_PER_RUN
+        )
+
         for batch in batches:
             candidates = await HostedAIProvider().infer_journeys(batch)
 
             for candidate in candidates:
-                if candidates_processed >= MAX_CANDIDATE_JOURNEYS_PER_RUN:
+                if candidates_processed >= max_journeys:
                     logger.warning(
                         "InferenceActivity: run-level cap (%d) reached for discovery_run=%s — "
                         "dropping candidate %r",
-                        MAX_CANDIDATE_JOURNEYS_PER_RUN,
+                        max_journeys,
                         input.discovery_run_id,
                         candidate.name,
                     )
