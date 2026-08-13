@@ -40,9 +40,22 @@ from workflows import (
 )
 
 from generation_worker.db import engine
+from generation_worker.locator_grounding import build_grounding_context, find_ungrounded_locators, format_feedback
 from generation_worker.typecheck import typecheck_playwright_code
 
 logger = logging.getLogger(__name__)
+
+# Locator-grounding hardening: how many total `generate_playwright` calls one
+# Activity attempt makes for a single Scenario before giving up and raising —
+# 1 initial + up to 2 in-process corrective retries, each seeded with the
+# specific violation the previous attempt produced. Cheaper and faster than
+# relying solely on the outer wave loop (no Temporal round-trip, no
+# WAVE_COOLDOWN_SECONDS between corrections) — the outer wave loop
+# (`SuiteGenerationWorkflow`) still gets a chance too, via
+# `PlaywrightGenerationActivityInput.grounding_feedback`, if every in-process
+# attempt here is exhausted.
+_MAX_GROUNDING_ATTEMPTS = 3
+_GROUNDING_VIOLATION_SENTINEL = "GROUNDING_VIOLATION:"
 
 # Non-AI, deterministic default-value generator (Story 4.2) — mirrors
 # discovery_worker/crawler.py's `_generic_value` convention: a field's
@@ -322,7 +335,40 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
         _resolve_scenario_defaults_sync, input.scenario_id
     )
 
-    code = await HostedAIProvider().generate_playwright(scenario, known_pages, known_locators)
+    # Locator-grounding hardening: `known_locators` is real, discovery-captured
+    # DOM data (`ComponentLocator` rows, ultimately traced back to a live
+    # DOM/uniqueness-checked capture — see `discovery_worker.crawler`) — the
+    # same data already grounding the AI prompt below. `find_ungrounded_
+    # locators` deterministically checks whether the LLM actually used it, or
+    # invented a locator with nothing behind it, which `typecheck_playwright_
+    # code` below can never catch (a hallucinated selector still compiles
+    # fine — it just never resolves against the real application).
+    grounding_context = build_grounding_context(known_locators)
+    feedback = input.grounding_feedback
+    code = None
+    violations: list = []
+    for attempt in range(1, _MAX_GROUNDING_ATTEMPTS + 1):
+        code = await HostedAIProvider().generate_playwright(
+            scenario, known_pages, known_locators, grounding_feedback=feedback
+        )
+        violations = find_ungrounded_locators(code.code, grounding_context)
+        if not violations:
+            break
+        feedback = format_feedback(violations)
+        logger.warning(
+            "PlaywrightGenerationActivity: scenario_id=%s attempt %d/%d produced "
+            "ungrounded locator(s): %s",
+            input.scenario_id,
+            attempt,
+            _MAX_GROUNDING_ATTEMPTS,
+            feedback,
+        )
+    if violations:
+        # Recognizable sentinel (not a generic message) — `SuiteGenerationWorkflow`'s
+        # wave loop matches on this to thread `feedback` into this same
+        # Scenario's next-wave input, rather than a blind identical retry.
+        raise ValueError(f"{_GROUNDING_VIOLATION_SENTINEL} {feedback}")
+    assert code is not None
 
     # Checklist rule 3: a spec isn't "generated successfully" until it
     # compiles against real @playwright/test types — this catches

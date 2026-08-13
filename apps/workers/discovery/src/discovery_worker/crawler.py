@@ -1242,13 +1242,32 @@ async def _capture_selector(locator: Locator, fallback_text: str | None = None) 
 # lower is more durable. `_capture_selector` above stays untouched (existing
 # consumers of `captured_selector` keep working); this is the new, additive
 # path Story 2.5's `ComponentLocator` derivation extends to consume.
+#
+# `[FIXED — locator reliability hardening]` This used to rank `text`/`label`
+# above `css_scoped`/`css_absolute`, and had no dedicated tier for the HTML
+# `name` attribute or a generic `data-*` attribute at all — despite
+# generation-time prompting (`ai_provider.hosted`) explicitly telling the LLM
+# to prefer `input[name="..."]`-style locators over accessibility-based ones.
+# The grounding data captured here literally couldn't supply what generation
+# was told to prefer, and text/label locators are exactly the ones most prone
+# to breaking (case, whitespace, i18n, dynamic content) — a real, generic
+# contributor to `toBeVisible`/`element(s) not found` failures across
+# different applications, not specific to any one target app. Tier order now
+# matches the durability priority: unique testid > other stable data-*
+# attribute > unique id > name attribute > input type+name combo > role/label
+# (accessibility, collision-prone) > scoped/absolute CSS path > raw text
+# (last resort).
 _LOCATOR_TIER_ORDER = {
     "testid": 0,
-    "aria": 1,
-    "text": 2,
-    "label": 3,
-    "css_scoped": 4,
-    "css_absolute": 5,
+    "data_attr": 1,
+    "id": 2,
+    "name": 3,
+    "type_name": 4,
+    "aria": 5,
+    "label": 5,
+    "css_scoped": 6,
+    "css_absolute": 7,
+    "text": 8,
 }
 
 # Story 2.21 AC 2: machine-generated identifiers, syntactically valid CSS but
@@ -1271,6 +1290,13 @@ _HEX_OR_UUID_FRAGMENT_RE = re.compile(
 _POSITIONAL_ONLY_PATH_RE = re.compile(
     r"^(css=)?(\w+:nth-child\(\d+\)\s*(>|\s)\s*)*\w+:nth-child\(\d+\)$"
 )
+# `[FIXED — locator reliability hardening]` Companion to promoting `data_attr`
+# to tier 1 (right after `testid`, above `id`/`name`): a framework-injected
+# scoped-style marker (Vue's `data-v-xxxxxxxx`) is syntactically a `data-*`
+# attribute but carries zero semantic meaning and is regenerated on every
+# build — without this it would now outrank far more durable candidates
+# instead of being down-ranked like every other generated-token pattern here.
+_VUE_SCOPED_STYLE_ATTR_RE = re.compile(r"data-v-[0-9a-f]{6,10}", re.IGNORECASE)
 
 
 def _looks_like_generated_token(token: str) -> bool:
@@ -1288,6 +1314,7 @@ def _is_fragile_locator_value(value: str) -> bool:
         _FRAMEWORK_GENERATED_ID_RE.search(value)
         or _HEX_OR_UUID_FRAGMENT_RE.search(value)
         or _POSITIONAL_ONLY_PATH_RE.match(value)
+        or _VUE_SCOPED_STYLE_ATTR_RE.search(value)
     )
 
 
@@ -1332,6 +1359,20 @@ _LOCATOR_INFO_SCRIPT = r"""
   if (!label && el.closest('label')) label = el.closest('label').innerText.trim();
   const testid = el.getAttribute('data-testid') || el.getAttribute('data-test')
     || el.getAttribute('data-cy');
+  // `[FIXED — locator reliability hardening]` `otherDataAttr` finds the first
+  // *other* stable data-* attribute (markup order, so this is deterministic
+  // per element) — needed for the new `data_attr` tier. `nameAttr`/`typeAttr`
+  // are the real HTML attributes, distinct from the `name` key below (which
+  // is the computed *accessible* name from aria-label/innerText/value, used
+  // by the `aria` strategy) — needed for the new `name`/`type_name` tiers.
+  let otherDataAttr = null;
+  for (const attr of el.attributes) {
+    if (attr.name.startsWith('data-') &&
+        !['data-testid', 'data-test', 'data-cy'].includes(attr.name)) {
+      otherDataAttr = { name: attr.name, value: attr.value };
+      break;
+    }
+  }
   return {
     testid: testid,
     role: el.getAttribute('role') || implicitRoles[el.tagName] || null,
@@ -1340,6 +1381,9 @@ _LOCATOR_INFO_SCRIPT = r"""
     text: (el.innerText || '').trim().slice(0, 80),
     tag: el.tagName.toLowerCase(),
     idAttr: el.id || null,
+    nameAttr: el.getAttribute('name') || null,
+    typeAttr: el.getAttribute('type') || null,
+    otherDataAttr: otherDataAttr,
     firstClass: (el.className || '').trim().split(/\s+/)[0] || null,
     scoped: scopedPath(el),
     absolute: absolutePath(el),
@@ -1373,14 +1417,26 @@ def _build_locator_candidates(info: dict, frame_path: str | None) -> list[dict]:
 
     if info.get("testid"):
         add("testid", f'[data-testid="{info["testid"]}"]')
+    # `[FIXED — locator reliability hardening]` `data_attr`/`id`/`name`/
+    # `type_name` are new, dedicated tiers — `id` used to be folded into
+    # `css_scoped` (ranked well below `text`/`label`) and `name`/`type_name`
+    # didn't exist as captured candidates at all, even though generation-time
+    # prompting explicitly asks the LLM to prefer exactly these.
+    if info.get("otherDataAttr"):
+        data_attr = info["otherDataAttr"]
+        add("data_attr", f'[{data_attr["name"]}="{data_attr["value"]}"]')
+    if info.get("idAttr"):
+        add("id", f"#{info['idAttr']}")
+    if info.get("nameAttr"):
+        add("name", f'[name="{info["nameAttr"]}"]')
+    if info.get("tag") == "input" and info.get("typeAttr") and info.get("nameAttr"):
+        add("type_name", f'input[type="{info["typeAttr"]}"][name="{info["nameAttr"]}"]')
     if info.get("role") and info.get("name"):
         add("aria", f'role={info["role"]}[name="{info["name"]}"]')
     if info.get("text"):
         add("text", f'text="{info["text"]}"')
     if info.get("label"):
         add("label", info["label"])
-    if info.get("idAttr"):
-        add("css_scoped", f"#{info['idAttr']}")
     if info.get("firstClass"):
         add("css_scoped", f"css=.{info['firstClass']}")
     if info.get("scoped"):
@@ -1400,6 +1456,64 @@ def _build_locator_candidates(info: dict, frame_path: str | None) -> list[dict]:
     return deduped
 
 
+# `[FIXED — locator reliability hardening]` Bounded to the top-N ranked
+# candidates, not the whole list — a live `.count()` is a single unpolled DOM
+# query (not subject to `navigation_timeout_seconds`), but every element
+# capture already awaits several round trips per page; checking every
+# fallback candidate too would meaningfully slow a large crawl for no benefit
+# once a top candidate is already confirmed unique.
+_LIVE_UNIQUENESS_CHECK_TOP_N = 3
+
+
+def _is_live_invalid(candidate: dict) -> bool:
+    """A candidate whose live match count is known and isn't exactly 1.
+    `None` (never checked, or checked but inconclusive) is NOT live-invalid —
+    absence of live confirmation must never be treated as live rejection."""
+    count = candidate.get("live_match_count")
+    return count is not None and count != 1
+
+
+async def _annotate_and_resort_by_live_uniqueness(page: Page, candidates: list[dict]) -> list[dict]:
+    """Story: fixing generated-Playwright-test reliability at its actual
+    root — every locator candidate up to this point is inferred purely from a
+    static DOM snapshot (`_LOCATOR_INFO_SCRIPT`); nothing has ever confirmed
+    it actually resolves to exactly one element on the live page it was
+    captured from. This is the missing check, added exactly where the crawler
+    already holds a live, authenticated browser page open — no new browser
+    session, no new trust boundary, just using the one already there.
+
+    A candidate matching 0 or >1 elements live is never discarded (same
+    "down-rank, never discard" philosophy `_is_fragile_locator_value` already
+    follows for syntactic fragility) — it's re-sorted below every candidate
+    whose live status is unknown or confirmed-unique. A `.count()` failure
+    (e.g. a selector shape this Playwright version can't evaluate, such as a
+    chained frame-piercing `>>` selector) leaves `live_match_count` unset and
+    the candidate untouched, same tolerance as every other capture helper
+    here — never let an inconclusive check look like a live rejection."""
+    checked = 0
+    for candidate in candidates:
+        if checked >= _LIVE_UNIQUENESS_CHECK_TOP_N:
+            break
+        checked += 1
+        try:
+            count = await page.locator(candidate["value"]).count()
+        except Exception:
+            continue
+        candidate["live_match_count"] = count
+        if count == 1:
+            # Already confirmed unique — checking lower-ranked candidates too
+            # buys nothing and only costs more round trips.
+            break
+    candidates.sort(
+        key=lambda c: (
+            _is_live_invalid(c),
+            bool(c.get("fragile")),
+            _LOCATOR_TIER_ORDER.get(c.get("strategy", ""), 9),
+        )
+    )
+    return candidates
+
+
 async def _capture_locator_candidates(
     locator: Locator, fallback_text: str | None = None, frame_path: str | None = None
 ) -> list[dict]:
@@ -1416,7 +1530,8 @@ async def _capture_locator_candidates(
     # candidate that can never match real page content.
     if not info.get("text") and fallback_text and info.get("tag") not in _NO_TEXT_TAGS:
         info["text"] = fallback_text
-    return _build_locator_candidates(info, frame_path)
+    candidates = _build_locator_candidates(info, frame_path)
+    return await _annotate_and_resort_by_live_uniqueness(locator.page, candidates)
 
 
 async def _submit_button_label(locator: Locator) -> str | None:

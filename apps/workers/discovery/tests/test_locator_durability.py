@@ -10,7 +10,9 @@ import uuid
 import pytest
 from discovery_worker.crawler import (
     CapturedForm,
+    _LOCATOR_TIER_ORDER,
     _build_locator_candidates,
+    _capture_locator_candidates,
     _is_fragile_locator_value,
     run_discovery_crawl,
 )
@@ -21,6 +23,31 @@ from discovery_worker.model_builder import (
 )
 from discovery_worker.session import establish_session
 from playwright.async_api import async_playwright
+
+
+class _FakeLiveLocator:
+    """Stand-in for `page.locator(value)` — resolves to a fixed `.count()`."""
+
+    def __init__(self, count: int) -> None:
+        self._count = count
+
+    async def count(self) -> int:
+        return self._count
+
+
+class _FakeLivePage:
+    """Minimal stand-in for `Locator.page`. `counts_by_value` maps a candidate
+    value to its live match count; anything not listed resolves to 1 (i.e.
+    confirmed unique) by default so tests not about the live check itself are
+    unaffected by it."""
+
+    def __init__(self, counts_by_value: dict[str, int] | None = None) -> None:
+        self._counts_by_value = counts_by_value or {}
+        self.checked_selectors: list[str] = []
+
+    def locator(self, value: str) -> _FakeLiveLocator:
+        self.checked_selectors.append(value)
+        return _FakeLiveLocator(self._counts_by_value.get(value, 1))
 
 
 class FakeObjectStore:
@@ -107,8 +134,116 @@ def test_no_testid_role_or_text_falls_through_to_scoped_css_and_scores_low() -> 
         "absolute": "div:nth-child(3)",
     }
     candidates = _build_locator_candidates(info, frame_path=None)
-    assert candidates[0]["strategy"] == "css_scoped"
+    # `id` is now its own dedicated tier (was folded into `css_scoped`) —
+    # ranked well above raw text/label, matching the durability priority a
+    # bare `#id` selector actually deserves.
+    assert candidates[0]["strategy"] == "id"
     assert candidates[0]["value"] == "#bare-div"
+
+
+def test_other_data_attribute_ranks_between_testid_and_id() -> None:
+    info = {
+        "testid": None,
+        "role": None,
+        "name": "",
+        "text": "",
+        "label": None,
+        "tag": "div",
+        "idAttr": "confirm-panel",
+        "nameAttr": None,
+        "typeAttr": None,
+        "otherDataAttr": {"name": "data-qa", "value": "confirm-order"},
+        "firstClass": None,
+        "scoped": None,
+        "absolute": "div:nth-child(1)",
+    }
+    candidates = _build_locator_candidates(info, frame_path=None)
+    assert candidates[0]["strategy"] == "data_attr"
+    assert candidates[0]["value"] == '[data-qa="confirm-order"]'
+    assert candidates[1]["strategy"] == "id"
+    assert candidates[1]["value"] == "#confirm-panel"
+
+
+def test_name_attribute_produces_name_strategy_candidate() -> None:
+    info = {
+        "testid": None,
+        "role": "textbox",
+        "name": "",
+        "text": "",
+        "label": None,
+        "tag": "input",
+        "idAttr": None,
+        "nameAttr": "username",
+        "typeAttr": "text",
+        "otherDataAttr": None,
+        "firstClass": None,
+        "scoped": None,
+        "absolute": None,
+    }
+    candidates = _build_locator_candidates(info, frame_path=None)
+    name_candidate = next(c for c in candidates if c["strategy"] == "name")
+    assert name_candidate["value"] == '[name="username"]'
+
+
+def test_input_type_and_name_combo_produces_type_name_strategy() -> None:
+    info = {
+        "testid": None,
+        "role": "textbox",
+        "name": "",
+        "text": "",
+        "label": None,
+        "tag": "input",
+        "idAttr": None,
+        "nameAttr": "username",
+        "typeAttr": "text",
+        "otherDataAttr": None,
+        "firstClass": None,
+        "scoped": None,
+        "absolute": None,
+    }
+    candidates = _build_locator_candidates(info, frame_path=None)
+    combo = next(c for c in candidates if c["strategy"] == "type_name")
+    assert combo["value"] == 'input[type="text"][name="username"]'
+
+
+def test_type_name_strategy_skipped_for_non_input_tags() -> None:
+    """A `<button type="submit" name="go">` should never produce a
+    `button[type="submit"][name="go"]` locator — the combo tier is scoped to
+    `<input>` elements only, matching what `ai_provider.hosted`'s prompt
+    actually asks the model to prefer for form fields."""
+    info = {
+        "testid": None,
+        "role": "button",
+        "name": "",
+        "text": "",
+        "label": None,
+        "tag": "button",
+        "idAttr": None,
+        "nameAttr": "go",
+        "typeAttr": "submit",
+        "otherDataAttr": None,
+        "firstClass": None,
+        "scoped": None,
+        "absolute": None,
+    }
+    candidates = _build_locator_candidates(info, frame_path=None)
+    assert not any(c["strategy"] == "type_name" for c in candidates)
+
+
+def test_tier_order_matches_documented_priority_list() -> None:
+    order = _LOCATOR_TIER_ORDER
+    assert (
+        order["testid"]
+        < order["data_attr"]
+        < order["id"]
+        < order["name"]
+        < order["type_name"]
+        < order["aria"]
+        < order["css_scoped"]
+        < order["css_absolute"]
+        < order["text"]
+    )
+    assert order["aria"] == order["label"]
 
 
 def test_frame_path_is_prefixed_onto_every_candidate_value() -> None:
@@ -132,9 +267,10 @@ async def test_capture_locator_candidates_skips_text_backfill_for_input_tag() ->
     """A `text="<fallback>"` candidate for an input/select/textarea would be
     the field's internal name/id masquerading as visible text — it can
     never match real page content, unlike for a button/link (below)."""
-    from discovery_worker.crawler import _capture_locator_candidates
 
     class FakeLocator:
+        page = _FakeLivePage()  # every candidate resolves to 1 (confirmed unique)
+
         async def evaluate(self, script: str) -> dict:
             return {
                 "testid": None,
@@ -155,9 +291,9 @@ async def test_capture_locator_candidates_skips_text_backfill_for_input_tag() ->
 
 @pytest.mark.asyncio
 async def test_capture_locator_candidates_still_backfills_text_for_button_tag() -> None:
-    from discovery_worker.crawler import _capture_locator_candidates
-
     class FakeLocator:
+        page = _FakeLivePage()
+
         async def evaluate(self, script: str) -> dict:
             return {
                 "testid": None,
@@ -174,6 +310,117 @@ async def test_capture_locator_candidates_still_backfills_text_for_button_tag() 
 
     candidates = await _capture_locator_candidates(FakeLocator(), fallback_text="Save")
     assert any(c["strategy"] == "text" and c["value"] == 'text="Save"' for c in candidates)
+
+
+# --- pure-fake tests: live uniqueness check -------------------------------
+
+
+@pytest.mark.asyncio
+async def test_capture_locator_candidates_annotates_top_n_and_skips_the_rest() -> None:
+    """Bounded to the top 3 ranked candidates — the 4th (lowest-tier) never
+    gets a live `.count()` check at all."""
+    fake_page = _FakeLivePage({"#a": 0, "css=.b": 0, "css=#scope > div": 0})
+
+    class FakeLocator:
+        page = fake_page
+
+        async def evaluate(self, script: str) -> dict:
+            return {
+                "testid": None,
+                "role": None,
+                "name": "",
+                "text": "",
+                "label": None,
+                "tag": "div",
+                "idAttr": "a",
+                "nameAttr": None,
+                "typeAttr": None,
+                "otherDataAttr": None,
+                "firstClass": "b",
+                "scoped": "#scope > div",
+                "absolute": "div:nth-child(1)",
+            }
+
+    candidates = await _capture_locator_candidates(FakeLocator())
+    # 4 total candidates (id, css_scoped x2, css_absolute) — only the top 3
+    # ranked ones are live-checked.
+    assert len(fake_page.checked_selectors) == 3
+    checked = [c for c in candidates if "live_match_count" in c]
+    unchecked = [c for c in candidates if "live_match_count" not in c]
+    assert len(checked) == 3
+    assert len(unchecked) == 1
+    assert all(c["live_match_count"] == 0 for c in checked)
+
+
+@pytest.mark.asyncio
+async def test_live_zero_match_candidate_is_confirmed_invalid_and_ranked_below_a_valid_one() -> None:
+    """A stale/incorrect `data-testid` (0 live matches) must never outrank a
+    lower-tier candidate that's actually confirmed unique — this is the core
+    fix: durability tier alone is no longer enough, live resolution matters."""
+    fake_page = _FakeLivePage({'[data-testid="ghost"]': 0, "#real-id": 1})
+
+    class FakeLocator:
+        page = fake_page
+
+        async def evaluate(self, script: str) -> dict:
+            return {
+                "testid": "ghost",
+                "role": None,
+                "name": "",
+                "text": "",
+                "label": None,
+                "tag": "div",
+                "idAttr": "real-id",
+                "nameAttr": None,
+                "typeAttr": None,
+                "otherDataAttr": None,
+                "firstClass": None,
+                "scoped": None,
+                "absolute": None,
+            }
+
+    candidates = await _capture_locator_candidates(FakeLocator())
+    assert candidates[0]["strategy"] == "id"
+    assert candidates[0]["value"] == "#real-id"
+    assert candidates[0]["live_match_count"] == 1
+    ghost = next(c for c in candidates if c["strategy"] == "testid")
+    assert ghost["live_match_count"] == 0
+    assert candidates.index(ghost) > 0
+
+
+@pytest.mark.asyncio
+async def test_live_check_failure_leaves_candidate_unannotated_and_never_raises() -> None:
+    """An unsupported selector shape (e.g. a Playwright version that can't
+    evaluate a chained frame-piercing `>>` selector) must degrade gracefully
+    — same tolerance every other capture helper in this module has."""
+
+    class _RaisingPage:
+        def locator(self, value: str):
+            raise RuntimeError("unsupported selector shape")
+
+    class FakeLocator:
+        page = _RaisingPage()
+
+        async def evaluate(self, script: str) -> dict:
+            return {
+                "testid": "save-button",
+                "role": None,
+                "name": "",
+                "text": "",
+                "label": None,
+                "tag": "button",
+                "idAttr": None,
+                "nameAttr": None,
+                "typeAttr": None,
+                "otherDataAttr": None,
+                "firstClass": None,
+                "scoped": None,
+                "absolute": None,
+            }
+
+    candidates = await _capture_locator_candidates(FakeLocator())
+    assert candidates[0]["strategy"] == "testid"
+    assert "live_match_count" not in candidates[0]
 
 
 def test_rank_locator_candidates_dedupes_and_sorts_fragile_last() -> None:
@@ -238,8 +485,12 @@ async def test_real_hash_classed_element_ranks_aria_above_the_hash(target_app_ur
 async def test_real_bare_element_falls_through_to_scoped_css(target_app_url: str) -> None:
     candidates = await _capture_candidates_on_locators_page(target_app_url)
     assert candidates["bare"], candidates
-    assert candidates["bare"][0]["strategy"] == "css_scoped"
-    assert not any(c["strategy"] in ("testid", "aria", "text", "label") for c in candidates["bare"])
+    # `id` is now its own dedicated tier (was folded into `css_scoped`).
+    assert candidates["bare"][0]["strategy"] == "id"
+    assert not any(
+        c["strategy"] in ("testid", "data_attr", "aria", "text", "label")
+        for c in candidates["bare"]
+    )
 
 
 @pytest.mark.asyncio
@@ -383,3 +634,71 @@ def test_derive_locators_and_fragile_proportion_against_real_postgres() -> None:
         assert legacy_locators[0].value == '[data-testid="legacy"]'
         assert legacy_locators[0].strategy == "testid"
         assert legacy_locators[0].fragile is False
+
+
+@pytest.mark.skipif(not _db_available(), reason="requires PostgreSQL reachable")
+def test_derive_locators_folds_live_invalid_into_fragile_flag() -> None:
+    """A candidate that resolved to 0 (or >1) elements live during capture
+    must persist as `fragile=True` even when its own `fragile` flag (the
+    syntactic heuristic) was `False` — a stale/incorrect `data-testid` is not
+    a syntactically fragile value, but it is exactly as untrustworthy as one."""
+    from discovery_worker.db import engine, init_db
+    from domain import Application, Component, ComponentLocator, DiscoveryRun, Organization, Page
+    from sqlmodel import Session, select
+
+    init_db()
+    with Session(engine) as session:
+        org = Organization(name=f"Org {uuid.uuid4()}")
+        session.add(org)
+        session.flush()
+        application = Application(
+            organization_id=org.id,
+            name="Live Invalid Locator Test App",
+            url="https://example.test",
+            environment="test",
+            secret_ref="unused",
+        )
+        session.add(application)
+        session.flush()
+        run = DiscoveryRun(application_id=application.id)
+        session.add(run)
+        session.flush()
+        page = Page(application_id=application.id, discovery_run_id=run.id, url="/")
+        session.add(page)
+        session.flush()
+
+        component = Component(
+            application_id=application.id,
+            page_id=page.id,
+            form_id=None,
+            name="Ghost Button",
+            type="button",
+            action="click",
+        )
+        session.add(component)
+        session.flush()
+
+        _derive_locators(
+            session,
+            component,
+            [
+                (
+                    None,
+                    [
+                        {
+                            "strategy": "testid",
+                            "value": '[data-testid="ghost"]',
+                            "fragile": False,
+                            "live_match_count": 0,
+                        }
+                    ],
+                )
+            ],
+        )
+
+        [locator] = list(
+            session.exec(
+                select(ComponentLocator).where(ComponentLocator.component_id == component.id)
+            ).all()
+        )
+        assert locator.fragile is True

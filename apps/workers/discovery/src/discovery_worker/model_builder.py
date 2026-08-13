@@ -132,24 +132,43 @@ def _selector_strategy(value: str) -> str:
 
 
 # Story 2.21 AC 1/2/4: tier order for the ranked-candidate shape crawler.py's
-# `_build_locator_candidates` produces (`{"strategy", "value", "fragile"}`).
-# Lower is more durable; a fragile match is penalized regardless of tier so
-# it always sorts below every non-fragile candidate.
+# `_build_locator_candidates` produces (`{"strategy", "value", "fragile"}`,
+# now also optionally carrying `"live_match_count"` — see `_is_live_invalid`
+# below). Lower is more durable; a fragile match is penalized regardless of
+# tier so it always sorts below every non-fragile candidate.
+#
+# `[FIXED — locator reliability hardening]` Must stay identical to crawler.py's
+# `_LOCATOR_TIER_ORDER` — duplicated across both files by existing convention
+# (see the note there) rather than extracted to a shared constant.
 _CANDIDATE_TIER_ORDER = {
     "testid": 0,
-    "aria": 1,
-    "text": 2,
-    "label": 3,
-    "css_scoped": 4,
-    "css_absolute": 5,
+    "data_attr": 1,
+    "id": 2,
+    "name": 3,
+    "type_name": 4,
+    "aria": 5,
+    "label": 5,
+    "css_scoped": 6,
+    "css_absolute": 7,
+    "text": 8,
 }
 _FRAGILE_SCORE_PENALTY = 10
+
+
+def _is_live_invalid(candidate: dict) -> bool:
+    """Mirrors crawler.py's `_is_live_invalid` — a candidate whose live
+    `.count()` was checked during capture and resolved to 0 or >1 elements.
+    `None` (never checked, or the check was inconclusive) is not invalid."""
+    count = candidate.get("live_match_count")
+    return count is not None and count != 1
 
 
 def _rank_locator_candidates(candidate_lists: list[list[dict] | None]) -> list[dict]:
     """Flattens every raw capture's candidate list (one per Action/FormField
     in the group), dedupes by (strategy, value), and sorts non-fragile
-    before fragile, then by tier — AC 2's down-rank, never discard."""
+    before fragile, then by tier — AC 2's down-rank, never discard. A
+    live-invalid candidate (matched 0 or >1 elements when captured) sorts
+    below everything else, same down-rank-never-discard treatment."""
     seen: set[tuple[str, str]] = set()
     flattened: list[dict] = []
     for candidates in candidate_lists:
@@ -163,6 +182,7 @@ def _rank_locator_candidates(candidate_lists: list[list[dict] | None]) -> list[d
             flattened.append(candidate)
     flattened.sort(
         key=lambda c: (
+            _is_live_invalid(c),
             bool(c.get("fragile")),
             _CANDIDATE_TIER_ORDER.get(c.get("strategy", ""), 9),
         )
@@ -252,6 +272,11 @@ def _derive_locators(
         if value in existing_values:
             priority += 1
             continue
+        # `[FIXED — locator reliability hardening]` Fold live-invalidity
+        # (matched 0 or >1 elements when captured, per crawler.py's new
+        # `.count()` check) into the persisted `fragile` flag — no new column
+        # needed; `_durability_score` above already penalizes `fragile=True`,
+        # so a live-invalid candidate's score reflects that automatically.
         session.add(
             ComponentLocator(
                 component_id=component.id,
@@ -259,7 +284,7 @@ def _derive_locators(
                 strategy=candidate.get("strategy", _selector_strategy(value)),
                 value=value,
                 priority=priority,
-                fragile=bool(candidate.get("fragile")),
+                fragile=bool(candidate.get("fragile")) or _is_live_invalid(candidate),
                 durability_score=_durability_score(candidate),
             )
         )

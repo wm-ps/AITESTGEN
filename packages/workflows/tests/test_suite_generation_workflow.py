@@ -100,3 +100,56 @@ async def test_suite_generation_workflow_recovers_a_scenario_in_a_later_wave() -
     # attempt (wave 2) — proves the recovery came from a second wave, not
     # from retry_policy alone.
     assert call_counts["scenario-2"] == 4
+
+
+@pytest.mark.asyncio
+async def test_suite_generation_workflow_threads_grounding_feedback_into_next_wave_input() -> None:
+    """Locator-grounding hardening: a Scenario whose Activity attempt raises
+    `ValueError("GROUNDING_VIOLATION: ...")` (generation_worker.
+    playwright_generation_activity's in-process retries exhausted) must have
+    that specific feedback carried into its next-wave input — a blind,
+    unchanged retry would just reproduce the same rejected locator."""
+    received_feedback: dict[str, list[str | None]] = {}
+
+    @activity.defn(name=PLAYWRIGHT_GENERATION_ACTIVITY_NAME)
+    async def _fake_playwright_generation_raises_grounding_violation_once(
+        input: PlaywrightGenerationActivityInput,
+    ) -> str:
+        received_feedback.setdefault(input.scenario_id, []).append(input.grounding_feedback)
+        if input.scenario_id == "scenario-2" and input.grounding_feedback is None:
+            raise ValueError(
+                "GROUNDING_VIOLATION: - page.locator('#invented') — '#invented' does not "
+                "match any locator actually discovered on this application during crawling."
+            )
+        return f"test-asset-for-{input.scenario_id}"
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=GENERATION_TASK_QUEUE,
+            workflows=[SuiteGenerationWorkflow],
+            activities=[
+                _fake_ensure_test_suite,
+                _fake_playwright_generation_raises_grounding_violation_once,
+            ],
+        ):
+            result = await env.client.execute_workflow(
+                SuiteGenerationWorkflow.run,
+                "journey-1",
+                id=f"suite-test-{uuid.uuid4()}",
+                task_queue=GENERATION_TASK_QUEUE,
+            )
+
+    assert sorted(result) == [
+        "test-asset-for-scenario-1",
+        "test-asset-for-scenario-2",
+        "test-asset-for-scenario-3",
+    ]
+    # scenario-2's every wave-1 attempt (retry_policy exhausts all 3) saw
+    # `grounding_feedback=None` (wave 1's default); its wave-2 attempt saw
+    # the extracted feedback text, not another blind `None`.
+    wave_1_feedback = received_feedback["scenario-2"][:3]
+    wave_2_feedback = received_feedback["scenario-2"][3]
+    assert all(f is None for f in wave_1_feedback)
+    assert wave_2_feedback is not None
+    assert "#invented" in wave_2_feedback

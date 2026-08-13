@@ -57,11 +57,35 @@ class _FakeAIProvider:
         scenario: Scenario,
         known_pages: list[dict] | None = None,
         known_locators: list[dict] | None = None,
+        grounding_feedback: str | None = None,
     ) -> TestAssetCode:
         self.calls.append(str(scenario.external_id))
         self.known_pages_calls.append(known_pages or [])
         self.known_locators_calls.append(known_locators or [])
         return TestAssetCode(code=self._code)
+
+
+class _SequencedAIProvider:
+    """Returns a different code string on each successive call, in order —
+    the last one repeats for any call beyond the list. Used to simulate a
+    first attempt producing a locator-grounding violation and a later
+    attempt (in-process retry, or a seeded wave-level `grounding_feedback`)
+    correcting it."""
+
+    def __init__(self, codes: list[str]) -> None:
+        self._codes = list(codes)
+        self.calls: list[dict] = []
+
+    async def generate_playwright(
+        self,
+        scenario: Scenario,
+        known_pages: list[dict] | None = None,
+        known_locators: list[dict] | None = None,
+        grounding_feedback: str | None = None,
+    ) -> TestAssetCode:
+        self.calls.append({"grounding_feedback": grounding_feedback})
+        index = min(len(self.calls) - 1, len(self._codes) - 1)
+        return TestAssetCode(code=self._codes[index])
 
 
 def _seed_journey(name: str = "Checkout") -> Journey:
@@ -649,3 +673,133 @@ def test_playwright_generation_activity_passes_empty_known_data_when_journey_has
 
     assert fake_provider.known_pages_calls == [[]]
     assert fake_provider.known_locators_calls == [[]]
+
+
+# --- locator-grounding hardening: in-process retry + wave-level seeding ---
+
+_GROUNDED_CODE = (
+    "import { test, expect } from '@playwright/test'\n\n"
+    "test('test_x', async ({ page }) => {\n"
+    "  const btn = page.locator('[data-testid=\"save\"]');\n"
+    "});\n"
+)
+_UNGROUNDED_CODE = (
+    "import { test, expect } from '@playwright/test'\n\n"
+    "test('test_x', async ({ page }) => {\n"
+    "  const btn = page.locator('#totally-invented');\n"
+    "});\n"
+)
+
+
+def _seed_scenario_with_grounding_data(journey: Journey) -> None:
+    """A Component with a real captured locator — needed for `GroundingContext`
+    to be non-empty, since an empty context short-circuits to "no violations"
+    (a Journey with nothing captured has nothing to ground against)."""
+    page = _seed_page(journey)
+    _seed_journey_step(journey, page, stage_label="Checkout")
+    _seed_component_with_locators(page, name="Save button", type_="button")
+
+
+def test_playwright_generation_activity_retries_in_process_on_grounding_violation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    init_db()
+    journey = _seed_journey()
+    _seed_scenario_with_grounding_data(journey)
+    scenario = _seed_scenario(journey)
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    fake_provider = _SequencedAIProvider([_UNGROUNDED_CODE, _GROUNDED_CODE])
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    asset_id = asyncio.run(
+        activities_module.playwright_generation_activity(
+            PlaywrightGenerationActivityInput(
+                scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+            )
+        )
+    )
+
+    # Two in-process attempts: the first's invented locator was rejected, the
+    # second (fed the first's specific violation as feedback) succeeded —
+    # never reaches the outer Temporal retry/wave machinery at all.
+    assert len(fake_provider.calls) == 2
+    assert fake_provider.calls[0]["grounding_feedback"] is None
+    assert "#totally-invented" in fake_provider.calls[1]["grounding_feedback"]
+    with Session(engine) as session:
+        test_asset = session.exec(
+            select(TestAsset).where(TestAsset.external_id == uuid.UUID(asset_id))
+        ).one()
+        assert test_asset.code == _GROUNDED_CODE
+
+
+def test_playwright_generation_activity_raises_grounding_violation_after_exhausting_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    init_db()
+    journey = _seed_journey()
+    _seed_scenario_with_grounding_data(journey)
+    scenario = _seed_scenario(journey)
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    fake_provider = _SequencedAIProvider([_UNGROUNDED_CODE])  # always ungrounded
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    with pytest.raises(ValueError, match="GROUNDING_VIOLATION"):
+        asyncio.run(
+            activities_module.playwright_generation_activity(
+                PlaywrightGenerationActivityInput(
+                    scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+                )
+            )
+        )
+
+    # 3 total attempts (1 initial + 2 in-process corrective retries), then
+    # gives up rather than looping forever.
+    assert len(fake_provider.calls) == 3
+    with Session(engine) as session:
+        assert (
+            session.exec(select(TestAsset).where(TestAsset.scenario_id == scenario.id)).first()
+            is None
+        )
+
+
+def test_playwright_generation_activity_seeds_first_attempt_with_wave_level_feedback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `grounding_feedback` already present on the input (threaded in by
+    `SuiteGenerationWorkflow` from a prior wave's rejected attempt) must reach
+    the very first `generate_playwright` call of this Activity attempt, not
+    just in-process retries after it."""
+    init_db()
+    journey = _seed_journey()
+    _seed_scenario_with_grounding_data(journey)
+    scenario = _seed_scenario(journey)
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    fake_provider = _SequencedAIProvider([_GROUNDED_CODE])
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    asyncio.run(
+        activities_module.playwright_generation_activity(
+            PlaywrightGenerationActivityInput(
+                scenario_id=str(scenario.external_id),
+                test_suite_id=prep.test_suite_id,
+                grounding_feedback="prior wave: #invented-earlier did not resolve",
+            )
+        )
+    )
+
+    assert len(fake_provider.calls) == 1
+    assert fake_provider.calls[0]["grounding_feedback"] == (
+        "prior wave: #invented-earlier did not resolve"
+    )

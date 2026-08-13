@@ -32,6 +32,32 @@ PLAYWRIGHT_GENERATION_ACTIVITY_NAME = "PlaywrightGenerationActivity"
 # still exhaust 3 waves at higher real concurrency than observed live.
 MAX_SCENARIO_WAVES = 3
 WAVE_COOLDOWN_SECONDS = 30
+# `generation_worker.playwright_generation_activity` raises
+# `ValueError(f"GROUNDING_VIOLATION: {feedback}")` when a Scenario's generated
+# locators still aren't grounded in real captured DOM data after its own
+# in-process retries — this sentinel is how the wave loop tells that failure
+# apart from an ordinary timeout/typecheck failure (which retries blind,
+# unchanged) so it can carry the specific feedback into the next wave.
+_GROUNDING_VIOLATION_SENTINEL = "GROUNDING_VIOLATION:"
+
+
+def _extract_grounding_feedback(error: BaseException) -> str | None:
+    """`workflow.execute_activity` raises a `temporalio.exceptions.
+    ActivityError` whose own `str()` is a generic "Activity task failed" —
+    never the Activity's actual raised message. The real message lives on
+    `.__cause__` (a `temporalio.exceptions.ApplicationError`, itself rendered
+    as `f"{exception_type}: {message}"`, e.g. `"ValueError: GROUNDING_
+    VIOLATION: ..."`) — confirmed empirically against the installed
+    temporalio SDK rather than assumed. Walk the whole `__cause__` chain
+    (not just one level) so this stays correct regardless of exact wrapping
+    depth across SDK versions."""
+    current: BaseException | None = error
+    while current is not None:
+        message = str(current)
+        if _GROUNDING_VIOLATION_SENTINEL in message:
+            return message.split(_GROUNDING_VIOLATION_SENTINEL, 1)[1].strip()
+        current = current.__cause__
+    return None
 
 
 @dataclass
@@ -49,6 +75,14 @@ class EnsureTestSuiteActivityResult:
 class PlaywrightGenerationActivityInput:
     scenario_id: str
     test_suite_id: str
+    # Locator-grounding hardening: when a prior wave's attempt for this
+    # Scenario raised a `GROUNDING_VIOLATION:`-prefixed error (a locator the
+    # LLM wrote that isn't backed by any real captured DOM data —
+    # `generation_worker.locator_grounding`), the extracted feedback text is
+    # threaded into the next wave's input so that retry actually corrects the
+    # named mistake instead of blindly repeating it. `None` (the default) for
+    # every wave-1 input and every non-grounding failure.
+    grounding_feedback: str | None = None
 
 
 @workflow.defn(name="SuiteGenerationWorkflow")
@@ -82,6 +116,10 @@ class SuiteGenerationWorkflow:
         # itself keep trying instead of a human having to notice and retry.
         pending = list(prep.scenario_ids)
         test_asset_ids: list[str] = []
+        # Locator-grounding hardening: a `GROUNDING_VIOLATION:`-raising
+        # Scenario's extracted feedback, carried forward into that same
+        # Scenario's next-wave input — see `PlaywrightGenerationActivityInput`.
+        feedback_by_scenario: dict[str, str] = {}
         for wave in range(MAX_SCENARIO_WAVES):
             if not pending:
                 break
@@ -90,7 +128,9 @@ class SuiteGenerationWorkflow:
                     workflow.execute_activity(
                         PLAYWRIGHT_GENERATION_ACTIVITY_NAME,
                         PlaywrightGenerationActivityInput(
-                            scenario_id=scenario_id, test_suite_id=prep.test_suite_id
+                            scenario_id=scenario_id,
+                            test_suite_id=prep.test_suite_id,
+                            grounding_feedback=feedback_by_scenario.get(scenario_id),
                         ),
                         # Generous for LLM latency, matching InferenceActivity's/
                         # ScenarioGenerationActivity's own timeout.
@@ -107,12 +147,16 @@ class SuiteGenerationWorkflow:
             for scenario_id, result in zip(pending, results, strict=True):
                 if isinstance(result, BaseException):
                     still_pending.append(scenario_id)
+                    feedback = _extract_grounding_feedback(result)
+                    if feedback:
+                        feedback_by_scenario[scenario_id] = feedback
                     continue
                 # Empty string is PlaywrightGenerationActivity's sentinel for
                 # "skipped, max_test_cases_per_application reached" — not a
                 # failure to retry, not a real TestAsset id either.
                 if result:
                     test_asset_ids.append(result)
+                    feedback_by_scenario.pop(scenario_id, None)
             pending = still_pending
 
             if pending and wave < MAX_SCENARIO_WAVES - 1:

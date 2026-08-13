@@ -192,10 +192,10 @@ decorative arrow/chevron glyph (e.g. `role=link[name="🏥\nHealth Plan\nFrom �
 to ₹50 L cover\n›"]`). That figure changes between runs/environments and the icon/chevron are \
 noise, so an exact match on the full string is guaranteed to break. Instead extract only the \
 stable entity-name fragment and match it with `getByRole(...)` using a partial/regex `name`, \
-e.g. `page.getByRole('link', {{ name: /Health Plan/ }})`. This applies to any card, list item, \
+e.g. `page.getByRole('link', {{ name: /Health Plan/i }})`. This applies to any card, list item, \
 or dashboard tile whose accessible name mixes an icon/title/dynamic-value/chevron this way — \
 not just this one example.
-{known_locators_listing}"""
+{known_locators_listing}{grounding_feedback_section}"""
 
 _PLAYWRIGHT_PROMPT_SYSTEM = """You are converting one integration test Scenario into a single, \
 executable Playwright (TypeScript, @playwright/test) test.
@@ -287,22 +287,44 @@ test('...', async ({{ page }}) => {{
   // ...rest of the test
 }});
 
+Page-readiness rule — `waitUntil: 'load'`/`'domcontentloaded'` alone can resolve before a \
+client-rendered app has painted anything real, and `waitForLoadState('networkidle')` alone can \
+hang well past ASSERTION_TIMEOUT_MS on an app with legitimate long-poll/analytics/websocket \
+traffic that never goes idle — neither is a safe universal proof that the page you actually \
+need is showing. The reliable pattern is: navigate with the cheapest possible `waitUntil`, then \
+prove readiness by waiting for a real, page-specific element — never a bare `body`, which is \
+visible the instant any HTML at all exists, working page or error page alike:
+const response = await page.goto(url, {{ waitUntil: 'commit', timeout: ASSERTION_TIMEOUT_MS }});
+if (!response || response.status() >= 400) {{
+  throw new Error(`Failed to load page. HTTP status: ${{response?.status()}}`);
+}}
+await assertNoServerError(page);
+// THEN wait for a specific element this page is known to have (a Known element locator, or a \
+// field/heading the Test steps name) — this is what actually proves the right page finished \
+// rendering, not merely that navigation returned.
+await expect(specificElementLocator).toBeVisible({{ timeout: ASSERTION_TIMEOUT_MS }});
+Only fall back to `page.waitForLoadState('networkidle', {{ timeout: ASSERTION_TIMEOUT_MS }})` as \
+an ADDITIONAL wait after the element check above, never as the sole or first readiness signal — \
+some applications' polling/analytics traffic never lets `networkidle` resolve at all.
+
 Session/navigation rules — many target applications are session-dependent and will return \
 a server error or broken markup if a deep link is the very first thing opened in a fresh \
 browser context with no prior cookies. Follow these rules for every test, not just login \
 Scenarios:
 
-1. Before navigating anywhere else, first visit the application's base URL ({base_url}) with \
-`{{ timeout: ASSERTION_TIMEOUT_MS }}` and wait for it to finish loading with `await \
-page.waitForLoadState('networkidle', {{ timeout: ASSERTION_TIMEOUT_MS }})`. This establishes the \
-session/cookies a real user's browser would already have. Only after that initial visit \
-should the test navigate on to whatever page the Scenario's steps actually need (via \
-`page.goto`, or by clicking a discovered link/button). Never `page.goto()` straight to a \
-deep URL as the first action of the test.
+1. Before navigating anywhere else, declare `const BASE_URL = {base_url!r};` and first visit \
+it with `{{ waitUntil: 'commit', timeout: ASSERTION_TIMEOUT_MS }}`, then prove it actually \
+rendered via the Page-readiness rule above (never just `toBeVisible()` on `body`). This \
+establishes the session/cookies a real user's browser would already have. Only after that \
+initial visit — and only if the Scenario's steps need a different page — declare `const \
+REQUIRED_URL = "<the page the steps actually need>";` and navigate on to it the same way \
+(`page.goto(REQUIRED_URL, {{ waitUntil: 'commit', timeout: ASSERTION_TIMEOUT_MS }})`, then the \
+same readiness proof), or reach it by clicking a discovered link/button instead. Never \
+`page.goto()` straight to a deep URL as the first action of the test.
 
 2. After every `page.goto(...)` call, capture the returned response and verify it \
 succeeded before doing anything else with the page:
-const response = await page.goto(url, {{ timeout: ASSERTION_TIMEOUT_MS }});
+const response = await page.goto(url, {{ waitUntil: 'commit', timeout: ASSERTION_TIMEOUT_MS }});
 if (!response || response.status() >= 400) {{
   throw new Error(`Failed to load page. HTTP status: ${{response?.status()}}`);
 }}
@@ -335,6 +357,54 @@ Never guess a redirect target from convention (e.g. assuming a successful action
 `/` or "the home page") — if the destination isn't given by the Test steps or a Known page \
 match, verify the actual landing page via a content check rather than asserting an invented URL.
 
+Failure-taxonomy helpers — a bare `expect(locator).toBeVisible()` failing after \
+ASSERTION_TIMEOUT_MS tells you almost nothing about WHY: a genuinely broken locator, an \
+absent element, a still-loading page, a hidden element, a disabled element, or a locator \
+matching more than one element all produce the exact same generic timeout message. Define \
+these two helpers once near the top of the file and route every element interaction through \
+them instead of a bare `page.locator(...).first()`/`.click()` — this turns an ambiguous \
+timeout into a specific, actionable error:
+async function resolveUnique(page, selector, description) {{
+  const locator = page.locator(selector);
+  const count = await locator.count();
+  if (count === 0) {{
+    throw new Error(
+      `Element not found: ${{description}} (selector: ${{selector}}). Resolved to 0 ` +
+      `elements — either the page has not finished rendering, the element genuinely is not ` +
+      `on this page, or the wrong page loaded (current URL: ${{page.url()}}, title: ` +
+      `${{await page.title()}}).`
+    );
+  }}
+  if (count > 1) {{
+    throw new Error(
+      `Ambiguous locator: ${{description}} (selector: ${{selector}}) matched ${{count}} ` +
+      `elements — Playwright strict mode requires exactly one match. Narrow the selector.`
+    );
+  }}
+  return locator;
+}}
+async function clickWhenReady(page, selector, description) {{
+  const locator = await resolveUnique(page, selector, description);
+  const visible = await locator.isVisible();
+  const enabled = await locator.isEnabled();
+  if (!visible) {{
+    throw new Error(`Element hidden: ${{description}} (selector: ${{selector}}) exists but is ` +
+      `not visible — it may be behind a modal/dropdown that has not opened yet, or lazily ` +
+      `rendered content that has not appeared yet.`);
+  }}
+  if (!enabled) {{
+    throw new Error(`Element disabled: ${{description}} (selector: ${{selector}}) is visible ` +
+      `but disabled — the form may be incomplete, or the app may still be processing a prior ` +
+      `request.`);
+  }}
+  await locator.click({{ timeout: ASSERTION_TIMEOUT_MS }});
+}}
+Use `await resolveUnique(page, selector, description)` for locating any element you will only \
+assert on or fill, and `await clickWhenReady(page, selector, description)` for any element you \
+will click — including the combined CSS-attribute selectors the Locator rules above build. \
+Never reintroduce a bare `.first()` once a `resolveUnique`/`clickWhenReady` call is available \
+for that interaction.
+
 Selector-collision rule — default `exact: true` on `getByLabel(...)`, `getByText(...)`, and \
 `getByRole(..., {{ name }})` whenever the given text/label could plausibly be a substring of \
 another label on the same page (e.g. `getByLabel('Password')` also matches "Confirm \
@@ -346,16 +416,31 @@ string at all. Separately: when an element has both an `id`/`name`/`data-testid`
 AND label/text, prefer the attribute — attributes can't collide via substring the way label \
 text can.
 
-Locator rules — accessible-name-based locators (`getByLabel`, `getByRole` on non-button \
-elements) are NOT safe for form fields: a name/label regex like `/password/i` will also \
-match unrelated controls that merely mention the same word (e.g. a "Show password" \
-visibility-toggle button), causing a Playwright strict-mode violation ("resolved to N \
-elements"). For every form field, prefer a CSS attribute locator restricted to the \
-correct element type over any accessibility-based locator, in this priority order:
+Locator rules — pick the locator for ANY element (form field, button, link) by this exact \
+priority order, from strongest to weakest, and never reach for a weaker tier when the Known \
+element locators above (or the field/button's own captured attributes) already give you a \
+stronger one:
+1. A unique `data-testid` (or `data-test`/`data-cy`) attribute.
+2. Another stable `data-*` attribute that isn't a framework-injected style/hash marker.
+3. A unique `id` attribute.
+4. The element's `name` attribute (form fields).
+5. For an `<input>`, its `type` combined with its `name` (`input[type="..."][name="..."]`) — \
+useful when `name` alone isn't known to be unique on the page.
+6. `role` + accessible name via `getByRole(...)`, ALWAYS with a case-insensitive regex \
+(`/i`), never an exact-case string literal — the real markup's capitalization is not \
+guaranteed to match whatever case a business-language step description implies.
+7. A stable CSS attribute selector scoped to the element's type.
+8. Raw visible text (`getByText`) — last resort only, and never for a form field \
+(input/select/textarea have no text content to match).
 
-For a password field: `input[name="password"]`, then `input[type="password"]`, then \
-`input[id="password"]`, then `getByPlaceholder(/password/i)`, and only as a last resort \
-`getByLabel(/password/i)`.
+accessible-name-based locators (`getByLabel`, `getByRole` on non-button elements) are NOT \
+safe for form fields: a name/label regex like `/password/i` will also match unrelated \
+controls that merely mention the same word (e.g. a "Show password" visibility-toggle \
+button), causing a Playwright strict-mode violation ("resolved to N elements"). For every \
+form field, prefer a CSS attribute locator restricted to the correct element type over any \
+accessibility-based locator, following tiers 3-5 above. For example, for a password field: \
+`input[name="password"]`, then `input[type="password"]`, then `input[id="password"]`, then \
+`getByPlaceholder(/password/i)`, and only as a last resort `getByLabel(/password/i)`.
 
 For a username/email field: `input[name="username"]`, `input[name="email"]`, \
 `input[type="email"]`, then `getByPlaceholder(/user|email/i)`, and only as a last resort \
@@ -369,14 +454,17 @@ name (what a sighted user reads next to the field) — never the field's interna
 model-property string.
 
 Combine the CSS-attribute options as one comma-separated selector passed to `page.locator(...)` \
-and take `.first()`, so any one of them matching resolves the field unambiguously. Assert \
-visibility (with `{{ timeout: ASSERTION_TIMEOUT_MS }}`) before interacting, so a locator mismatch fails \
-clearly instead of a confusing fill/click error. For example, instead of:
+and resolve it through the `resolveUnique` helper (see the Failure-taxonomy helpers section \
+below) rather than a bare `.first()` — `.first()` silently accepts an accidentally-ambiguous \
+selector matching the wrong element, while `resolveUnique` fails loudly with an actionable \
+diagnostic instead. For example, instead of:
 await page.getByLabel(/password/i).fill(password);
 generate:
-const passwordField = page.locator(
-  'input[name="password"], input[type="password"], input[id="password"]'
-).first();
+const passwordField = await resolveUnique(
+  page,
+  'input[name="password"], input[type="password"], input[id="password"]',
+  'password field'
+);
 await expect(passwordField).toBeVisible({{ timeout: ASSERTION_TIMEOUT_MS }});
 await passwordField.fill(password);
 
@@ -396,7 +484,18 @@ as an exact match — it will break the moment the dynamic figure changes. Match
 stable entity-name fragment via partial/regex `name`:
 Don't: `page.locator('role=link[name="🏥\nHealth Plan\nFrom ₹ 12,500/yr · Up to ₹50 L cover\n\
 ›"]')`
-Do: `page.getByRole('link', {{ name: /Health Plan/ }})`
+Do: `page.getByRole('link', {{ name: /Health Plan/i }})`
+
+Case-insensitivity rule — ALWAYS pass a case-insensitive regex (the `/i` flag) to \
+`getByRole(..., {{ name }})`, `getByLabel(...)`, `getByPlaceholder(...)`, and `getByText(...)` \
+when matching against a business-language description of an element's text (e.g. a step \
+saying "click Login" does not guarantee the real markup renders `<button>Login</button>` \
+rather than `LOGIN`/`login`/`Log In`) — never assume the exact capitalization implied by a \
+step description or Scenario name matches the real DOM. The only exception is a `getByLabel`/ \
+`getByText`/`getByPlaceholder` argument taken verbatim from a Known element locator or from \
+literal text explicitly given via Test data/Expected result above — that text is already the \
+real captured/given value, so match it exactly (still case-insensitively is fine, but never \
+paraphrase or re-case it).
 
 Field-level validation rules — when a step checks that a field shows a validation/error \
 state (e.g. "shows required field error", "marks the field invalid"), do NOT search the \
@@ -477,6 +576,26 @@ def _describe_known_locators(known_locators: list[dict[str, str]] | None) -> str
         return f"- {prefix} -> {loc['selector']}"
 
     return "\n".join(_describe_one(loc) for loc in known_locators)
+
+
+# Grounding-violation feedback loop (`generation_worker.locator_grounding`):
+# when a prior attempt's generated code used a locator that isn't backed by
+# any real captured DOM data, `PlaywrightGenerationActivity` retries in-process
+# with that specific violation named here — so a wave 2/3 retry actually
+# corrects the named mistake instead of blindly repeating it. Empty string
+# when `None` — zero effect on the prompt for every call that never hits a
+# violation (the overwhelming majority).
+_GROUNDING_FEEDBACK_SECTION = """
+
+A previous attempt at this exact test used one or more locators that do NOT match any \
+element actually discovered on this application during crawling, and were rejected before \
+being used. Do not repeat these mistakes — replace each one ONLY with the real alternative \
+given, or with another locator built strictly from the Known element locators above:
+{feedback}"""
+
+
+def _describe_grounding_feedback(feedback: str | None) -> str:
+    return _GROUNDING_FEEDBACK_SECTION.format(feedback=feedback) if feedback else ""
 
 
 # Story 2.10 AC 3: a short, plain-language (not JSON) opinion — this is
@@ -725,6 +844,7 @@ class HostedAIProvider:
         scenario: Scenario,
         known_pages: list[dict[str, str]] | None = None,
         known_locators: list[dict[str, str]] | None = None,
+        grounding_feedback: str | None = None,
     ) -> TestAssetCode:
         step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
         base_url = getattr(scenario, "base_url", None) or ""
@@ -742,6 +862,7 @@ class HostedAIProvider:
                         test_data_listing=_describe_test_data(scenario),
                         known_pages_listing=_describe_known_pages(known_pages),
                         known_locators_listing=_describe_known_locators(known_locators),
+                        grounding_feedback_section=_describe_grounding_feedback(grounding_feedback),
                     ),
                 },
             ],
