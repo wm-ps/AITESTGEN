@@ -479,6 +479,179 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/{external_id}/execution-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Execution Policy */
+        get: operations["get_execution_policy_applications__external_id__execution_policy_get"];
+        /**
+         * Update Execution Policy
+         * @description Upsert — without this, "Run All Tests" has nothing to validate a run
+         *     against and can never be clickable (decision from the grill-me design
+         *     review). `version` is bumped on every field change, never on a no-op
+         *     PUT, so a `TestRun`'s `execution_policy_version` snapshot stays a
+         *     meaningful "was this the policy in effect" marker.
+         */
+        put: operations["update_execution_policy_applications__external_id__execution_policy_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/test-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Test Runs
+         * @description Paginated (Application Workspace feature's Runs tab) — every run for
+         *     an Application is kept forever (immutable history), so an unpaginated
+         *     list would grow without bound.
+         */
+        get: operations["list_test_runs_applications__external_id__test_runs_get"];
+        put?: never;
+        /**
+         * Trigger Test Run
+         * @description No body — every "Run All Tests" click is a fresh, full-scope run
+         *     covering every current TestAsset for the application (no rerun-scoped
+         *     mode). `PrepareTestRunActivity` creates the actual `TestRun` row
+         *     asynchronously, so the very first `GET .../test-runs` poll may briefly
+         *     see nothing yet — the same gap `TestSuiteResults.tsx`'s existing poll
+         *     loop already tolerates for generation.
+         *
+         *     ponytail: no `ExecutionPolicy` precondition check here anymore —
+         *     removed per explicit request so this never needs setup before it can
+         *     be clicked. `GET`/`PUT .../execution-policy` below still exist; nothing
+         *     on this path reads them. To restore the original gate: re-add a
+         *     `select(ExecutionPolicy)...` lookup and 409 when it's missing (see git
+         *     history for the removed version).
+         */
+        post: operations["trigger_test_run_applications__external_id__test_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/test-runs/{test_run_external_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Test Run
+         * @description The endpoint the frontend polls while a run is in flight (mirrors
+         *     `list_test_suites`'s shape).
+         */
+        get: operations["get_test_run_applications__external_id__test_runs__test_run_external_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/test-results/{external_id}/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Test Result Artifacts
+         * @description Presigned URLs (mirrors the existing screenshot-URL pattern used
+         *     elsewhere in this file) — never proxies the blob itself through this
+         *     API.
+         */
+        get: operations["list_test_result_artifacts_test_results__external_id__artifacts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/test-suite-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Test Suite Status
+         * @description Application Workspace's Test Suite tab — one row per current
+         *     TestAsset, showing its most recent result (or "not_run" if it's never
+         *     been executed) across every TestRun, not just the latest one.
+         */
+        get: operations["get_test_suite_status_applications__external_id__test_suite_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/test-assets/{external_id}/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Test Asset Code
+         * @description Lazy code fetch for the Suite tab's "View Code" button — keeps the
+         *     (large, rarely-viewed) source text out of `get_test_suite_status`'s
+         *     paginated rows.
+         */
+        get: operations["get_test_asset_code_test_assets__external_id__code_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Overview
+         * @description Application Workspace's Overview tab — one bundled endpoint (health,
+         *     stat counts, recent-run trend, latest run, last discovery) rather than
+         *     several, mirroring `get_home`'s own "aggregate once, don't reintroduce a
+         *     polling waterfall" rationale.
+         */
+        get: operations["get_overview_applications__external_id__overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/settings": {
         parameters: {
             query?: never;
@@ -603,10 +776,41 @@ export interface components {
              */
             created_at: string;
         };
+        /** ExecutionPolicyRead */
+        ExecutionPolicyRead: {
+            /** Execution Enabled */
+            execution_enabled: boolean;
+            /** Allowed Base Urls */
+            allowed_base_urls: string[];
+            /** Destructive Actions Permitted */
+            destructive_actions_permitted: boolean;
+            /** Video Capture Enabled */
+            video_capture_enabled: boolean;
+            /** Version */
+            version: number;
+        };
+        /** ExecutionPolicyUpdate */
+        ExecutionPolicyUpdate: {
+            /** Execution Enabled */
+            execution_enabled?: boolean | null;
+            /** Allowed Base Urls */
+            allowed_base_urls?: string[] | null;
+            /** Destructive Actions Permitted */
+            destructive_actions_permitted?: boolean | null;
+            /** Video Capture Enabled */
+            video_capture_enabled?: boolean | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** HealthRead */
+        HealthRead: {
+            /** Tier */
+            tier: string;
+            /** Headline */
+            headline: string;
         };
         /** HomeApplicationRead */
         HomeApplicationRead: {
@@ -714,12 +918,67 @@ export interface components {
             /** Screenshot Url */
             screenshot_url?: string | null;
         };
+        /** LatestRunSummaryRead */
+        LatestRunSummaryRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Passed Count */
+            passed_count: number;
+            /** Failed Count */
+            failed_count: number;
+            /** Blocked Count */
+            blocked_count: number;
+            /** Duration Ms */
+            duration_ms: number | null;
+        };
         /** LoginRequest */
         LoginRequest: {
             /** Email */
             email: string;
             /** Password */
             password: string;
+        };
+        /** OverviewRead */
+        OverviewRead: {
+            health: components["schemas"]["HealthRead"];
+            /** Total Tests */
+            total_tests: number;
+            /** Passed */
+            passed: number;
+            /** Failed */
+            failed: number;
+            /** Not Run */
+            not_run: number;
+            /** Pass Rate */
+            pass_rate: number | null;
+            /** Trend */
+            trend: components["schemas"]["RunTrendPointRead"][];
+            latest_run: components["schemas"]["LatestRunSummaryRead"] | null;
+            /** Last Discovery Started At */
+            last_discovery_started_at: string | null;
+        };
+        /** RunTrendPointRead */
+        RunTrendPointRead: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /** Pass Rate */
+            pass_rate: number | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /** ScenarioRead */
         ScenarioRead: {
@@ -815,6 +1074,46 @@ export interface components {
              */
             max_test_cases_per_application: number | "__unset__" | null;
         };
+        /** TestAssetCodeRead */
+        TestAssetCodeRead: {
+            /** Code */
+            code: string;
+        };
+        /** TestAssetStatusPageRead */
+        TestAssetStatusPageRead: {
+            /** Items */
+            items: components["schemas"]["TestAssetStatusRead"][];
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total */
+            total: number;
+        };
+        /** TestAssetStatusRead */
+        TestAssetStatusRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Type */
+            type: string;
+            /** Steps */
+            steps: string[];
+            /** Status */
+            status: string;
+            /** Last Run At */
+            last_run_at: string | null;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Error Message */
+            error_message: string | null;
+            /** Latest Test Result Id */
+            latest_test_result_id: string | null;
+        };
         /** TestCaseRead */
         TestCaseRead: {
             /**
@@ -877,6 +1176,96 @@ export interface components {
             value?: string | null;
             /** Is Sensitive */
             is_sensitive?: boolean | null;
+        };
+        /** TestResultArtifactRead */
+        TestResultArtifactRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Artifact Type */
+            artifact_type: string;
+            /** Content Type */
+            content_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Url */
+            url: string;
+        };
+        /** TestResultRead */
+        TestResultRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Scenario Name */
+            scenario_name: string;
+            /** Status */
+            status: string;
+            /** Duration Ms */
+            duration_ms: number | null;
+            /** Error Message */
+            error_message: string | null;
+            /** Stack Trace */
+            stack_trace: string | null;
+            /** Blocked Reason */
+            blocked_reason: string | null;
+        };
+        /** TestRunPageRead */
+        TestRunPageRead: {
+            /** Items */
+            items: components["schemas"]["TestRunRead"][];
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Total */
+            total: number;
+        };
+        /** TestRunRead */
+        TestRunRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Status */
+            status: string;
+            /** Trigger */
+            trigger: string;
+            /** Pass Rate */
+            pass_rate: number | null;
+            /** Total Count */
+            total_count: number;
+            /** Passed Count */
+            passed_count: number;
+            /** Failed Count */
+            failed_count: number;
+            /** Timed Out Count */
+            timed_out_count: number;
+            /** Errored Count */
+            errored_count: number;
+            /** Blocked Count */
+            blocked_count: number;
+            /** Blocked Reason */
+            blocked_reason: string | null;
+            /** Environment Snapshot */
+            environment_snapshot: string;
+            /** Target Base Url Snapshot */
+            target_base_url_snapshot: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Started At */
+            started_at: string | null;
+            /** Completed At */
+            completed_at: string | null;
+            /** Results */
+            results?: components["schemas"]["TestResultRead"][] | null;
         };
         /** TestSuiteRead */
         TestSuiteRead: {
@@ -2026,6 +2415,316 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_execution_policy_applications__external_id__execution_policy_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionPolicyRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_execution_policy_applications__external_id__execution_policy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExecutionPolicyUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionPolicyRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_test_runs_applications__external_id__test_runs_get: {
+        parameters: {
+            query?: {
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestRunPageRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trigger_test_run_applications__external_id__test_runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_test_run_applications__external_id__test_runs__test_run_external_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+                test_run_external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestRunRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_test_result_artifacts_test_results__external_id__artifacts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestResultArtifactRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_test_suite_status_applications__external_id__test_suite_status_get: {
+        parameters: {
+            query?: {
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestAssetStatusPageRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_test_asset_code_test_assets__external_id__code_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestAssetCodeRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_overview_applications__external_id__overview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OverviewRead"];
                 };
             };
             /** @description Validation Error */

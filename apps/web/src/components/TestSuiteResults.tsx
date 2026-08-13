@@ -92,7 +92,7 @@ function ChevronIcon({ size, color, open }: { size: number; color: string; open:
   )
 }
 
-function StatTile({ icon, value, label }: { icon: React.ReactNode; value: string | number; label: string }) {
+export function StatTile({ icon, value, label }: { icon: React.ReactNode; value: string | number; label: string }) {
   return (
     <div
       style={{
@@ -142,7 +142,10 @@ const TYPE_BADGE: Record<string, { label: string; background: string; color: str
   edge: { label: 'Edge Case', background: 'var(--warn-wash)', color: 'var(--warn-strong)' },
 }
 
-function CodeModal({ testCase, onClose }: { testCase: TestCaseRead; onClose: () => void }) {
+// Loosened to `{ name, code }` rather than the full `TestCaseRead` so the
+// Application Workspace's Test Suite tab (which only has a lazily-fetched
+// code string, not a whole TestCaseRead) can reuse this modal too.
+export function CodeModal({ testCase, onClose }: { testCase: { name: string; code: string }; onClose: () => void }) {
   return (
     <div
       role="dialog"
@@ -220,12 +223,14 @@ function CodeModal({ testCase, onClose }: { testCase: TestCaseRead; onClose: () 
 export function TestSuiteResults({
   applicationId,
   onGoToDashboard,
+  onRunAllTests,
   furthestCount,
   onStepClick,
   onPrevious,
 }: {
   applicationId: string
   onGoToDashboard: () => void
+  onRunAllTests: () => void
   furthestCount: number
   onStepClick?: (key: StepKey) => void
   onPrevious?: () => void
@@ -434,6 +439,23 @@ export function TestSuiteResults({
                 >
                   <DownloadIcon />
                   {downloading ? <LoadingDots label="Downloading" /> : 'Download Test Suite'}
+                </button>
+                <button
+                  type="button"
+                  onClick={onRunAllTests}
+                  style={{
+                    padding: '9px 20px',
+                    background: 'rgba(255,255,255,0.16)',
+                    color: '#FFFFFF',
+                    border: '1px solid rgba(255,255,255,0.5)',
+                    borderRadius: 'var(--radius)',
+                    fontSize: 13.5,
+                    fontWeight: 700,
+                    fontFamily: 'inherit',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Run All Tests
                 </button>
                 <button
                   type="button"

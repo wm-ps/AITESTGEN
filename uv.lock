@@ -10,9 +10,12 @@ members = [
     "delivery-adapters",
     "discovery-worker",
     "domain",
+    "execution-worker",
     "generation-worker",
     "object-store",
+    "safety-classifier",
     "secrets-client",
+    "test-suite-assembler",
     "workflows",
 ]
 
@@ -97,9 +100,11 @@ dependencies = [
     { name = "itsdangerous" },
     { name = "object-store" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "safety-classifier" },
     { name = "secrets-client" },
     { name = "sqlmodel" },
     { name = "temporalio" },
+    { name = "test-suite-assembler" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "workflows" },
 ]
@@ -119,9 +124,11 @@ requires-dist = [
     { name = "itsdangerous", specifier = ">=2.2.0" },
     { name = "object-store", editable = "packages/object_store" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "safety-classifier", editable = "packages/safety_classifier" },
     { name = "secrets-client", editable = "packages/secrets_client" },
     { name = "sqlmodel", specifier = ">=0.0.24" },
     { name = "temporalio", specifier = ">=1.9" },
+    { name = "test-suite-assembler", editable = "packages/test_suite_assembler" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
     { name = "workflows", editable = "packages/workflows" },
 ]
@@ -293,6 +300,7 @@ dependencies = [
     { name = "object-store" },
     { name = "playwright" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "safety-classifier" },
     { name = "secrets-client" },
     { name = "sqlmodel" },
     { name = "temporalio" },
@@ -315,6 +323,7 @@ requires-dist = [
     { name = "object-store", editable = "packages/object_store" },
     { name = "playwright", specifier = ">=1.57" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "safety-classifier", editable = "packages/safety_classifier" },
     { name = "secrets-client", editable = "packages/secrets_client" },
     { name = "sqlmodel", specifier = ">=0.0.24" },
     { name = "temporalio", specifier = ">=1.9" },
@@ -346,6 +355,45 @@ requires-dist = [
 ]
 
 [[package]]
+name = "execution-worker"
+version = "0.1.0"
+source = { editable = "apps/workers/execution" }
+dependencies = [
+    { name = "domain" },
+    { name = "object-store" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "secrets-client" },
+    { name = "sqlmodel" },
+    { name = "temporalio" },
+    { name = "test-suite-assembler" },
+    { name = "workflows" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "domain", editable = "packages/domain" },
+    { name = "object-store", editable = "packages/object_store" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "secrets-client", editable = "packages/secrets_client" },
+    { name = "sqlmodel", specifier = ">=0.0.24" },
+    { name = "temporalio", specifier = ">=1.9" },
+    { name = "test-suite-assembler", editable = "packages/test_suite_assembler" },
+    { name = "workflows", editable = "packages/workflows" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.3" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+]
+
+[[package]]
 name = "fastapi"
 version = "0.139.0"
 source = { registry = "https://pypi.org/simple" }
@@ -369,6 +417,7 @@ dependencies = [
     { name = "ai-provider" },
     { name = "domain" },
     { name = "psycopg", extra = ["binary"] },
+    { name = "safety-classifier" },
     { name = "sqlmodel" },
     { name = "temporalio" },
     { name = "workflows" },
@@ -385,6 +434,7 @@ requires-dist = [
     { name = "ai-provider", editable = "packages/ai_provider" },
     { name = "domain", editable = "packages/domain" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "safety-classifier", editable = "packages/safety_classifier" },
     { name = "sqlmodel", specifier = ">=0.0.24" },
     { name = "temporalio", specifier = ">=1.9" },
     { name = "workflows", editable = "packages/workflows" },
@@ -946,6 +996,21 @@ wheels = [
 ]
 
 [[package]]
+name = "safety-classifier"
+version = "0.1.0"
+source = { editable = "packages/safety_classifier" }
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.3" }]
+
+[[package]]
 name = "secrets-client"
 version = "0.1.0"
 source = { editable = "packages/secrets_client" }
@@ -1036,6 +1101,29 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/1c/e1/dbd57de0f5090891850c2ee5490319834a12b704076b11f32a4a149998d4/temporalio-1.30.0-cp310-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:47b156138de30c2cd6723d5bfc06a30abcf680344c5481abb31f2a98a9b1f809", size = 14833364, upload-time = "2026-07-02T21:04:40.454Z" },
     { url = "https://files.pythonhosted.org/packages/30/2a/6d41289c11465ba276a8b417f31d2e469f0fe4b8afacd61d5244151c5fce/temporalio-1.30.0-cp310-abi3-win_amd64.whl", hash = "sha256:3adee28d5ec47bd6309a5eeef7b00126373f119bc5c1b058a34de098542f4da7", size = 15181893, upload-time = "2026-07-02T21:04:43.609Z" },
 ]
+
+[[package]]
+name = "test-suite-assembler"
+version = "0.1.0"
+source = { editable = "packages/test_suite_assembler" }
+dependencies = [
+    { name = "domain" },
+    { name = "sqlmodel" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "domain", editable = "packages/domain" },
+    { name = "sqlmodel", specifier = ">=0.0.24" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8.3" }]
 
 [[package]]
 name = "types-protobuf"

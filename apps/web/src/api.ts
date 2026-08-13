@@ -35,6 +35,103 @@ export type SettingsRead = {
   max_test_cases_per_application: number | null
 }
 export type SettingsUpdate = Partial<SettingsRead>
+// Not in api-types.gen.ts yet (backend schema is new, regenerate via
+// `npm run generate:api-types` once the API is running) — added by hand.
+export type ExecutionPolicyRead = {
+  execution_enabled: boolean
+  allowed_base_urls: string[]
+  destructive_actions_permitted: boolean
+  video_capture_enabled: boolean
+  version: number
+}
+export type ExecutionPolicyUpdate = Partial<ExecutionPolicyRead>
+export type TestResultStatus = 'pending' | 'passed' | 'failed' | 'timed_out' | 'errored' | 'blocked'
+export type TestResultRead = {
+  id: string
+  scenario_name: string
+  status: TestResultStatus
+  duration_ms: number | null
+  error_message: string | null
+  stack_trace: string | null
+  blocked_reason: string | null
+}
+export type TestRunStatus = 'pending' | 'running' | 'completed' | 'blocked'
+export type TestRunRead = {
+  id: string
+  status: TestRunStatus
+  trigger: string
+  pass_rate: number | null
+  total_count: number
+  passed_count: number
+  failed_count: number
+  timed_out_count: number
+  errored_count: number
+  blocked_count: number
+  blocked_reason: string | null
+  environment_snapshot: string
+  target_base_url_snapshot: string
+  created_at: string
+  started_at: string | null
+  completed_at: string | null
+  results?: TestResultRead[] | null
+}
+export type TestRunPageRead = {
+  items: TestRunRead[]
+  page: number
+  page_size: number
+  total: number
+}
+export type TestResultArtifactRead = {
+  id: string
+  artifact_type: 'screenshot' | 'trace' | 'video'
+  content_type: string
+  size_bytes: number
+  url: string
+}
+// Application Workspace feature (Overview / Test Suite / Runs tabs) — not in
+// api-types.gen.ts yet, added by hand per the same convention as the types
+// above.
+export type SuiteRowStatus = 'passed' | 'failed' | 'not_run'
+export type TestAssetStatusRead = {
+  id: string
+  name: string
+  type: string
+  steps: string[]
+  status: SuiteRowStatus
+  last_run_at: string | null
+  duration_ms: number | null
+  error_message: string | null
+  latest_test_result_id: string | null
+}
+export type TestAssetStatusPageRead = {
+  items: TestAssetStatusRead[]
+  page: number
+  page_size: number
+  total: number
+}
+export type TestAssetCodeRead = { code: string }
+export type HealthTier = 'healthy' | 'needs_attention' | 'critical'
+export type HealthRead = { tier: HealthTier; headline: string }
+export type RunTrendPointRead = { run_id: string; pass_rate: number | null; created_at: string }
+export type LatestRunSummaryRead = {
+  id: string
+  created_at: string
+  passed_count: number
+  failed_count: number
+  blocked_count: number
+  duration_ms: number | null
+}
+export type OverviewRead = {
+  health: HealthRead
+  total_tests: number
+  passed: number
+  failed: number
+  not_run: number
+  pass_rate: number | null
+  trend: RunTrendPointRead[]
+  latest_run: LatestRunSummaryRead | null
+  last_discovery_started_at: string | null
+}
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
@@ -128,6 +225,31 @@ export const api = {
   getSettings: () => request<SettingsRead>('/settings'),
   updateSettings: (payload: SettingsUpdate) =>
     request<SettingsRead>('/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
+  getExecutionPolicy: (applicationId: string) =>
+    request<ExecutionPolicyRead>(`/applications/${applicationId}/execution-policy`),
+  updateExecutionPolicy: (applicationId: string, payload: ExecutionPolicyUpdate) =>
+    request<ExecutionPolicyRead>(`/applications/${applicationId}/execution-policy`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  triggerTestRun: (applicationId: string) =>
+    request<{ started: boolean }>(`/applications/${applicationId}/test-runs`, { method: 'POST' }),
+  listTestRuns: (applicationId: string, page = 1, pageSize = 10) =>
+    request<TestRunPageRead>(
+      `/applications/${applicationId}/test-runs?page=${page}&page_size=${pageSize}`,
+    ),
+  getTestRun: (applicationId: string, testRunId: string) =>
+    request<TestRunRead>(`/applications/${applicationId}/test-runs/${testRunId}`),
+  listTestResultArtifacts: (testResultId: string) =>
+    request<TestResultArtifactRead[]>(`/test-results/${testResultId}/artifacts`),
+  getTestSuiteStatus: (applicationId: string, page = 1, pageSize = 10) =>
+    request<TestAssetStatusPageRead>(
+      `/applications/${applicationId}/test-suite-status?page=${page}&page_size=${pageSize}`,
+    ),
+  getTestAssetCode: (testAssetId: string) =>
+    request<TestAssetCodeRead>(`/test-assets/${testAssetId}/code`),
+  getOverview: (applicationId: string) =>
+    request<OverviewRead>(`/applications/${applicationId}/overview`),
   // Not built on request<T>() — that helper always calls response.json(),
   // which throws on a binary zip body (Story 4.3).
   downloadTestSuiteProject: async (applicationId: string) => {

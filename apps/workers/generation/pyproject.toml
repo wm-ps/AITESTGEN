@@ -8,6 +8,7 @@ dependencies = [
     "workflows",
     "domain",
     "ai-provider",
+    "safety-classifier",
     "sqlmodel>=0.0.24",
     "psycopg[binary]>=3.2",
 ]
@@ -22,6 +23,7 @@ dev = [
 workflows = { workspace = true }
 domain = { workspace = true }
 ai-provider = { workspace = true }
+safety-classifier = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

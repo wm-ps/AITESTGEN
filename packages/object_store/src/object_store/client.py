@@ -5,7 +5,11 @@ Shared between apps/workers/discovery (writes screenshots via `put`) and
 apps/api (reads them back via `presigned_get_url` for the journey-steps
 endpoint) — originally lived inside apps/workers/discovery alone (Story 2.2)
 since no caller outside it needed object storage yet; extracted here once
-apps/api became a second consumer.
+apps/api became a second consumer. `put_test_artifact` (Run All Tests
+feature) is a second writer, `apps/workers/execution`, storing
+failure-capture screenshots/traces under a `test-runs/` prefix rather than
+`discovery-runs/` — same bucket, same client, just a different key prefix
+per producer.
 
 Backend is real AWS S3 (Story 2.8) — the local/CI MinIO backend from Story 2.2
 was removed once local dev also moved to pointing at real S3 (see this repo's
@@ -38,6 +42,11 @@ class ObjectStore:
 
     def put(self, data: bytes, discovery_run_id: uuid.UUID) -> str:
         key = f"discovery-runs/{discovery_run_id}/{uuid.uuid4()}"
+        self._s3_client.put_object(Bucket=self._bucket, Key=key, Body=data)
+        return key
+
+    def put_test_artifact(self, data: bytes, test_run_id: uuid.UUID) -> str:
+        key = f"test-runs/{test_run_id}/{uuid.uuid4()}"
         self._s3_client.put_object(Bucket=self._bucket, Key=key, Body=data)
         return key
 

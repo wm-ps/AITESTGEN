@@ -13,6 +13,14 @@ matching code (Task 2). An action matching none of the three lists is never
 Safe by default: it falls into the Ambiguous bucket alongside an explicit
 Ambiguous-list match, and posture resolves it exactly the same way (AC 1/2).
 
+`classify()` and its three pattern lists live in `packages/safety_classifier`
+(Run All Tests feature) — extracted so `generation_worker` can reuse the
+exact same classification at Scenario-generation time (persisted as
+`Scenario.safety_classification`) without depending on this worker's own
+package. Re-imported here unchanged; `evaluate()`/`SafetyState`/
+`consult_ai` below (the live-crawl posture-resolution half) stay exactly
+where they were — this is a pure extraction, not a behavior change.
+
 AC 3's AI consultation (`consult_ai`) is real — tested against a failing/
 timing-out provider to prove the guarantee holds — but not called from the
 live crawl loop by default: it is supporting evidence only that never
@@ -26,58 +34,29 @@ posture-driven verdict does not need to change.
 
 import asyncio
 import logging
-import re
 from dataclasses import dataclass
+
+from safety_classifier import (
+    AMBIGUOUS_PATTERNS,
+    DESTRUCTIVE_PATTERNS,
+    SAFE_PATTERNS,
+    classify,
+)
 
 from discovery_worker.planner import ActionCandidate, SpecialistVerdict
 
 logger = logging.getLogger(__name__)
 
-# AC 1: seeded from the PRD's named examples. Destructive is checked first —
-# an accessible name matching both a destructive and a safe pattern (a
-# customized list could do this even though the seed lists don't overlap)
-# must never come out Safe.
-DESTRUCTIVE_PATTERNS = [
-    re.compile(rf"\b{verb}\b", re.IGNORECASE)
-    for verb in ("delete", "remove", "terminate", "transfer", "payment")
+__all__ = [
+    "AMBIGUOUS_PATTERNS",
+    "DESTRUCTIVE_PATTERNS",
+    "SAFE_PATTERNS",
+    "SafetyState",
+    "SafetyVerdict",
+    "classify",
+    "consult_ai",
+    "evaluate",
 ]
-SAFE_PATTERNS = [
-    re.compile(rf"\b{verb}\b", re.IGNORECASE)
-    for verb in (
-        "view",
-        "open",
-        "expand",
-        "collapse",
-        "navigate",
-        "tab",
-        "paginate",
-        "next page",
-        "previous page",
-        "search",
-        "filter",
-    )
-]
-AMBIGUOUS_PATTERNS = [
-    re.compile(rf"\b{verb}\b", re.IGNORECASE)
-    for verb in ("submit", "approve", "reject", "save", "confirm", "proceed")
-]
-
-
-def classify(label: str) -> tuple[str, str | None]:
-    """AC 1: returns (bucket, matched_list) where bucket is "safe" |
-    "destructive" | "ambiguous". `matched_list` names whichever list fired,
-    or `None` when the label matched nothing at all — still bucketed
-    "ambiguous" (an unmatched action is never Safe by default), but
-    distinguishable from a real Ambiguous-list match for diagnostics (AC 6)
-    and for deciding whether AI consultation would even apply (AC 3)."""
-    label = label or ""
-    if any(p.search(label) for p in DESTRUCTIVE_PATTERNS):
-        return "destructive", "destructive"
-    if any(p.search(label) for p in SAFE_PATTERNS):
-        return "safe", "safe"
-    if any(p.search(label) for p in AMBIGUOUS_PATTERNS):
-        return "ambiguous", "ambiguous"
-    return "ambiguous", None
 
 
 @dataclass(frozen=True)

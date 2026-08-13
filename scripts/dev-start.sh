@@ -49,6 +49,11 @@ if ! pgrep -f "generation_worker.worker" >/dev/null 2>&1; then
   "$ROOT/scripts/run-generation-worker.sh" >"$LOG_DIR/generation-worker.log" 2>&1 &
 fi
 
+if ! pgrep -f "execution_worker.worker" >/dev/null 2>&1; then
+  echo "[dev-up] starting execution worker..."
+  "$ROOT/scripts/run-execution-worker.sh" >"$LOG_DIR/execution-worker.log" 2>&1 &
+fi
+
 # Best-effort, backgrounded: refresh generated API types once the API
 # responds. Web is already up by now - this never blocks it.
 "$ROOT/scripts/wait-and-gen-types.sh" >"$LOG_DIR/typegen.log" 2>&1 &
@@ -60,7 +65,7 @@ cat <<EOF
   API:      http://localhost:8000/docs
   Temporal: http://localhost:8233
   Sign-in:  dev@example.com / devpassword123
-  Logs:     $LOG_DIR/{web,api,discovery-worker,generation-worker,typegen}.log
+  Logs:     $LOG_DIR/{web,api,discovery-worker,generation-worker,execution-worker,typegen}.log
   Tail:     tail -f $LOG_DIR/*.log
   Stop:     $ROOT/scripts/dev-stop.sh        (add --keep-docker to leave Postgres/Temporal/Vault up)
 EOF

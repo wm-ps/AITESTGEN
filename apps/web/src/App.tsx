@@ -13,6 +13,7 @@ import { SignIn } from './components/SignIn'
 import type { StepKey } from './components/Stepper'
 import { TestSuiteResults } from './components/TestSuiteResults'
 import { TopBar } from './components/TopBar'
+import { Workspace } from './components/workspace/Workspace'
 
 const VIEW_FOR_STEP: Record<StepKey, View> = {
   'connect-app': 'connect-app',
@@ -48,6 +49,7 @@ type View =
   | 'review-scenarios'
   | 'generate-suite'
   | 'test-suite-results'
+  | 'workspace'
   | 'settings'
 
 function App() {
@@ -72,6 +74,15 @@ function App() {
     const timeout = setTimeout(() => setErrorToast(null), 3000)
     return () => clearTimeout(timeout)
   }, [errorToast])
+
+  // Read once by Workspace on mount (it fully remounts each time `view`
+  // toggles away from 'workspace' and back) — lets "Run All Tests" land
+  // straight on the Runs tab with the new run auto-selected, while a plain
+  // dashboard resume lands on Overview as usual.
+  const [workspaceEntry, setWorkspaceEntry] = useState<{
+    initialTab: 'overview' | 'runs'
+    autoTriggerRun: boolean
+  }>({ initialTab: 'overview', autoTriggerRun: false })
 
   useEffect(() => {
     if (inviteToken) return
@@ -133,7 +144,8 @@ function App() {
         api.listTestSuites(app.id),
       ])
       setFurthestCount(suites.length > 0 ? 4 : scenarios.length > 0 ? 2 : 1)
-      setView(suites.length > 0 ? 'test-suite-results' : 'discover')
+      setWorkspaceEntry({ initialTab: 'overview', autoTriggerRun: false })
+      setView(suites.length > 0 ? 'workspace' : 'discover')
     } catch {
       setApplication(null)
       setErrorToast('Failed to load project. Please try again.')
@@ -237,9 +249,21 @@ function App() {
         <TestSuiteResults
           applicationId={application.id}
           onGoToDashboard={() => setView('home')}
+          onRunAllTests={() => {
+            setWorkspaceEntry({ initialTab: 'runs', autoTriggerRun: true })
+            setView('workspace')
+          }}
           furthestCount={furthestCount}
           onStepClick={onStepClick}
           onPrevious={onPrevious}
+        />
+      )}
+      {view === 'workspace' && application && (
+        <Workspace
+          applicationId={application.id}
+          applicationName={application.name}
+          initialTab={workspaceEntry.initialTab}
+          autoTriggerRun={workspaceEntry.autoTriggerRun}
         />
       )}
       {view === 'settings' && <Settings onCancel={() => setView(previousView)} />}

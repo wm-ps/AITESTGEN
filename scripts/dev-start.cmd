@@ -39,6 +39,12 @@ if errorlevel 1 (
   start "AITestGen Generation Worker" cmd /k "scripts\run-generation-worker.cmd"
 )
 
+tasklist /v /fi "windowtitle eq AITestGen Execution Worker" 2>nul | findstr /i "cmd.exe" >nul
+if errorlevel 1 (
+  echo [dev-up] starting execution worker...
+  start "AITestGen Execution Worker" cmd /k "scripts\run-execution-worker.cmd"
+)
+
 rem Best-effort, backgrounded: refresh generated API types once the API
 rem responds. Web is already up by now - this never blocks it.
 start /b "" cmd /c "scripts\wait-and-gen-types.cmd" >nul 2>&1

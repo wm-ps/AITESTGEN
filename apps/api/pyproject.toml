@@ -14,6 +14,8 @@ dependencies = [
     "workflows",
     "secrets-client",
     "object-store",
+    "test-suite-assembler",
+    "safety-classifier",
     "bcrypt>=5.0.0",
     "itsdangerous>=2.2.0",
     "httpx>=0.28",
@@ -29,6 +31,8 @@ domain = { workspace = true }
 workflows = { workspace = true }
 secrets-client = { workspace = true }
 object-store = { workspace = true }
+test-suite-assembler = { workspace = true }
+safety-classifier = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

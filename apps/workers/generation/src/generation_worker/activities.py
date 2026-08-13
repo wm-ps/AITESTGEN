@@ -7,6 +7,14 @@ attaches to Pages before calling the AI provider, and persists the returned
 at-least-once retry (AD-9): if `Scenario` rows already exist for this
 Journey's current `(journey_id, generation_run_id)` pair, returns them
 without re-generating.
+
+Each persisted `Scenario` also gets a `safety_classification` (Run All
+Tests feature), via `safety_classifier.classify_scenario_steps` — the same
+`classify()` `discovery_worker`'s live-crawl `safety_engine.evaluate()`
+calls, aggregated across the Scenario's plain-language steps at generation
+time, not `evaluate()` itself (there's no live-crawl "posture" to resolve
+here; the policy-permission check for a non-`SAFE` classification happens
+later, at execution time, via `ExecutionPolicy`).
 """
 
 import asyncio
@@ -28,6 +36,7 @@ from domain import (
     TestAsset,
     TestSuite,
 )
+from safety_classifier import classify_scenario_steps
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
@@ -160,6 +169,9 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
 
         scenario_external_ids: list[str] = []
         for candidate in candidates:
+            safety_classification, safety_classification_reason = classify_scenario_steps(
+                candidate.steps
+            )
             scenario = Scenario(
                 journey_id=journey.id,
                 type=candidate.type,
@@ -172,6 +184,8 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
                 ],
                 generation_run_id=journey.attempt,
                 current=True,
+                safety_classification=safety_classification,
+                safety_classification_reason=safety_classification_reason,
             )
             session.add(scenario)
             session.flush()

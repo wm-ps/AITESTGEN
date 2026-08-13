@@ -16,13 +16,21 @@ separate column — a reasoned default: a stored flag would need to stay in
 sync with every `test_data` write, and this codebase already prefers
 deriving state over duplicating it (e.g. `Journey`/`Capability` excluding
 `status="deleted"` rows rather than a separate active-count).
+
+`safety_classification` (Run All Tests feature) is computed once, at
+generation time, by reusing `discovery_worker.safety_engine`'s `classify()`
+against every step in `steps` and keeping the most severe verdict —
+`DESTRUCTIVE` > `UNKNOWN` > `SAFE`. It is persisted (not derived on read,
+unlike `test_data_complete`) because classification only needs the AI/
+pattern-matched output once; execution-time gating then trusts this stored
+value as authoritative rather than reclassifying on every run.
 """
 
 import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from sqlalchemy import Column, DateTime, ForeignKey, text
+from sqlalchemy import Column, DateTime, ForeignKey, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
@@ -59,6 +67,11 @@ class Scenario(SQLModel, table=True):
     )
     generation_run_id: int
     current: bool = Field(default=True)
+    safety_classification: str = Field(
+        default="UNKNOWN",
+        sa_column=Column(String, server_default=text("'UNKNOWN'"), nullable=False),
+    )
+    safety_classification_reason: str | None = Field(default=None)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
