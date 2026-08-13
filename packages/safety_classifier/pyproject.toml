@@ -1,0 +1,18 @@
+[project]
+name = "safety-classifier"
+version = "0.1.0"
+description = "Pure destructive/safe/ambiguous action classification (Story 2.12's classify()), shared by discovery_worker's live-crawl safety_engine and generation_worker's Scenario safety_classification (Run All Tests feature)"
+requires-python = ">=3.14"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/safety_classifier"]

@@ -14,7 +14,7 @@ import uuid
 import httpx
 import pytest
 from ai_provider.hosted import HostedAIProvider
-from domain import Page, Scenario
+from domain import Journey, Page, Scenario
 
 
 def _fake_page(url: str, title: str = "") -> Page:
@@ -178,6 +178,116 @@ def _fake_scenario(**overrides) -> Scenario:
     return Scenario(**defaults)
 
 
+def _fake_journey(**overrides) -> Journey:
+    defaults = dict(
+        application_id=uuid.uuid4(),
+        discovery_run_id=uuid.uuid4(),
+        name="Guest checkout",
+        identity_key=f"identity-{uuid.uuid4()}",
+    )
+    defaults.update(overrides)
+    return Journey(**defaults)
+
+
+def _scenario_body(name: str) -> str:
+    return json.dumps(
+        {
+            "scenarios": [
+                {
+                    "name": name,
+                    "type": "SOMETHING-THE-MODEL-MADE-UP",
+                    "steps": ["step 1"],
+                    "expected_result": "it works",
+                    "test_data": [],
+                }
+            ]
+        }
+    )
+
+
+async def test_generate_scenarios_batches_by_type_and_forces_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bodies = iter(
+        [_scenario_body("Happy scenario"), _scenario_body("Negative scenario"), _scenario_body("Edge scenario")]
+    )
+    captured_calls: list[dict] = []
+
+    async def fake_post(self, url, *, headers=None, json=None):
+        captured_calls.append(json)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": next(bodies)}}]},
+            request=httpx.Request("POST", "https://fake-proxy.example.com/chat/completions"),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    candidates = await HostedAIProvider().generate_scenarios(_fake_journey(), [_fake_page("https://a.example.com")])
+
+    # One call per type, not one call for everything — bounds each call's
+    # output separately so a large Journey can't get silently capped.
+    assert len(captured_calls) == 3
+    assert [c.name for c in candidates] == ["Happy scenario", "Negative scenario", "Edge scenario"]
+    # Forced from which call produced it, never trusted from the model's own
+    # (possibly wrong) "type" field.
+    assert [c.type for c in candidates] == ["happy", "negative", "edge"]
+
+
+async def test_generate_scenarios_isolates_a_failed_type_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = iter(
+        [
+            httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": ""}, "finish_reason": "length"}]},
+                request=httpx.Request("POST", "https://fake-proxy.example.com/chat/completions"),
+            ),
+            httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": _scenario_body("Negative scenario")}}]},
+                request=httpx.Request("POST", "https://fake-proxy.example.com/chat/completions"),
+            ),
+            httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": _scenario_body("Edge scenario")}}]},
+                request=httpx.Request("POST", "https://fake-proxy.example.com/chat/completions"),
+            ),
+        ]
+    )
+
+    async def fake_post(self, url, *, headers=None, json=None):
+        return next(responses)
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    candidates = await HostedAIProvider().generate_scenarios(_fake_journey(), [_fake_page("https://a.example.com")])
+
+    # The truncated "happy" batch is dropped, but "negative"/"edge" still
+    # make it through — one bad batch doesn't lose the whole Journey.
+    assert [c.name for c in candidates] == ["Negative scenario", "Edge scenario"]
+
+
+async def test_generate_scenarios_raises_when_every_type_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_post(self, url, *, headers=None, json=None):
+        raise httpx.ConnectError("boom")
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    # All 3 types erroring must raise, not return [] — a Journey with zero
+    # Scenarios and no error is indistinguishable from "the model legitimately
+    # found nothing", and it means GenerationWorkflow's retry_policy (which
+    # only retries a *failed* Activity) never gets a chance to retry a
+    # transient failure like this one.
+    with pytest.raises(RuntimeError, match="all scenario types failed"):
+        await HostedAIProvider().generate_scenarios(
+            _fake_journey(), [_fake_page("https://a.example.com")]
+        )
+
+
 async def test_generate_playwright_returns_code(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _monkeypatch_post(
         monkeypatch,
@@ -193,8 +303,9 @@ async def test_generate_playwright_returns_code(monkeypatch: pytest.MonkeyPatch)
         "import { test, expect } from '@playwright/test'\n\n"
         "test('guest checkout', async ({ page }) => {})"
     )
-    assert "Guest checkout" in captured["json"]["messages"][0]["content"]
-    assert "qa-user" in captured["json"]["messages"][0]["content"]
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "Guest checkout" in content
+    assert "qa-user" in content
     # No response_format here — raw Playwright source, not JSON.
     assert "response_format" not in captured["json"]
 
@@ -212,3 +323,148 @@ async def test_generate_playwright_strips_markdown_code_fences(
 
     assert result.code == "test('guest checkout', async ({ page }) => {})"
     assert "```" not in result.code
+
+
+async def test_generate_playwright_includes_known_pages_in_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(
+        monkeypatch, "test('guest checkout', async ({ page }) => {})"
+    )
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(
+        scenario,
+        known_pages=[{"stage_label": "Checkout", "url": "https://app.example.com/checkout"}],
+    )
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "Known pages" in content
+    assert "Checkout -> https://app.example.com/checkout" in content
+
+
+async def test_generate_playwright_degrades_gracefully_with_no_known_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(
+        monkeypatch, "test('guest checkout', async ({ page }) => {})"
+    )
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(scenario)
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "Known pages" in content
+    assert "(none)" in content
+
+
+async def test_generate_playwright_includes_known_locators_in_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(
+        monkeypatch, "test('guest checkout', async ({ page }) => {})"
+    )
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(
+        scenario,
+        known_locators=[
+            {
+                "stage_label": "Checkout",
+                "component_type": "button",
+                "component_name": "Save button",
+                "selector": '[data-testid="save"]',
+            }
+        ],
+    )
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "Known element locators" in content
+    assert 'Checkout / button:Save button -> [data-testid="save"]' in content
+
+
+async def test_generate_playwright_renders_label_strategy_as_getbylabel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`label=` isn't a real Playwright selector engine — a "label" strategy \
+    locator must render as a ready-to-call `getByLabel(...)`, never interpolated \
+    into a `page.locator("label=\\"...\\"")` string."""
+    captured = _monkeypatch_post(
+        monkeypatch, "test('guest checkout', async ({ page }) => {})"
+    )
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(
+        scenario,
+        known_locators=[
+            {
+                "stage_label": "Login",
+                "component_type": "input",
+                "component_name": "Username field",
+                "selector": "Username",
+                "strategy": "label",
+            }
+        ],
+    )
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert 'Login / input:Username field -> getByLabel("Username")' in content
+    assert 'label="Username"' not in content
+
+
+async def test_generate_playwright_degrades_gracefully_with_no_known_locators(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(
+        monkeypatch, "test('guest checkout', async ({ page }) => {})"
+    )
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(scenario)
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "Known element locators" in content
+    assert "(none)" in content
+
+
+async def test_infer_state_similarity_returns_the_raw_opinion_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Story 2.10 AC 3 — a short plain-language opinion, not JSON; the
+    caller records it as supporting evidence and never parses/branches on
+    it as a structured decision."""
+    captured = _monkeypatch_post(
+        monkeypatch, "VARIANT: state B shows Approve/Reject actions state A doesn't have."
+    )
+
+    result = await HostedAIProvider().infer_state_similarity(
+        heading_a="Claim Details",
+        actions_a=["Edit", "Submit"],
+        heading_b="Claim Details",
+        actions_b=["Approve", "Reject"],
+    )
+
+    assert result == "VARIANT: state B shows Approve/Reject actions state A doesn't have."
+    assert "Claim Details" in captured["json"]["messages"][0]["content"]
+    assert "Approve" in captured["json"]["messages"][0]["content"]
+    # Plain text opinion — no JSON response_format, matching generate_playwright.
+    assert "response_format" not in captured["json"]
+
+
+async def test_classify_action_safety_returns_the_raw_opinion_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Story 2.12 AC 3 — supporting evidence only, recorded in diagnostics;
+    the Safety Engine's posture-driven verdict never depends on this."""
+    captured = _monkeypatch_post(
+        monkeypatch, "AMBIGUOUS: archiving may trigger a downstream workflow."
+    )
+
+    result = await HostedAIProvider().classify_action_safety(
+        label="Archive", page_context="Claim Details page, status: Open"
+    )
+
+    assert result == "AMBIGUOUS: archiving may trigger a downstream workflow."
+    assert "Archive" in captured["json"]["messages"][0]["content"]
+    assert "Claim Details" in captured["json"]["messages"][0]["content"]
+    assert "response_format" not in captured["json"]

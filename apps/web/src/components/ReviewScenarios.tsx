@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type ScenarioRead } from '../api'
-import { Stepper } from './Stepper'
+import { api, type JourneyRead, type ScenarioRead } from '../api'
+import { Stepper, type StepKey } from './Stepper'
 
-const POLL_INTERVAL_MS = 1500
+const POLL_INTERVAL_MS = 3000
 const SCENARIOS_PER_PAGE = 6
 
 const TYPE_BADGE: Record<string, { label: string; background: string; color: string }> = {
@@ -72,6 +72,110 @@ function ScenarioRenameInput({
   )
 }
 
+function JourneyFilterDropdown({
+  journeys,
+  selected,
+  onChange,
+}: {
+  journeys: JourneyRead[]
+  selected: Set<string>
+  onChange: (next: Set<string>) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const label = selected.size === 0 ? 'All journeys' : `${selected.size} journey${selected.size === 1 ? '' : 's'}`
+
+  function toggle(id: string) {
+    const next = new Set(selected)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    onChange(next)
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="button-secondary"
+        style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+      >
+        {label} ▾
+      </button>
+      {open && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9 }} onClick={() => setOpen(false)} />
+          <div
+            role="menu"
+            aria-label="Filter by journey"
+            className="card-panel"
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: 34,
+              minWidth: 220,
+              maxHeight: 280,
+              overflowY: 'auto',
+              boxShadow: '0 12px 28px rgba(15,23,42,0.14)',
+              zIndex: 10,
+              padding: 'var(--space-2) 0',
+            }}
+          >
+            {selected.size > 0 && (
+              <button
+                type="button"
+                onClick={() => onChange(new Set())}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '8px 12px',
+                  background: 'none',
+                  border: 'none',
+                  borderBottom: '1px solid var(--border-hairline)',
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  color: 'var(--accent)',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >
+                Clear filter
+              </button>
+            )}
+            {journeys.map((journey) => (
+              <label
+                key={journey.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '8px 12px',
+                  fontSize: 12.5,
+                  cursor: 'pointer',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(journey.id)}
+                  onChange={() => toggle(journey.id)}
+                />
+                {journey.name}
+              </label>
+            ))}
+            {journeys.length === 0 && (
+              <div className="caption" style={{ padding: '8px 12px', fontSize: 12 }}>
+                No journeys yet.
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 function ScenarioRowMenu({ onRename, onDelete }: { onRename: () => void; onDelete: () => void }) {
   const [open, setOpen] = useState(false)
 
@@ -98,19 +202,21 @@ function ScenarioRowMenu({ onRename, onDelete }: { onRename: () => void; onDelet
         ⋯
       </button>
       {open && (
-        <div
-          role="menu"
-          className="card-panel"
-          style={{
-            position: 'absolute',
-            right: 0,
-            top: 30,
-            minWidth: 140,
-            boxShadow: '0 12px 28px rgba(15,23,42,0.14)',
-            overflow: 'hidden',
-            zIndex: 10,
-          }}
-        >
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9 }} onClick={() => setOpen(false)} />
+          <div
+            role="menu"
+            className="card-panel"
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: 30,
+              minWidth: 140,
+              boxShadow: '0 12px 28px rgba(15,23,42,0.14)',
+              overflow: 'hidden',
+              zIndex: 10,
+            }}
+          >
           <button
             type="button"
             role="menuitem"
@@ -155,7 +261,8 @@ function ScenarioRowMenu({ onRename, onDelete }: { onRename: () => void; onDelet
           >
             Delete
           </button>
-        </div>
+          </div>
+        </>
       )}
     </div>
   )
@@ -164,20 +271,48 @@ function ScenarioRowMenu({ onRename, onDelete }: { onRename: () => void; onDelet
 export function ReviewScenarios({
   applicationId,
   onContinueToGenerate,
+  furthestCount,
+  onStepClick,
+  onPrevious,
+  onNext,
 }: {
   applicationId: string
   onContinueToGenerate: () => void
+  furthestCount: number
+  onStepClick?: (key: StepKey) => void
+  onPrevious?: () => void
+  onNext?: () => void
 }) {
   const [scenarios, setScenarios] = useState<ScenarioRead[]>([])
+  const [journeys, setJourneys] = useState<JourneyRead[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [readinessFilter, setReadinessFilter] = useState<ReadinessFilter>('All')
+  const [journeyFilter, setJourneyFilter] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   // Same distinction DiscoverJourneys draws for Journeys: "generation still
   // running" and "every Scenario was removed" both look like an empty list.
   const hadScenariosRef = useRef(false)
   if (scenarios.length > 0) hadScenariosRef.current = true
+
+  // GenerationWorkflow runs one per Journey but each writes a variable
+  // number of Scenarios (happy/negative/edge) — so a raw scenario count
+  // can't signal "done" the way TestSuiteResults' test-case count does.
+  // Distinct Journeys covered vs total candidate Journeys is the signal
+  // that's actually stable: every Journey gets exactly one generation run.
+  useEffect(() => {
+    let cancelled = false
+    api.listJourneys(applicationId).then((rows) => {
+      if (!cancelled) setJourneys(rows)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [applicationId])
+
+  const journeysCovered = new Set(scenarios.map((s) => s.journey_id)).size
+  const isComplete = journeys.length > 0 && journeysCovered >= journeys.length
 
   useEffect(() => {
     let cancelled = false
@@ -192,12 +327,20 @@ export function ReviewScenarios({
     }
 
     poll()
+    if (isComplete) return
     const interval = setInterval(poll, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
-  }, [applicationId])
+  }, [applicationId, isComplete])
+
+  // Land on the first Scenario selected by default, not an empty canvas —
+  // also re-picks the first one if the selected Scenario was deleted.
+  useEffect(() => {
+    if (selectedId && scenarios.some((s) => s.id === selectedId)) return
+    setSelectedId(scenarios[0]?.id ?? null)
+  }, [scenarios, selectedId])
 
   async function handleRename(id: string, name: string) {
     setRenamingId(null)
@@ -226,6 +369,7 @@ export function ReviewScenarios({
   const searchLower = search.trim().toLowerCase()
   const visibleScenarios = scenarios.filter((s) => {
     if (!(s.name ?? '').toLowerCase().includes(searchLower)) return false
+    if (journeyFilter.size > 0 && !journeyFilter.has(s.journey_id)) return false
     if (readinessFilter === 'Ready') return s.test_data_complete
     if (readinessFilter === 'Needs data') return !s.test_data_complete
     return true
@@ -247,7 +391,7 @@ export function ReviewScenarios({
 
   return (
     <>
-      <Stepper current="review" />
+      <Stepper current="review" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
       <main
         style={{
           maxWidth: 'var(--content-max)',
@@ -313,6 +457,14 @@ export function ReviewScenarios({
                   </button>
                 ))}
               </div>
+              <JourneyFilterDropdown
+                journeys={journeys}
+                selected={journeyFilter}
+                onChange={(next) => {
+                  setJourneyFilter(next)
+                  setPage(0)
+                }}
+              />
               <input
                 type="text"
                 placeholder="Search scenarios"

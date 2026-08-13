@@ -3,12 +3,16 @@ members = [
     "apps/api",
     "apps/workers/discovery",
     "apps/workers/generation",
+    "apps/workers/execution",
     "packages/domain",
     "packages/workflows",
     "packages/ai_provider",
     "packages/delivery_adapters",
     "packages/ci_instructions",
     "packages/secrets_client",
+    "packages/object_store",
+    "packages/test_suite_assembler",
+    "packages/safety_classifier",
 ]
 
 [dependency-groups]
@@ -40,10 +44,14 @@ include = [
     "apps/api",
     "apps/workers/discovery",
     "apps/workers/generation",
+    "apps/workers/execution",
     "packages/domain",
     "packages/workflows",
     "packages/ai_provider",
     "packages/delivery_adapters",
     "packages/ci_instructions",
     "packages/secrets_client",
+    "packages/object_store",
+    "packages/test_suite_assembler",
+    "packages/safety_classifier",
 ]

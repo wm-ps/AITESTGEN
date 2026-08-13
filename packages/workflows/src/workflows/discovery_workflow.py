@@ -39,6 +39,17 @@ class DiscoveryActivityInput:
     discovery_run_id: str
     application_id: str
     secret_ref: str
+    # Story 2.17 AC 2/3: True only for a deliberate resume of a paused run
+    # (`api.discovery.resume_discovery_run`) — distinct from a Temporal
+    # activity retry of the *same* run (`activity.info().attempt > 1`,
+    # Story 2.18's crash recovery), which `discovery_activity` detects on its
+    # own. Both cases resume past whatever's already confirmed canonical;
+    # this flag only covers the "brand-new DiscoveryRun, same Application"
+    # case Temporal's own attempt counter can't see. False (the default)
+    # means a full fresh crawl — unchanged, still re-visits and reclassifies
+    # every page against prior canonical rows (Story 2.10's own cross-run
+    # SAME/VARIANT/NEW design), not a resume skip.
+    resume: bool = False
 
 
 @dataclass
@@ -65,13 +76,20 @@ class InferenceActivityInput:
 @workflow.defn(name="DiscoveryWorkflow")
 class DiscoveryWorkflow:
     @workflow.run
-    async def run(self, discovery_run_id: str, application_id: str, secret_ref: str) -> str:
+    async def run(
+        self,
+        discovery_run_id: str,
+        application_id: str,
+        secret_ref: str,
+        resume: bool = False,
+    ) -> str:
         discovery_result = await workflow.execute_activity(
             DISCOVERY_ACTIVITY_NAME,
             DiscoveryActivityInput(
                 discovery_run_id=discovery_run_id,
                 application_id=application_id,
                 secret_ref=secret_ref,
+                resume=resume,
             ),
             # Story 2.3 removed the crawl's iteration cap by explicit product
             # decision (accepted risk — no bound on a real site's traversal

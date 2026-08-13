@@ -1,10 +1,11 @@
 """The real `discovery_activity` end-to-end (Story 2.2, Task 5) — Postgres +
-Vault + MinIO + a live local target app, no Temporal server involved (calls
+Vault + S3 + a live local target app, no Temporal server involved (calls
 the Activity function directly, same skip-cleanly convention as
 `apps/api/tests/test_onboarding.py`).
 """
 
 import json
+import os
 import uuid
 
 import discovery_worker.activities as activities_module
@@ -12,9 +13,9 @@ import hvac
 import pytest
 from discovery_worker.activities import discovery_activity
 from discovery_worker.db import engine, init_db
-from discovery_worker.object_store import MINIO_ENDPOINT, ObjectStore
 from domain import ApiEndpoint, Application, DiscoveryRun, Form, Organization, Page
 from fixtures.target_app import configure
+from object_store.client import ObjectStore
 from secrets_client.vault_client import VAULT_ADDR, VAULT_TOKEN, VaultSecretsClient
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -38,19 +39,9 @@ def _vault_available() -> bool:
         return False
 
 
-def _minio_available() -> bool:
-    import urllib.request
-
-    try:
-        urllib.request.urlopen(f"http://{MINIO_ENDPOINT}/minio/health/live", timeout=2)
-        return True
-    except Exception:
-        return False
-
-
 pytestmark = pytest.mark.skipif(
-    not (_db_available() and _vault_available() and _minio_available()),
-    reason="requires PostgreSQL + Vault + MinIO reachable — start docker compose",
+    not (_db_available() and _vault_available() and os.environ.get("AWS_S3_BUCKET")),
+    reason="requires PostgreSQL + Vault + AWS_S3_BUCKET configured",
 )
 
 
@@ -203,7 +194,7 @@ async def test_pages_captured_before_a_mid_crawl_crash_are_not_lost(
 
     2026-07-21: a screenshot-upload failure is now caught per-page (like a
     broken `goto` destination) instead of escaping to fail the whole run —
-    a transient MinIO hiccup on one page shouldn't torch hours of otherwise-
+    a transient S3 hiccup on one page shouldn't torch hours of otherwise-
     healthy traversal. So the crawl now runs to completion around the
     simulated failure rather than crashing; what this test actually checks
     (captures before the failure point are never lost) still holds."""

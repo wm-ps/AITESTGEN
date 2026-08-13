@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api, type UserRead } from '../api'
 import { Logo } from './Logo'
+import { LoadingDots } from './LoadingDots'
+import { PasswordInput } from './PasswordInput'
 
 const WIZARD_STEPS = [
   { label: 'Scan', desc: 'Reads every screen in your app.', kind: 'scan' },
@@ -420,63 +422,64 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
             <h2 style={{ fontSize: 19, fontWeight: 600, color: 'var(--ink)', margin: '0 0 4px' }}>Sign in</h2>
             <p style={{ fontSize: 13.5, color: 'var(--ink-muted)', margin: '0 0 22px' }}>Use your work account to continue</p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <label className="field">
-                <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
-                  Work email <span style={{ color: 'var(--danger)' }}>*</span>
-                </span>
-                <input
-                  type="email"
-                  required
-                  autoComplete="username"
-                  placeholder="you@company.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  style={{ padding: '11px 14px', fontSize: 14.5 }}
-                />
-              </label>
+            <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <label className="field">
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
+                    Work email <span style={{ color: 'var(--danger)' }}>*</span>
+                  </span>
+                  <input
+                    type="email"
+                    required
+                    autoComplete="username"
+                    placeholder="you@company.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    style={{ padding: '11px 14px', fontSize: 14.5 }}
+                  />
+                </label>
 
-              <label className="field">
-                <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
-                  Password <span style={{ color: 'var(--danger)' }}>*</span>
-                </span>
-                <input
-                  type="password"
-                  required
-                  autoComplete="current-password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  style={{ padding: '11px 14px', fontSize: 14.5 }}
-                />
-              </label>
+                <label className="field">
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
+                    Password <span style={{ color: 'var(--danger)' }}>*</span>
+                  </span>
+                  <PasswordInput
+                    required
+                    autoComplete="current-password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    style={{ padding: '11px 14px', fontSize: 14.5 }}
+                  />
+                </label>
 
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                <a href="#" style={{ fontSize: 13.5, color: 'var(--accent)', textDecoration: 'none' }}>
-                  Forgot password?
-                </a>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <a href="#" style={{ fontSize: 13.5, color: 'var(--accent)', textDecoration: 'none' }}>
+                    Forgot password?
+                  </a>
+                </div>
+
+                {error && (
+                  <div style={{ color: 'var(--danger)', fontSize: 13 }} role="alert">
+                    {error}
+                  </div>
+                )}
+
+                <button type="submit" className="button-primary" disabled={submitting} style={{ padding: 12, fontSize: 14.5 }}>
+                  {submitting ? <LoadingDots label="Signing in" /> : 'Sign in'}
+                </button>
               </div>
 
-              {error && (
-                <div style={{ color: 'var(--danger)', fontSize: 13 }} role="alert">
-                  {error}
-                </div>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0' }} aria-hidden="true">
+                <span style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                <span style={{ fontSize: 12.5, color: 'var(--ink-faint)' }}>OR</span>
+                <span style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+              </div>
 
-              <button type="submit" className="button-primary" disabled={submitting} style={{ padding: 12, fontSize: 14.5 }}>
-                {submitting ? 'Signing in…' : 'Sign in'}
+              <button type="button" className="button-secondary" style={{ padding: 12, fontSize: 14.5 }}>
+                Continue with Single Sign-On
               </button>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0' }} aria-hidden="true">
-              <span style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-              <span style={{ fontSize: 12.5, color: 'var(--ink-faint)' }}>OR</span>
-              <span style={{ flex: 1, height: 1, background: 'var(--border)' }} />
-            </div>
-
-            <button type="button" className="button-secondary" style={{ padding: 12, fontSize: 14.5 }}>
-              Continue with Single Sign-On
-            </button>
+            </fieldset>
 
             <p
               className="decorative"

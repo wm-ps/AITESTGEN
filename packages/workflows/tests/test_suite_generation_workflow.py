@@ -56,3 +56,47 @@ async def test_suite_generation_workflow_fans_out_one_call_per_scenario() -> Non
     # scenario-2's Activity failed — its TestAsset is missing, but
     # scenario-1/scenario-3's still made it through (fault isolation).
     assert sorted(result) == ["test-asset-for-scenario-1", "test-asset-for-scenario-3"]
+
+
+@pytest.mark.asyncio
+async def test_suite_generation_workflow_recovers_a_scenario_in_a_later_wave() -> None:
+    # scenario-2 fails its whole first wave (3 Activity attempts, matching
+    # the real retry_policy) — a transient AI-proxy timeout under real fan-out
+    # concurrency, not a permanent error. A single wave would drop it forever
+    # (observed live: stuck at 107/159 with no way to resume). The Workflow
+    # must re-wave it and pick up the TestAsset once the underlying call
+    # starts succeeding again.
+    call_counts: dict[str, int] = {}
+
+    @activity.defn(name=PLAYWRIGHT_GENERATION_ACTIVITY_NAME)
+    async def _fake_playwright_generation_recovers_later(
+        input: PlaywrightGenerationActivityInput,
+    ) -> str:
+        call_counts[input.scenario_id] = call_counts.get(input.scenario_id, 0) + 1
+        if input.scenario_id == "scenario-2" and call_counts[input.scenario_id] <= 3:
+            raise RuntimeError("simulated transient failure — exhausts wave 1's 3 attempts")
+        return f"test-asset-for-{input.scenario_id}"
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=GENERATION_TASK_QUEUE,
+            workflows=[SuiteGenerationWorkflow],
+            activities=[_fake_ensure_test_suite, _fake_playwright_generation_recovers_later],
+        ):
+            result = await env.client.execute_workflow(
+                SuiteGenerationWorkflow.run,
+                "journey-1",
+                id=f"suite-test-{uuid.uuid4()}",
+                task_queue=GENERATION_TASK_QUEUE,
+            )
+
+    assert sorted(result) == [
+        "test-asset-for-scenario-1",
+        "test-asset-for-scenario-2",
+        "test-asset-for-scenario-3",
+    ]
+    # 3 failed attempts (wave 1, exhausting retry_policy) + 1 successful
+    # attempt (wave 2) — proves the recovery came from a second wave, not
+    # from retry_policy alone.
+    assert call_counts["scenario-2"] == 4

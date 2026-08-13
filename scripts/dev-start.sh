@@ -45,8 +45,18 @@ if ! pgrep -f "discovery_worker.worker" >/dev/null 2>&1; then
 fi
 
 if ! pgrep -f "generation_worker.worker" >/dev/null 2>&1; then
+  # PlaywrightGenerationActivity's typecheck gate (Checklist rule 3) shells
+  # out to a real tsc here - without this install every Generate Suite run
+  # fails the typecheck step for every Scenario, silently (SuiteGeneration-
+  # Workflow reports COMPLETED with 0 TestAssets written, no error surfaced).
+  [ -d "$ROOT/apps/workers/generation/typecheck/node_modules" ] || (cd "$ROOT/apps/workers/generation/typecheck" && npm install)
   echo "[dev-up] starting generation worker..."
   "$ROOT/scripts/run-generation-worker.sh" >"$LOG_DIR/generation-worker.log" 2>&1 &
+fi
+
+if ! pgrep -f "execution_worker.worker" >/dev/null 2>&1; then
+  echo "[dev-up] starting execution worker..."
+  "$ROOT/scripts/run-execution-worker.sh" >"$LOG_DIR/execution-worker.log" 2>&1 &
 fi
 
 # Best-effort, backgrounded: refresh generated API types once the API
@@ -60,7 +70,7 @@ cat <<EOF
   API:      http://localhost:8000/docs
   Temporal: http://localhost:8233
   Sign-in:  dev@example.com / devpassword123
-  Logs:     $LOG_DIR/{web,api,discovery-worker,generation-worker,typegen}.log
+  Logs:     $LOG_DIR/{web,api,discovery-worker,generation-worker,execution-worker,typegen}.log
   Tail:     tail -f $LOG_DIR/*.log
   Stop:     $ROOT/scripts/dev-stop.sh        (add --keep-docker to leave Postgres/Temporal/Vault up)
 EOF

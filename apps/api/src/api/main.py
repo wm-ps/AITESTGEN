@@ -8,8 +8,8 @@ Story 1.3 adds Application onboarding.
 import json
 import os
 import uuid
-from datetime import datetime
-from typing import Annotated
+from datetime import UTC, datetime
+from typing import Annotated, Literal
 
 import httpx
 from domain import (
@@ -19,33 +19,54 @@ from domain import (
     AuthMethod,
     Component,
     DiscoveryRun,
+    DiscoverySettings,
+    ExecutionPolicy,
     Form,
+    InteractionLevel,
+    Invite,
     Journey,
     JourneyStep,
     Page,
     PlatformUser,
     Scenario,
     TestAsset,
+    TestDataEntry,
+    TestResult,
+    TestResultArtifact,
+    TestRun,
     TestSuite,
+    aggregation_key,
 )
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, model_validator
+from object_store import ObjectStore
+from pydantic import BaseModel, Field, field_validator, model_validator
 from secrets_client import VaultSecretsClient
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio.exceptions import WorkflowAlreadyStartedError
-from workflows import GENERATION_TASK_QUEUE, GenerationWorkflow, SuiteGenerationWorkflow
+from workflows import (
+    EXECUTION_TASK_QUEUE,
+    GENERATION_TASK_QUEUE,
+    ApplicationTestExecutionWorkflow,
+    ExecutionWorkflowInput,
+    GenerationWorkflow,
+    SuiteGenerationWorkflow,
+)
 
 from api.auth import (
+    CurrentAdminDep,
     CurrentOrgIdDep,
     CurrentUserDep,
     clear_session_cookie,
     issue_session_cookie,
     verify_password,
 )
+from api.coverage_report import build_coverage_report
 from api.db import get_session
-from api.discovery import start_discovery_run
+from api.discovery import pause_discovery_run, resume_discovery_run, start_discovery_run
+from api.invites import InviteAcceptError, accept_invite, create_invite, org_name, send_invite_email
 from api.temporal_client import get_temporal_client
 from api.test_suite_export import (
     TestSuiteExportError,
@@ -93,6 +114,11 @@ class LoginRequest(BaseModel):
 class UserRead(BaseModel):
     name: str
     email: str
+    role: str
+
+
+def _to_user_read(user: PlatformUser) -> UserRead:
+    return UserRead(name=user.name, email=user.email, role=user.role)
 
 
 @app.post("/auth/login", response_model=UserRead)
@@ -101,7 +127,7 @@ def login(payload: LoginRequest, response: Response, session: SessionDep) -> Use
     if user is None or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="invalid email or password")
     issue_session_cookie(response, user.id)
-    return UserRead(name=user.name, email=user.email)
+    return _to_user_read(user)
 
 
 @app.post("/auth/logout")
@@ -112,12 +138,119 @@ def logout(response: Response) -> dict[str, str]:
 
 @app.get("/auth/me", response_model=UserRead)
 def me(user: CurrentUserDep) -> UserRead:
-    return UserRead(name=user.name, email=user.email)
+    return _to_user_read(user)
+
+
+# --- Invite-only Sign-up ---
+# No open self-service registration — an admin sends an Invite (email +
+# role), the invitee accepts it via a one-time token link and sets their own
+# password. Always joins the inviting admin's existing Organization; there
+# is no "create a new org" flow (single-tenant-per-deployment, though the
+# schema itself is multi-tenant per AD-12).
+
+
+class InviteCreate(BaseModel):
+    email: str
+    role: str = "member"
+
+    @model_validator(mode="after")
+    def _valid_role(self) -> InviteCreate:
+        if self.role not in ("admin", "member"):
+            raise ValueError("role must be 'admin' or 'member'")
+        return self
+
+
+class InviteRead(BaseModel):
+    id: uuid.UUID
+    email: str
+    role: str
+    expires_at: datetime
+
+
+@app.post("/invites", response_model=InviteRead, status_code=201)
+def send_invite(
+    payload: InviteCreate,
+    session: SessionDep,
+    admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> InviteRead:
+    existing = session.exec(
+        select(PlatformUser).where(PlatformUser.email == payload.email)
+    ).first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="a user with this email already exists")
+
+    invite, token = create_invite(session, organization_id, admin.id, payload.email, payload.role)
+    send_invite_email(payload.email, org_name(session, organization_id), token)
+    return InviteRead(
+        id=invite.external_id, email=invite.email, role=invite.role, expires_at=invite.expires_at
+    )
+
+
+@app.get("/invites", response_model=list[InviteRead])
+def list_pending_invites(
+    session: SessionDep,
+    admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[InviteRead]:
+    invites = session.exec(
+        select(Invite).where(
+            Invite.organization_id == organization_id,
+            Invite.used_at.is_(None),  # type: ignore[attr-defined]
+        )
+    ).all()
+    return [
+        InviteRead(id=i.external_id, email=i.email, role=i.role, expires_at=i.expires_at)
+        for i in invites
+    ]
+
+
+@app.delete("/invites/{external_id}", status_code=204)
+def revoke_invite(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> None:
+    invite = session.exec(
+        select(Invite).where(
+            Invite.external_id == external_id, Invite.organization_id == organization_id
+        )
+    ).first()
+    if invite is None:
+        raise HTTPException(status_code=404, detail="invite not found")
+    session.delete(invite)
+    session.commit()
+
+
+class AcceptInviteRequest(BaseModel):
+    token: str
+    name: str
+    password: str = Field(min_length=8)
+
+
+@app.post("/invites/accept", response_model=UserRead)
+def accept_invite_route(
+    payload: AcceptInviteRequest, response: Response, session: SessionDep
+) -> UserRead:
+    try:
+        user = accept_invite(session, payload.token, payload.name, payload.password)
+    except InviteAcceptError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    issue_session_cookie(response, user.id)
+    return _to_user_read(user)
 
 
 class ApplicationCreate(BaseModel):
     name: str
     url: str
+    login_url: str | None = Field(
+        default=None,
+        description="Explicit login page URL, if the login form isn't reachable "
+        "from the Application URL alone. Optional — omit to let discovery find it "
+        "itself. Never reachability-checked (a login endpoint can legitimately "
+        "misbehave without prior session state).",
+    )
     environment: str
     auth_method: AuthMethod = "standard_login"
     username: str | None = Field(
@@ -138,6 +271,16 @@ class ApplicationCreate(BaseModel):
         "handshake itself — it only reuses a session the customer supplies.",
     )
 
+    @field_validator("username", "password", mode="before")
+    @classmethod
+    def _strip_credential_whitespace(cls, value: str | None) -> str | None:
+        # A stray leading/trailing space (copy-paste artifact) silently
+        # breaks login at the target app with no useful error anywhere
+        # downstream — strip it here, at the one place these get persisted.
+        # Only leading/trailing: an internal space could be a real part of
+        # the credential, never touch that.
+        return value.strip() if isinstance(value, str) else value
+
     @model_validator(mode="after")
     def _credentials_match_auth_method(self) -> ApplicationCreate:
         if self.auth_method == "standard_login" and not (self.username and self.password):
@@ -147,10 +290,15 @@ class ApplicationCreate(BaseModel):
         return self
 
 
+class ApplicationRenamePayload(BaseModel):
+    name: str
+
+
 class ApplicationRead(BaseModel):
     id: uuid.UUID
     name: str
     url: str
+    login_url: str | None
     environment: str
     auth_method: AuthMethod
     created_at: datetime
@@ -158,13 +306,41 @@ class ApplicationRead(BaseModel):
     discovery_status: str
     discovery_stage: str | None
     discovery_failure_reason: str | None
+    # Story 2.22 AC 2: `status` never travels alone — whenever it's
+    # "complete", these counts ride along in the same response so a bare
+    # "Complete" can't be misread as "the whole application was covered"
+    # (AD-15 is deliberate, non-exhaustive sampling). `None` for every other
+    # status, where the full report is more useful than a partial count.
+    discovery_coverage_summary: dict[str, int] | None = None
 
 
-def _to_application_read(application: Application, discovery_run: DiscoveryRun) -> ApplicationRead:
+class HomeApplicationRead(ApplicationRead):
+    journey_count: int
+    scenario_count: int
+    suite_count: int
+
+
+def _coverage_counts(session: Session, discovery_run: DiscoveryRun) -> dict[str, int]:
+    coverage = build_coverage_report(session, discovery_run)["coverage"]
+    return {
+        "reached_pages": coverage["reached"]["pages"],
+        "reached_actions": coverage["reached"]["actions"],
+        "reached_forms": coverage["reached"]["forms"],
+        "blocked": len(coverage["blocked"]),
+        "skipped_for_safety": len(coverage["skipped_for_safety"]),
+        "unreached": len(coverage["unreached"]),
+        "errored": len(coverage["errored"]["items"]),
+    }
+
+
+def _to_application_read(
+    session: Session, application: Application, discovery_run: DiscoveryRun
+) -> ApplicationRead:
     return ApplicationRead(
         id=application.external_id,
         name=application.name,
         url=application.url,
+        login_url=application.login_url,
         environment=application.environment,
         auth_method=application.auth_method,  # type: ignore[arg-type]
         created_at=application.created_at,
@@ -172,6 +348,9 @@ def _to_application_read(application: Application, discovery_run: DiscoveryRun) 
         discovery_status=discovery_run.status,
         discovery_stage=discovery_run.stage,
         discovery_failure_reason=discovery_run.failure_reason,
+        discovery_coverage_summary=(
+            _coverage_counts(session, discovery_run) if discovery_run.status == "complete" else None
+        ),
     )
 
 
@@ -222,6 +401,7 @@ async def create_application(
         organization_id=organization_id,
         name=payload.name,
         url=payload.url,
+        login_url=payload.login_url,
         environment=payload.environment,
         auth_method=payload.auth_method,
         secret_ref=secret_ref.path,
@@ -234,7 +414,18 @@ async def create_application(
     # DiscoveryRun-creation logic itself is Story 2.1's (api.discovery).
     discovery_run = await start_discovery_run(session, application)
 
-    return _to_application_read(application, discovery_run)
+    return _to_application_read(session, application, discovery_run)
+
+
+def _latest_discovery_run(session: Session, application_id: uuid.UUID) -> DiscoveryRun | None:
+    """Story 2.17: an Application can now have more than one `DiscoveryRun`
+    (each pause/resume cycle starts a fresh one, AD-22) — always the most
+    recent, never the DB's arbitrary insertion order."""
+    return session.exec(
+        select(DiscoveryRun)
+        .where(DiscoveryRun.application_id == application_id)
+        .order_by(DiscoveryRun.created_at.desc())  # type: ignore[arg-type]
+    ).first()
 
 
 def _get_org_application(
@@ -244,6 +435,7 @@ def _get_org_application(
         select(Application).where(
             Application.external_id == external_id,
             Application.organization_id == organization_id,
+            Application.deleted_at.is_(None),  # type: ignore[attr-defined]
         )
     ).first()
     if application is None:
@@ -258,11 +450,192 @@ def get_application(
     organization_id: CurrentOrgIdDep,
 ) -> ApplicationRead:
     application = _get_org_application(session, organization_id, external_id)
-    discovery_run = session.exec(
-        select(DiscoveryRun).where(DiscoveryRun.application_id == application.id)
-    ).first()
+    discovery_run = _latest_discovery_run(session, application.id)
     assert discovery_run is not None
-    return _to_application_read(application, discovery_run)
+    return _to_application_read(session, application, discovery_run)
+
+
+@app.get("/applications", response_model=list[ApplicationRead])
+def list_applications(
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[ApplicationRead]:
+    applications = session.exec(
+        select(Application)
+        .where(
+            Application.organization_id == organization_id,
+            Application.deleted_at.is_(None),  # type: ignore[attr-defined]
+        )
+        .order_by(Application.created_at.desc())  # type: ignore[arg-type]
+    ).all()
+    result = []
+    for application in applications:
+        discovery_run = _latest_discovery_run(session, application.id)
+        assert discovery_run is not None
+        result.append(_to_application_read(session, application, discovery_run))
+    return result
+
+
+@app.get("/home", response_model=list[HomeApplicationRead])
+def get_home(
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[HomeApplicationRead]:
+    """Home screen used to poll `/applications` plus journeys/scenarios/
+    test-suites per application (1+3N calls every tick). One aggregate
+    query set instead — the cards only ever needed counts, never the items."""
+    applications = session.exec(
+        select(Application)
+        .where(
+            Application.organization_id == organization_id,
+            Application.deleted_at.is_(None),  # type: ignore[attr-defined]
+        )
+        .order_by(Application.created_at.desc())  # type: ignore[arg-type]
+    ).all()
+    if not applications:
+        return []
+    app_ids = [a.id for a in applications]
+
+    # Batched in place of the N _latest_discovery_run() calls list_applications makes.
+    latest_run_by_app: dict[uuid.UUID, DiscoveryRun] = {}
+    for run in session.exec(
+        select(DiscoveryRun)
+        .where(DiscoveryRun.application_id.in_(app_ids))  # type: ignore[attr-defined]
+        .order_by(DiscoveryRun.created_at.desc())  # type: ignore[arg-type]
+    ).all():
+        latest_run_by_app.setdefault(run.application_id, run)
+
+    journey_counts = dict(
+        session.exec(
+            select(Journey.application_id, func.count())
+            .where(
+                Journey.application_id.in_(app_ids),  # type: ignore[attr-defined]
+                Journey.status == "candidate",
+            )
+            .group_by(Journey.application_id)  # type: ignore[arg-type]
+        ).all()
+    )
+
+    app_id_by_journey_id = dict(
+        session.exec(
+            select(Journey.id, Journey.application_id).where(
+                Journey.application_id.in_(app_ids),  # type: ignore[attr-defined]
+                Journey.status == "candidate",
+            )
+        ).all()
+    )
+    journey_ids = list(app_id_by_journey_id.keys())
+
+    scenario_counts: dict[uuid.UUID, int] = {}
+    suite_counts: dict[uuid.UUID, int] = {}
+    if journey_ids:
+        for journey_id, count in session.exec(
+            select(Scenario.journey_id, func.count())
+            .where(
+                Scenario.journey_id.in_(journey_ids),  # type: ignore[attr-defined]
+                Scenario.current.is_(True),  # type: ignore[attr-defined]
+            )
+            .group_by(Scenario.journey_id)  # type: ignore[arg-type]
+        ).all():
+            app_id = app_id_by_journey_id[journey_id]
+            scenario_counts[app_id] = scenario_counts.get(app_id, 0) + count
+        for journey_id, count in session.exec(
+            select(TestSuite.journey_id, func.count())
+            .where(
+                TestSuite.journey_id.in_(journey_ids),  # type: ignore[attr-defined]
+                TestSuite.current.is_(True),  # type: ignore[attr-defined]
+            )
+            .group_by(TestSuite.journey_id)  # type: ignore[arg-type]
+        ).all():
+            app_id = app_id_by_journey_id[journey_id]
+            suite_counts[app_id] = suite_counts.get(app_id, 0) + count
+
+    result = []
+    for application in applications:
+        discovery_run = latest_run_by_app.get(application.id)
+        assert discovery_run is not None
+        base = _to_application_read(session, application, discovery_run)
+        result.append(
+            HomeApplicationRead(
+                **base.model_dump(),
+                journey_count=journey_counts.get(application.id, 0),
+                scenario_count=scenario_counts.get(application.id, 0),
+                suite_count=suite_counts.get(application.id, 0),
+            )
+        )
+    return result
+
+
+@app.post("/applications/{external_id}/pause-discovery", response_model=ApplicationRead)
+async def pause_discovery(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> ApplicationRead:
+    """Story 2.17 Task 1 (AC 1)."""
+    application = _get_org_application(session, organization_id, external_id)
+    discovery_run = _latest_discovery_run(session, application.id)
+    if discovery_run is None or discovery_run.status != "running":
+        raise HTTPException(status_code=409, detail="discovery run is not running")
+    discovery_run = await pause_discovery_run(session, discovery_run)
+    return _to_application_read(session, application, discovery_run)
+
+
+@app.patch("/applications/{external_id}", response_model=ApplicationRead)
+def rename_application(
+    external_id: uuid.UUID,
+    payload: ApplicationRenamePayload,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> ApplicationRead:
+    application = _get_org_application(session, organization_id, external_id)
+    application.name = payload.name
+    session.add(application)
+    session.commit()
+    discovery_run = _latest_discovery_run(session, application.id)
+    assert discovery_run is not None
+    return _to_application_read(session, application, discovery_run)
+
+
+@app.delete("/applications/{external_id}", status_code=204)
+def delete_application(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> None:
+    """Soft delete only (AD-15 disclosed scope) — child rows (discovery_run,
+    journey, page, ...) and the Vault secret are deliberately left behind;
+    nothing purges them yet. Blocked while discovery is running so a live
+    crawler doesn't keep writing rows for an application that just
+    disappeared from Home."""
+    application = _get_org_application(session, organization_id, external_id)
+    discovery_run = _latest_discovery_run(session, application.id)
+    if discovery_run is not None and discovery_run.status == "running":
+        raise HTTPException(status_code=409, detail="discovery run is still in progress")
+    application.deleted_at = datetime.now(UTC)
+    session.add(application)
+    session.commit()
+
+
+@app.post(
+    "/applications/{external_id}/resume-discovery", response_model=ApplicationRead, status_code=201
+)
+async def resume_discovery(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> ApplicationRead:
+    """Story 2.17 Task 2 (AC 2/3): starts a fresh `DiscoveryRun` — see
+    `api.discovery.resume_discovery_run`'s own docstring for why that's the
+    whole mechanism."""
+    application = _get_org_application(session, organization_id, external_id)
+    discovery_run = _latest_discovery_run(session, application.id)
+    if discovery_run is None or discovery_run.status != "paused":
+        raise HTTPException(status_code=409, detail="discovery run is not paused")
+    discovery_run = await resume_discovery_run(session, application)
+    return _to_application_read(session, application, discovery_run)
 
 
 class CaptureRead(BaseModel):
@@ -319,11 +692,45 @@ def list_captures(
     # actually done.
     if discovery_run.status == "complete":
         completed_at = captures[0].created_at if captures else discovery_run.created_at
+        # Story 2.22 AC 2: "Complete" never travels alone — the counts
+        # already computed above ride along in the same summary line rather
+        # than a bare status word (AD-15: sampling, not exhaustive coverage).
         captures.insert(
-            0, CaptureRead(kind="status", summary="Crawling complete", created_at=completed_at)
+            0,
+            CaptureRead(
+                kind="status",
+                summary=(
+                    f"Crawling complete — {len(pages)} pages, {len(actions)} actions, "
+                    f"{len(api_calls)} API calls reached. See the coverage report for "
+                    "blocked/skipped/unreached/errored detail."
+                ),
+                created_at=completed_at,
+            ),
         )
 
     return captures[:50]
+
+
+@app.get("/discovery-runs/{external_id}/report")
+def get_discovery_report(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> dict:
+    """Story 2.22 AC 5: the structured coverage/diagnostics report, queryable
+    independent of any screen — no `[GAP]` UI exists for this yet (Task 4's
+    own disclosed scope), so this is the whole surface for now."""
+    discovery_run = session.exec(
+        select(DiscoveryRun).where(DiscoveryRun.external_id == external_id)
+    ).first()
+    application = session.get(Application, discovery_run.application_id) if discovery_run else None
+    if (
+        discovery_run is None
+        or application is None
+        or application.organization_id != organization_id
+    ):
+        raise HTTPException(status_code=404, detail="discovery run not found")
+    return build_coverage_report(session, discovery_run)
 
 
 # --- Discover Journeys (Story 3.1) + Rename/Delete (Story 3.4) ---
@@ -344,6 +751,7 @@ class JourneyStepRead(BaseModel):
     stage_label: str
     route: str
     method: str
+    screenshot_url: str | None = None
 
 
 class JourneyRenamePayload(BaseModel):
@@ -484,6 +892,24 @@ def list_journey_steps(
                 step_order=step.step_order, stage_label=step.stage_label, route=route, method=method
             )
         )
+
+    # Only the final step gets a screenshot (product decision — not every
+    # step, just the journey's end state). Form/API-endpoint steps have no
+    # associated Page, so no screenshot is available for those.
+    if result:
+        last_step = steps[-1]
+        last_page = (
+            pages.get(last_step.page_id)
+            if last_step.page_id
+            else pages.get(components[last_step.component_id].page_id)
+            if last_step.component_id
+            else None
+        )
+        if last_page is not None and last_page.object_storage_key:
+            result[-1].screenshot_url = ObjectStore().presigned_get_url(
+                last_page.object_storage_key
+            )
+
     return result
 
 
@@ -523,6 +949,182 @@ def delete_journey(
         raise HTTPException(status_code=409, detail="journey already deleted")
     journey.status = "deleted"
     session.add(journey)
+    session.commit()
+
+
+# --- Test Data Pool (Story 2.20) ---
+# `[GAP — needs UX pass]` No screen for this exists in the current 6-screen
+# IA (DESIGN.md/EXPERIENCE.md) — this is backend + API only, independently
+# useful on its own (seed via API, or by answering a Blocked Frontier item
+# once Story 2.15 lands), same disclosed scope as Story 2.17/2.22's UI halves.
+#
+# `_POOL_WILDCARD_ROUTE_FAMILY`: Story 2.15's `aggregation_key` is (field
+# name, input type, route family) — but a user seeding data before a crawl
+# has ever run has no route family to give, and a value like "Policy Number"
+# is usually meant to apply everywhere, not to one specific route. Rather
+# than force a route family at seed time, entries are keyed under this
+# wildcard by default; the Data Resolver (Story 2.13) tries the candidate's
+# real route family first, then falls back to the wildcard. Still the same
+# shared `aggregation_key` function either way — this is a choice of what
+# value to pass for `route_family`, not a second normalizer.
+_POOL_WILDCARD_ROUTE_FAMILY = "*"
+
+
+class TestDataEntryCreate(BaseModel):
+    label: str
+    field_name: str
+    input_type: str = "text"
+    route_family: str = _POOL_WILDCARD_ROUTE_FAMILY
+    value: str
+    is_sensitive: bool = False
+
+
+class TestDataEntryUpdate(BaseModel):
+    label: str | None = None
+    value: str | None = None
+    is_sensitive: bool | None = None
+
+
+class TestDataEntryRead(BaseModel):
+    id: uuid.UUID
+    label: str
+    normalized_key: str
+    is_sensitive: bool
+    # AC 6: never the raw value for a sensitive entry, in any API response.
+    value: str | None
+
+
+def _mask(entry: TestDataEntry) -> str | None:
+    if entry.is_sensitive:
+        return None
+    return entry.value
+
+
+def _get_org_test_data_entry(
+    session: Session, organization_id: uuid.UUID, external_id: uuid.UUID
+) -> TestDataEntry:
+    entry = session.exec(
+        select(TestDataEntry).where(TestDataEntry.external_id == external_id)
+    ).first()
+    application = session.get(Application, entry.application_id) if entry else None
+    if entry is None or application is None or application.organization_id != organization_id:
+        raise HTTPException(status_code=404, detail="test data entry not found")
+    return entry
+
+
+@app.get("/applications/{external_id}/test-data", response_model=list[TestDataEntryRead])
+def list_test_data_entries(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[TestDataEntryRead]:
+    application = _get_org_application(session, organization_id, external_id)
+    entries = session.exec(
+        select(TestDataEntry).where(TestDataEntry.application_id == application.id)
+    ).all()
+    return [
+        TestDataEntryRead(
+            id=e.external_id,
+            label=e.label,
+            normalized_key=e.normalized_key,
+            is_sensitive=e.is_sensitive,
+            value=_mask(e),
+        )
+        for e in entries
+    ]
+
+
+@app.post(
+    "/applications/{external_id}/test-data", response_model=TestDataEntryRead, status_code=201
+)
+def create_test_data_entry(
+    external_id: uuid.UUID,
+    payload: TestDataEntryCreate,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> TestDataEntryRead:
+    application = _get_org_application(session, organization_id, external_id)
+    normalized_key = aggregation_key(payload.field_name, payload.input_type, payload.route_family)
+
+    value: str | None = payload.value
+    secret_ref: str | None = None
+    if payload.is_sensitive:
+        # AC 6: held via the existing Vault-backed client, not plain Postgres
+        # storage — mirrors Application.secret_ref (create_application above).
+        secret_ref = VaultSecretsClient().store(organization_id, payload.value.encode()).path
+        value = None
+
+    entry = TestDataEntry(
+        application_id=application.id,
+        label=payload.label,
+        normalized_key=normalized_key,
+        value=value,
+        secret_ref=secret_ref,
+        is_sensitive=payload.is_sensitive,
+    )
+    session.add(entry)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=409, detail="a test data entry for this field already exists"
+        ) from None
+    session.refresh(entry)
+    return TestDataEntryRead(
+        id=entry.external_id,
+        label=entry.label,
+        normalized_key=entry.normalized_key,
+        is_sensitive=entry.is_sensitive,
+        value=_mask(entry),
+    )
+
+
+@app.patch("/test-data/{external_id}", response_model=TestDataEntryRead)
+def update_test_data_entry(
+    external_id: uuid.UUID,
+    payload: TestDataEntryUpdate,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> TestDataEntryRead:
+    entry = _get_org_test_data_entry(session, organization_id, external_id)
+    if payload.label is not None:
+        entry.label = payload.label
+    is_sensitive = payload.is_sensitive if payload.is_sensitive is not None else entry.is_sensitive
+    if payload.value is not None:
+        if is_sensitive:
+            # `organization_id` here is already confirmed (by
+            # `_get_org_test_data_entry` above) to be this entry's own
+            # Application's org — no need to re-fetch the Application row.
+            entry.secret_ref = (
+                VaultSecretsClient().store(organization_id, payload.value.encode()).path
+            )
+            entry.value = None
+        else:
+            entry.value = payload.value
+            entry.secret_ref = None
+    entry.is_sensitive = is_sensitive
+    entry.updated_at = datetime.now(UTC)
+    session.add(entry)
+    session.commit()
+    session.refresh(entry)
+    return TestDataEntryRead(
+        id=entry.external_id,
+        label=entry.label,
+        normalized_key=entry.normalized_key,
+        is_sensitive=entry.is_sensitive,
+        value=_mask(entry),
+    )
+
+
+@app.delete("/test-data/{external_id}", status_code=204)
+def delete_test_data_entry(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> None:
+    entry = _get_org_test_data_entry(session, organization_id, external_id)
+    session.delete(entry)
     session.commit()
 
 
@@ -756,25 +1358,42 @@ async def generate_suite(
     client = await get_temporal_client()
     triggered = 0
     for journey in journeys:
-        has_current_scenarios = session.exec(
+        current_scenarios = session.exec(
             select(Scenario).where(
                 Scenario.journey_id == journey.id,
                 Scenario.current.is_(True),  # type: ignore[attr-defined]
             )
-        ).first()
-        if has_current_scenarios is None:
+        ).all()
+        if not current_scenarios:
             continue
-        # Idempotent: skip a Journey that already has a TestSuite for its
-        # current attempt — Temporal's WorkflowAlreadyStartedError below is
-        # the second layer, covering the narrower race where the workflow
-        # started but hasn't written its TestSuite row yet.
-        already_generated = session.exec(
-            select(TestSuite).where(
+        # Idempotent, but scoped to "every current Scenario already has a
+        # TestAsset" rather than "a TestSuite row exists" — SuiteGeneration-
+        # Workflow's own fault isolation (one Scenario's PlaywrightGeneration
+        # failing all 3 retries doesn't fail the Journey) means a TestSuite
+        # can exist with some Scenarios never getting a TestAsset. Checking
+        # TestSuite existence alone made that permanent: re-clicking Generate
+        # Suite skipped the Journey forever, no way to resume. Re-running is
+        # safe either way — EnsureTestSuiteActivity/PlaywrightGenerationActivity
+        # are both idempotent per Journey/Scenario.
+        suite_ids = session.exec(
+            select(TestSuite.id).where(
                 TestSuite.journey_id == journey.id,
                 TestSuite.generation_run_id == journey.attempt,
             )
-        ).first()
-        if already_generated is not None:
+        ).all()
+        covered_scenario_ids = (
+            set(
+                session.exec(
+                    select(TestAsset.scenario_id).where(
+                        TestAsset.test_suite_id.in_(suite_ids),  # type: ignore[attr-defined]
+                        TestAsset.current.is_(True),  # type: ignore[attr-defined]
+                    )
+                ).all()
+            )
+            if suite_ids
+            else set()
+        )
+        if all(s.id in covered_scenario_ids for s in current_scenarios):
             continue
         try:
             await client.start_workflow(
@@ -946,3 +1565,704 @@ def download_test_suite_project(
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}-tests.zip"'},
     )
+
+
+class ExecutionPolicyRead(BaseModel):
+    execution_enabled: bool
+    allowed_base_urls: list[str]
+    destructive_actions_permitted: bool
+    video_capture_enabled: bool
+    version: int
+
+
+class ExecutionPolicyUpdate(BaseModel):
+    execution_enabled: bool | None = None
+    allowed_base_urls: list[str] | None = None
+    destructive_actions_permitted: bool | None = None
+    video_capture_enabled: bool | None = None
+
+
+def _to_execution_policy_read(policy: ExecutionPolicy) -> ExecutionPolicyRead:
+    return ExecutionPolicyRead(
+        execution_enabled=policy.execution_enabled,
+        allowed_base_urls=policy.allowed_base_urls,
+        destructive_actions_permitted=policy.destructive_actions_permitted,
+        video_capture_enabled=policy.video_capture_enabled,
+        version=policy.version,
+    )
+
+
+@app.get(
+    "/applications/{external_id}/execution-policy",
+    response_model=ExecutionPolicyRead,
+)
+def get_execution_policy(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> ExecutionPolicyRead:
+    application = _get_org_application(session, organization_id, external_id)
+    policy = session.exec(
+        select(ExecutionPolicy).where(ExecutionPolicy.application_id == application.id)
+    ).first()
+    if policy is None:
+        raise HTTPException(status_code=404, detail="no execution policy configured yet")
+    return _to_execution_policy_read(policy)
+
+
+@app.put(
+    "/applications/{external_id}/execution-policy",
+    response_model=ExecutionPolicyRead,
+)
+def update_execution_policy(
+    external_id: uuid.UUID,
+    payload: ExecutionPolicyUpdate,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> ExecutionPolicyRead:
+    """Upsert — without this, "Run All Tests" has nothing to validate a run
+    against and can never be clickable (decision from the grill-me design
+    review). `version` is bumped on every field change, never on a no-op
+    PUT, so a `TestRun`'s `execution_policy_version` snapshot stays a
+    meaningful "was this the policy in effect" marker."""
+    application = _get_org_application(session, organization_id, external_id)
+    policy = session.exec(
+        select(ExecutionPolicy).where(ExecutionPolicy.application_id == application.id)
+    ).first()
+    is_new = policy is None
+    if policy is None:
+        policy = ExecutionPolicy(application_id=application.id)
+
+    changed = False
+    for field_name in (
+        "execution_enabled",
+        "allowed_base_urls",
+        "destructive_actions_permitted",
+        "video_capture_enabled",
+    ):
+        value = getattr(payload, field_name)
+        if value is not None and value != getattr(policy, field_name):
+            setattr(policy, field_name, value)
+            changed = True
+
+    if changed and not is_new:
+        policy.version += 1
+    policy.updated_at = datetime.now(UTC)
+    session.add(policy)
+    session.commit()
+    session.refresh(policy)
+    return _to_execution_policy_read(policy)
+
+
+class TestResultRead(BaseModel):
+    id: uuid.UUID
+    scenario_name: str
+    status: str
+    duration_ms: int | None
+    error_message: str | None
+    stack_trace: str | None
+    blocked_reason: str | None
+
+
+class TestRunRead(BaseModel):
+    id: uuid.UUID
+    status: str
+    trigger: str
+    pass_rate: float | None
+    total_count: int
+    passed_count: int
+    failed_count: int
+    timed_out_count: int
+    errored_count: int
+    blocked_count: int
+    blocked_reason: str | None
+    environment_snapshot: str
+    target_base_url_snapshot: str
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    results: list[TestResultRead] | None = None
+
+
+class TestResultArtifactRead(BaseModel):
+    id: uuid.UUID
+    artifact_type: str
+    content_type: str
+    size_bytes: int
+    url: str
+
+
+def _to_test_run_read(
+    test_run: TestRun, *, results: list[TestResultRead] | None
+) -> TestRunRead:
+    return TestRunRead(
+        id=test_run.external_id,
+        status=test_run.status,
+        trigger=(
+            f"Manual run by {test_run.triggered_by_name}"
+            if test_run.triggered_by_name
+            else "Manual run"
+        ),
+        pass_rate=(
+            test_run.passed_count / test_run.total_count if test_run.total_count else None
+        ),
+        total_count=test_run.total_count,
+        passed_count=test_run.passed_count,
+        failed_count=test_run.failed_count,
+        timed_out_count=test_run.timed_out_count,
+        errored_count=test_run.errored_count,
+        blocked_count=test_run.blocked_count,
+        blocked_reason=test_run.blocked_reason,
+        environment_snapshot=test_run.environment_snapshot,
+        target_base_url_snapshot=test_run.target_base_url_snapshot,
+        created_at=test_run.created_at,
+        started_at=test_run.started_at,
+        completed_at=test_run.completed_at,
+        results=results,
+    )
+
+
+@app.post("/applications/{external_id}/test-runs", status_code=202)
+async def trigger_test_run(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
+) -> dict[str, bool]:
+    """No body — every "Run All Tests" click is a fresh, full-scope run
+    covering every current TestAsset for the application (no rerun-scoped
+    mode). `PrepareTestRunActivity` creates the actual `TestRun` row
+    asynchronously, so the very first `GET .../test-runs` poll may briefly
+    see nothing yet — the same gap `TestSuiteResults.tsx`'s existing poll
+    loop already tolerates for generation.
+
+    ponytail: no `ExecutionPolicy` precondition check here anymore —
+    removed per explicit request so this never needs setup before it can
+    be clicked. `GET`/`PUT .../execution-policy` below still exist; nothing
+    on this path reads them. To restore the original gate: re-add a
+    `select(ExecutionPolicy)...` lookup and 409 when it's missing (see git
+    history for the removed version)."""
+    application = _get_org_application(session, organization_id, external_id)
+
+    client = await get_temporal_client()
+    await client.start_workflow(
+        ApplicationTestExecutionWorkflow.run,
+        ExecutionWorkflowInput(
+            application_id=str(application.external_id), triggered_by_name=user.name
+        ),
+        # Every run is a genuinely new TestRun (no rerun/idempotency key the
+        # way suite-{journey_id}-{attempt} has) — the id only needs to be
+        # unique, never deterministic/replayable.
+        id=f"execution-{application.external_id}-{uuid.uuid4()}",
+        task_queue=EXECUTION_TASK_QUEUE,
+    )
+    return {"started": True}
+
+
+class TestRunPageRead(BaseModel):
+    items: list[TestRunRead]
+    page: int
+    page_size: int
+    total: int
+
+
+@app.get("/applications/{external_id}/test-runs", response_model=TestRunPageRead)
+def list_test_runs(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+    page: int = 1,
+    page_size: int = 10,
+) -> TestRunPageRead:
+    """Paginated (Application Workspace feature's Runs tab) — every run for
+    an Application is kept forever (immutable history), so an unpaginated
+    list would grow without bound."""
+    application = _get_org_application(session, organization_id, external_id)
+    base_query = select(TestRun).where(TestRun.application_id == application.id)
+    total = session.exec(select(func.count()).select_from(base_query.subquery())).one()
+    test_runs = session.exec(
+        base_query.order_by(TestRun.created_at.desc())  # type: ignore[arg-type]
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+    return TestRunPageRead(
+        items=[_to_test_run_read(tr, results=None) for tr in test_runs],
+        page=page,
+        page_size=page_size,
+        total=total,
+    )
+
+
+@app.get(
+    "/applications/{external_id}/test-runs/{test_run_external_id}",
+    response_model=TestRunRead,
+)
+def get_test_run(
+    external_id: uuid.UUID,
+    test_run_external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> TestRunRead:
+    """The endpoint the frontend polls while a run is in flight (mirrors
+    `list_test_suites`'s shape)."""
+    application = _get_org_application(session, organization_id, external_id)
+    test_run = session.exec(
+        select(TestRun).where(
+            TestRun.external_id == test_run_external_id,
+            TestRun.application_id == application.id,
+        )
+    ).first()
+    if test_run is None:
+        raise HTTPException(status_code=404, detail="test run not found")
+
+    results = session.exec(
+        select(TestResult).where(TestResult.test_run_id == test_run.id)
+    ).all()
+    scenario_ids = {r.scenario_id for r in results}
+    scenarios_by_id = (
+        {
+            s.id: s
+            for s in session.exec(
+                select(Scenario).where(Scenario.id.in_(scenario_ids))  # type: ignore[attr-defined]
+            ).all()
+        }
+        if scenario_ids
+        else {}
+    )
+    result_reads = [
+        TestResultRead(
+            id=r.external_id,
+            scenario_name=scenarios_by_id[r.scenario_id].name
+            if r.scenario_id in scenarios_by_id
+            else "",
+            status=r.status,
+            duration_ms=r.duration_ms,
+            error_message=r.error_message,
+            stack_trace=r.stack_trace,
+            blocked_reason=r.blocked_reason,
+        )
+        for r in results
+    ]
+    return _to_test_run_read(test_run, results=result_reads)
+
+
+@app.get(
+    "/test-results/{external_id}/artifacts",
+    response_model=list[TestResultArtifactRead],
+)
+def list_test_result_artifacts(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[TestResultArtifactRead]:
+    """Presigned URLs (mirrors the existing screenshot-URL pattern used
+    elsewhere in this file) — never proxies the blob itself through this
+    API."""
+    test_result = session.exec(
+        select(TestResult).where(TestResult.external_id == external_id)
+    ).first()
+    test_run = (
+        session.get(TestRun, test_result.test_run_id) if test_result is not None else None
+    )
+    application = (
+        session.get(Application, test_run.application_id) if test_run is not None else None
+    )
+    if (
+        test_result is None
+        or test_run is None
+        or application is None
+        or application.organization_id != organization_id
+    ):
+        raise HTTPException(status_code=404, detail="test result not found")
+
+    artifacts = session.exec(
+        select(TestResultArtifact).where(TestResultArtifact.test_result_id == test_result.id)
+    ).all()
+    object_store = ObjectStore()
+    return [
+        TestResultArtifactRead(
+            id=a.external_id,
+            artifact_type=a.artifact_type,
+            content_type=a.content_type,
+            size_bytes=a.size_bytes,
+            url=object_store.presigned_get_url(a.object_store_key),
+        )
+        for a in artifacts
+    ]
+
+
+def _current_test_assets_for_application(
+    session: Session, application: Application
+) -> tuple[list[TestAsset], dict[uuid.UUID, Scenario]]:
+    """The same `Journey(candidate) -> TestSuite(current) -> TestAsset(current)`
+    join `list_test_suites` and `_prepare_test_run_sync`
+    (`execution_worker/activities.py`) already use — factored out here so
+    the Application Workspace's Suite-tab and Overview endpoints don't each
+    duplicate it. Returns every current `TestAsset` plus a
+    `Scenario.id -> Scenario` map (for name/type/steps)."""
+    journeys = session.exec(
+        select(Journey).where(
+            Journey.application_id == application.id,
+            Journey.status == "candidate",
+        )
+    ).all()
+    if not journeys:
+        return [], {}
+    journey_ids = [j.id for j in journeys]
+
+    test_suites = session.exec(
+        select(TestSuite).where(
+            TestSuite.journey_id.in_(journey_ids),  # type: ignore[attr-defined]
+            TestSuite.current.is_(True),  # type: ignore[attr-defined]
+        )
+    ).all()
+    if not test_suites:
+        return [], {}
+    suite_ids = [ts.id for ts in test_suites]
+
+    test_assets = session.exec(
+        select(TestAsset).where(
+            TestAsset.test_suite_id.in_(suite_ids),  # type: ignore[attr-defined]
+            TestAsset.current.is_(True),  # type: ignore[attr-defined]
+        )
+    ).all()
+    scenario_ids = {a.scenario_id for a in test_assets}
+    scenarios_by_id = {
+        s.id: s
+        for s in (
+            session.exec(select(Scenario).where(Scenario.id.in_(scenario_ids))).all()  # type: ignore[attr-defined]
+            if scenario_ids
+            else []
+        )
+    }
+    return test_assets, scenarios_by_id
+
+
+def _latest_result_by_asset(
+    session: Session, application: Application, asset_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, TestResult]:
+    """The most recent `TestResult` per `TestAsset`, across every `TestRun`
+    the Application has ever had — no window function exists elsewhere in
+    this codebase, so this uses the same order-by-desc + `setdefault` idiom
+    already established for "most recent X" lookups (mirrors
+    `_latest_discovery_run` above, just keyed per-asset instead of
+    per-application). An asset with no key in the returned dict has never
+    been executed at all ("Not Run")."""
+    if not asset_ids:
+        return {}
+    results = session.exec(
+        select(TestResult)
+        .join(TestRun, TestResult.test_run_id == TestRun.id)  # type: ignore[arg-type]
+        .where(
+            TestRun.application_id == application.id,
+            TestResult.test_asset_id.in_(asset_ids),  # type: ignore[attr-defined]
+        )
+        .order_by(TestResult.created_at.desc())  # type: ignore[arg-type]
+    ).all()
+    latest_by_asset: dict[uuid.UUID, TestResult] = {}
+    for result in results:
+        latest_by_asset.setdefault(result.test_asset_id, result)
+    return latest_by_asset
+
+
+def _collapse_to_suite_row_status(result: TestResult | None) -> str:
+    """The Suite tab shows exactly 3 buckets (Passed/Failed/Not Run) —
+    narrower than `TestResultStatus`'s full vocabulary. `timed_out`/
+    `errored`/`blocked` all read as "Failed" here: an attempted-and-didn't-pass
+    test is a more honest reading for a suite-health table than lumping it
+    with never-attempted. The Runs tab's per-result detail view still shows
+    the full status via `StatusPill`, so nothing is lost overall — only in
+    this one summary."""
+    if result is None or result.status == "pending":
+        return "not_run"
+    if result.status == "passed":
+        return "passed"
+    return "failed"
+
+
+def _get_org_test_asset(
+    session: Session, organization_id: uuid.UUID, external_id: uuid.UUID
+) -> TestAsset:
+    test_asset = session.exec(
+        select(TestAsset).where(TestAsset.external_id == external_id)
+    ).first()
+    test_suite = session.get(TestSuite, test_asset.test_suite_id) if test_asset else None
+    journey = session.get(Journey, test_suite.journey_id) if test_suite else None
+    application = session.get(Application, journey.application_id) if journey else None
+    if (
+        test_asset is None
+        or test_suite is None
+        or journey is None
+        or application is None
+        or application.organization_id != organization_id
+    ):
+        raise HTTPException(status_code=404, detail="test asset not found")
+    return test_asset
+
+
+class TestAssetStatusRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    type: str
+    steps: list[str]
+    status: str
+    last_run_at: datetime | None
+    duration_ms: int | None
+    error_message: str | None
+    latest_test_result_id: uuid.UUID | None
+
+
+class TestAssetStatusPageRead(BaseModel):
+    items: list[TestAssetStatusRead]
+    page: int
+    page_size: int
+    total: int
+
+
+@app.get(
+    "/applications/{external_id}/test-suite-status",
+    response_model=TestAssetStatusPageRead,
+)
+def get_test_suite_status(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+    page: int = 1,
+    page_size: int = 10,
+) -> TestAssetStatusPageRead:
+    """Application Workspace's Test Suite tab — one row per current
+    TestAsset, showing its most recent result (or "not_run" if it's never
+    been executed) across every TestRun, not just the latest one."""
+    application = _get_org_application(session, organization_id, external_id)
+    test_assets, scenarios_by_id = _current_test_assets_for_application(session, application)
+
+    def _scenario_name(asset: TestAsset) -> str:
+        scenario = scenarios_by_id.get(asset.scenario_id)
+        return scenario.name if scenario else ""
+
+    test_assets = sorted(test_assets, key=_scenario_name)
+    total = len(test_assets)
+    page_assets = test_assets[(page - 1) * page_size : (page - 1) * page_size + page_size]
+
+    latest_by_asset = _latest_result_by_asset(session, application, [a.id for a in page_assets])
+
+    items = []
+    for asset in page_assets:
+        scenario = scenarios_by_id.get(asset.scenario_id)
+        result = latest_by_asset.get(asset.id)
+        items.append(
+            TestAssetStatusRead(
+                id=asset.external_id,
+                name=scenario.name if scenario else "",
+                type=scenario.type if scenario else "happy",
+                steps=scenario.steps if scenario else [],
+                status=_collapse_to_suite_row_status(result),
+                last_run_at=result.completed_at if result else None,
+                duration_ms=result.duration_ms if result else None,
+                error_message=result.error_message if result else None,
+                latest_test_result_id=result.external_id if result else None,
+            )
+        )
+    return TestAssetStatusPageRead(items=items, page=page, page_size=page_size, total=total)
+
+
+class TestAssetCodeRead(BaseModel):
+    code: str
+
+
+@app.get("/test-assets/{external_id}/code", response_model=TestAssetCodeRead)
+def get_test_asset_code(
+    external_id: uuid.UUID, session: SessionDep, organization_id: CurrentOrgIdDep
+) -> TestAssetCodeRead:
+    """Lazy code fetch for the Suite tab's "View Code" button — keeps the
+    (large, rarely-viewed) source text out of `get_test_suite_status`'s
+    paginated rows."""
+    test_asset = _get_org_test_asset(session, organization_id, external_id)
+    return TestAssetCodeRead(code=test_asset.code)
+
+
+class HealthRead(BaseModel):
+    tier: str
+    headline: str
+
+
+class RunTrendPointRead(BaseModel):
+    run_id: uuid.UUID
+    pass_rate: float | None
+    created_at: datetime
+
+
+class LatestRunSummaryRead(BaseModel):
+    id: uuid.UUID
+    created_at: datetime
+    passed_count: int
+    failed_count: int
+    blocked_count: int
+    duration_ms: int | None
+
+
+class OverviewRead(BaseModel):
+    health: HealthRead
+    total_tests: int
+    passed: int
+    failed: int
+    not_run: int
+    pass_rate: float | None
+    trend: list[RunTrendPointRead]
+    latest_run: LatestRunSummaryRead | None
+    # `DiscoveryRun` has no completion timestamp (only `created_at`, i.e.
+    # start time, and `status`) — this is honestly the most recent
+    # *completed* run's start time, not when it finished.
+    last_discovery_started_at: datetime | None
+
+
+def _health_tier(pass_rate: float | None) -> HealthRead:
+    if pass_rate is None:
+        return HealthRead(tier="needs_attention", headline="No tests have run yet")
+    if pass_rate >= 0.90:
+        return HealthRead(tier="healthy", headline=f"{pass_rate:.0%} of tests are passing")
+    if pass_rate >= 0.70:
+        return HealthRead(tier="needs_attention", headline=f"{pass_rate:.0%} of tests are passing")
+    return HealthRead(tier="critical", headline=f"{pass_rate:.0%} of tests are passing")
+
+
+_OVERVIEW_TREND_RUN_COUNT = 10
+
+
+@app.get("/applications/{external_id}/overview", response_model=OverviewRead)
+def get_overview(
+    external_id: uuid.UUID, session: SessionDep, organization_id: CurrentOrgIdDep
+) -> OverviewRead:
+    """Application Workspace's Overview tab — one bundled endpoint (health,
+    stat counts, recent-run trend, latest run, last discovery) rather than
+    several, mirroring `get_home`'s own "aggregate once, don't reintroduce a
+    polling waterfall" rationale."""
+    application = _get_org_application(session, organization_id, external_id)
+    test_assets, scenarios_by_id = _current_test_assets_for_application(session, application)
+    asset_ids = [a.id for a in test_assets]
+    latest_by_asset = _latest_result_by_asset(session, application, asset_ids)
+
+    total_tests = len(test_assets)
+    passed = sum(
+        1 for a in test_assets if _collapse_to_suite_row_status(latest_by_asset.get(a.id)) == "passed"
+    )
+    failed = sum(
+        1 for a in test_assets if _collapse_to_suite_row_status(latest_by_asset.get(a.id)) == "failed"
+    )
+    not_run = total_tests - passed - failed
+    pass_rate = (passed / total_tests) if total_tests else None
+
+    recent_runs = session.exec(
+        select(TestRun)
+        .where(TestRun.application_id == application.id)
+        .order_by(TestRun.created_at.desc())  # type: ignore[arg-type]
+        .limit(_OVERVIEW_TREND_RUN_COUNT)
+    ).all()
+    trend = [
+        RunTrendPointRead(
+            run_id=r.external_id,
+            pass_rate=(r.passed_count / r.total_count) if r.total_count else None,
+            created_at=r.created_at,
+        )
+        for r in reversed(recent_runs)  # oldest first, for a left-to-right trend chart
+    ]
+    latest_run = None
+    if recent_runs:
+        latest = recent_runs[0]
+        duration_ms = None
+        if latest.started_at and latest.completed_at:
+            duration_ms = int((latest.completed_at - latest.started_at).total_seconds() * 1000)
+        latest_run = LatestRunSummaryRead(
+            id=latest.external_id,
+            created_at=latest.created_at,
+            passed_count=latest.passed_count,
+            failed_count=latest.failed_count,
+            blocked_count=latest.blocked_count,
+            duration_ms=duration_ms,
+        )
+
+    discovery_run = _latest_discovery_run(session, application.id)
+    last_discovery_started_at = (
+        discovery_run.created_at if discovery_run and discovery_run.status == "complete" else None
+    )
+
+    return OverviewRead(
+        health=_health_tier(pass_rate),
+        total_tests=total_tests,
+        passed=passed,
+        failed=failed,
+        not_run=not_run,
+        pass_rate=pass_rate,
+        trend=trend,
+        latest_run=latest_run,
+        last_discovery_started_at=last_discovery_started_at,
+    )
+
+
+class SettingsRead(BaseModel):
+    max_pages: int
+    max_discovery_duration_minutes: int
+    navigation_timeout_seconds: float
+    interaction_level: InteractionLevel
+    max_journeys: int | None
+    max_scenarios_per_journey: int | None
+    max_test_cases_per_application: int | None
+
+
+class SettingsUpdate(BaseModel):
+    max_pages: int | None = None
+    max_discovery_duration_minutes: int | None = None
+    navigation_timeout_seconds: float | None = None
+    interaction_level: InteractionLevel | None = None
+    # Sentinel, not None: None already means "leave unchanged" for every
+    # other field here, but these three need "leave unchanged" AND "clear to
+    # unlimited" to be distinguishable.
+    max_journeys: int | None | Literal["__unset__"] = "__unset__"
+    max_scenarios_per_journey: int | None | Literal["__unset__"] = "__unset__"
+    max_test_cases_per_application: int | None | Literal["__unset__"] = "__unset__"
+
+
+def _to_settings_read(settings: DiscoverySettings) -> SettingsRead:
+    return SettingsRead(
+        max_pages=settings.max_pages,
+        max_discovery_duration_minutes=settings.max_discovery_duration_minutes,
+        navigation_timeout_seconds=settings.navigation_timeout_seconds,
+        interaction_level=settings.interaction_level,  # type: ignore[arg-type]
+        max_journeys=settings.max_journeys,
+        max_scenarios_per_journey=settings.max_scenarios_per_journey,
+        max_test_cases_per_application=settings.max_test_cases_per_application,
+    )
+
+
+@app.get("/settings", response_model=SettingsRead)
+def get_settings(session: SessionDep, _admin: CurrentAdminDep) -> SettingsRead:
+    settings = session.exec(select(DiscoverySettings)).one()
+    return _to_settings_read(settings)
+
+
+@app.patch("/settings", response_model=SettingsRead)
+def update_settings(
+    payload: SettingsUpdate,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+) -> SettingsRead:
+    settings = session.exec(select(DiscoverySettings)).one()
+    if payload.max_pages is not None:
+        settings.max_pages = payload.max_pages
+    if payload.max_discovery_duration_minutes is not None:
+        settings.max_discovery_duration_minutes = payload.max_discovery_duration_minutes
+    if payload.navigation_timeout_seconds is not None:
+        settings.navigation_timeout_seconds = payload.navigation_timeout_seconds
+    if payload.interaction_level is not None:
+        settings.interaction_level = payload.interaction_level
+    if payload.max_journeys != "__unset__":
+        settings.max_journeys = payload.max_journeys
+    if payload.max_scenarios_per_journey != "__unset__":
+        settings.max_scenarios_per_journey = payload.max_scenarios_per_journey
+    if payload.max_test_cases_per_application != "__unset__":
+        settings.max_test_cases_per_application = payload.max_test_cases_per_application
+    session.add(settings)
+    session.commit()
+    session.refresh(settings)
+    return _to_settings_read(settings)

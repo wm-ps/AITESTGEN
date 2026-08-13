@@ -147,12 +147,11 @@ textarea:focus-visible,
 }
 
 .home-app-card {
-  transition: box-shadow 0.15s ease, transform 0.15s ease;
+  transition: box-shadow 0.15s ease;
 }
 
 .home-app-card:hover {
   box-shadow: 0 10px 24px -8px rgba(15, 23, 42, 0.12);
-  transform: translateY(-2px);
 }
 
 .badge {
@@ -165,9 +164,9 @@ textarea:focus-visible,
 
 .status-pill {
   display: inline-block;
-  border-radius: var(--radius-xs);
-  font-size: 10.5px;
-  font-weight: 700;
+  border-radius: var(--radius-full);
+  font-size: 10px;
+  font-weight: 600;
   padding: 3px 8px;
 }
 
@@ -200,6 +199,14 @@ textarea:focus-visible,
 
 .menu-item-danger:hover {
   background: var(--danger-wash);
+}
+
+.menu-item {
+  transition: background-color 0.15s ease;
+}
+
+.menu-item:hover {
+  background: var(--canvas-wash-alt);
 }
 
 .button-primary:hover:not(:disabled) {

@@ -76,6 +76,7 @@ function stubFetch(overrides: {
 function renderScreen(onContinueToScenarios: () => void = () => {}) {
   return render(
     <DiscoverJourneys
+      furthestCount={1}
       applicationId="app-1"
       applicationName="Test App"
       discoveryStatus="complete"
@@ -99,11 +100,21 @@ describe('DiscoverJourneys', () => {
       expect(screen.getByText('Checkout')).toBeTruthy()
     })
     expect(screen.getByText('2 steps')).toBeTruthy()
-    expect(
-      screen.getByText('Customer adds an item to the cart and completes payment.')
-    ).toBeTruthy()
+    expect(screen.queryByText('Customer adds an item to the cart and completes payment.')).toBeNull()
     expect(screen.queryByText(/confidence/i)).toBeNull()
     expect(screen.queryByText(/risk/i)).toBeNull()
+  })
+
+  it('shows the selected journey description in the right canvas, not the list row', async () => {
+    stubFetch()
+    renderScreen()
+
+    await waitFor(() => screen.getByText('Checkout'))
+    fireEvent.click(screen.getByText('Checkout'))
+
+    expect(
+      await screen.findByText('Customer adds an item to the cart and completes payment.'),
+    ).toBeTruthy()
   })
 
   it('keeps polling for more Journeys after the first one appears', async () => {
@@ -210,6 +221,7 @@ describe('DiscoverJourneys', () => {
     )
     render(
       <DiscoverJourneys
+        furthestCount={1}
         applicationId="app-1"
         applicationName="Test App"
         discoveryStatus="running"

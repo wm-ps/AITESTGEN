@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type JourneyRead, type ScenarioRead } from '../api'
-import { Stepper } from './Stepper'
+import { Stepper, type StepKey } from './Stepper'
 
 const ENV_OPTIONS = [
   ['staging', 'Staging'],
@@ -24,9 +24,17 @@ function PlayIcon() {
 export function GenerateSuite({
   applicationId,
   onGenerated,
+  furthestCount,
+  onStepClick,
+  onPrevious,
+  onNext,
 }: {
   applicationId: string
   onGenerated: () => void
+  furthestCount: number
+  onStepClick?: (key: StepKey) => void
+  onPrevious?: () => void
+  onNext?: () => void
 }) {
   const [journeys, setJourneys] = useState<JourneyRead[]>([])
   const [scenarios, setScenarios] = useState<ScenarioRead[]>([])
@@ -72,7 +80,7 @@ export function GenerateSuite({
 
   return (
     <>
-      <Stepper current="generate" />
+      <Stepper current="generate" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
       <main style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
         <div style={{ maxWidth: 'clamp(1050px, 90vw, 1720px)', width: '100%' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>

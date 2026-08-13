@@ -82,3 +82,15 @@ def current_org_id(user: CurrentUserDep) -> uuid.UUID:
 
 
 CurrentOrgIdDep = Annotated[uuid.UUID, Depends(current_org_id)]
+
+
+def require_admin(user: CurrentUserDep) -> PlatformUser:
+    """Gate for admin-only actions (issuing/revoking Invites) — every seeded
+    or invite-accepted PlatformUser has a `role`, checked here once rather
+    than in each admin-only route."""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="admin role required")
+    return user
+
+
+CurrentAdminDep = Annotated[PlatformUser, Depends(require_admin)]

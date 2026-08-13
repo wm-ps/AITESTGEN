@@ -189,6 +189,31 @@ def test_generate_suite_is_idempotent_for_journeys_with_existing_test_suite() ->
     assert response.json() == {"suites_triggered": 0}
 
 
+def test_generate_suite_resumes_a_journey_with_a_scenario_missing_its_test_asset() -> None:
+    # SuiteGenerationWorkflow's own fault isolation (Task 4) lets one
+    # Scenario's PlaywrightGenerationActivity exhaust its retries without
+    # failing the Journey — so a TestSuite can exist with some Scenarios
+    # never getting a TestAsset. Checking "TestSuite exists" alone (as
+    # `test_generate_suite_is_idempotent_for_journeys_with_existing_test_suite`
+    # covers for the *fully* generated case) made that permanent: re-clicking
+    # Generate Suite skipped the Journey forever. It must still trigger here.
+    init_db()
+    client = _signed_in_client("Org Suite Generation Partial")
+    application = _create_application(client, "Partial Suite App")
+    journey = _add_candidate_journey(application)
+    covered_scenario = _add_scenario(journey, "Guest checkout")
+    _add_scenario(journey, "Checkout with a saved card")  # never got a TestAsset
+    _add_test_suite_with_asset(journey, covered_scenario)
+    workflow_id = f"suite-{journey.external_id}-{journey.attempt}"
+
+    try:
+        response = client.post(f"/applications/{application['id']}/generate-suite")
+        assert response.status_code == 202
+        assert response.json() == {"suites_triggered": 1}
+    finally:
+        asyncio.run(_terminate(workflow_id))
+
+
 def test_generate_suite_starting_twice_only_triggers_once() -> None:
     init_db()
     client = _signed_in_client("Org Suite Generation Twice")

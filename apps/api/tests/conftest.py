@@ -11,6 +11,7 @@ after the test, regardless of which file or future test triggers it.
 import asyncio
 
 import pytest
+from api import discovery as api_discovery
 from api import main as api_main
 from api.temporal_client import get_temporal_client
 
@@ -51,14 +52,20 @@ def _reachable_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def _terminate_discovery_workflows_started_by_test(monkeypatch: pytest.MonkeyPatch) -> None:
     started_external_ids: list[str] = []
-    original_start_discovery_run = api_main.start_discovery_run
+    # `api.main.create_application` and `api.discovery.resume_discovery_run`
+    # (Story 2.17) each hold their own module-level reference to the real
+    # `start_discovery_run` (a plain `from ... import` copies the reference
+    # at import time, it isn't a live alias) — both must be patched, or
+    # workflows started via the resume-discovery endpoint leak untracked.
+    original_start_discovery_run = api_discovery.start_discovery_run
 
-    async def _tracked_start_discovery_run(session, application):
-        discovery_run = await original_start_discovery_run(session, application)
+    async def _tracked_start_discovery_run(session, application, **kwargs):
+        discovery_run = await original_start_discovery_run(session, application, **kwargs)
         started_external_ids.append(str(discovery_run.external_id))
         return discovery_run
 
     monkeypatch.setattr(api_main, "start_discovery_run", _tracked_start_discovery_run)
+    monkeypatch.setattr(api_discovery, "start_discovery_run", _tracked_start_discovery_run)
     yield
     if not started_external_ids:
         return

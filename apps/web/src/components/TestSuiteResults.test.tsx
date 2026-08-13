@@ -73,7 +73,7 @@ afterEach(() => {
 describe('TestSuiteResults', () => {
   it('shows a spinner and live progress while generation is still in flight', async () => {
     stubFetch({ suites: [], scenarios: SCENARIOS })
-    render(<TestSuiteResults applicationId="app-1" onGoToDashboard={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onGoToDashboard={() => {}} onRunAllTests={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByRole('status').textContent).toContain('Generating')
@@ -83,7 +83,7 @@ describe('TestSuiteResults', () => {
 
   it('shows the completed summary and stats, with the file list and its scenarios collapsed by default', async () => {
     stubFetch()
-    render(<TestSuiteResults applicationId="app-1" onGoToDashboard={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onGoToDashboard={() => {}} onRunAllTests={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByText(/Generated 2 test cases across 1 journeys/)).toBeTruthy()
@@ -106,7 +106,7 @@ describe('TestSuiteResults', () => {
 
   it('toggles test details visibility', async () => {
     stubFetch()
-    render(<TestSuiteResults applicationId="app-1" onGoToDashboard={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onGoToDashboard={() => {}} onRunAllTests={() => {}} />)
 
     await waitFor(() => screen.getByText(/Generated 2 test cases across 1 journeys/))
 
@@ -122,7 +122,14 @@ describe('TestSuiteResults', () => {
   it('calls onGoToDashboard when the Go to Dashboard button is clicked', async () => {
     stubFetch()
     const onGoToDashboard = vi.fn()
-    render(<TestSuiteResults applicationId="app-1" onGoToDashboard={onGoToDashboard} />)
+    render(
+      <TestSuiteResults
+        furthestCount={4}
+        applicationId="app-1"
+        onGoToDashboard={onGoToDashboard}
+        onRunAllTests={() => {}}
+      />,
+    )
 
     const button = await screen.findByRole('button', { name: 'Go to Dashboard →' })
     fireEvent.click(button)
@@ -130,9 +137,27 @@ describe('TestSuiteResults', () => {
     expect(onGoToDashboard).toHaveBeenCalledOnce()
   })
 
+  it('calls onRunAllTests when the Run All Tests button is clicked', async () => {
+    stubFetch()
+    const onRunAllTests = vi.fn()
+    render(
+      <TestSuiteResults
+        furthestCount={4}
+        applicationId="app-1"
+        onGoToDashboard={() => {}}
+        onRunAllTests={onRunAllTests}
+      />,
+    )
+
+    const button = await screen.findByRole('button', { name: 'Run All Tests' })
+    fireEvent.click(button)
+
+    expect(onRunAllTests).toHaveBeenCalledOnce()
+  })
+
   it('clicking View Code opens a modal with that row\'s own code; a different row shows its own code', async () => {
     stubFetch()
-    render(<TestSuiteResults applicationId="app-1" onGoToDashboard={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onGoToDashboard={() => {}} onRunAllTests={() => {}} />)
 
     await waitFor(() => screen.getByRole('button', { name: /View Tests/ }))
     fireEvent.click(screen.getByRole('button', { name: /View Tests/ }))
@@ -155,7 +180,7 @@ describe('TestSuiteResults', () => {
       createObjectURL: vi.fn(() => 'blob:mock-url'),
       revokeObjectURL: vi.fn(),
     })
-    render(<TestSuiteResults applicationId="app-1" onGoToDashboard={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onGoToDashboard={() => {}} onRunAllTests={() => {}} />)
 
     const button = (await screen.findByRole('button', {
       name: /Download Test Suite/,
@@ -174,7 +199,7 @@ describe('TestSuiteResults', () => {
 
   it('re-enables the Download button after a failed export', async () => {
     stubFetch({ download: { ok: false, status: 500 } })
-    render(<TestSuiteResults applicationId="app-1" onGoToDashboard={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onGoToDashboard={() => {}} onRunAllTests={() => {}} />)
 
     const button = await screen.findByRole('button', { name: /Download Test Suite/ })
     fireEvent.click(button)

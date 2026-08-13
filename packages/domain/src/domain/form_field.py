@@ -13,6 +13,7 @@ import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -39,6 +40,9 @@ class FormField(SQLModel, table=True):
     required: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
     default_value: str | None = Field(default=None)
     captured_selector: str | None = Field(default=None)
+    # Story 2.21: ranked, fragility-aware candidate locators — see Action's
+    # matching field for the shape.
+    locator_candidates: list | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
     # No ForeignKey yet — `component` table lands in Story 2.5's migration.
     component_id: uuid.UUID | None = Field(
         default=None,

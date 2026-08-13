@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "AITestGen — System Architecture",
+    "subtitle": "Crawling, invites, journeys/scenarios, test-suite generation & CI/CD",
+    "output": "aitestgen-architecture.html",
+    "views": [
+      {
+        "id": "crawl-to-journeys",
+        "label": "Crawl to journeys",
+        "focus": ["temporal", "discovery", "db", "s3", "vault"],
+        "note": "Discovery worker crawls the app with Playwright and infers journeys."
+      },
+      {
+        "id": "invite-flow",
+        "label": "Invite flow",
+        "focus": ["web", "api", "db"],
+        "note": "API issues org-scoped invites and stores only a token hash."
+      },
+      {
+        "id": "scenario-to-suite",
+        "label": "Journeys to test suites",
+        "focus": ["temporal", "generation", "litellm", "db", "s3"],
+        "note": "Generation worker turns journeys into scenarios, then Playwright test suites via the LLM."
+      },
+      {
+        "id": "ci-cd",
+        "label": "CI/CD stack",
+        "focus": ["github_actions", "jenkins", "ecr", "k8s"],
+        "note": "PR gate in GitHub Actions; per-service Jenkins pipelines build, push, and deploy."
+      }
+    ]
+  },
+  "components": [
+    { "id": "users", "type": "external", "label": "Users", "sublabel": "browser", "pos": [40, 320] },
+    { "id": "web", "type": "frontend", "label": "Web App", "sublabel": "React SPA", "pos": [220, 320] },
+    { "id": "api", "type": "backend", "label": "API Server", "sublabel": "FastAPI :8000", "pos": [420, 320] },
+    { "id": "temporal", "type": "backend", "label": "Temporal Server", "sublabel": "workflow orchestration", "pos": [640, 320] },
+    { "id": "discovery", "type": "backend", "label": "Discovery Worker", "sublabel": "Playwright crawl", "pos": [820, 160] },
+    { "id": "generation", "type": "backend", "label": "Generation Worker", "sublabel": "scenarios + test suites", "pos": [820, 480] },
+    { "id": "vault", "type": "security", "label": "Vault", "sublabel": "app credentials", "pos": [1000, 40] },
+    { "id": "s3", "type": "cloud", "label": "S3 Object Store", "sublabel": "screenshots + test assets", "pos": [1000, 340] },
+    { "id": "litellm", "type": "external", "label": "LiteLLM Proxy", "sublabel": "claude-sonnet-5", "pos": [1000, 520] },
+    { "id": "db", "type": "database", "label": "PostgreSQL", "sublabel": "invites, journeys, scenarios, suites", "pos": [420, 660] },
+    { "id": "github_actions", "type": "cloud", "label": "GitHub Actions", "sublabel": "PR gate: lint+test+build", "pos": [40, 860] },
+    { "id": "jenkins", "type": "cloud", "label": "Jenkins", "sublabel": "per-service pipelines", "pos": [260, 860] },
+    { "id": "ecr", "type": "cloud", "label": "ECR", "sublabel": "image registry", "pos": [480, 860] },
+    { "id": "k8s", "type": "cloud", "label": "Kubernetes", "sublabel": "deploy target", "pos": [700, 860] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Runtime", "wraps": ["api", "temporal", "discovery", "generation", "db", "vault", "s3"] },
+    { "kind": "region", "label": "CI/CD", "wraps": ["github_actions", "jenkins", "ecr", "k8s"] }
+  ],
+  "connections": [
+    { "id": "users-to-web", "from": "users", "to": "web", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "web-to-api", "from": "web", "to": "api", "label": "REST (OpenAPI)", "variant": "emphasis" },
+    { "id": "api-to-db", "from": "api", "to": "db", "label": "SQL", "fromSide": "bottom", "toSide": "top", "labelDy": 24 },
+    { "id": "api-to-temporal", "from": "api", "to": "temporal", "label": "start workflow" },
+    { "id": "temporal-to-discovery", "from": "temporal", "to": "discovery", "label": "discovery-task-queue", "fromSide": "top", "toSide": "left", "labelAt": [700, 250] },
+    { "id": "temporal-to-generation", "from": "temporal", "to": "generation", "label": "generation-task-queue", "fromSide": "bottom", "toSide": "left", "labelAt": [700, 450] },
+    { "id": "discovery-to-db", "from": "discovery", "to": "db", "label": "journeys", "fromSide": "left", "toSide": "right", "via": [[790, 190], [790, 675]] },
+    { "id": "discovery-to-s3", "from": "discovery", "to": "s3", "label": "screenshots" },
+    { "id": "discovery-to-vault", "from": "discovery", "to": "vault", "label": "app credentials" },
+    { "id": "generation-to-db", "from": "generation", "to": "db", "label": "scenarios + suites", "fromSide": "left", "toSide": "right", "via": [[790, 505], [790, 700]], "labelAt": [650, 615] },
+    { "id": "generation-to-litellm", "from": "generation", "to": "litellm", "label": "LLM calls" },
+    { "id": "generation-to-s3", "from": "generation", "to": "s3", "label": "test assets" },
+    { "id": "jenkins-to-ecr", "from": "jenkins", "to": "ecr", "label": "push image" },
+    { "id": "ecr-to-k8s", "from": "ecr", "to": "k8s", "label": "deploy" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Invite flow", "items": ["API owns invite lifecycle: create, list, revoke, accept", "Only a sha256 token hash is stored; raw token emailed once", "72h expiry, org-scoped, single-use — no self-service signup"] },
+    { "dot": "rose", "title": "Journeys & scenarios", "items": ["Journey: AI-inferred workflow from a discovery crawl", "Scenario: AI-generated test case per journey", "TestSuite: generated Playwright test code per journey attempt"] },
+    { "dot": "emerald", "title": "CI/CD stack", "items": ["GitHub Actions: ruff/pyright/pytest + oxlint/tsc/vitest + API-types drift check on every PR", "Jenkins: one pipeline per service (api, web, discovery-worker, generation-worker)", "Each pipeline builds a Docker image, pushes to ECR, then kubectl deploys to Kubernetes"] }
+  ]
+}

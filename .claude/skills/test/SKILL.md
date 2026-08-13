@@ -1,12 +1,12 @@
 ---
 name: test
-description: 'Bring up every local-dev dependency for AITestGen (Postgres/Temporal/Vault via Docker, migrations, seed data, API, discovery worker, generation worker, web app) so the user can validate the app end-to-end without remembering the runbook. Use when the user types /test or asks to spin up / start / bring up the app for validation.'
+description: 'Bring up every local-dev dependency for AITestGen (Postgres/Temporal/Vault via Docker, migrations, seed data, API, discovery worker, generation worker, execution worker, web app) so the user can validate the app end-to-end without remembering the runbook. Use when the user types /test or asks to spin up / start / bring up the app for validation.'
 ---
 
 # /test — spin up AITestGen for validation
 
-**Fast path (no LLM tool calls, no tokens):** `scripts\dev-up.cmd` (Windows)
-or `scripts/dev-up.sh` (Mac/Linux) runs the whole bring-up below directly —
+**Fast path (no LLM tool calls, no tokens):** `scripts\dev-start.cmd` (Windows)
+or `scripts/dev-start.sh` (Mac/Linux) runs the whole bring-up below directly —
 Docker, API/workers/web starting in parallel, web install/type-gen. Windows
 gets each process its own titled console window; Mac/Linux backgrounds them
 instead and writes each to its own `logs/*.log` (`tail -f logs/*.log` to
@@ -16,11 +16,11 @@ invoking this skill when nothing about the runbook itself needs to change.
 Re-run this skill (and update both scripts) only when the bring-up steps
 themselves change.
 
-The four long-lived processes (API, discovery worker, generation worker,
-web) each get their own **visible terminal window** via Windows' native
-`start` — not the Bash tool's background mode — so the user can watch logs
-live and Ctrl+C / troubleshoot per-process. Closing a window is how the user
-stops that process.
+The five long-lived processes (API, discovery worker, generation worker,
+execution worker, web) each get their own **visible terminal window** via
+Windows' native `start` — not the Bash tool's background mode — so the user
+can watch logs live and Ctrl+C / troubleshoot per-process. Closing a window
+is how the user stops that process.
 
 **The generation worker is not optional, and not just a Story 1.1 wiring
 proof — read this before skipping it.** An earlier version of this skill
@@ -34,6 +34,32 @@ after one real Discovery Run). `GenerationWorkflow`'s body is still a
 no-op stub (Epic 4 isn't built yet), so once a worker exists to pick them
 up they complete instantly — the fix is having a worker there *at all*, not
 a code change.
+
+**The execution worker (Run All Tests feature) is a separate process from
+discovery/generation — don't forget it once a Test Suite exists.** It polls
+`execution-task-queue` for `ApplicationTestExecutionWorkflow`, which "Run
+All Tests" starts. With no worker there, that workflow just sits `Running`
+forever exactly like an unpolled `GenerationWorkflow` — the button click
+silently does nothing from the user's perspective (the UI polls for a
+`TestRun` row that `PrepareTestRunActivity` never gets to create). Needs
+`.env` too, since it resolves target-app credentials from Vault the same
+way discovery does.
+
+**The generation worker's typecheck gate needs its own `npm install`, once,
+in `apps/workers/generation/typecheck/` — a bare local project of just
+`package.json`/`package-lock.json` (real `typescript` + `@playwright/test`,
+no source of its own) that `PlaywrightGenerationActivity` shells out to for
+Checklist rule 3's mandatory typecheck of every AI-generated spec before
+it's persisted as a `TestAsset`.** Skipping this doesn't error loudly: every
+`PlaywrightGenerationActivity` call fails identically (`tsc not found`),
+`SuiteGenerationWorkflow`'s fault-isolation retries 3x/wave × 3 waves then
+gives up on the whole batch and returns normally — the workflow reports
+`COMPLETED` with zero `TestAsset`s ever written, and the wizard's "Generate
+Suite" step just spins on "Generating your test suite…" forever with no
+visible error (observed live: every Journey generated in a fresh clone
+before this install existed came back empty). Step 6b below runs `npm
+install` there automatically if `node_modules` is missing, same pattern as
+the web app's.
 
 **The API and discovery worker need `AI_MODEL`/`LITELLM_BASE_URL`/
 `LITELLM_API_KEY` from a local `.env` — launch both with `uv run --env-file
@@ -55,16 +81,17 @@ reaped right after. `dangerouslyDisableSandbox` is safe here: these are
 ordinary local dev-server processes the user explicitly asked to keep
 running.
 
-All three already pick up code changes without a manual restart — no wrapper
-needed for the API (uvicorn `--reload`) or the web app (Vite's built-in HMR).
-The discovery worker has no built-in reload, so it's wrapped in `watchfiles`
-(already installed — a transitive dep of `uvicorn[standard]`) to restart it
-on file changes.
+The API and web app already pick up code changes without a manual restart —
+no wrapper needed for the API (uvicorn `--reload`) or the web app (Vite's
+built-in HMR). None of the three workers (discovery/generation/execution)
+have built-in reload, so each is wrapped in `watchfiles` (already
+installed — a transitive dep of `uvicorn[standard]`) to restart it on file
+changes.
 
-Steps 2-4 are independent of each other and of the migration/seed steps —
-**launch all three windows and run migrations/seeding in one batch of
-parallel tool calls** right after Docker is up, rather than serially. `uv
-run` and `npm run dev` each sync/install their own deps on demand, so
+Steps 2, 6, 6b, 6c are independent of each other and of the migration/seed
+steps — **launch all four windows and run migrations/seeding in one batch
+of parallel tool calls** right after Docker is up, rather than serially.
+`uv run` and `npm run dev` each sync/install their own deps on demand, so
 nothing downstream is blocked waiting on a separate "install everything
 first" pass. Serializing all of this behind itself is the other reason
 bring-up used to feel slow.
@@ -135,6 +162,25 @@ Then, in parallel (single message, multiple tool calls):
    ```
    cmd //c start "AITestGen Generation Worker" cmd //k "scripts\\run-generation-worker.cmd"
    ```
+   Before launching it, also check `apps/workers/generation/typecheck/node_modules`
+   exists (see the typecheck-gate note above) — if not, run `npm install`
+   there first:
+   ```
+   cd apps/workers/generation/typecheck && npm install
+   ```
+6c. Check if the execution worker is already running (`ps -W | grep -i
+   execution_worker`). If not, same pattern — needed for the "Run All
+   Tests" button on the Test Suite results screen to do anything at all
+   (see the note above). Create `scripts/run-execution-worker.cmd` if
+   missing:
+   ```
+   @echo off
+   cd /d "%~dp0.."
+   uv run --env-file .env --package execution-worker watchfiles "uv run --package execution-worker python -m execution_worker.worker" apps/workers/execution/src packages
+   ```
+   ```
+   cmd //c start "AITestGen Execution Worker" cmd //k "scripts\\run-execution-worker.cmd"
+   ```
 7. In `apps/web`: run `npm install` only if `node_modules` is missing, then
    `npm run generate:api-types` (regenerates TS types from the now-running
    API), then check
@@ -151,8 +197,8 @@ Then, in parallel (single message, multiple tool calls):
    - Sign-in: `dev@example.com` / `devpassword123`
    - Each process is in its own titled window ("AITestGen API" /
      "AITestGen Discovery Worker" / "AITestGen Generation Worker" /
-     "AITestGen Web") — watch logs there, and close a window to stop that
-     process.
+     "AITestGen Execution Worker" / "AITestGen Web") — watch logs there,
+     and close a window to stop that process.
 
 Skip only the Temporal smoke test script
 (`api.scripts.temporal_smoke_test`) — that alone is the separate Story 1.1

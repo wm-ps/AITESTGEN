@@ -58,7 +58,7 @@ afterEach(() => {
 describe('GenerateSuite', () => {
   it('summarizes suite count (journeys with current scenarios) and total test case count', async () => {
     stubFetch()
-    render(<GenerateSuite applicationId="app-1" onGenerated={() => {}} />)
+    render(<GenerateSuite furthestCount={3}applicationId="app-1" onGenerated={() => {}} />)
 
     // Only journey-1 has scenarios — journey-2 (no scenarios) doesn't count
     // toward the suite total, matching Task 3's "only Journeys with current
@@ -73,14 +73,14 @@ describe('GenerateSuite', () => {
 
   it('has no suite-name input field — naming is automatic (AC 2)', async () => {
     stubFetch()
-    render(<GenerateSuite applicationId="app-1" onGenerated={() => {}} />)
+    render(<GenerateSuite furthestCount={3}applicationId="app-1" onGenerated={() => {}} />)
     await waitFor(() => screen.getByText('Test Suite'))
     expect(screen.queryByLabelText(/suite name/i)).toBeNull()
   })
 
   it('renders the Execution placeholder as inert radio controls', async () => {
     stubFetch()
-    render(<GenerateSuite applicationId="app-1" onGenerated={() => {}} />)
+    render(<GenerateSuite furthestCount={3}applicationId="app-1" onGenerated={() => {}} />)
     await waitFor(() => screen.getByText('Test Suite'))
     expect(screen.getByLabelText('Run immediately')).toBeTruthy()
     expect(screen.getByLabelText('Schedule for later')).toBeTruthy()
@@ -91,7 +91,7 @@ describe('GenerateSuite', () => {
     const onGenerate = vi.fn()
     stubFetch({ onGenerate })
     const onGenerated = vi.fn()
-    render(<GenerateSuite applicationId="app-1" onGenerated={onGenerated} />)
+    render(<GenerateSuite furthestCount={3}applicationId="app-1" onGenerated={onGenerated} />)
 
     await waitFor(() => screen.getByText('Test Suite'))
     fireEvent.click(screen.getByRole('button', { name: /Generate Test Suite/ }))

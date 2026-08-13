@@ -11,9 +11,13 @@ import pytest
 from ai_provider.test_asset_code import TestAssetCode
 from domain import (
     Application,
+    Component,
+    ComponentLocator,
     DiscoveryRun,
     Journey,
+    JourneyStep,
     Organization,
+    Page,
     Scenario,
     TestAsset,
     TestSuite,
@@ -45,9 +49,18 @@ class _FakeAIProvider:
     def __init__(self, code: str = _FAKE_CODE) -> None:
         self._code = code
         self.calls: list[str] = []
+        self.known_pages_calls: list[list[dict]] = []
+        self.known_locators_calls: list[list[dict]] = []
 
-    async def generate_playwright(self, scenario: Scenario) -> TestAssetCode:
+    async def generate_playwright(
+        self,
+        scenario: Scenario,
+        known_pages: list[dict] | None = None,
+        known_locators: list[dict] | None = None,
+    ) -> TestAssetCode:
         self.calls.append(str(scenario.external_id))
+        self.known_pages_calls.append(known_pages or [])
+        self.known_locators_calls.append(known_locators or [])
         return TestAssetCode(code=self._code)
 
 
@@ -82,6 +95,70 @@ def _seed_journey(name: str = "Checkout") -> Journey:
         session.commit()
         session.refresh(journey)
         return journey
+
+
+def _seed_page(journey: Journey, url: str = "https://app.example.com/checkout") -> Page:
+    with Session(engine) as session:
+        page = Page(
+            application_id=journey.application_id,
+            discovery_run_id=journey.discovery_run_id,
+            url=url,
+            title="Checkout",
+        )
+        session.add(page)
+        session.commit()
+        session.refresh(page)
+        return page
+
+
+def _seed_journey_step(
+    journey: Journey, page: Page, step_order: int = 1, stage_label: str = "Checkout"
+) -> None:
+    with Session(engine) as session:
+        session.add(
+            JourneyStep(
+                journey_id=journey.id,
+                page_id=page.id,
+                step_order=step_order,
+                stage_label=stage_label,
+            )
+        )
+        session.commit()
+
+
+def _seed_component_with_locators(
+    page: Page,
+    name: str = "Save button",
+    type_: str = "button",
+    locators: list[dict] | None = None,
+) -> Component:
+    """`locators=None` (the default) seeds a single preferred locator; pass
+    explicit kind/priority/value dicts (an empty list included) to exercise
+    the fallback-selection/no-locator logic."""
+    if locators is None:
+        locators = [
+            {
+                "kind": "preferred",
+                "strategy": "testid",
+                "value": '[data-testid="save"]',
+                "priority": 0,
+            }
+        ]
+    with Session(engine) as session:
+        component = Component(
+            application_id=page.application_id,
+            page_id=page.id,
+            name=name,
+            type=type_,
+            action="click",
+        )
+        session.add(component)
+        session.flush()
+        for loc in locators:
+            session.add(ComponentLocator(component_id=component.id, **loc))
+        session.commit()
+        session.refresh(component)
+        return component
 
 
 def _seed_scenario(journey: Journey, test_data: list[dict] | None = None) -> Scenario:
@@ -213,6 +290,44 @@ def test_ensure_test_suite_activity_supersedes_prior_attempt_atomically() -> Non
         assert new_suite.generation_run_id == journey.attempt
 
 
+def test_playwright_generation_activity_rejects_code_that_fails_typecheck(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Checklist rule 3: a hallucinated matcher / undefined variable — real
+    failure modes seen this session — must fail the activity, never reach
+    `TestAsset`."""
+    init_db()
+    journey = _seed_journey()
+    scenario = _seed_scenario(journey)
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    fake_provider = _FakeAIProvider(
+        "import { test, expect } from '@playwright/test'\n\n"
+        "test('broken', async ({ page }) => {\n"
+        "  await expect(page.locator('#x')).toBeSuperVisible();\n"
+        "  console.log(undefinedVar);\n"
+        "});\n"
+    )
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    with pytest.raises(ValueError, match="failed typecheck"):
+        asyncio.run(
+            activities_module.playwright_generation_activity(
+                PlaywrightGenerationActivityInput(
+                    scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+                )
+            )
+        )
+
+    with Session(engine) as session:
+        assert session.exec(
+            select(TestAsset).where(TestAsset.scenario_id == scenario.id)
+        ).first() is None
+
+
 def test_playwright_generation_activity_creates_a_test_asset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -306,3 +421,231 @@ def test_playwright_generation_activity_is_idempotent_and_skips_the_ai_call(
             session.exec(select(TestAsset).where(TestAsset.scenario_id == scenario.id)).all()
         )
         assert count == 1
+
+
+def test_playwright_generation_activity_passes_known_page_to_ai_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    init_db()
+    journey = _seed_journey()
+    page = _seed_page(journey, url="https://app.example.com/checkout")
+    _seed_journey_step(journey, page, step_order=1, stage_label="Checkout")
+    scenario = _seed_scenario(journey)
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    fake_provider = _FakeAIProvider()
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    asyncio.run(
+        activities_module.playwright_generation_activity(
+            PlaywrightGenerationActivityInput(
+                scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+            )
+        )
+    )
+
+    assert fake_provider.known_pages_calls == [
+        [{"stage_label": "Checkout", "url": "https://app.example.com/checkout"}]
+    ]
+
+
+def test_playwright_generation_activity_dedupes_known_pages_by_page_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    init_db()
+    journey = _seed_journey()
+    page = _seed_page(journey, url="https://app.example.com/checkout")
+    _seed_journey_step(journey, page, step_order=1, stage_label="Checkout")
+    _seed_journey_step(journey, page, step_order=2, stage_label="Checkout Confirmation")
+    scenario = _seed_scenario(journey)
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    fake_provider = _FakeAIProvider()
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    asyncio.run(
+        activities_module.playwright_generation_activity(
+            PlaywrightGenerationActivityInput(
+                scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+            )
+        )
+    )
+
+    # Same Page visited by two steps — appears once, keeping the first
+    # step's stage_label.
+    assert fake_provider.known_pages_calls == [
+        [{"stage_label": "Checkout", "url": "https://app.example.com/checkout"}]
+    ]
+
+
+def test_playwright_generation_activity_passes_known_locator_to_ai_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    init_db()
+    journey = _seed_journey()
+    page = _seed_page(journey)
+    _seed_journey_step(journey, page, stage_label="Checkout")
+    _seed_component_with_locators(page, name="Save button", type_="button")
+    scenario = _seed_scenario(journey)
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    fake_provider = _FakeAIProvider()
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    asyncio.run(
+        activities_module.playwright_generation_activity(
+            PlaywrightGenerationActivityInput(
+                scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+            )
+        )
+    )
+
+    assert fake_provider.known_locators_calls == [
+        [
+            {
+                "stage_label": "Checkout",
+                "component_type": "button",
+                "component_name": "Save button",
+                "selector": '[data-testid="save"]',
+                "strategy": "testid",
+            }
+        ]
+    ]
+
+
+def test_playwright_generation_activity_prefers_preferred_locator_over_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    init_db()
+    journey = _seed_journey()
+    page = _seed_page(journey)
+    _seed_journey_step(journey, page)
+    _seed_component_with_locators(
+        page,
+        locators=[
+            {"kind": "fallback", "strategy": "css", "value": "#save-btn", "priority": 1},
+            {
+                "kind": "preferred",
+                "strategy": "testid",
+                "value": '[data-testid="save"]',
+                "priority": 0,
+            },
+        ],
+    )
+    scenario = _seed_scenario(journey)
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    fake_provider = _FakeAIProvider()
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    asyncio.run(
+        activities_module.playwright_generation_activity(
+            PlaywrightGenerationActivityInput(
+                scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+            )
+        )
+    )
+
+    [locators] = fake_provider.known_locators_calls
+    assert locators[0]["selector"] == '[data-testid="save"]'
+
+
+def test_playwright_generation_activity_falls_back_to_lowest_priority_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    init_db()
+    journey = _seed_journey()
+    page = _seed_page(journey)
+    _seed_journey_step(journey, page)
+    _seed_component_with_locators(
+        page,
+        locators=[
+            {"kind": "fallback", "strategy": "css", "value": "#save-btn-b", "priority": 2},
+            {"kind": "fallback", "strategy": "css", "value": "#save-btn-a", "priority": 1},
+        ],
+    )
+    scenario = _seed_scenario(journey)
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    fake_provider = _FakeAIProvider()
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    asyncio.run(
+        activities_module.playwright_generation_activity(
+            PlaywrightGenerationActivityInput(
+                scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+            )
+        )
+    )
+
+    [locators] = fake_provider.known_locators_calls
+    assert locators[0]["selector"] == "#save-btn-a"
+
+
+def test_playwright_generation_activity_skips_component_with_no_locators(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    init_db()
+    journey = _seed_journey()
+    page = _seed_page(journey)
+    _seed_journey_step(journey, page)
+    _seed_component_with_locators(page, name="Save button", locators=[])
+    scenario = _seed_scenario(journey)
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    fake_provider = _FakeAIProvider()
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    asyncio.run(
+        activities_module.playwright_generation_activity(
+            PlaywrightGenerationActivityInput(
+                scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+            )
+        )
+    )
+
+    assert fake_provider.known_locators_calls == [[]]
+
+
+def test_playwright_generation_activity_passes_empty_known_data_when_journey_has_no_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    init_db()
+    journey = _seed_journey()  # no Page/JourneyStep seeded — today's default shape
+    scenario = _seed_scenario(journey)
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    fake_provider = _FakeAIProvider()
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    asyncio.run(
+        activities_module.playwright_generation_activity(
+            PlaywrightGenerationActivityInput(
+                scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+            )
+        )
+    )
+
+    assert fake_provider.known_pages_calls == [[]]
+    assert fake_provider.known_locators_calls == [[]]

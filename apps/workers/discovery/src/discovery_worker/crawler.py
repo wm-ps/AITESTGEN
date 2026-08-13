@@ -47,17 +47,33 @@ Fixed by heartbeating before each individual form submission and button
 click too, not just once per page.
 """
 
+from __future__ import annotations
+
 import asyncio
+import base64
 import logging
+import os
 import re
+import tempfile
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qsl, urldefrag, urlencode, urlparse, urlsplit, urlunsplit
 
-from playwright.async_api import BrowserContext, Locator, Response
+from domain import aggregation_key
+from playwright.async_api import BrowserContext, Frame, Locator, Page, Response
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
+from discovery_worker import widgets
 from discovery_worker.session import attempt_login
+
+if TYPE_CHECKING:
+    # Real imports stay function-local everywhere below (see the "circular
+    # import" comments at each call site) — these are for static type
+    # checking only, never executed, so they can't reintroduce the cycle.
+    from discovery_worker import data_resolver, planner
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +98,847 @@ def _generic_value(input_type: str, name: str | None, field_id: str | None) -> s
     if _QUANTITY_FIELD_RE.search(name or field_id or ""):
         return "1"
     return _GENERIC_VALUES.get(input_type, "Test value")
+
+
+# `on_diagnostic(kind, payload)` — Story 2.22 Task 1's sink contract, called
+# from crawler.py (which has no DB session of its own) exactly like
+# `on_capture`: the caller (`discovery_activity`) wraps the real
+# `record_diagnostic()` off the event loop. `None` is a valid caller (older
+# call sites, or a story that hasn't wired it up) — every call site below
+# guards with `if on_diagnostic:`.
+DiagnosticCallback = Callable[[str, dict], None]
+
+
+async def _emit_diagnostic(on_diagnostic: DiagnosticCallback, kind: str, payload: dict) -> None:
+    """Every `on_diagnostic` call site awaits this rather than calling the
+    callback directly — same reason `_CaptureSink.add` hops `on_capture` onto
+    a thread: the real callback (`activities.py`'s `_record_diagnostic`)
+    does a synchronous Postgres commit, and it shares the same `Session` as
+    every capture write, so it must stay serialized with them (awaited, not
+    fire-and-forget) rather than run concurrently against that session."""
+    await asyncio.to_thread(on_diagnostic, kind, payload)
+
+
+DEFAULT_PAGE_LOAD_TIMEOUT_SECONDS = 15.0
+
+# Story 2.9 AC 1a: kept small and centralized so it's easy to extend.
+_ANALYTICS_HOST_RE = re.compile(
+    r"google-analytics\.com|googletagmanager\.com|segment\.(io|com)|"
+    r"mixpanel\.com|hotjar\.com|doubleclick\.net|facebook\.net|"
+    r"intercom\.io|fullstory\.com|sentry\.io|bugsnag\.com",
+    re.IGNORECASE,
+)
+# A request repeating to the same URL at least this many times, with no
+# interval varying by more than the jitter below, is classified a poll /
+# long-poll / heartbeat rather than genuine application traffic (AC 1a).
+_POLLING_MIN_OCCURRENCES = 3
+_POLLING_JITTER_SECONDS = 1.0
+_NETWORK_QUIET_WINDOW_SECONDS = 0.5
+_NETWORK_POLL_INTERVAL_SECONDS = 0.1
+_MAX_INFLIGHT_AGE_SECONDS = 8.0
+_DOM_QUIET_WINDOW_MS = 300
+
+
+@dataclass
+class ReadinessResult:
+    settled: bool
+    unsettled_signals: list[str] = field(default_factory=list)
+
+
+class NetworkActivityTracker:
+    """Network-quiet signal (Story 2.9 AC 1a). Attached once per page — same
+    lifetime as Story 2.2's separate `page.on("response", ...)` listener
+    used for API-call capture — not a second listener stack per readiness
+    check. Tracks in-flight requests and each URL's recent request
+    timestamps, so a repeating poll can be recognized and ignored."""
+
+    def __init__(self) -> None:
+        self._inflight: dict = {}
+        self._history: dict[str, list[float]] = {}
+
+    def attach(self, page: Page) -> None:
+        page.on("request", self._on_request)
+        page.on("requestfinished", self._on_request_settled)
+        page.on("requestfailed", self._on_request_settled)
+
+    def _is_ignorable(self, request) -> bool:
+        if _ANALYTICS_HOST_RE.search(urlparse(request.url).netloc):
+            return True
+        times = self._history.get(request.url, [])
+        if len(times) >= _POLLING_MIN_OCCURRENCES:
+            recent = times[-_POLLING_MIN_OCCURRENCES:]
+            # `recent` and `recent[1:]` are deliberately different lengths —
+            # this pairs up consecutive timestamps to compute intervals
+            # between them, not a same-length zip. `[FIXED]` `strict=True`
+            # here always raised, and that exception firing inside a
+            # Playwright request event handler (called synchronously by
+            # pyee for every single request) was destabilizing the whole
+            # page's event dispatch — this is what made readiness
+            # mysteriously time out on completely static pages.
+            intervals = [b - a for a, b in zip(recent, recent[1:])]
+            if intervals and (max(intervals) - min(intervals)) < _POLLING_JITTER_SECONDS:
+                return True
+        return False
+
+    def _on_request(self, request) -> None:
+        self._history.setdefault(request.url, []).append(time.monotonic())
+        if not self._is_ignorable(request):
+            self._inflight[request] = time.monotonic()
+
+    def _on_request_settled(self, request) -> None:
+        self._inflight.pop(request, None)
+
+    def quiet(self) -> bool:
+        # A request Playwright never reported finished/failed for (a
+        # WebSocket/SSE/long-poll, or a request Chromium silently dropped
+        # across a navigation without an event) would otherwise block
+        # "quiet" forever — one orphaned entry poisoning every readiness
+        # check for the rest of the crawl. Same survivability principle as
+        # the polling/analytics heuristics above: an imperfect classifier is
+        # fine because the timeout ceiling makes the worst case bounded,
+        # never an unbounded hang. Expire anything older than this.
+        now = time.monotonic()
+        self._inflight = {
+            request: started
+            for request, started in self._inflight.items()
+            if now - started < _MAX_INFLIGHT_AGE_SECONDS
+        }
+        return len(self._inflight) == 0
+
+
+async def _wait_for_network_quiet(
+    tracker: NetworkActivityTracker | None, deadline: float, heartbeat: Callable[[], None] | None
+) -> bool:
+    if tracker is None:
+        return True
+    quiet_since: float | None = None
+    while True:
+        now = time.monotonic()
+        if now >= deadline:
+            return False
+        if tracker.quiet():
+            quiet_since = quiet_since if quiet_since is not None else now
+            if now - quiet_since >= _NETWORK_QUIET_WINDOW_SECONDS:
+                return True
+        else:
+            quiet_since = None
+        if heartbeat:
+            heartbeat()
+        await asyncio.sleep(min(_NETWORK_POLL_INTERVAL_SECONDS, max(0.0, deadline - now)))
+
+
+# Story 2.9 AC 1b/2: an in-page `MutationObserver`, not driver-side polling —
+# one `evaluate` round-trip instead of dozens, and it sees every mutation
+# batch rather than sampling state between polls (a burst that starts and
+# finishes between two polls would otherwise look "stable" mid-render). The
+# JS side owns its own ceiling (`maxWaitMs`) so the observer disconnects on
+# both the settled and timed-out paths regardless of what the Python side
+# does — it can't leak across navigations waiting on a Python-side timeout
+# that races ahead of it.
+_DOM_STABLE_SCRIPT = """
+([quietWindowMs, maxWaitMs]) => new Promise((resolve) => {
+  const start = Date.now();
+  let lastMutation = start;
+  const observer = new MutationObserver(() => { lastMutation = Date.now(); });
+  observer.observe(document.documentElement, {
+    childList: true, subtree: true, attributes: true, characterData: true,
+  });
+  const check = () => {
+    const now = Date.now();
+    if (now - lastMutation >= quietWindowMs) {
+      observer.disconnect();
+      resolve(true);
+    } else if (now - start >= maxWaitMs) {
+      observer.disconnect();
+      resolve(false);
+    } else {
+      setTimeout(check, 50);
+    }
+  };
+  check();
+})
+"""
+
+
+async def _wait_for_dom_stable(page: Page, remaining_seconds: float) -> bool:
+    if remaining_seconds <= 0:
+        return False
+    remaining_ms = remaining_seconds * 1000
+    try:
+        return bool(
+            await asyncio.wait_for(
+                page.evaluate(_DOM_STABLE_SCRIPT, [_DOM_QUIET_WINDOW_MS, remaining_ms]),
+                timeout=remaining_seconds + 1.0,
+            )
+        )
+    except Exception:
+        return False
+
+
+_CONTENT_PRESENT_SCRIPT = "document.body && document.body.innerText.trim().length > 0"
+
+
+async def _wait_for_content_present(page: Page, remaining_seconds: float) -> bool:
+    if remaining_seconds <= 0:
+        try:
+            return bool(await page.evaluate(_CONTENT_PRESENT_SCRIPT))
+        except Exception:
+            return False
+    try:
+        await page.wait_for_function(_CONTENT_PRESENT_SCRIPT, timeout=remaining_seconds * 1000)
+        return True
+    except Exception:
+        return False
+
+
+async def wait_for_page_ready(
+    page: Page,
+    timeout_seconds: float,
+    network_tracker: NetworkActivityTracker | None = None,
+    heartbeat: Callable[[], None] | None = None,
+    on_diagnostic: DiagnosticCallback | None = None,
+) -> ReadinessResult:
+    """Story 2.9 AC 1-3: the one settle gate every capture point in this
+    file uses. Three signals — network quiet, DOM stable, content present.
+    Network-quiet and DOM-stable run concurrently, not sequentially: both
+    conditions describe the *same* moment ("is the page settled right now"),
+    not two separate phases, and running them concurrently against the same
+    deadline roughly halves the guaranteed minimum latency (each has its own
+    ~0.3-0.5s settle window) versus paying both windows back-to-back for no
+    correctness gain. Content-present runs last (usually near-instant) and
+    every signal is bounded by whatever's left of `timeout_seconds`, so the
+    total can never exceed the ceiling. On expiry, returns `settled=False`
+    rather than raising: readiness has exactly two outcomes, "settled" and
+    "settled-enough-by-timeout", and both proceed to capture (AC 3) — never
+    blocks, fails, retries or aborts the run."""
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    unsettled: list[str] = []
+
+    network_ok, dom_ok = await asyncio.gather(
+        _wait_for_network_quiet(network_tracker, deadline, heartbeat),
+        _wait_for_dom_stable(page, deadline - time.monotonic()),
+    )
+    if not network_ok:
+        unsettled.append("network_quiet")
+    if not dom_ok:
+        unsettled.append("dom_stable")
+    if heartbeat:
+        heartbeat()
+
+    if not await _wait_for_content_present(page, deadline - time.monotonic()):
+        unsettled.append("content_present")
+
+    settled = not unsettled
+    if not settled:
+        logger.warning(
+            "DISC-004: page did not fully settle within %.1fs (unsettled: %s) — "
+            "capturing best-effort",
+            timeout_seconds,
+            unsettled,
+        )
+        if on_diagnostic:
+            # Story 2.18 AC 2/3: informational, not a skip — AC 3's
+            # readiness gate still proceeds to best-effort capture (Dev
+            # Notes: never blocks/fails/retries/aborts). Logged once per
+            # unsettled page visit, not retried here — the timeout itself is
+            # already the bounded wait this AC asks for.
+            await _emit_diagnostic(
+                on_diagnostic,
+                "discovery_error",
+                {
+                    "error_code": "DISC-004",
+                    "message": (
+                        f"Page did not fully settle within {timeout_seconds:.1f}s "
+                        f"(unsettled signals: {', '.join(unsettled)}). Consider increasing "
+                        "the Page Load Timeout for this application."
+                    ),
+                    "page_url": page.url,
+                    "retry_count": 0,
+                },
+            )
+    return ReadinessResult(settled=settled, unsettled_signals=unsettled)
+
+
+# Story 2.9 AC 5/6: bounded sampling of a repeating region (infinite scroll /
+# "Load More"), not exhaustion. A hard per-page budget is the backstop; the
+# consecutive-SAME rule below is the primary mechanism.
+_LOAD_MORE_NAME_RE = re.compile(r"load\s*more|show\s*more|^next$", re.IGNORECASE)
+_SCROLL_SAMPLE_BUDGET = 20
+_SAME_RUN_TO_CONFIRM_SAMPLED = 3
+
+
+async def _page_has_scrollable_overflow(page: Page) -> bool:
+    try:
+        return bool(
+            await page.evaluate("document.documentElement.scrollHeight > window.innerHeight + 50")
+        )
+    except Exception:
+        return False
+
+
+async def _detect_load_more_control(page: Page) -> Locator | None:
+    for role in ("button", "link"):
+        try:
+            locator = page.get_by_role(role, name=_LOAD_MORE_NAME_RE)
+            if await locator.count() > 0:
+                return locator.first
+        except Exception:
+            continue
+    return None
+
+
+async def _sample_scroll_or_pagination(
+    page: Page,
+    page_url: str,
+    heartbeat: Callable[[], None] | None,
+    on_diagnostic: DiagnosticCallback | None,
+    network_tracker: NetworkActivityTracker | None,
+    timeout_seconds: float,
+) -> str | None:
+    """Loops act -> re-observe -> compare, per AC 5/6. Returns the Load-More
+    control's accessible name (so the caller excludes it from the generic
+    button loop) or `None` if this page uses plain scroll instead."""
+    control = await _detect_load_more_control(page)
+    control_label: str | None = None
+    if control is not None:
+        try:
+            control_label = (await control.inner_text()).strip() or None
+        except Exception:
+            control_label = None
+    elif not await _page_has_scrollable_overflow(page):
+        # Nothing to sample — most pages. Skip the loop entirely rather than
+        # pay this function's settle-window cost for a scroll that can't
+        # reveal anything.
+        return None
+
+    async def _element_count() -> int:
+        try:
+            return await page.evaluate("document.querySelectorAll('*').length")
+        except Exception:
+            return -1
+
+    same_streak = 0
+    previous_count = await _element_count()
+    for iteration in range(_SCROLL_SAMPLE_BUDGET):
+        if heartbeat:
+            heartbeat()
+        try:
+            if control is not None:
+                await control.click(timeout=1500)
+            else:
+                await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        except Exception:
+            break
+        await wait_for_page_ready(page, timeout_seconds, network_tracker, heartbeat)
+        new_count = await _element_count()
+        # `ponytail:` temporary substitute for Story 2.10's SAME/VARIANT/NEW
+        # classification (not built yet, per this story's own AC 7) —
+        # element-count growth answers "did anything appear?", not "is what
+        # appeared the same kind of thing?". It cannot distinguish "10 more
+        # identical rows" from "10 more genuinely different rows"; the hard
+        # budget above is what bounds that worst case. Upgrade to a real
+        # comparison once Story 2.10 lands.
+        grew = new_count > previous_count
+        same_streak = 0 if grew else same_streak + 1
+        previous_count = new_count
+        if same_streak >= _SAME_RUN_TO_CONFIRM_SAMPLED:
+            if on_diagnostic:
+                await _emit_diagnostic(
+                    on_diagnostic,
+                    "page_readiness",
+                    {
+                        "type": "scroll_sampled",
+                        "page_url": page_url,
+                        "reason": "same_run",
+                        "iterations": iteration + 1,
+                    },
+                )
+            return control_label
+    if on_diagnostic:
+        await _emit_diagnostic(
+            on_diagnostic,
+            "page_readiness",
+            {
+                "type": "scroll_sampled",
+                "page_url": page_url,
+                "reason": "budget",
+                "iterations": _SCROLL_SAMPLE_BUDGET,
+            },
+        )
+    return control_label
+
+
+# Story 2.14 AC 1: recurse into same-origin iframes to this depth by default.
+DEFAULT_MAX_FRAME_DEPTH = 3
+
+# Story 2.14 AC 6: a minimal, valid placeholder file per upload kind,
+# generated once per process and reused across every upload field this run
+# encounters (never regenerated per occurrence). A 1x1 transparent PNG and a
+# tiny single-page PDF are both small enough to inline as base64 rather than
+# ship as separate binary fixture files.
+_MINIMAL_PNG_BYTES = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
+_MINIMAL_PDF_BYTES = (
+    b"%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+    b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 3 3]>>endobj\n"
+    b"trailer<</Root 1 0 R>>"
+)
+_placeholder_files_dir: str | None = None
+
+
+def _placeholder_file_path(accept: str | None) -> str:
+    """Lazily creates one temp dir per process and writes each placeholder
+    kind into it exactly once — `accept` (the file input's `accept`
+    attribute) picks PDF vs image; anything else defaults to the image, the
+    broadest-compatibility choice."""
+    global _placeholder_files_dir
+    if _placeholder_files_dir is None:
+        _placeholder_files_dir = tempfile.mkdtemp(prefix="discovery-upload-")
+    wants_pdf = bool(accept) and "pdf" in accept.lower()
+    filename = "placeholder.pdf" if wants_pdf else "placeholder.png"
+    path = os.path.join(_placeholder_files_dir, filename)
+    if not os.path.exists(path):
+        with open(path, "wb") as f:
+            f.write(_MINIMAL_PDF_BYTES if wants_pdf else _MINIMAL_PNG_BYTES)
+    return path
+
+
+# Story 2.14 AC 2 (shadow DOM). `Element.shadowRoot` reads back `null`
+# identically for "no shadow root" and "closed shadow root" — there is no
+# DOM signal that distinguishes them from outside. The only way to know a
+# closed root exists at all is to intercept its creation, so this init
+# script (installed once per page, before any app code runs) wraps
+# `attachShadow` and tags the host element with a discoverable marker
+# attribute recording the mode it was created with.
+_SHADOW_TRACKING_INIT_SCRIPT = """
+(() => {
+  if (window.__discoveryShadowTracking) return;
+  window.__discoveryShadowTracking = true;
+  window.__discoveryShadowHosts = [];
+  const original = Element.prototype.attachShadow;
+  let counter = 0;
+  Element.prototype.attachShadow = function (init) {
+    const root = original.call(this, init);
+    const id = 'discovery-shadow-' + (counter++);
+    this.setAttribute('data-discovery-shadow-id', id);
+    window.__discoveryShadowHosts.push({ id, mode: init && init.mode });
+    return root;
+  };
+})();
+"""
+
+# Walks every host tagged by the init script above: open roots (`.shadowRoot`
+# non-null) are traversed recursively for interactive elements, feeding AC
+# 2's capture requirement; closed roots (`.shadowRoot` reads back null even
+# though we know one was attached) are reported separately so the caller can
+# log them as unreachable containers rather than silently finding nothing.
+_SHADOW_DOM_WALK_SCRIPT = """
+() => {
+  const hosts = window.__discoveryShadowHosts || [];
+  const regions = [];
+  const closed = [];
+  function describe(el) {
+    return {
+      tag: el.tagName.toLowerCase(),
+      role: el.getAttribute('role'),
+      text: (el.innerText || el.value || '').trim().slice(0, 80),
+    };
+  }
+  function walk(root) {
+    const interactive = Array.from(
+      root.querySelectorAll('button, a[href], input, select, textarea, [role], [onclick]')
+    ).map(describe);
+    regions.push(interactive);
+    root.querySelectorAll('[data-discovery-shadow-id]').forEach((host) => {
+      if (host.shadowRoot) walk(host.shadowRoot);
+    });
+  }
+  hosts.forEach((h) => {
+    const host = document.querySelector(`[data-discovery-shadow-id="${h.id}"]`);
+    if (!host) return;
+    if (host.shadowRoot) {
+      walk(host.shadowRoot);
+    } else {
+      closed.push(describe(host));
+    }
+  });
+  return { regions, closed };
+}
+"""
+
+
+async def _collect_shadow_dom_widgets(
+    page: Page, page_url: str, on_diagnostic: DiagnosticCallback | None
+) -> list[dict]:
+    """Runs the walk script and reports closed roots as unreachable
+    containers (AC 2). Returns the flattened list of interactive element
+    descriptors found inside every open root, for the caller to act on."""
+    try:
+        data = await page.evaluate(_SHADOW_DOM_WALK_SCRIPT)
+    except Exception:
+        return []
+    for closed_host in data.get("closed", []):
+        if on_diagnostic:
+            await _emit_diagnostic(
+                on_diagnostic,
+                "widget_coverage",
+                {
+                    "type": "unreachable_container",
+                    "container": "closed_shadow_root",
+                    "page_url": page_url,
+                    "host_tag": closed_host.get("tag"),
+                },
+            )
+    interactive: list[dict] = [el for region in data.get("regions", []) for el in region]
+    if interactive and on_diagnostic:
+        await _emit_diagnostic(
+            on_diagnostic,
+            "widget_coverage",
+            {
+                "type": "shadow_dom_traversed",
+                "page_url": page_url,
+                "element_count": len(interactive),
+            },
+        )
+    return interactive
+
+
+async def _click_shadow_dom_buttons(
+    page: Page,
+    sink: _CaptureSink,
+    page_url: str,
+    shadow_widgets: list[dict],
+    seen_labels: set[str],
+    heartbeat: Callable[[], None] | None,
+) -> None:
+    """Playwright's role/text locators already pierce open shadow roots for
+    interaction (Dev Notes) — capture just needed to *know the buttons
+    exist*, which `_collect_shadow_dom_widgets` provides."""
+    for widget in shadow_widgets:
+        if widget.get("tag") != "button" or not widget.get("text"):
+            continue
+        label = widget["text"]
+        if label in seen_labels:
+            continue
+        seen_labels.add(label)
+        locator = page.get_by_role("button", name=label, exact=True)
+        try:
+            if await locator.count() == 0:
+                continue
+            await locator.first.click(timeout=1500)
+        except Exception:
+            continue
+        if heartbeat:
+            heartbeat()
+        await sink.add(
+            CapturedAction(
+                page_url=page_url,
+                description=label,
+                captured_selector=f'shadow-dom >> role=button[name="{label}"]',
+                locator_candidates=await _capture_locator_candidates(
+                    locator.first, fallback_text=label
+                ),
+            )
+        )
+
+
+def _frame_same_origin(frame_url: str, base_url: str) -> bool:
+    return frame_url not in ("", "about:blank") and _same_origin(frame_url, base_url)
+
+
+async def _iter_same_origin_frames(
+    frame: Frame,
+    depth: int,
+    max_depth: int,
+    page_url: str,
+    on_diagnostic: DiagnosticCallback | None,
+):
+    """Recurses `frame`'s children to `max_depth` (AC 1), yielding
+    `(child_frame, depth)` for each same-origin one. Cross-origin frames are
+    logged as unreachable containers — a coverage fact, never an error — and
+    not recursed into (their own children are equally unreachable)."""
+    for child in frame.child_frames:
+        try:
+            child_url = child.url
+        except Exception:
+            continue
+        if not _frame_same_origin(child_url, page_url):
+            if child_url and child_url != "about:blank" and on_diagnostic:
+                await _emit_diagnostic(
+                    on_diagnostic,
+                    "widget_coverage",
+                    {
+                        "type": "unreachable_container",
+                        "container": "cross_origin_frame",
+                        "url": child_url,
+                        "page_url": page_url,
+                        "depth": depth,
+                    },
+                )
+            continue
+        yield child, depth
+        if depth < max_depth:
+            async for grandchild, d in _iter_same_origin_frames(
+                child, depth + 1, max_depth, page_url, on_diagnostic
+            ):
+                yield grandchild, d
+        elif on_diagnostic:
+            await _emit_diagnostic(
+                on_diagnostic,
+                "widget_coverage",
+                {"type": "frame_depth_exceeded", "page_url": page_url, "depth": depth},
+            )
+
+
+async def _capture_frame_widgets(
+    frame: Frame,
+    page_url: str,
+    sink: _CaptureSink,
+    seen_form_signatures: set,
+    heartbeat: Callable[[], None] | None,
+    credential: bytes | None,
+    on_diagnostic: DiagnosticCallback | None,
+    depth: int,
+    network_tracker: NetworkActivityTracker | None = None,
+    timeout_seconds: float = DEFAULT_PAGE_LOAD_TIMEOUT_SECONDS,
+    loop_guard_state: planner.LoopGuardState | None = None,
+    data_resolver_pool: dict[str, data_resolver.PoolEntry] | None = None,
+    resolution_log: data_resolver.ResolutionLog | None = None,
+    safety: planner.SpecialistFn | None = None,
+    interaction_level: planner.SpecialistFn | None = None,
+) -> None:
+    """Runs the same form/button capture routines used for a top-level page,
+    scoped to one frame — Dev Notes: extend the existing capture path, don't
+    build a parallel one. Everything captured is attributed to `page_url`
+    (the containing page), per AC 1. `frame_path` (Story 2.21 AC 3) records
+    the container chain so a locator captured inside this frame is still
+    resolvable from the top-level page."""
+    frame_path = f'iframe[src="{frame.url}"]'
+    try:
+        form_count = await frame.locator("form").count()
+    except Exception:
+        form_count = 0
+    for form_index in range(form_count):
+        try:
+            await _fill_and_submit_form(
+                frame,
+                f"form >> nth={form_index}",
+                page_url,
+                sink,
+                seen_form_signatures,
+                heartbeat=heartbeat,
+                network_tracker=network_tracker,
+                timeout_seconds=timeout_seconds,
+                frame_path=frame_path,
+                data_resolver_pool=data_resolver_pool,
+                resolution_log=resolution_log,
+            )
+        except Exception:
+            logger.warning("frame form capture failed at depth %d on %s", depth, page_url)
+    try:
+        await _click_standalone_buttons(
+            frame,
+            sink,
+            frame.url,
+            heartbeat=heartbeat,
+            credential=credential,
+            network_tracker=network_tracker,
+            timeout_seconds=timeout_seconds,
+            frame_path=frame_path,
+            loop_guard_state=loop_guard_state,
+            safety=safety,
+            interaction_level=interaction_level,
+        )
+    except Exception:
+        logger.warning("frame button capture failed at depth %d on %s", depth, page_url)
+    if on_diagnostic:
+        await _emit_diagnostic(
+            on_diagnostic,
+            "widget_coverage",
+            {
+                "type": "frame_traversed",
+                "page_url": page_url,
+                "frame_url": frame.url,
+                "depth": depth,
+            },
+        )
+
+
+async def _explore_tabs(
+    page: Page,
+    sink: _CaptureSink,
+    page_url: str,
+    heartbeat: Callable[[], None] | None,
+    on_diagnostic: DiagnosticCallback | None,
+) -> None:
+    """Each `role="tab"` is a Tier-1 candidate (AC 3): click it, let its
+    revealed content settle, capture it as an Action. Story 2.10/2.11 own
+    classifying the revealed content as its own state/VARIANT and formal
+    tiering — this story only needs the tab to be discovered and exercised."""
+    seen_labels: set[str] = set()
+    for tab in await widgets.list_tabs(page):
+        try:
+            label = (await tab.inner_text()).strip() or await tab.get_attribute("aria-label") or ""
+        except Exception:
+            continue
+        if not label or label in seen_labels:
+            continue
+        seen_labels.add(label)
+        selector = await _capture_selector(tab, fallback_text=label)
+        candidates = await _capture_locator_candidates(tab, fallback_text=label)
+        try:
+            await tab.click(timeout=1500)
+        except Exception:
+            continue
+        if heartbeat:
+            heartbeat()
+        try:
+            await page.wait_for_function(
+                "document.body && document.body.innerText.trim().length > 0", timeout=5000
+            )
+        except Exception:
+            pass
+        await sink.add(
+            CapturedAction(
+                page_url=page_url,
+                description=f"Tab: {label}",
+                captured_selector=selector,
+                locator_candidates=candidates,
+            )
+        )
+        if on_diagnostic:
+            await _emit_diagnostic(
+                on_diagnostic,
+                "widget_coverage", {"type": "tab_explored", "page_url": page_url, "label": label}
+            )
+
+
+async def _handle_dialog_if_opened(
+    page: Page,
+    sink: _CaptureSink,
+    page_url: str,
+    opener_label: str | None,
+    heartbeat: Callable[[], None] | None,
+    on_diagnostic: DiagnosticCallback | None,
+) -> None:
+    """Checked after every click/submit (AC 4): a portal-rendered overlay is
+    appended to `document.body`, not a descendant of whatever opened it, so
+    this looks for a page-level dialog rather than scoping to the opener's
+    subtree. Fingerprints the dialog as a nested state, captures its forms,
+    then runs the mandatory close ladder — Dev Notes call an undetected or
+    failed close the highest-risk failure in this story."""
+    dialog = await widgets.detect_open_dialog(page)
+    if dialog is None:
+        return
+    dialog_url = f"{page_url}#dialog:{opener_label or 'unknown'}"
+    if on_diagnostic:
+        await _emit_diagnostic(
+            on_diagnostic,
+            "widget_coverage",
+            {"type": "dialog_opened", "page_url": page_url, "opener": opener_label},
+        )
+    await sink.add(CapturedPage(url=dialog_url, title=f"Dialog: {opener_label or ''}".strip()))
+    # Exhaustively driving whatever forms/buttons a dialog contains, at the
+    # same fidelity as a full page visit, is Story 2.11's job once tiering
+    # exists — this story's job is fingerprinting-as-nested-state (done via
+    # the CapturedPage above) and the close ladder below.
+    result = await widgets.close_dialog_ladder(page, dialog, page_url, heartbeat=heartbeat)
+    if on_diagnostic:
+        await _emit_diagnostic(
+            on_diagnostic,
+            "widget_coverage",
+            {
+                "type": "dialog_closed",
+                "page_url": page_url,
+                "method": result.method,
+                "closed": result.closed,
+            },
+        )
+        if not result.closed:
+            await _emit_diagnostic(
+                on_diagnostic,
+                "widget_coverage",
+                {
+                    "type": "unreachable_container",
+                    "container": "unclosable_dialog",
+                    "page_url": page_url,
+                },
+            )
+
+
+async def _handle_popups(
+    popup_events: list | None,
+    base_url: str,
+    sink: _CaptureSink,
+    opener_url: str,
+    opener_label: str | None,
+    on_diagnostic: DiagnosticCallback | None,
+) -> None:
+    """Drains whatever `page.on("popup", ...)` queued since the last check
+    (AC 5). Same-origin + in-scope: followed as a linked sub-flow recorded
+    against the opening action. Cross-origin: flagged and closed, never
+    followed — focus already stayed on the original page since we never
+    switch to the popup beyond reading its URL/title.
+
+    `[FIXED]` A cross-origin popup's own event consistently arrives ~400-500ms
+    after the triggering click's promise resolves — measured directly
+    against this fixture, not theoretical (Chromium spins up a genuinely
+    new renderer process for site-isolated cross-origin content; a
+    same-origin popup pays none of that cost and its event is near-
+    instant). A short grace wait is not enough margin; 0.75s comfortably
+    covers the measured delay. Paid only when nothing is queued yet, so it
+    never taxes the (much more common) non-popup click, and is small next
+    to the multi-second settle timeouts already paid after every click in
+    this file — the alternative is silently missing exactly the case AC 5
+    exists to catch."""
+    if popup_events is None:
+        return
+    if not popup_events:
+        await asyncio.sleep(0.75)
+    while popup_events:
+        popup = popup_events.pop(0)
+        try:
+            await popup.wait_for_load_state("domcontentloaded", timeout=5000)
+        except Exception:
+            pass
+        try:
+            popup_url = popup.url
+        except Exception:
+            popup_url = ""
+        if popup_url and _same_origin(popup_url, base_url):
+            try:
+                title = await popup.title()
+            except Exception:
+                title = ""
+            await sink.add(CapturedPage(url=popup_url, title=title))
+            await sink.add(
+                CapturedTransition(
+                    from_url=opener_url, to_url=popup_url, triggered_by_description=opener_label
+                )
+            )
+            if on_diagnostic:
+                await _emit_diagnostic(
+                    on_diagnostic,
+                    "widget_coverage",
+                    {"type": "popup_followed", "url": popup_url, "opener": opener_label},
+                )
+        elif on_diagnostic:
+            await _emit_diagnostic(
+                on_diagnostic,
+                "widget_coverage",
+                {
+                    "type": "unreachable_container",
+                    "container": "cross_origin_popup",
+                    "url": popup_url,
+                    "opener": opener_label,
+                },
+            )
+        try:
+            await popup.close()
+        except Exception:
+            pass
 
 # Representative-action sampling (AC 6): a repeated identical action pattern
 # (e.g. one "Edit" per grid row) is exercised once, not once per DOM
@@ -122,6 +979,10 @@ _DEAD_HREF = (
 # Checked against both the clicked label (here) and the destination URL
 # (`_maybe_enqueue` below, for a plain `<a href="/logout">`-shaped link).
 _LOGOUT_RE = re.compile(r"log\s*[-_]?\s*out|sign\s*[-_]?\s*out|log\s*[-_]?\s*off", re.IGNORECASE)
+# Marks a synthetic label built from an icon's class name (a button with no
+# text and no aria-label/title at all) rather than real DOM text — must match
+# the literal `'icon:' + cls` built by the JS in `_click_standalone_buttons`.
+_ICON_LABEL_PREFIX = "icon:"
 _BODY_BUTTONS = (
     f"xpath=//*[(self::button or (self::a and ({_DEAD_HREF}))) "
     "and not(ancestor::form) and not(ancestor::nav) "
@@ -134,6 +995,26 @@ _CHROME_BUTTONS = (
 )
 
 
+async def _visible_content_size(page) -> int:
+    """`[FIXED 2026-08-05]` Started as a `_BODY_BUTTONS`/`_CHROME_BUTTONS`
+    element *count* — wrong signal, confirmed live: this app hides its
+    sidebar via a CSS class (`display: none`-equivalent), which never
+    removes the `<a>` elements from the DOM, only their visibility. A raw
+    `.count()` is a DOM-presence query, blind to CSS visibility, so it
+    reported the exact same number whether the drawer was open or closed —
+    the grow/shrink check below silently never fired, no matter what the
+    click actually did. `document.body.innerText` — like the
+    `text_still_present_anywhere` diagnostic already uses — naturally
+    excludes hidden elements, so its length is a cheap, single-call, holistic
+    stand-in for "how much is currently visible": revealing ~15 sidebar links
+    adds a few hundred characters, a real collapse removes them, a no-op
+    (clicking something unrelated) leaves it unchanged."""
+    try:
+        return await page.evaluate("() => document.body.innerText.length")
+    except Exception:
+        return 0
+
+
 @dataclass
 class CapturedFormField:
     name: str | None
@@ -141,6 +1022,9 @@ class CapturedFormField:
     required: bool
     default_value: str | None
     captured_selector: str | None
+    # Story 2.21: ranked candidate locators, e.g.
+    # [{"strategy": "testid", "value": "...", "fragile": False}, ...].
+    locator_candidates: list[dict] | None = None
 
 
 @dataclass
@@ -148,6 +1032,12 @@ class CapturedPage:
     url: str
     title: str
     object_storage_key: str | None = None
+    # Story 2.10: the heading + structural-shape signals `state_identity.py`
+    # scores against. `structural_tokens` includes tokens from open shadow
+    # roots (Story 2.14) so two states differing only inside one don't
+    # score identical (AC 6).
+    heading: str | None = None
+    structural_tokens: list[str] | None = None
 
 
 @dataclass
@@ -164,6 +1054,8 @@ class CapturedAction:
     description: str
     captured_selector: str | None = None
     representative: bool = True
+    # Story 2.21: ranked candidate locators — see CapturedFormField.
+    locator_candidates: list[dict] | None = None
 
 
 @dataclass
@@ -182,8 +1074,26 @@ class CapturedTransition:
     triggered_by_description: str | None = None
 
 
+@dataclass
+class CapturedPageComplete:
+    """Story 2.10 Task 7: signals that `url`'s full capture set (Page, every
+    Action/Form/ApiCall/Transition attributed to it) is now known, so the
+    persist layer can classify SAME/VARIANT/NEW with the page's *complete*
+    action/form set — not just what was known at first navigation. Emitted
+    at the end of the per-page loop body **and every early-exit path**
+    (session expiry, mid-crawl reauth retry) — a missed exit path strands
+    that page's captures in the buffer permanently."""
+
+    url: str
+
+
 CapturedItem = (
-    CapturedPage | CapturedForm | CapturedAction | CapturedApiCall | CapturedTransition
+    CapturedPage
+    | CapturedForm
+    | CapturedAction
+    | CapturedApiCall
+    | CapturedTransition
+    | CapturedPageComplete
 )
 
 
@@ -319,10 +1229,194 @@ async def _capture_selector(locator: Locator, fallback_text: str | None = None) 
     name = await locator.get_attribute("name")
     if name:
         return f'[name="{name}"]'
-    if fallback_text:
-        return f'text="{fallback_text}"'
     tag = await locator.evaluate("el => el.tagName.toLowerCase()")
+    # input/select/textarea never render fallback_text as real innerText —
+    # a `text=` selector built from it (a field's internal name/id) could
+    # never match real page content, unlike for a button/link.
+    if fallback_text and tag not in _NO_TEXT_TAGS:
+        return f'text="{fallback_text}"'
     return f"css={tag}"
+
+
+# Story 2.21 AC 1: capture-time ranked locator candidates. Tier order —
+# lower is more durable. `_capture_selector` above stays untouched (existing
+# consumers of `captured_selector` keep working); this is the new, additive
+# path Story 2.5's `ComponentLocator` derivation extends to consume.
+_LOCATOR_TIER_ORDER = {
+    "testid": 0,
+    "aria": 1,
+    "text": 2,
+    "label": 3,
+    "css_scoped": 4,
+    "css_absolute": 5,
+}
+
+# Story 2.21 AC 2: machine-generated identifiers, syntactically valid CSS but
+# semantically worthless — a value matching any of these is down-ranked below
+# every human-meaningful alternative, never discarded outright.
+#
+# `word-word` alone (e.g. "data-testid", "save-button") is indistinguishable
+# from a real CSS-in-JS hash by shape — the actual signal is that a hash's
+# second segment isn't a dictionary word: it contains a digit
+# (`css-1x2y3z`) or mixes case in a way an English word never does
+# (`sc-hKgILt`). `_looks_like_generated_token` carries that distinction;
+# the regex below only finds the candidate segment to test.
+_HYPHENATED_SEGMENT_RE = re.compile(r"\b[a-zA-Z]{1,10}-([0-9a-zA-Z]{5,})\b")
+_FRAMEWORK_GENERATED_ID_RE = re.compile(
+    r"ctl00_|ContentPlaceHolder|^gwt-|^ext-gen|^x-auto", re.IGNORECASE
+)
+_HEX_OR_UUID_FRAGMENT_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{12,}", re.IGNORECASE
+)
+_POSITIONAL_ONLY_PATH_RE = re.compile(
+    r"^(css=)?(\w+:nth-child\(\d+\)\s*(>|\s)\s*)*\w+:nth-child\(\d+\)$"
+)
+
+
+def _looks_like_generated_token(token: str) -> bool:
+    has_digit = any(c.isdigit() for c in token)
+    has_mixed_case = any(c.isupper() for c in token) and any(c.islower() for c in token)
+    return has_digit or has_mixed_case
+
+
+def _is_fragile_locator_value(value: str) -> bool:
+    if any(
+        _looks_like_generated_token(m.group(1)) for m in _HYPHENATED_SEGMENT_RE.finditer(value)
+    ):
+        return True
+    return bool(
+        _FRAMEWORK_GENERATED_ID_RE.search(value)
+        or _HEX_OR_UUID_FRAGMENT_RE.search(value)
+        or _POSITIONAL_ONLY_PATH_RE.match(value)
+    )
+
+
+# One round trip, computed while the element is live — deriving this from a
+# stored DOM snapshot afterwards loses the accessibility context (computed
+# role, accessible name) tiers 2 and 4 depend on (Dev Notes).
+_LOCATOR_INFO_SCRIPT = r"""
+(el) => {
+  function nthOfTag(node) {
+    let idx = 1, sib = node;
+    while ((sib = sib.previousElementSibling)) if (sib.tagName === node.tagName) idx++;
+    return node.tagName.toLowerCase() + ':nth-child(' + idx + ')';
+  }
+  function absolutePath(node) {
+    const parts = [];
+    while (node && node.nodeType === 1 && node !== document.documentElement) {
+      parts.unshift(nthOfTag(node));
+      node = node.parentElement;
+    }
+    return parts.join(' > ');
+  }
+  function scopedPath(node) {
+    let depth = 0, cur = node.parentElement, scope = null;
+    while (cur && depth < 4) {
+      if (cur.id) { scope = cur; break; }
+      cur = cur.parentElement; depth++;
+    }
+    if (!scope) return null;
+    const parts = [];
+    let n = node;
+    while (n && n !== scope) { parts.unshift(nthOfTag(n)); n = n.parentElement; }
+    return '#' + scope.id + (parts.length ? ' > ' + parts.join(' > ') : '');
+  }
+  const implicitRoles = {
+    BUTTON: 'button', A: 'link', INPUT: 'textbox', SELECT: 'combobox', TEXTAREA: 'textbox',
+  };
+  let label = null;
+  if (el.id) {
+    const lab = document.querySelector('label[for="' + el.id + '"]');
+    if (lab) label = lab.innerText.trim();
+  }
+  if (!label && el.closest('label')) label = el.closest('label').innerText.trim();
+  const testid = el.getAttribute('data-testid') || el.getAttribute('data-test')
+    || el.getAttribute('data-cy');
+  return {
+    testid: testid,
+    role: el.getAttribute('role') || implicitRoles[el.tagName] || null,
+    name: (el.getAttribute('aria-label') || el.innerText || el.value || '').trim().slice(0, 80),
+    label: label,
+    text: (el.innerText || '').trim().slice(0, 80),
+    tag: el.tagName.toLowerCase(),
+    idAttr: el.id || null,
+    firstClass: (el.className || '').trim().split(/\s+/)[0] || null,
+    scoped: scopedPath(el),
+    absolute: absolutePath(el),
+  };
+}
+"""
+
+
+_NO_TEXT_TAGS = {"input", "select", "textarea"}
+
+
+def _build_locator_candidates(info: dict, frame_path: str | None) -> list[dict]:
+    candidates: list[dict] = []
+
+    def add(strategy: str, value: str | None) -> None:
+        if not value:
+            return
+        # "label" isn't a real Playwright selector engine — its value is
+        # the raw label text for `getByLabel(...)`, not a `page.locator()`
+        # selector string, so it never gets a frame_path `>>` prefix either.
+        full_value = value if strategy == "label" else (
+            f"{frame_path} >> {value}" if frame_path else value
+        )
+        candidates.append(
+            {
+                "strategy": strategy,
+                "value": full_value,
+                "fragile": _is_fragile_locator_value(value),
+            }
+        )
+
+    if info.get("testid"):
+        add("testid", f'[data-testid="{info["testid"]}"]')
+    if info.get("role") and info.get("name"):
+        add("aria", f'role={info["role"]}[name="{info["name"]}"]')
+    if info.get("text"):
+        add("text", f'text="{info["text"]}"')
+    if info.get("label"):
+        add("label", info["label"])
+    if info.get("idAttr"):
+        add("css_scoped", f"#{info['idAttr']}")
+    if info.get("firstClass"):
+        add("css_scoped", f"css=.{info['firstClass']}")
+    if info.get("scoped"):
+        add("css_scoped", f"css={info['scoped']}")
+    if info.get("absolute"):
+        add("css_absolute", f"css={info['absolute']}")
+
+    seen: set[tuple[str, str]] = set()
+    deduped = []
+    for c in candidates:
+        key = (c["strategy"], c["value"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(c)
+    deduped.sort(key=lambda c: (c["fragile"], _LOCATOR_TIER_ORDER.get(c["strategy"], 9)))
+    return deduped
+
+
+async def _capture_locator_candidates(
+    locator: Locator, fallback_text: str | None = None, frame_path: str | None = None
+) -> list[dict]:
+    """Story 2.21 AC 1/2/3: the ranked, fragility-aware candidate list.
+    Best-effort — a capture failure (a detached/stale element) yields an
+    empty list rather than raising, same tolerance as every other capture
+    helper in this file."""
+    try:
+        info = await locator.evaluate(_LOCATOR_INFO_SCRIPT)
+    except Exception:
+        return []
+    # input/select/textarea never render innerText — stamping a fallback
+    # (a field's internal name/id) in as "text" would produce a `text=`
+    # candidate that can never match real page content.
+    if not info.get("text") and fallback_text and info.get("tag") not in _NO_TEXT_TAGS:
+        info["text"] = fallback_text
+    return _build_locator_candidates(info, frame_path)
 
 
 async def _submit_button_label(locator: Locator) -> str | None:
@@ -337,6 +1431,76 @@ async def _submit_button_label(locator: Locator) -> str | None:
     return text or None
 
 
+# Story 2.10 AC 2/6: the heading + structural-shape signals the State
+# Identity Engine scores against, computed in one round trip. The
+# structural walk descends into open shadow roots (Story 2.14) — without
+# that, two states differing only inside one would produce the same token
+# list and score identical, exactly the failure AC 6 exists to prevent.
+_STATE_SIGNALS_SCRIPT = r"""
+() => {
+  function describe(el) {
+    const role = el.getAttribute('role');
+    return role ? el.tagName.toLowerCase() + '[' + role + ']' : el.tagName.toLowerCase();
+  }
+  function walk(root) {
+    const tokens = [];
+    root.querySelectorAll('*').forEach((el) => {
+      tokens.push(describe(el));
+      if (el.shadowRoot) tokens.push(...walk(el.shadowRoot));
+    });
+    return tokens;
+  }
+  const h1 = document.querySelector('h1');
+  const h2 = document.querySelector('h2');
+  const heading = (h1 && h1.innerText.trim())
+    || (h2 && h2.innerText.trim())
+    || document.title
+    || '';
+  // Story 2.10 Task 2: fold in how many of this page's tracked shadow
+  // hosts (Story 2.14's attachShadow-tracking init script) are closed —
+  // genuinely opaque, but their *count* is still an observable structural
+  // fact, so two pages differing only in reachability don't fingerprint
+  // identically.
+  const hosts = window.__discoveryShadowHosts || [];
+  let closedCount = 0;
+  hosts.forEach((h) => {
+    const host = document.querySelector(`[data-discovery-shadow-id="${h.id}"]`);
+    if (host && !host.shadowRoot) closedCount++;
+  });
+  const tokens = walk(document.body);
+  if (closedCount > 0) tokens.push('unreachable:closed_shadow_root:' + closedCount);
+  return { heading: heading, structuralTokens: tokens };
+}
+"""
+
+
+async def _capture_state_signals(page: Page) -> tuple[str, list[str]]:
+    """Best-effort — a failure yields an empty heading/token list rather
+    than raising, same tolerance as every other capture helper here."""
+    try:
+        info = await page.evaluate(_STATE_SIGNALS_SCRIPT)
+    except Exception:
+        return "", []
+    tokens = list(info.get("structuralTokens") or [])
+    # Story 2.10 Task 2: same reasoning as the closed-shadow-root count
+    # above, for the other unreachable-container kind (Story 2.14) —
+    # cross-origin frames Playwright can enumerate directly, no JS needed.
+    try:
+        cross_origin_count = sum(
+            1
+            for frame in page.frames
+            if frame != page.main_frame
+            and frame.url not in ("", "about:blank")
+            and not _same_origin(frame.url, page.url)
+        )
+    except Exception:
+        cross_origin_count = 0
+    if cross_origin_count:
+        tokens.append(f"unreachable:cross_origin_frame:{cross_origin_count}")
+    return info.get("heading") or "", tokens
+
+
+
 async def _fill_and_submit_form(
     page,
     form_selector: str,
@@ -345,6 +1509,13 @@ async def _fill_and_submit_form(
     seen_form_signatures: set[tuple[str, str, tuple[tuple[str | None, str | None], ...]]],
     rescan: Callable[[str], Awaitable[int]] | None = None,
     heartbeat: Callable[[], None] | None = None,
+    on_diagnostic: DiagnosticCallback | None = None,
+    popup_events: list | None = None,
+    network_tracker: NetworkActivityTracker | None = None,
+    timeout_seconds: float = DEFAULT_PAGE_LOAD_TIMEOUT_SECONDS,
+    frame_path: str | None = None,
+    data_resolver_pool: dict[str, data_resolver.PoolEntry] | None = None,
+    resolution_log: data_resolver.ResolutionLog | None = None,
 ) -> str | None:
     # A form's fill+submit+settle sequence can itself run close to the
     # heartbeat_timeout window on a slow page — heartbeating here, not just
@@ -353,6 +1524,24 @@ async def _fill_and_submit_form(
     # triggering a from-scratch retry (see Dev Notes below).
     if heartbeat:
         heartbeat()
+
+    # Story 2.13: deferred imports for the same reason `_click_standalone_
+    # buttons` uses them (see its own comment on the crawler/planner/
+    # state_identity import cycle) — `data_resolver` only needs
+    # `route_template`, but importing `state_identity` here would eventually
+    # cycle back through this module too.
+    from discovery_worker import data_resolver, state_identity
+
+    pool = data_resolver_pool or {}
+    log = resolution_log if resolution_log is not None else data_resolver.ResolutionLog()
+    route_family = state_identity.route_template(page_url)
+    # (field_key, value) pairs actually used this submit — success feedback
+    # (AC 2/3) is recorded against these once the submit's outcome is known.
+    resolved_this_submit: list[tuple[str, str]] = []
+    # Buffered, not emitted immediately — a `SyntheticDataEntry` needs the
+    # real `outcome` (AC 2/3), which isn't known until after the submit.
+    pending_synthetic_data: list[dict] = []
+
     form = page.locator(form_selector)
     action = await form.get_attribute("action") or page.url
     method = (await form.get_attribute("method") or "get").upper()
@@ -371,7 +1560,7 @@ async def _fill_and_submit_form(
     input_info = await all_inputs.evaluate_all(
         "els => els.map(el => ({"
         "type: el.type || 'text', name: el.name || null, value: el.value || null, "
-        "id: el.id || null, required: el.required"
+        "id: el.id || null, required: el.required, accept: el.accept || null"
         "}))"
     )
 
@@ -408,8 +1597,90 @@ async def _fill_and_submit_form(
         field_el = all_inputs.nth(i)
         input_type = info["type"]
         name = info["name"]
-        value = _generic_value(input_type, name, info["id"])
+        if input_type == "file":
+            # Story 2.14 AC 6: routed to a placeholder file rather than
+            # `_generic_value` — there is no meaningful text value for an
+            # upload field.
+            path = _placeholder_file_path(info.get("accept"))
+            selector = await _capture_selector(field_el, fallback_text=name)
+            candidates = await _capture_locator_candidates(
+                field_el, fallback_text=name, frame_path=frame_path
+            )
+            try:
+                await field_el.set_input_files(path, timeout=2000)
+                fields.append(
+                    CapturedFormField(
+                        name=name,
+                        input_type=input_type,
+                        required=info["required"],
+                        default_value=os.path.basename(path),
+                        captured_selector=selector,
+                        locator_candidates=candidates,
+                    )
+                )
+                if on_diagnostic:
+                    await _emit_diagnostic(
+                        on_diagnostic,
+                        "data_resolution",
+                        {
+                            "field": name,
+                            "type": "file",
+                            "resolution": "placeholder_file",
+                            "filename": os.path.basename(path),
+                        },
+                    )
+            except Exception:
+                pass
+            continue
+        # Story 2.13 AC 1: five-step resolution — pool, then per-run reuse,
+        # then safe synthesis (step 2, page-scanning, is deliberately not
+        # built; see `data_resolver`'s module docstring). `_generic_value`
+        # (Story 2.2) still supplies step 4's candidate value unchanged —
+        # this extends that behaviour, it doesn't replace it (Dev Notes).
+        field_name_for_resolution = name or info["id"] or ""
+        resolved = data_resolver.resolve(
+            field_name=field_name_for_resolution,
+            input_type=input_type,
+            route_family=route_family,
+            pool=pool,
+            log=log,
+            generic_value=_generic_value(input_type, name, info["id"]),
+        )
+        if resolved is None:
+            if info["required"]:
+                # AC 5/6: an unresolvable *required* field defers the whole
+                # form-submit action, not just this field — the Planner
+                # would attach this to the Blocked Frontier (Story 2.15);
+                # not yet built, so this is recorded as a diagnostic in the
+                # meantime rather than silently invented or silently lost.
+                if on_diagnostic:
+                    await _emit_diagnostic(
+                        on_diagnostic,
+                        "execution_decision",
+                        {
+                            "url": page_url,
+                            "action": "DEFER",
+                            "label": field_name_for_resolution,
+                            "deciding_specialist": "data_resolver",
+                            "reason": (
+                                f"unresolved required field "
+                                f"{field_name_for_resolution!r}: no pool entry, "
+                                "business-specific, not synthesized"
+                            ),
+                            "normalized_key": data_resolver.field_key(
+                                field_name_for_resolution, input_type
+                            ),
+                        },
+                    )
+                return None
+            # Optional and unresolvable — left unfilled, same as any other
+            # field this function already skips via the `except` below.
+            continue
+        value = resolved.value
         selector = await _capture_selector(field_el, fallback_text=name)
+        candidates = await _capture_locator_candidates(
+            field_el, fallback_text=name, frame_path=frame_path
+        )
         try:
             # Explicit short timeout, not Playwright's 30s default — a
             # checkout-sized form can have several CSS-hidden conditional
@@ -425,7 +1696,27 @@ async def _fill_and_submit_form(
                     required=info["required"],
                     default_value=value,
                     captured_selector=selector,
+                    locator_candidates=candidates,
                 )
+            )
+            used_key = data_resolver.field_key(field_name_for_resolution, input_type)
+            resolved_this_submit.append((used_key, value))
+            # Story 2.13 Task 4: every resolved value gets a
+            # `SyntheticDataEntry` row, not only synthesized ones — masked
+            # here (before it ever leaves process memory into a diagnostic
+            # payload) when the pool marked it sensitive (Story 2.20 AC 6).
+            # Emitted after the submit below, once the real `outcome` (AC
+            # 2/3) is known, rather than here with a placeholder that would
+            # never get corrected.
+            pending_synthetic_data.append(
+                {
+                    "field_name": field_name_for_resolution,
+                    "normalized_key": used_key,
+                    "value": "***REDACTED***" if resolved.is_sensitive else value,
+                    "source": resolved.source,
+                    "is_placeholder_file": False,
+                    "page_url": page_url,
+                }
             )
         except Exception:
             continue
@@ -434,6 +1725,7 @@ async def _fill_and_submit_form(
     submit = form.locator("button[type=submit], input[type=submit], button:not([type])")
     submit_label: str | None = None
     submit_selector: str | None = None
+    submit_candidates: list[dict] | None = None
     # Bracket the submit+settle sequence with heartbeats — this is the
     # single slowest step in form processing (a real submit can redirect
     # through an auth check, hit a slow remote server, or reload a
@@ -445,6 +1737,9 @@ async def _fill_and_submit_form(
         if await submit.count() > 0:
             submit_label = await _submit_button_label(submit.first)
             submit_selector = await _capture_selector(submit.first, fallback_text=submit_label)
+            submit_candidates = await _capture_locator_candidates(
+                submit.first, fallback_text=submit_label, frame_path=frame_path
+            )
             await submit.first.click(timeout=2000)
         else:
             await form.evaluate("f => f.submit()")
@@ -452,38 +1747,72 @@ async def _fill_and_submit_form(
         pass
     # A real submit can redirect through an auth check or reload a page with
     # dozens of assets — well past a single short navigation-event window —
-    # so settle on load state generically instead of racing one
-    # `expect_navigation` call. A submit with no navigation at all (a
+    # so settle generically (Story 2.9's readiness gate) instead of racing
+    # one `expect_navigation` call. A submit with no navigation at all (a
     # client-side "Add to Cart" that only updates in-page state) resolves
     # these near-instantly, so this adds no real delay for that case.
-    try:
-        await page.wait_for_load_state("domcontentloaded", timeout=8000)
-    except Exception:
-        pass
-    if heartbeat:
-        heartbeat()
-    try:
-        await page.wait_for_load_state("networkidle", timeout=10000)
-    except Exception:
-        pass
-    if heartbeat:
-        heartbeat()
-    # `networkidle` can resolve before an SPA's post-navigation data fetch
-    # even starts (see the same fix in `run_discovery_crawl`'s main loop) —
-    # wait for actual rendered text too, not just quiet network.
-    try:
-        await page.wait_for_function(
-            "document.body && document.body.innerText.trim().length > 0", timeout=15000
-        )
-    except Exception:
-        pass
-    if heartbeat:
-        heartbeat()
+    await wait_for_page_ready(page, timeout_seconds, network_tracker, heartbeat)
 
     await sink.add(
         CapturedForm(page_url=page_url, action_url=action, method=method, fields=fields)
     )
+    # Dialogs/popups are page-level concepts — only checked when `page` is
+    # genuinely the top-level Page (not a Frame passed in for Story 2.14's
+    # frame-content capture, which has no `.keyboard`/popup concept of its
+    # own; a dialog opened from inside a frame still attaches to the page).
+    if isinstance(page, Page):
+        await _handle_dialog_if_opened(
+            page, sink, page_url, submit_label, heartbeat, on_diagnostic
+        )
+        await _handle_popups(
+            popup_events, page_url, sink, before_url, submit_label, on_diagnostic
+        )
     after_url = _page_fingerprint(page.url)
+
+    if resolved_this_submit:
+        # Story 2.13 AC 2/3: success feedback. `ponytail:` a single bounded
+        # heuristic, not the fuller "validation error OR no expected
+        # transition OR unchanged fingerprint" list Task 3 sketches — a
+        # navigating submit is treated as success outright (Dev Notes:
+        # don't over-build attribution); only the no-navigation case is
+        # checked at all, and only for the one cheap, broadly-supported
+        # signal (`aria-invalid`). Upgrade if a pilot shows real forms that
+        # reject without ever setting it. When several fields were filled in
+        # one submit and it's rejected, every one of them is demoted
+        # together (Dev Notes' "demote the set" attribution rule) — this
+        # function has no way to isolate which single field was at fault.
+        outcome = "success"
+        if after_url == before_url:
+            try:
+                has_error = await form.locator('[aria-invalid="true"]').count() > 0
+            except Exception:
+                has_error = False
+            outcome = "rejected" if has_error else "unknown"
+        for used_key, used_value in resolved_this_submit:
+            log.record_outcome(used_key, used_value, outcome)
+        if on_diagnostic:
+            for record in pending_synthetic_data:
+                await _emit_diagnostic(
+                    on_diagnostic, "synthetic_data", {**record, "outcome": outcome}
+                )
+            if outcome == "rejected":
+                # Task 6: the "values the application rejected" report
+                # section reads this — separate from the SyntheticDataEntry
+                # row above (Task 4), which already carries `outcome` too,
+                # but this is what a rejection-focused query can filter on
+                # without joining, and it doesn't need `value` at all
+                # (never re-expose it, sensitive or not).
+                for used_key, _ in resolved_this_submit:
+                    await _emit_diagnostic(
+                        on_diagnostic,
+                        "data_resolution",
+                        {
+                            "normalized_key": used_key,
+                            "outcome": "rejected",
+                            "page_url": page_url,
+                        },
+                    )
+
     # Recorded whenever there's a real label, whether or not the submit
     # produced a navigation — a submit that only updates in-page state (no
     # URL change, no XHR) is still a real, testable business action; a
@@ -495,6 +1824,7 @@ async def _fill_and_submit_form(
                 page_url=before_url,
                 description=submit_label,
                 captured_selector=submit_selector,
+                locator_candidates=submit_candidates,
             )
         )
     if after_url != before_url:
@@ -576,6 +1906,17 @@ async def _click_standalone_buttons(
     heartbeat: Callable[[], None] | None = None,
     credential: bytes | None = None,
     seen_labels: set[str] | None = None,
+    on_diagnostic: DiagnosticCallback | None = None,
+    popup_events: list | None = None,
+    network_tracker: NetworkActivityTracker | None = None,
+    timeout_seconds: float = DEFAULT_PAGE_LOAD_TIMEOUT_SECONDS,
+    frame_path: str | None = None,
+    entry_url: str | None = None,
+    loop_guard: planner.SpecialistFn | None = None,
+    safety: planner.SpecialistFn | None = None,
+    data_resolver: planner.SpecialistFn | None = None,
+    loop_guard_state: planner.LoopGuardState | None = None,
+    interaction_level: planner.SpecialistFn | None = None,
 ) -> list[str]:
     """Clicks every distinct-labeled standalone button — page-body content
     tried before nav/header/footer chrome, no numeric cap on either (see the
@@ -609,222 +1950,925 @@ async def _click_standalone_buttons(
     if seen_labels is None:
         seen_labels = set()
     discovered: list[str] = []
+    # `[ADDED 2026-08-05]` Caps the reload-and-retry-once escape hatch below
+    # (see its use site) at one attempt per candidate per page visit — a
+    # candidate that's still broken after a full reload isn't going to fix
+    # itself with a second one, and this bounds it against ever looping.
+    reload_retried_labels: set[str] = set()
+    # `[ADDED 2026-08-05]` Persists across the whole page visit (every tier/
+    # group iteration), not reset per candidate like `is_ambiguous_icon_toggle`
+    # below — confirmed live: two different ambiguous-icon candidates both
+    # toggle the *same* region (a `document.body.innerText`-based check at
+    # click-failure time showed the whole revealed sidebar gone from the page
+    # entirely, not merely this one element gone — a double-toggle net
+    # collapse, not a stale-handle/re-render problem). Once one of them has
+    # confirmed a reveal (grew the candidate count), trying a second one
+    # risks re-closing what the first one opened for no benefit — the reveal
+    # already happened, so there's nothing left to gain from opening it
+    # "again" via a different control.
+    revealed_via_icon_toggle = False
 
-    for group_selector, group_name in (
-        (_BODY_BUTTONS, "body"),
-        (_CHROME_BUTTONS, "chrome (nav/header/footer)"),
-    ):
-        while True:
-            buttons = page.locator(group_selector)
-            button_count = await buttons.count()
+    # `state_identity` imports `_page_fingerprint` from this module —
+    # deferred imports here, not module-level ones, are what avoid a
+    # circular import between the two (and, transitively, `planner`).
+    from discovery_worker import planner, state_identity
+    from discovery_worker.planner import return_to_state
 
-            button = None
-            label: str | None = None
-            for i in range(button_count):
-                if heartbeat:
-                    heartbeat()
-                candidate = buttons.nth(i)
+    # Story 2.19: a real `loop_guard_state` (the crawl-wide bookkeeping
+    # instance) takes precedence over a directly-injected `loop_guard`
+    # callable — the two are never meant to be supplied together, but the
+    # state object is what `run_discovery_crawl` actually passes.
+    loop_guard = (loop_guard_state.guard if loop_guard_state else loop_guard) or (
+        planner.default_loop_guard
+    )
+    safety = safety or planner.default_safety
+    data_resolver = data_resolver or planner.default_data_resolver
+
+    # Story 2.11 AC 5: captured once, before any click in this call — the
+    # State Return ladder's confirmation target for every restore attempt
+    # this function makes. Frame-scoped calls (Story 2.14) skip the ladder
+    # entirely below (`Frame` has no `go_back()`), so this is skipped too.
+    pre_action_fingerprint = None
+    if isinstance(page, Page):
+        heading, structural_tokens = await _capture_state_signals(page)
+        pre_action_fingerprint = state_identity.compute_fingerprint(
+            heading, [], [], structural_tokens
+        )
+
+    # Story 2.11 AC 1/2: every Tier 1 (in-page) candidate across *both* DOM
+    # groups is exhausted before any Tier 2 (navigation-intent) candidate is
+    # even attempted — outer tier pass, inner body-then-chrome group, same as
+    # before this story. A candidate skipped only because it doesn't match
+    # the current tier pass is left off `seen_labels` so it's picked up on
+    # the Tier 2 pass; this re-scans the DOM twice as often as the old
+    # single-pass loop, a deliberate, bounded cost for correct tiering.
+    source_route_template = state_identity.route_template(before_url)
+    for tier in (planner.TIER_IN_PAGE, planner.TIER_NAVIGATION):
+        for group_selector, group_name in (
+            (_BODY_BUTTONS, "body"),
+            (_CHROME_BUTTONS, "chrome (nav/header/footer)"),
+        ):
+            in_landmark = group_name != "body"
+            while True:
+                buttons = page.locator(group_selector)
+                button_count = await buttons.count()
+                # Batched: one round trip for every label/role instead of one
+                # per candidate — the old per-`.nth(i)` `inner_text()`/
+                # `get_attribute()` awaits made each outer pass O(button_count)
+                # CDP calls, and this loop runs once per button found on the
+                # page, so a page with many buttons paid O(button_count^2)
+                # round trips. `all_inner_texts()`/`evaluate_all()` fetch the
+                # whole group in one call each; the per-candidate skip logic
+                # below is unchanged, just reading from the batched lists.
                 try:
-                    candidate_label = (await candidate.inner_text()).strip()
+                    all_labels = await buttons.all_inner_texts()
                 except Exception as exc:
                     logger.info(
-                        "  %s: %s button #%d inner_text failed, skipping (%s)",
+                        "  %s: %s button batch inner_text failed, ending %s pass (%s)",
                         before_url,
                         group_name,
-                        i,
+                        group_name,
                         exc,
                     )
-                    continue
-                # Representative-action sampling (AC 6): a repeated identical
-                # action pattern (e.g. one "Edit" button per grid row) is
-                # exercised once, not once per DOM instance.
-                if not candidate_label or candidate_label in seen_labels:
-                    continue
-                if candidate_label.strip().lower() == "icon":
-                    # `[FIXED 2026-07-22]` A bare, generic "Icon" label (no
-                    # other distinguishing text) is exactly the accessible
-                    # name a left-nav collapse toggle reports — observed
-                    # live: clicking it genuinely collapses the whole
-                    # sidebar to zero size for the rest of this page visit,
-                    # confirmed with a raw `getBoundingClientRect()` check,
-                    # and clicking it again does *not* reliably restore it
-                    # (not a simple toggle). Same class of self-defeating
-                    # click as "Log out" — skip it rather than lose
-                    # navigation for the whole page.
-                    seen_labels.add(candidate_label)
-                    continue
-                if _LOGOUT_RE.search(candidate_label):
-                    logger.info(
-                        "  %s: refusing to click %s button %r — looks like a logout control",
-                        before_url,
-                        group_name,
-                        candidate_label,
-                    )
-                    seen_labels.add(candidate_label)
-                    continue
-                button, label = candidate, candidate_label
-                break
-
-            if button is None or label is None:
-                # Nothing left unseen in this group — move to the next one.
-                break
-
-            seen_labels.add(label)
-            selector = await _capture_selector(button, fallback_text=label)
-            try:
-                await button.click(timeout=1000)
-            except Exception as first_exc:
-                # `[FIXED 2026-07-22]` Observed live: the *exact* same
-                # element, same selector, sometimes fails this click with
-                # "element is not visible" and sometimes succeeds instantly
-                # on a fresh page that never triggered it. Playwright's own
-                # `bounding_box()` isn't a useful independent check here —
-                # it shares the same visibility heuristic the click itself
-                # uses, so it reports zero-size for the exact same reason
-                # the click failed (confirmed live: always empty in exactly
-                # this situation). A raw `getBoundingClientRect()` — real
-                # layout, no Playwright opinion involved — showed this
-                # element fully on-screen with real dimensions the whole
-                # time. This is a left-nav panel's CSS transition class
-                # ("slide-in"/"collapsed") confusing Playwright's stability
-                # check, not a genuinely hidden or covered element, so force
-                # through it — a truly zero-size/off-screen element still
-                # gets skipped below, since the raw rect check catches that
-                # case for real.
-                has_real_size = False
+                    break
                 try:
-                    has_real_size = await button.evaluate(
-                        "el => { const r = el.getBoundingClientRect(); "
-                        "return r.width > 0 && r.height > 0; }"
+                    all_roles = await buttons.evaluate_all(
+                        "els => els.map(el => el.getAttribute('role'))"
                     )
                 except Exception:
-                    pass
-                if not has_real_size:
-                    logger.info(
-                        "  %s: %s button click failed, not on-screen: %r (%s)",
-                        before_url,
-                        group_name,
-                        label,
-                        first_exc,
-                    )
-                    continue
+                    all_roles = [None] * button_count
                 try:
-                    await button.click(timeout=1500, force=True)
-                except Exception as exc:
+                    # A button with no visible text *and* no aria-label/title
+                    # (a bare icon-font glyph — e.g. a drawer/hamburger toggle)
+                    # would otherwise get `candidate_label == ""` below and be
+                    # silently invisible forever: every downstream step keys
+                    # off `label` (dedup, action history, safety matching), so
+                    # a blank one can never be discovered or clicked. The
+                    # icon's own most-specific class name (e.g. "wi-menu") is
+                    # a stable substitute distinct per icon; repeated
+                    # instances of the same icon (e.g. one "..." row-menu per
+                    # grid row) collapse to the same synthetic label, which is
+                    # exactly what Representative-action sampling below
+                    # already wants for a repeated control. Prefixed so it's
+                    # never confused with real DOM text (see `_ICON_LABEL_PREFIX`
+                    # use at the selector-capture call site below).
+                    all_icon_labels = await buttons.evaluate_all(
+                        """els => els.map(el => {
+                            const aria = (el.getAttribute('aria-label') || '').trim();
+                            if (aria) return aria;
+                            const title = (el.getAttribute('title') || '').trim();
+                            if (title) return title;
+                            const iconEl = el.matches('i[class]') ? el : el.querySelector('i[class]');
+                            const cls = iconEl
+                                ? (iconEl.getAttribute('class') || '').trim().split(/\\s+/).pop()
+                                : '';
+                            return cls ? ('icon:' + cls) : '';
+                        })"""
+                    )
+                except Exception:
+                    all_icon_labels = [""] * button_count
+                try:
+                    # Disambiguator for the specific case where the real
+                    # visible text is itself a bare, generic word like "Icon"
+                    # — unlike a truly blank label (handled above, where
+                    # collapsing identical icons together is the *desired*
+                    # Representative-action sampling behaviour, e.g. one "..."
+                    # per grid row), a literal "Icon" text label has been
+                    # observed live to belong to two genuinely different
+                    # controls on the same page (a hidden drawer toggle and,
+                    # separately, something near the profile menu) that
+                    # happen to share that exact word — deduping them
+                    # together starves whichever is scanned second forever.
+                    # `id` is a real, stable identity when present; the DOM
+                    # index is a same-scan-only fallback, which is enough to
+                    # tell two simultaneously-present anonymous elements apart
+                    # without it needing to survive a reload.
+                    all_element_ids = await buttons.evaluate_all(
+                        "els => els.map(el => el.id || '')"
+                    )
+                except Exception:
+                    all_element_ids = [""] * button_count
+
+                button = None
+                label: str | None = None
+                role: str | None = None
+                is_ambiguous_icon_toggle = False
+                for i in range(button_count):
+                    if heartbeat:
+                        heartbeat()
+                    real_text = (all_labels[i] if i < len(all_labels) else "").strip()
+                    candidate_label = real_text
+                    if not candidate_label:
+                        candidate_label = (
+                            all_icon_labels[i] if i < len(all_icon_labels) else ""
+                        ).strip()
+                    candidate_is_ambiguous_icon = real_text.lower() == "icon"
+                    if candidate_is_ambiguous_icon:
+                        disambiguator = (
+                            all_element_ids[i] if i < len(all_element_ids) else ""
+                        ) or str(i)
+                        candidate_label = f"{real_text}#{disambiguator}"
+                    # Representative-action sampling (AC 6): a repeated identical
+                    # action pattern (e.g. one "Edit" button per grid row) is
+                    # exercised once, not once per DOM instance. Scoped by
+                    # `group_name` (body vs. chrome), not bare label — apps
+                    # reuse the same generic accessible name (e.g. a header
+                    # hamburger and every per-row grid "..." action menu both
+                    # reporting `aria-label="Menu"`) for controls that are not
+                    # duplicates of each other at all; without this, whichever
+                    # one is scanned first (body, always before chrome) wins
+                    # and permanently shadows the other for this whole page
+                    # visit, same failure mode representative sampling exists
+                    # to avoid, not cause.
+                    seen_key = f"{group_name}\x00{candidate_label}"
+                    if not candidate_label or seen_key in seen_labels:
+                        continue
+                    if candidate_is_ambiguous_icon and revealed_via_icon_toggle:
+                        # `[ADDED 2026-08-05]` A different ambiguous-icon
+                        # candidate already confirmed a reveal this page visit
+                        # (see `revealed_via_icon_toggle`'s definition) — the
+                        # nav is open; clicking a second icon-toggle control
+                        # risks being the same drawer's close action reached a
+                        # different way, undoing it for zero gain.
+                        seen_labels.add(seen_key)
+                        continue
+                    # `[CHANGED 2026-08-04]` A prior fix unconditionally
+                    # skipped any bare, generic "Icon" label (no other
+                    # distinguishing text) — observed live on some other app:
+                    # it was a left-nav *collapse* toggle, clicking it
+                    # genuinely collapsed an already-open sidebar to zero
+                    # size for the rest of the page visit. But the same bare
+                    # "Icon" accessible name is exactly as likely to be a
+                    # left-nav *reveal* toggle instead (observed live on a
+                    # WaveMaker admin app: its list-view pages render the
+                    # sidebar collapsed by default — every section link
+                    # behind it, e.g. 10+ catalog categories, was
+                    # unreachable — and this exact button is what opens it).
+                    # A blanket skip always loses the second case; blanket-
+                    # allowing (tried first) always loses the first — it
+                    # regressed the original incident, confirmed live: this
+                    # exact button on this exact app's *Home* page collapsed
+                    # an already-open sidebar. The actual fix is below, after
+                    # the click: verify whether the group's own candidate
+                    # count grew or shrank, and reload to undo if it shrank.
+                    # Still no special-casing of *whether to try* it — it
+                    # flows through tiering/safety/dedup like anything else.
+                    if _LOGOUT_RE.search(candidate_label):
+                        logger.info(
+                            "  %s: refusing to click %s button %r — looks like a logout control",
+                            before_url,
+                            group_name,
+                            candidate_label,
+                        )
+                        seen_labels.add(seen_key)
+                        continue
+                    # Story 2.11 AC 1: role="tab" is always Tier 1 regardless
+                    # of landmark position, so a tab strip that happens to
+                    # live inside <nav> still gets exhausted in the Tier 1
+                    # pass, not deferred behind every other nav destination.
+                    role = all_roles[i] if i < len(all_roles) else None
+                    candidate_tier = planner.classify_tier(
+                        planner.ActionCandidate(
+                            label=candidate_label,
+                            role=role,
+                            in_landmark=in_landmark,
+                            source_route_template=source_route_template,
+                            # This function's selectors (_BODY_BUTTONS/
+                            # _CHROME_BUTTONS) only ever match a <button> or a
+                            # dead-href <a> (see _DEAD_HREF) — a real
+                            # route-changing href is always found via the
+                            # plain link scrape instead, never here.
+                            target_route_template=None,
+                        )
+                    )
+                    if candidate_tier != tier:
+                        continue
+                    button, label = buttons.nth(i), candidate_label
+                    is_ambiguous_icon_toggle = candidate_is_ambiguous_icon
+                    break
+
+                if button is None or label is None:
+                    # Nothing left unseen (in this tier) in this group — move
+                    # to the next group, or the next tier once both groups
+                    # are exhausted for it.
+                    break
+
+                # `[FIXED 2026-08-05]` `button` is a live `Locator` — every
+                # action on it re-runs `group_selector` and re-picks whatever
+                # is *currently* at index `i`, not the specific element just
+                # scanned above. Confirmed live: a real, always-visible sidebar
+                # link (`getBoundingClientRect()` non-zero, `visibility:
+                # visible`, checked directly) still measured a (0,0,0,0) rect
+                # at the exact moment `button.click()` ran, for 68 straight
+                # candidates across repeated runs — the several awaits between
+                # picking this candidate and clicking it (state-signal capture,
+                # selector capture, locator-candidate capture) are enough time
+                # for this app's own re-renders to reorder/remount the list out
+                # from under a position-based lookup. `element_handle()` pins
+                # the actual DOM node chosen above; clicking that instead of
+                # re-resolving by position is immune to the list changing
+                # shape in between. Only the click itself needs this — the
+                # selector/candidate-capture calls below stay on `button`
+                # (the descriptive `Locator` API), since they're for reporting,
+                # not for identifying what gets clicked.
+                seen_labels.add(seen_key)
+
+                button_handle = await button.element_handle()
+                if button_handle is None:
+                    # Vanished between being scanned and now — nothing to
+                    # click, and no point misattributing this as a visibility
+                    # failure. Already in `seen_labels` above, so this doesn't
+                    # loop forever re-picking the same vanished candidate.
+                    continue
+
+                # Story 2.11 AC 3/4/7: exactly one Execution Decision per
+                # candidate, before it runs — loop guards, then safety, then
+                # the data resolver (default pass-throughs today; Stories
+                # 2.19/2.12/2.13 replace them without touching this call site).
+                # `state_key=before_url`: the specific state instance this
+                # candidate is tried from (Story 2.19 AC 2a) — distinct from
+                # `source_route_template`, the route *family* AC 2c operates
+                # on across parameterized pages.
+                action_candidate = planner.ActionCandidate(
+                    label=label,
+                    role=role,
+                    in_landmark=in_landmark,
+                    source_route_template=source_route_template,
+                    target_route_template=None,
+                    state_key=before_url,
+                )
+                decision = planner.decide(
+                    action_candidate,
+                    loop_guard=loop_guard,
+                    safety=safety,
+                    data_resolver=data_resolver,
+                    interaction_level=interaction_level,
+                )
+                # Story 2.12 AC 6: one diagnostic per safety verdict actually
+                # reached — `deciding_specialist == "loop_guard"` means safety
+                # was never even asked (loop guards run first), so there's no
+                # verdict to record. `safety` is a `SafetyState` instance only
+                # when the real engine (not a pass-through/test stub) is
+                # wired in.
+                safety_verdict = getattr(safety, "last_verdict", None)
+                if decision.deciding_specialist != "loop_guard" and safety_verdict is not None:
+                    if on_diagnostic:
+                        await _emit_diagnostic(
+                            on_diagnostic,
+                            "safety_verdict",
+                            {
+                                "url": before_url,
+                                "label": label,
+                                "matched_list": safety_verdict.matched_list,
+                                "posture": safety_verdict.posture,
+                                "ai_consulted": safety_verdict.ai_consulted,
+                                "verdict": safety_verdict.verdict,
+                            },
+                        )
+                if decision.action != "EXECUTE":
                     logger.info(
-                        "  %s: %s button click failed even with force=True: %r (%s)",
+                        "  %s: %s button %r %s (%s: %s)",
                         before_url,
                         group_name,
                         label,
-                        exc,
+                        decision.action,
+                        decision.deciding_specialist,
+                        decision.reason,
                     )
+                    if on_diagnostic:
+                        payload = {
+                            "url": before_url,
+                            "action": decision.action,
+                            "label": label,
+                            "deciding_specialist": decision.deciding_specialist,
+                            "reason": decision.reason,
+                        }
+                        if decision.action == "DEFER":
+                            # Story 2.15 Task 3: the Blocked Frontier attaches
+                            # on this key — real route family (not the
+                            # wildcard `data_resolver.field_key` uses), since
+                            # an approval need is inherently route-scoped
+                            # (Dev Notes: "Submit" on a claims page and
+                            # "Submit" on a settings page are not the same
+                            # ask).
+                            payload["normalized_key"] = aggregation_key(
+                                label, "action_approval", source_route_template
+                            )
+                        await _emit_diagnostic(on_diagnostic, "execution_decision", payload)
                     continue
-            # Bracket the settle waits too — the click itself is fast, but
-            # what it triggers (a redirect, a slow page reload) is the same
-            # class of risk `_fill_and_submit_form`'s submit+settle is.
-            if heartbeat:
-                heartbeat()
-            try:
-                await page.wait_for_load_state("domcontentloaded", timeout=8000)
-            except Exception:
-                pass
-            if heartbeat:
-                heartbeat()
-            try:
-                await page.wait_for_load_state("networkidle", timeout=10000)
-            except Exception:
-                pass
-            if heartbeat:
-                heartbeat()
-            # `networkidle` can resolve before an SPA's post-navigation data
-            # fetch even starts (see the same fix in `run_discovery_crawl`'s
-            # main loop) — wait for actual rendered text too, not just quiet
-            # network.
-            try:
-                await page.wait_for_function(
-                    "document.body && document.body.innerText.trim().length > 0", timeout=15000
+
+                if loop_guard_state:
+                    loop_guard_state.record_executed(action_candidate)
+                # Story 2.12 Task 4/AC 5: only a genuinely Safe-classified
+                # action (not an Ambiguous one merely allowed to execute by
+                # non_production posture) gets a before/after check — reuses
+                # the same heading/structural-token capture the State
+                # Identity Engine already does, no new capture mechanism.
+                # Skipped for frame-scoped calls (no `Page.url` restore
+                # semantics to compare against) and when the safety engine
+                # isn't wired in at all.
+                verify_safe_action = (
+                    isinstance(page, Page)
+                    and safety_verdict is not None
+                    and safety_verdict.matched_list == "safe"
                 )
-            except Exception:
-                pass
-            if heartbeat:
-                heartbeat()
-            await sink.add(
-                CapturedAction(
-                    page_url=before_url, description=label, captured_selector=selector
+                before_signals = None
+                if verify_safe_action:
+                    before_signals = await _capture_state_signals(page)
+                # `[MOVED 2026-08-04, REVERTED 2026-08-05]` Briefly moved
+                # after the click, on the theory that fewer awaits between
+                # "picked" and "clicked" would help — it didn't (the actual
+                # cause was `_visible_content_size`'s bug, see its docstring),
+                # and moving it after the click introduced a real regression:
+                # once the drawer correctly stayed open, the body group's
+                # candidate count legitimately grew past 100, and re-resolving
+                # `button` by its original index *after* the click (rather
+                # than right after it was chosen) hit a real element at a
+                # since-shifted index, timing out `get_attribute` for 30s and
+                # crashing the whole run uncaught. Back to capturing
+                # immediately after selection, before anything else can move
+                # the index out from under it.
+                selector_fallback_text = (
+                    None
+                    if is_ambiguous_icon_toggle or label.startswith(_ICON_LABEL_PREFIX)
+                    else label
                 )
-            )
-            after_url = _page_fingerprint(page.url)
-            if after_url != before_url:
-                logger.info(
-                    "  %s button %r navigated: %s -> %s", group_name, label, before_url, after_url
+                selector = await _capture_selector(button, fallback_text=selector_fallback_text)
+                candidates = await _capture_locator_candidates(
+                    button, fallback_text=selector_fallback_text, frame_path=frame_path
                 )
+                # `[FIXED 2026-08-05]` Used to be captured only for ambiguous-
+                # icon candidates — but a plainly-labeled accordion header
+                # (e.g. "Catalog") reveals its children exactly the same way
+                # an icon toggle does, and those children got no settle-wait
+                # at all: confirmed live, 68 straight `initial_click_not_
+                # onscreen` failures on a real app, every one of them a just-
+                # revealed submenu item, none of them an icon toggle. Grow/
+                # shrink detection below now applies to every non-navigating
+                # click, not just icon ones.
+                visible_size_before_click = await _visible_content_size(page)
+                try:
+                    await button_handle.click(timeout=1000)
+                except Exception as first_exc:
+                    # `[FIXED 2026-07-22]` Observed live: the *exact* same
+                    # element, same selector, sometimes fails this click with
+                    # "element is not visible" and sometimes succeeds instantly
+                    # on a fresh page that never triggered it. Playwright's own
+                    # `bounding_box()` isn't a useful independent check here —
+                    # it shares the same visibility heuristic the click itself
+                    # uses, so it reports zero-size for the exact same reason
+                    # the click failed (confirmed live: always empty in exactly
+                    # this situation). A raw `getBoundingClientRect()` — real
+                    # layout, no Playwright opinion involved — showed this
+                    # element fully on-screen with real dimensions the whole
+                    # time. This is a left-nav panel's CSS transition class
+                    # ("slide-in"/"collapsed") confusing Playwright's stability
+                    # check, not a genuinely hidden or covered element, so force
+                    # through it — a truly zero-size/off-screen element still
+                    # gets skipped below, since the raw rect check catches that
+                    # case for real.
+                    async def _capture_rect() -> dict | None:
+                        try:
+                            return await button_handle.evaluate(
+                                "el => { const r = el.getBoundingClientRect(); "
+                                "return {x: r.x, y: r.y, width: r.width, height: r.height, "
+                                "connected: el.isConnected, "
+                                "displayNone: window.getComputedStyle(el).display === 'none', "
+                                "ancestorWidth: (el.offsetParent ? el.offsetParent.getBoundingClientRect().width : null)}; }"
+                            )
+                        except Exception:
+                            return None
+
+                    async def _text_still_present_anywhere() -> bool | None:
+                        # `[ADDED 2026-08-04]` Distinguishes the two candidate
+                        # explanations for a zero rect: text findable nowhere
+                        # in `document.body.innerText` (which excludes hidden
+                        # elements) means the whole region got hidden again
+                        # after this candidate was scanned — a different
+                        # ambiguous-icon toggle click closing what an earlier
+                        # one opened is the leading suspect; text still
+                        # present means this specific element is genuinely
+                        # stale/detached while its sibling content survives,
+                        # pointing at a re-render swapping this one node.
+                        search_text = None
+                        if is_ambiguous_icon_toggle:
+                            search_text = label.split("#", 1)[0]
+                        elif not label.startswith(_ICON_LABEL_PREFIX):
+                            search_text = label
+                        if not search_text:
+                            return None
+                        try:
+                            return await page.evaluate(
+                                "t => document.body.innerText.includes(t)", search_text
+                            )
+                        except Exception:
+                            return None
+
+                    rect = await _capture_rect()
+                    has_real_size = bool(rect) and rect["width"] > 0 and rect["height"] > 0
+                    # `[CHANGED 2026-08-05]` A rect of *exactly* (0,0,0,0) —
+                    # not just small, all four fields zero — is the signature
+                    # of a detached DOM node: this exact element's text was
+                    # read correctly moments earlier (the batched scan above),
+                    # so it existed then; a sibling widget's async data
+                    # arriving and re-rendering a shared ancestor (observed
+                    # live: this app's Home dashboard card loads its content
+                    # behind a spinner) can unmount-and-remount the whole
+                    # layout region around it in between. `button_handle` now
+                    # pins the specific node chosen at scan time (see its
+                    # capture above) rather than a live/lazy `Locator` that
+                    # re-resolves by position on every action — re-clicking
+                    # the *same* handle after a brief wait catches the case
+                    # where this node itself was just mid-layout and has
+                    # since settled, without the earlier position-based retry
+                    # risking a silent hit on a since-shifted, unrelated node.
+                    # `[CHANGED 2026-08-05]` A single 400ms wait wasn't the
+                    # right order of magnitude — confirmed live: this
+                    # particular app can take 3-6+ seconds to finish
+                    # re-rendering its nav after a full navigation (initial
+                    # login *and* a State Return ladder's `page.goto()` back
+                    # to a prior page both go through it), varying run to
+                    # run. Backing off across a few retries covers that
+                    # range without paying the full ~5s tax on every normal,
+                    # fast-rendering candidate — most still resolve on the
+                    # first try.
+                    retry_click_succeeded = False
+                    if not has_real_size and rect == {"x": 0, "y": 0, "width": 0, "height": 0}:
+                        for retry_wait_ms in (400, 800, 1600, 2200, 2500, 2500):
+                            await page.wait_for_timeout(retry_wait_ms)
+                            rect = await _capture_rect()
+                            has_real_size = bool(rect) and rect["width"] > 0 and rect["height"] > 0
+                            if has_real_size:
+                                break
+                        if has_real_size:
+                            try:
+                                await button_handle.click(timeout=1000)
+                                retry_click_succeeded = True
+                            except Exception:
+                                has_real_size = False
+                    if not has_real_size:
+                        # `[ADDED 2026-08-05]` `rect`'s extra fields (added
+                        # alongside this same-day fix) distinguish a specific
+                        # case: `connected: true` + `displayNone: false` on
+                        # the element itself, but `ancestorWidth: null` (i.e.
+                        # `offsetParent` is `null`) — confirmed live, this is
+                        # an *ancestor* container collapsed out of layout
+                        # (this app's left-nav drawer, after an earlier
+                        # candidate's click toggled it shut), not this element
+                        # itself being hidden or detached. Every backoff/retry
+                        # above already proved this specific signature never
+                        # self-heals by waiting longer — the only thing that's
+                        # ever restored it live is a full page reload (same
+                        # mechanism the shrink-detected-reload path already
+                        # uses successfully). One attempt per candidate: undo
+                        # via reload, drop it from `seen_labels` so the next
+                        # scan re-discovers it fresh (a new `button_handle` —
+                        # the reload invalidated this one), and let the outer
+                        # loop retry it instead of recording a permanent miss.
+                        ancestor_collapsed = (
+                            bool(rect)
+                            and rect.get("connected") is True
+                            and rect.get("displayNone") is False
+                            and rect.get("ancestorWidth") is None
+                        )
+                        if ancestor_collapsed and seen_key not in reload_retried_labels:
+                            reload_retried_labels.add(seen_key)
+                            logger.info(
+                                "  %s: %s button %r looks ancestor-collapsed — "
+                                "reloading once to retry it fresh",
+                                before_url,
+                                group_name,
+                                label,
+                            )
+                            try:
+                                await page.goto(before_url)
+                                await wait_for_page_ready(
+                                    page, timeout_seconds, network_tracker, heartbeat
+                                )
+                                for recover_wait_ms in (500, 1000, 1500, 2000, 2500, 2500):
+                                    if (
+                                        await _visible_content_size(page)
+                                        >= visible_size_before_click
+                                    ):
+                                        break
+                                    await page.wait_for_timeout(recover_wait_ms)
+                                seen_labels.discard(seen_key)
+                                continue
+                            except Exception as exc:
+                                logger.warning(
+                                    "  %s: could not reload to retry ancestor-"
+                                    "collapsed %r — recording as a miss (%s)",
+                                    before_url,
+                                    label,
+                                    exc,
+                                )
+                        logger.info(
+                            "  %s: %s button click failed, not on-screen: %r (%s)",
+                            before_url,
+                            group_name,
+                            label,
+                            first_exc,
+                        )
+                        # Diagnostic-only (Dev Notes-equivalent: same tolerance
+                        # as every other capture helper here) — persisted, not
+                        # just `logger.info`'d, so a live failure like this one
+                        # is inspectable after the fact instead of needing a
+                        # re-run with a debugger attached. `rect` distinguishes
+                        # a genuinely zero-size element from one that's real-
+                        # sized but positioned off-screen (e.g. still mid a
+                        # `transform: translateX` reveal transition).
+                        if on_diagnostic:
+                            await _emit_diagnostic(
+                                on_diagnostic,
+                                "click_failure",
+                                {
+                                    "url": before_url,
+                                    "group": group_name,
+                                    "label": label,
+                                    "stage": "initial_click_not_onscreen",
+                                    "error": repr(first_exc)[:500],
+                                    "rect": rect,
+                                    "text_still_present_anywhere": await _text_still_present_anywhere(),
+                                },
+                            )
+                        continue
+                    if not retry_click_succeeded:
+                        try:
+                            await button_handle.click(timeout=1500, force=True)
+                        except Exception as exc:
+                            logger.info(
+                                "  %s: %s button click failed even with force=True: %r (%s)",
+                                before_url,
+                                group_name,
+                                label,
+                                exc,
+                            )
+                            if on_diagnostic:
+                                await _emit_diagnostic(
+                                    on_diagnostic,
+                                    "click_failure",
+                                    {
+                                        "url": before_url,
+                                        "group": group_name,
+                                        "label": label,
+                                        "stage": "force_click_failed",
+                                        "error": repr(exc)[:500],
+                                        "rect": rect,
+                                        "text_still_present_anywhere": await _text_still_present_anywhere(),
+                                    },
+                                )
+                            continue
+                # Bracket the settle wait too — the click itself is fast, but
+                # what it triggers (a redirect, a slow page reload) is the same
+                # class of risk `_fill_and_submit_form`'s submit+settle is; Story
+                # 2.9's readiness gate replaces the three ad-hoc waits this used.
+                await wait_for_page_ready(page, timeout_seconds, network_tracker, heartbeat)
                 await sink.add(
-                    CapturedTransition(
-                        from_url=before_url, to_url=after_url, triggered_by_description=label
+                    CapturedAction(
+                        page_url=before_url,
+                        description=label,
+                        captured_selector=selector,
+                        locator_candidates=candidates,
                     )
                 )
-                if _same_origin(after_url, base_url):
-                    discovered.append(after_url)
-                try:
-                    await page.goto(before_url)
-                except Exception as exc:
-                    logger.warning(
-                        "  %s: could not restore page after %s button %r navigated away (%s) — "
-                        "stopping %s group early",
-                        before_url,
-                        group_name,
-                        label,
-                        exc,
-                        group_name,
+                if isinstance(page, Page):
+                    await _handle_dialog_if_opened(
+                        page, sink, before_url, label, heartbeat, on_diagnostic
                     )
-                    break
-                if not await _recover_login_if_needed(page, before_url, credential, heartbeat):
-                    logger.warning(
-                        "  %s: session appears lost restoring after %s button %r — "
-                        "stopping %s group early",
-                        before_url,
-                        group_name,
-                        label,
-                        group_name,
+                    await _handle_popups(
+                        popup_events, before_url, sink, before_url, label, on_diagnostic
                     )
-                    break
-                # `[FIXED 2026-07-22]` The restored page can need the exact
-                # same real-content settle time the very first page load
-                # does (observed live: this app's own left-nav sidebar takes
-                # ~4.5s to render after any fresh navigation) — searching
-                # for the next candidate immediately, with no wait at all,
-                # can catch the restored page mid-render and find nothing,
-                # prematurely treating this group as exhausted after just
-                # the first navigating click. Same content-readiness check
-                # already used for a page's first visit and after a
-                # non-navigating click, applied here too.
-                try:
-                    await page.wait_for_function(
-                        "document.body && document.body.innerText.trim().length > 0",
-                        timeout=15000,
-                    )
-                except Exception:
-                    pass
-                if heartbeat:
-                    heartbeat()
-                continue
-            if rescan:
-                # Didn't navigate — likely a toggle/dropdown/drawer/accordion.
-                # Whatever it revealed may include new <a href> nav links
-                # (React/Angular apps very often conditionally *render* menu
-                # items rather than just CSS-hiding a pre-rendered menu, so a
-                # one-shot link scrape at page-load time would never see
-                # them) — this is exactly the gap that hid an app's
-                # authenticated nav menu (Order History, Product Management,
-                # etc.) behind an "Account" dropdown, 2026-07-22.
-                newly_found = await rescan(before_url)
-                if newly_found:
+                after_url = _page_fingerprint(page.url)
+                if after_url != before_url:
                     logger.info(
-                        "  %s button %r revealed %d new link(s) without navigating",
+                        "  %s button %r navigated: %s -> %s",
                         group_name,
                         label,
-                        newly_found,
+                        before_url,
+                        after_url,
                     )
+                    await sink.add(
+                        CapturedTransition(
+                            from_url=before_url, to_url=after_url, triggered_by_description=label
+                        )
+                    )
+                    if loop_guard_state:
+                        loop_guard_state.record_transition(before_url, after_url, label)
+                    if _same_origin(after_url, base_url):
+                        discovered.append(after_url)
+
+                    if pre_action_fingerprint is None:
+                        # Frame-scoped call (Story 2.14) — no ladder (`Frame`
+                        # has no `go_back()`), same single-attempt restore as
+                        # before this story.
+                        try:
+                            await page.goto(before_url)
+                        except Exception as exc:
+                            logger.warning(
+                                "  %s: could not restore frame content after %s button %r "
+                                "navigated away (%s) — stopping %s group early",
+                                before_url,
+                                group_name,
+                                label,
+                                exc,
+                                group_name,
+                            )
+                            break
+                        continue
+
+                    async def _settle() -> None:
+                        await wait_for_page_ready(page, timeout_seconds, network_tracker, heartbeat)
+                        # A rung that lands on a login page (session expiry
+                        # mid-click) recovers here, same as before this story —
+                        # folded into settle so every rung benefits, not just
+                        # the one the old code special-cased.
+                        await _recover_login_if_needed(page, before_url, credential, heartbeat)
+
+                    # Story 2.11 AC 5/6: the State Return ladder, replacing the
+                    # single-attempt restore this file used before this story.
+                    return_result = await return_to_state(
+                        page,
+                        pre_action_fingerprint,
+                        before_url,
+                        _capture_state_signals,
+                        _settle,
+                        entry_url=entry_url,
+                    )
+                    if heartbeat:
+                        heartbeat()
+                    if return_result.succeeded:
+                        # `[ADDED 2026-08-05]` `return_to_state`'s own match
+                        # check (`planner.return_to_state`) only verifies a
+                        # heading/structural-token fingerprint — enough to
+                        # confirm "the right page's main content is back",
+                        # but blind to a nav/sidebar that a lighter-weight
+                        # rung (rung 2, `page.go_back()`) can leave broken.
+                        # Confirmed live: this app's sidebar never properly
+                        # re-mounts on browser-back — every candidate after
+                        # a successful-by-fingerprint `browser_back` return
+                        # measured a permanent zero rect, even though nothing
+                        # here ever detected a click-triggered shrink (that
+                        # path never fired — the break was always this one).
+                        # `visible_size_before_click` is this same page's own
+                        # last-known-good size, captured right before the
+                        # click that navigated away from it — reuse it as the
+                        # recovery target instead of threading a new baseline
+                        # through.
+                        recovered_size = await _visible_content_size(page)
+                        for return_wait_ms in (500, 1000, 1500, 2000, 2500, 2500):
+                            if recovered_size >= visible_size_before_click:
+                                break
+                            await page.wait_for_timeout(return_wait_ms)
+                            recovered_size = await _visible_content_size(page)
+                        if recovered_size < visible_size_before_click:
+                            # Still short — the fingerprint-matched rung
+                            # (typically `browser_back`) left real content
+                            # missing. A genuine full re-navigation (rung 3's
+                            # own mechanism) is the one path confirmed live to
+                            # always fully remount this app; force it here
+                            # rather than trusting a return that measurably
+                            # isn't whole.
+                            try:
+                                await page.goto(before_url)
+                                await _settle()
+                                for return_wait_ms in (500, 1000, 1500, 2000, 2500, 2500):
+                                    recovered_size = await _visible_content_size(page)
+                                    if recovered_size >= visible_size_before_click:
+                                        break
+                                    await page.wait_for_timeout(return_wait_ms)
+                            except Exception:
+                                pass
+                        if on_diagnostic:
+                            await _emit_diagnostic(
+                                on_diagnostic,
+                                "state_return",
+                                {
+                                    "url": before_url,
+                                    "rung": return_result.rung,
+                                    "attempts_used": return_result.attempts_used,
+                                    "opener": label,
+                                    "recovered_size": recovered_size,
+                                    "expected_size": visible_size_before_click,
+                                },
+                            )
+                        if loop_guard_state:
+                            # Story 2.19 AC 2b: the ladder's own successful
+                            # restore is the return half of a round trip —
+                            # without recording it too, the edge log would
+                            # only ever see the forward direction repeated,
+                            # and a genuine A->B->A->B oscillation could
+                            # never be distinguished from it.
+                            loop_guard_state.record_transition(after_url, before_url, label)
+                        continue
+
+                    # AC 6: rung 5 — give up honestly. Remaining untried
+                    # candidates in this group are `unreached`, not silently
+                    # dropped, and the run continues at the next frontier item.
+                    if on_diagnostic:
+                        await _emit_diagnostic(
+                            on_diagnostic,
+                            "unreached",
+                            {
+                                "url": before_url,
+                                "reason": "return_failed",
+                                "last_rung_attempted": return_result.rung,
+                                "attempts_used": return_result.attempts_used,
+                                "opener": label,
+                                "group": group_name,
+                            },
+                        )
+                    logger.warning(
+                        "  %s: state return ladder exhausted after %s button %r navigated away — "
+                        "remaining %s candidates are unreached",
+                        before_url,
+                        group_name,
+                        label,
+                        group_name,
+                    )
+                    break
+                if before_signals is not None:
+                    # Story 2.12 Task 4/AC 5: reached only when the click did
+                    # not navigate (the `if after_url != before_url:` block
+                    # above always `continue`s or `break`s) — an unexpectedly
+                    # large state change right here means a "Safe" action had
+                    # a real, visible side effect. Visibility only: recorded
+                    # and the crawl continues unconditionally, never blocked
+                    # or rolled back.
+                    after_heading, after_tokens = await _capture_state_signals(page)
+                    before_fingerprint = state_identity.compute_fingerprint(
+                        before_signals[0], [], [], before_signals[1]
+                    )
+                    after_fingerprint = state_identity.compute_fingerprint(
+                        after_heading, [], [], after_tokens
+                    )
+                    anomaly_score = state_identity.score(before_fingerprint, after_fingerprint)
+                    if anomaly_score.composite < state_identity.DEFAULT_THRESHOLD_SAME:
+                        logger.info(
+                            "  %s: Safe button %r produced an unexpected state change "
+                            "(composite=%.2f) — recording as a safety anomaly",
+                            before_url,
+                            label,
+                            anomaly_score.composite,
+                        )
+                        if on_diagnostic:
+                            await _emit_diagnostic(
+                                on_diagnostic,
+                                "safety_anomaly",
+                                {
+                                    "url": before_url,
+                                    "label": label,
+                                    "composite_score": anomaly_score.composite,
+                                },
+                            )
+                # `[CHANGED 2026-08-05]` Was gated to `is_ambiguous_icon_toggle`
+                # only — generalized to every non-navigating click (see
+                # `visible_size_before_click`'s comment above for why: a
+                # plain-text accordion header reveals/collapses its children
+                # exactly like an icon toggle does, and needs the same
+                # shrink-undo and reveal-settle handling).
+                # A bare "Icon" label was the original motivating case (it's
+                # genuinely ambiguous: on one app it's a *collapse* toggle —
+                # an already-open sidebar, clicking it hid everything and it
+                # never came back; on another it's a *reveal* toggle — a
+                # collapsed-by-default sidebar, clicking it is the only way to
+                # reach 10+ nav sections otherwise invisible to this whole
+                # crawl). Blanket-skipping always loses the second case;
+                # blanket-allowing always loses the first. Check instead: did
+                # the page's visible content grow or shrink? Shrink means it
+                # just destroyed access to whatever was there before this
+                # click — reload to undo, same restore already used for a
+                # failed State Return rung, and don't try it again this page
+                # visit.
+                visible_size_after_click = await _visible_content_size(page)
+                if visible_size_after_click < visible_size_before_click:
+                    logger.info(
+                        "  %s: %s button %r shrank visible content "
+                        "(%d -> %d chars) — reloading to undo",
+                        before_url,
+                        group_name,
+                        label,
+                        visible_size_before_click,
+                        visible_size_after_click,
+                    )
+                    try:
+                        await page.goto(before_url)
+                        await wait_for_page_ready(
+                            page, timeout_seconds, network_tracker, heartbeat
+                        )
+                        # `[ADDED 2026-08-05]` `wait_for_page_ready` checks
+                        # network-quiet/DOM-stable/content-present, not "this
+                        # specific app's nav has actually re-rendered" — this
+                        # app has been confirmed live to take 3-9+ seconds to
+                        # rehydrate its nav after a full reload, so treating
+                        # `wait_for_page_ready` as sufficient here left every
+                        # candidate on the *next* attempt at this page zero-
+                        # size, permanently, for the rest of the run. Poll
+                        # `_visible_content_size` back up towards (not
+                        # necessarily past — a reload can legitimately land
+                        # on a slightly different byte count) its pre-click
+                        # baseline before resuming the scan.
+                        recovered_size = visible_size_after_click
+                        for reload_wait_ms in (500, 1000, 1500, 2000, 2500, 2500):
+                            recovered_size = await _visible_content_size(page)
+                            if recovered_size >= visible_size_before_click:
+                                break
+                            await page.wait_for_timeout(reload_wait_ms)
+                        if on_diagnostic:
+                            await _emit_diagnostic(
+                                on_diagnostic,
+                                "shrink_reload",
+                                {
+                                    "url": before_url,
+                                    "group": group_name,
+                                    "label": label,
+                                    "before": visible_size_before_click,
+                                    "after_click": visible_size_after_click,
+                                    "recovered": recovered_size,
+                                },
+                            )
+                    except Exception as exc:
+                        logger.warning(
+                            "  %s: could not reload after undoing %r — stopping "
+                            "%s group early (%s)",
+                            before_url,
+                            label,
+                            group_name,
+                            exc,
+                        )
+                        break
+                    continue
+                if visible_size_after_click > visible_size_before_click:
+                    # Grew — a reveal, not a collapse. `wait_for_page_ready`
+                    # (just above, before this block) checks network-quiet/
+                    # DOM-stable/content-present, none of which cover a
+                    # pure CSS transition (a drawer/accordion opening changes
+                    # no network activity and no DOM structure, just computed
+                    # style over time) — the newly revealed items can still
+                    # be mid-slide, genuinely zero/partial-size for a
+                    # moment, exactly the class of intermittent failure the
+                    # click retry above already exists for, just triggered
+                    # differently. A short, bounded wait here is cheap insurance
+                    # against attempting the very next candidate while
+                    # this one's reveal is still animating.
+                    await page.wait_for_timeout(300)
+                    revealed_via_icon_toggle = True
+                if rescan:
+                    # Didn't navigate — likely a toggle/dropdown/drawer/accordion.
+                    # Whatever it revealed may include new <a href> nav links
+                    # (React/Angular apps very often conditionally *render* menu
+                    # items rather than just CSS-hiding a pre-rendered menu, so a
+                    # one-shot link scrape at page-load time would never see
+                    # them) — this is exactly the gap that hid an app's
+                    # authenticated nav menu (Order History, Product Management,
+                    # etc.) behind an "Account" dropdown, 2026-07-22.
+                    newly_found = await rescan(before_url)
+                    if newly_found:
+                        logger.info(
+                            "  %s button %r revealed %d new link(s) without navigating",
+                            group_name,
+                            label,
+                            newly_found,
+                        )
     return discovered
 
 
@@ -835,6 +2879,11 @@ async def _click_standalone_buttons(
 # on every real page, so a long healthy crawl that occasionally needs to
 # refresh a short-lived token is never penalized for it).
 _MAX_CONSECUTIVE_REAUTH_ATTEMPTS = 3
+
+# Story 2.18 AC 2: a small bounded retry before a 5xx/unreachable
+# destination is written as a DiscoveryError (DISC-003) — the source
+# document's own example ("e.g. 2").
+_MAX_NAV_RETRIES = 2
 
 
 async def run_discovery_crawl(
@@ -848,11 +2897,61 @@ async def run_discovery_crawl(
     auth_method: str | None = None,
     credential: bytes | None = None,
     login_page_url: str | None = None,
+    on_diagnostic: DiagnosticCallback | None = None,
+    max_frame_depth: int = DEFAULT_MAX_FRAME_DEPTH,
+    page_load_timeout_seconds: float = DEFAULT_PAGE_LOAD_TIMEOUT_SECONDS,
+    max_pages: int | None = None,
+    max_duration_seconds: float | None = None,
+    interaction_level: str = "normal",
+    data_resolver_pool: dict[str, data_resolver.PoolEntry] | None = None,
+    safety: planner.SpecialistFn | None = None,
+    already_confirmed_urls: frozenset[str] | None = None,
+    resume_seed: list[tuple[str, str | None]] | None = None,
 ) -> CrawlResult:
+    """`already_confirmed_urls`/`resume_seed` (Story 2.17 AC 2/3, Story 2.16
+    Task 3): resuming a paused/blocked run never re-explores a state already
+    confirmed canonical — `already_confirmed_urls` seeds the BFS's
+    `visited_pages` so those URLs are skipped entirely (not merely
+    deduplicated at persist time, which Story 2.10 already does), and
+    `resume_seed` seeds the initial `page_queue` with the frontier just past
+    them, `(url, from_url)` pairs, instead of starting over at `base_url`.
+    Both default to "nothing to resume from" — today's exact behaviour."""
+    # Story 2.19: one loop-guard instance for the whole run — deferred
+    # import for the same reason `_click_standalone_buttons` uses one (see
+    # its own comment on the crawler/planner/state_identity import cycle).
+    from discovery_worker import data_resolver, planner
+
     result = CrawlResult()
     sink = _CaptureSink(result, on_capture)
+    loop_guard_state = planner.LoopGuardState()
+    # Settings page's Max Discovery Duration — `None` means no wall-clock cap.
+    deadline = time.monotonic() + max_duration_seconds if max_duration_seconds else None
+    # Settings page's Interaction Level — orthogonal to `safety` (Story 2.12).
+    interaction_level_gate = planner.InteractionLevelGate(interaction_level)
+    # Story 2.13: one resolution log for the whole run, alongside the loop
+    # guard — `data_resolver_pool` is loaded once by the caller (Story
+    # 2.20's pool, seeded at Activity start) and passed straight through;
+    # an empty dict here is exactly today's behaviour (pool consulted,
+    # finds nothing, falls through to synthesis).
+    resolution_log = data_resolver.ResolutionLog()
     page = await context.new_page()
+    # Story 2.14 AC 2: installed once, before any app code runs, so every
+    # `attachShadow` call this page ever makes (open or closed) is tracked.
+    await page.add_init_script(_SHADOW_TRACKING_INIT_SCRIPT)
     reauth_attempts_since_last_page = 0
+    # Story 2.9 AC 1a/2: attached once for this page's whole lifetime, next
+    # to the existing "response" listener Story 2.2 uses for API capture —
+    # not a second listener stack per readiness check.
+    network_tracker = NetworkActivityTracker()
+    network_tracker.attach(page)
+    effective_page_load_timeout = page_load_timeout_seconds
+    # Story 2.14 AC 5: queued by Playwright's own popup event, drained after
+    # every click/submit that might have triggered one.
+    popup_events: list = []
+    # A bound built-in method (`popup_events.append`) can't hold the wrapper
+    # attribute Playwright's handler-wrapping caches on the callable — must
+    # be a plain function.
+    page.on("popup", lambda popup: popup_events.append(popup))
 
     async def on_response(response: Response) -> None:
         request = response.request
@@ -881,9 +2980,11 @@ async def run_discovery_crawl(
     # this, `journey_clustering.py`'s connectivity-based grouping sees it as
     # an isolated island with nothing to form a "Sign in" journey's second
     # step from, and no candidate journey ever gets inferred for it.
-    page_queue: list[tuple[str, str | None]] = [(_page_fingerprint(base_url), login_page_url)]
-    queued_urls: set[str] = {page_queue[0][0]}
-    visited_pages: set[str] = set()
+    page_queue: list[tuple[str, str | None]] = (
+        list(resume_seed) if resume_seed else [(_page_fingerprint(base_url), login_page_url)]
+    )
+    queued_urls: set[str] = {u for u, _ in page_queue}
+    visited_pages: set[str] = set(already_confirmed_urls or ())
     visited_forms: set[str] = set()
     seen_form_signatures: set[tuple[str, str, tuple[tuple[str | None, str | None], ...]]] = set()
     # `[ADDED 2026-07-22]` A mid-page session expiry (see `_recover_login_if_needed`
@@ -978,6 +3079,16 @@ async def run_discovery_crawl(
         visited_pages.add(url)
         queued_urls.discard(url)
 
+        # Settings page's Max Pages / Max Discovery Duration — stop cleanly
+        # and keep everything already captured in `result` (a `break`, not a
+        # raise) rather than the exhaustive-traversal default below.
+        if max_pages is not None and len(visited_pages) > max_pages:
+            logger.info("discovery stopped early: max_pages (%d) reached", max_pages)
+            break
+        if deadline is not None and time.monotonic() >= deadline:
+            logger.info("discovery stopped early: max_discovery_duration reached")
+            break
+
         # Exhaustive traversal (Story 2.3) has no cap and a real site can
         # take far longer than any fixed timeout — heartbeating each
         # iteration lets Temporal tell "still working" apart from "worker
@@ -986,17 +3097,53 @@ async def run_discovery_crawl(
         if heartbeat:
             heartbeat()
 
-        try:
-            response = await page.goto(url)
-        except Exception as exc:
-            # A single broken destination (dead link, DNS blip, timeout)
-            # shouldn't take down hours of otherwise-healthy traversal —
-            # already marked visited above, so it's never retried.
-            logger.warning("skip %s: goto() failed (%s)", url, exc)
+        # Story 2.18 AC 2/3: a small bounded retry before a 5xx/unreachable
+        # destination becomes a `DiscoveryError` — a 4xx (e.g. a GET against
+        # a POST-only route) is not a target-application *failure*, just not
+        # a business page (Story 2.2 AC 9's existing skip, unchanged below),
+        # so it's never retried and never logged as DISC-003.
+        response = None
+        nav_exc: Exception | None = None
+        attempt = 0
+        for attempt in range(_MAX_NAV_RETRIES + 1):
+            if attempt and heartbeat:
+                heartbeat()
+            try:
+                response = await page.goto(url, timeout=effective_page_load_timeout * 1000)
+                nav_exc = None
+            except Exception as exc:
+                nav_exc = exc
+                response = None
+            if nav_exc is None and (response is None or response.status < 500):
+                break
+        if nav_exc is not None or (response is not None and response.status >= 500):
+            reason = (
+                f"{type(nav_exc).__name__}: {nav_exc}"
+                if nav_exc
+                else f"HTTP {response.status}"  # type: ignore[union-attr]
+            )
+            logger.warning(
+                "skip %s: goto() failed after %d attempt(s) (%s)", url, attempt + 1, reason
+            )
+            if on_diagnostic:
+                await _emit_diagnostic(
+                    on_diagnostic,
+                    "discovery_error",
+                    {
+                        "error_code": "DISC-003",
+                        "message": (
+                            f"{url} was unreachable after {attempt + 1} attempt(s) ({reason}). "
+                            "Check whether the target application was under maintenance "
+                            "during this run."
+                        ),
+                        "page_url": url,
+                        "retry_count": attempt + 1,
+                    },
+                )
             continue
         if response is not None and response.status >= 400:
-            # A 4xx/5xx destination (e.g. a GET against a POST-only route)
-            # is not a business page — persisting it as one would hand the
+            # A 4xx destination (e.g. a GET against a POST-only route) is not
+            # a business page — persisting it as one would hand the
             # Journey/Scenario model a broken page to build an assertion
             # against and land on. Marked visited above so it's never
             # retried; nothing about it (Page, links, forms, buttons) is
@@ -1010,40 +3157,33 @@ async def run_discovery_crawl(
         # make an additional async call (e.g. "fetch my permissions, then
         # render the nav") before the *authenticated* menu actually appears.
         # Scraping links immediately after `goto()`, with no settle wait at
-        # all, could miss exactly that menu. Best-effort — a page that never
-        # goes idle (a live-updating dashboard) just falls through to
-        # whatever rendered within the timeout, same tolerance already used
-        # after every form submit/button click below.
-        try:
-            await page.wait_for_load_state("networkidle", timeout=10000)
-        except Exception:
-            pass
-        if heartbeat:
-            heartbeat()
-        # `[FIXED 2026-07-22, again]` `networkidle` is a *network* signal, not
-        # a content one — observed live against a real Next.js app behind
-        # Keycloak OAuth (poc-react-app.onwavemaker.com): the post-login route
-        # goes quiet (network-idle) around 1-3s, *before* it fires the actual
-        # "load my nav" API call, so the wait above kept resolving early
-        # regardless of its timeout — real sidebar content only rendered
-        # ~4.5s in. Result: a genuinely empty page scraped every time (1 page,
-        # 0 actions, 0 links, no error — just nothing there yet). Waiting for
-        # actual rendered text is a direct, content-based signal that doesn't
-        # depend on guessing the app's network behavior; best-effort/bounded
-        # the same way as every other settle-wait here.
-        try:
-            await page.wait_for_function(
-                "document.body && document.body.innerText.trim().length > 0", timeout=15000
+        # all, could miss exactly that menu. Story 2.9's readiness gate
+        # (network quiet + DOM stable + content present, bounded by
+        # `page_load_timeout_seconds`) replaces the two ad-hoc waits this
+        # used — `[FIXED 2026-07-22, again]`'s underlying observation (a
+        # network-quiet signal alone resolves before an SPA's post-login
+        # data fetch even starts) is exactly why AC 1 requires three signals,
+        # not one.
+        readiness = await wait_for_page_ready(
+            page, effective_page_load_timeout, network_tracker, heartbeat, on_diagnostic
+        )
+        if on_diagnostic:
+            await _emit_diagnostic(
+                on_diagnostic,
+                "page_readiness",
+                {
+                    "type": "page_settled" if readiness.settled else "page_not_settled",
+                    "page_url": url,
+                    "unsettled_signals": readiness.unsettled_signals,
+                },
             )
-        except Exception:
-            pass
         if heartbeat:
             heartbeat()
 
         try:
             screenshot = await page.screenshot()
             title = await page.title()
-            # Synchronous MinIO upload — off the event loop for the same
+            # Synchronous S3 upload — off the event loop for the same
             # reason as the DB commit above (see `_CaptureSink.add`).
             key = await asyncio.to_thread(object_store.put, screenshot, discovery_run_id)
         except Exception as exc:
@@ -1054,7 +3194,16 @@ async def run_discovery_crawl(
             # crawling everything else.
             logger.warning("skip %s: screenshot/upload failed (%s)", url, exc)
             continue
-        await sink.add(CapturedPage(url=page.url, title=title, object_storage_key=key))
+        heading, structural_tokens = await _capture_state_signals(page)
+        await sink.add(
+            CapturedPage(
+                url=page.url,
+                title=title,
+                object_storage_key=key,
+                heading=heading,
+                structural_tokens=structural_tokens,
+            )
+        )
         # Records how the crawler actually reached this page — without this,
         # plain link-followed BFS navigation (the vast majority of a normal
         # crawl) left `PageTransition` almost empty, since only click/form-
@@ -1103,6 +3252,11 @@ async def run_discovery_crawl(
                 visited_pages.discard(url)
                 queued_urls.add(url)
                 page_queue.insert(0, (url, from_url))
+                # Story 2.10 Task 7: this attempt's (partial) capture set is
+                # done, even though the page itself is being re-queued — a
+                # missed exit path here would strand it in the persist
+                # layer's per-URL buffer forever.
+                await sink.add(CapturedPageComplete(url=url))
                 continue
 
             logger.warning(
@@ -1110,6 +3264,25 @@ async def run_discovery_crawl(
                 url,
                 page.url,
             )
+            if on_diagnostic:
+                # Story 2.18 AC 3: DISC-002, logged the same way as every
+                # other error code here — Story 2.4/AD-11 already owns the
+                # actual detection/handling, this just gives it a matching
+                # code.
+                await _emit_diagnostic(
+                    on_diagnostic,
+                    "discovery_error",
+                    {
+                        "error_code": "DISC-002",
+                        "message": (
+                            f"Session expired mid-crawl: requested {url}, redirected to "
+                            f"{page.url}. Re-authenticate to resume discovery."
+                        ),
+                        "page_url": url,
+                        "retry_count": reauth_attempts_since_last_page,
+                    },
+                )
+            await sink.add(CapturedPageComplete(url=url))
             await page.close()
             return CrawlResult(
                 pages=result.pages,
@@ -1124,6 +3297,21 @@ async def run_discovery_crawl(
         current_url = _page_fingerprint(page.url)
         await _extract_and_enqueue_links(current_url)
 
+        # Story 2.9 AC 5/6: sample a repeating region (infinite scroll /
+        # "Load More") before the generic loops below, and exclude the
+        # matched control from them so it isn't also clicked as an ordinary
+        # button.
+        load_more_label = await _sample_scroll_or_pagination(
+            page,
+            current_url,
+            heartbeat,
+            on_diagnostic,
+            network_tracker,
+            effective_page_load_timeout,
+        )
+        if load_more_label:
+            seen_button_labels_by_page.setdefault(current_url, set()).add(load_more_label)
+
         form_count = await page.locator("form").count()
         logger.info(
             "visiting %s (page %d/?, %d forms, queue=%d remaining)",
@@ -1137,24 +3325,85 @@ async def run_discovery_crawl(
             if form_key in visited_forms:
                 continue
             visited_forms.add(form_key)
-            new_url = await _fill_and_submit_form(
-                page,
-                f"form >> nth={form_index}",
-                _page_fingerprint(page.url),
-                sink,
-                seen_form_signatures,
-                rescan=_extract_and_enqueue_links,
-                heartbeat=heartbeat,
-            )
+            try:
+                new_url = await _fill_and_submit_form(
+                    page,
+                    f"form >> nth={form_index}",
+                    _page_fingerprint(page.url),
+                    sink,
+                    seen_form_signatures,
+                    rescan=_extract_and_enqueue_links,
+                    heartbeat=heartbeat,
+                    on_diagnostic=on_diagnostic,
+                    popup_events=popup_events,
+                    network_tracker=network_tracker,
+                    timeout_seconds=effective_page_load_timeout,
+                    data_resolver_pool=data_resolver_pool,
+                    resolution_log=resolution_log,
+                )
+            except PlaywrightTimeoutError:
+                # A form's DOM position can shift or vanish between the
+                # `count()` above and this nth-index resolving (e.g. a
+                # Statement page's lazy-loaded rows) — same class of bug
+                # already fixed for buttons (see the "since-shifted index"
+                # comment below). Skip this one form instead of letting a
+                # raw Playwright timeout crash the whole discovery run.
+                logger.warning(
+                    "  %s: form #%d no longer resolves — skipping", current_url, form_index
+                )
+                if on_diagnostic:
+                    await _emit_diagnostic(
+                        on_diagnostic,
+                        "discovery_error",
+                        {
+                            "error_code": "DISC-006",
+                            "message": (
+                                f"Form #{form_index} on {current_url} timed out resolving "
+                                "(likely shifted/removed by page mutation) — skipped."
+                            ),
+                            "page_url": current_url,
+                            "retry_count": 0,
+                        },
+                    )
+                continue
             _maybe_enqueue(new_url, current_url)
-            if _page_fingerprint(page.url) != url:
-                await page.goto(url)
-                if not await _recover_login_if_needed(page, url, credential, heartbeat):
+            # `[FIXED 2026-08-05]` Compared against `url` — the raw queue
+            # entry — instead of `current_url` (already computed above, at
+            # the top of this iteration): whenever the *initial* navigation
+            # to `url` itself lands somewhere else (a server-side redirect —
+            # confirmed live: this app's bare origin 302s an authenticated
+            # session straight to `/Dashboard`), `page.url` never equals `url`
+            # even immediately after loading, with nothing to do with the form
+            # submit at all. Every same-page form submit on such a page then
+            # misfired this as "lost track", restored to the wrong (never-
+            # actually-visited) `url` instead of the real `current_url`, and
+            # DISC-005'd out of the rest of that page's forms.
+            if _page_fingerprint(page.url) != current_url:
+                await page.goto(current_url)
+                if not await _recover_login_if_needed(page, current_url, credential, heartbeat):
                     logger.warning(
                         "  %s: session appears lost restoring after a form submit — "
                         "stopping form loop early",
-                        url,
+                        current_url,
                     )
+                    if on_diagnostic:
+                        # Story 2.18 AC 3: DISC-005 — the browser lost track
+                        # of the expected page/state after this form submit
+                        # and restoring to it didn't work either.
+                        await _emit_diagnostic(
+                            on_diagnostic,
+                            "discovery_error",
+                            {
+                                "error_code": "DISC-005",
+                                "message": (
+                                    f"Lost track of {current_url} after a form submit and "
+                                    "could not restore to it — stopping this page's form "
+                                    "loop early."
+                                ),
+                                "page_url": current_url,
+                                "retry_count": 0,
+                            },
+                        )
                     break
 
         # Button-triggered navigation (e.g. an "Add to Cart" button that
@@ -1170,8 +3419,51 @@ async def run_discovery_crawl(
             heartbeat=heartbeat,
             credential=credential,
             seen_labels=seen_button_labels_by_page.setdefault(current_url, set()),
+            on_diagnostic=on_diagnostic,
+            popup_events=popup_events,
+            network_tracker=network_tracker,
+            timeout_seconds=effective_page_load_timeout,
+            entry_url=base_url,
+            loop_guard_state=loop_guard_state,
+            safety=safety,
+            interaction_level=interaction_level_gate,
         ):
             _maybe_enqueue(discovered_url, current_url)
+
+        # Story 2.14: tabs (AC 3), same-origin iframes (AC 1) and open shadow
+        # roots (AC 2) — run after the page's own forms/buttons so widget
+        # exploration sees the page in whatever state those left it.
+        await _explore_tabs(page, sink, current_url, heartbeat, on_diagnostic)
+        async for frame, depth in _iter_same_origin_frames(
+            page.main_frame, 1, max_frame_depth, current_url, on_diagnostic
+        ):
+            await _capture_frame_widgets(
+                frame,
+                current_url,
+                sink,
+                seen_form_signatures,
+                heartbeat,
+                credential,
+                on_diagnostic,
+                depth,
+                network_tracker=network_tracker,
+                timeout_seconds=effective_page_load_timeout,
+                loop_guard_state=loop_guard_state,
+                data_resolver_pool=data_resolver_pool,
+                resolution_log=resolution_log,
+                safety=safety,
+                interaction_level=interaction_level_gate,
+            )
+        shadow_widgets = await _collect_shadow_dom_widgets(page, current_url, on_diagnostic)
+        if shadow_widgets:
+            await _click_shadow_dom_buttons(
+                page, sink, current_url, shadow_widgets, set(), heartbeat
+            )
+
+        # Story 2.10 Task 7: this page's full capture set (Page, every
+        # Action/Form/ApiCall/Transition attributed to it) is now known —
+        # the persist layer can classify SAME/VARIANT/NEW.
+        await sink.add(CapturedPageComplete(url=current_url))
 
     logger.info(
         "crawl finished: %d pages, %d forms, %d actions, %d api calls, %d transitions",

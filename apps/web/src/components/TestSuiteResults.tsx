@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { api, type TestCaseRead, type TestSuiteRead } from '../api'
-import { Stepper } from './Stepper'
+import { Stepper, type StepKey } from './Stepper'
+import { LoadingDots } from './LoadingDots'
 
-const POLL_INTERVAL_MS = 1500
+const POLL_INTERVAL_MS = 3000
 const SECONDS_PER_TEST_CASE = 45
 
 // Generated Test Assets are Playwright (TypeScript, @playwright/test) — group
@@ -91,7 +92,7 @@ function ChevronIcon({ size, color, open }: { size: number; color: string; open:
   )
 }
 
-function StatTile({ icon, value, label }: { icon: React.ReactNode; value: string | number; label: string }) {
+export function StatTile({ icon, value, label }: { icon: React.ReactNode; value: string | number; label: string }) {
   return (
     <div
       style={{
@@ -141,7 +142,10 @@ const TYPE_BADGE: Record<string, { label: string; background: string; color: str
   edge: { label: 'Edge Case', background: 'var(--warn-wash)', color: 'var(--warn-strong)' },
 }
 
-function CodeModal({ testCase, onClose }: { testCase: TestCaseRead; onClose: () => void }) {
+// Loosened to `{ name, code }` rather than the full `TestCaseRead` so the
+// Application Workspace's Test Suite tab (which only has a lazily-fetched
+// code string, not a whole TestCaseRead) can reuse this modal too.
+export function CodeModal({ testCase, onClose }: { testCase: { name: string; code: string }; onClose: () => void }) {
   return (
     <div
       role="dialog"
@@ -219,9 +223,17 @@ function CodeModal({ testCase, onClose }: { testCase: TestCaseRead; onClose: () 
 export function TestSuiteResults({
   applicationId,
   onGoToDashboard,
+  onRunAllTests,
+  furthestCount,
+  onStepClick,
+  onPrevious,
 }: {
   applicationId: string
   onGoToDashboard: () => void
+  onRunAllTests: () => void
+  furthestCount: number
+  onStepClick?: (key: StepKey) => void
+  onPrevious?: () => void
 }) {
   const [suites, setSuites] = useState<TestSuiteRead[]>([])
   const [expectedTestCaseCount, setExpectedTestCaseCount] = useState(0)
@@ -261,6 +273,9 @@ export function TestSuiteResults({
     }
   }, [applicationId])
 
+  const testCaseCount = suites.reduce((sum, s) => sum + s.test_cases.length, 0)
+  const isComplete = expectedTestCaseCount > 0 && testCaseCount >= expectedTestCaseCount
+
   useEffect(() => {
     let cancelled = false
 
@@ -274,21 +289,19 @@ export function TestSuiteResults({
     }
 
     poll()
+    if (isComplete) return
     const interval = setInterval(poll, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
-  }, [applicationId])
-
-  const testCaseCount = suites.reduce((sum, s) => sum + s.test_cases.length, 0)
-  const isComplete = expectedTestCaseCount > 0 && testCaseCount >= expectedTestCaseCount
+  }, [applicationId, isComplete])
   const estRuntimeMin = Math.max(1, Math.ceil((testCaseCount * SECONDS_PER_TEST_CASE) / 60))
 
   if (!isComplete) {
     return (
       <>
-        <Stepper current="generate" />
+        <Stepper current="generate" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} />
         <main style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, boxSizing: 'border-box' }}>
           <div role="status" style={{ textAlign: 'center' }}>
             <div
@@ -320,6 +333,16 @@ export function TestSuiteResults({
             <p className="caption" style={{ margin: 0, fontSize: 12.5 }}>
               {testCaseCount}/{expectedTestCaseCount || '…'} test cases so far
             </p>
+            <p className="caption" style={{ margin: '6px 0 0', fontSize: 12, opacity: 0.7 }}>
+              Stuck?{' '}
+              <button
+                type="button"
+                onClick={() => onStepClick?.('generate')}
+                style={{ font: 'inherit', color: 'var(--accent)', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
+              >
+                Resume generation
+              </button>
+            </p>
           </div>
         </main>
       </>
@@ -328,7 +351,7 @@ export function TestSuiteResults({
 
   return (
     <>
-      <Stepper current="generate" allComplete />
+      <Stepper current="generate" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} />
       <main style={{ display: 'flex', justifyContent: 'center', padding: '28px 24px' }}>
         <div style={{ maxWidth: 'clamp(760px, 68vw, 1080px)', width: '100%' }}>
           <div
@@ -415,7 +438,24 @@ export function TestSuiteResults({
                   }}
                 >
                   <DownloadIcon />
-                  {downloading ? 'Downloading…' : 'Download Test Suite'}
+                  {downloading ? <LoadingDots label="Downloading" /> : 'Download Test Suite'}
+                </button>
+                <button
+                  type="button"
+                  onClick={onRunAllTests}
+                  style={{
+                    padding: '9px 20px',
+                    background: 'rgba(255,255,255,0.16)',
+                    color: '#FFFFFF',
+                    border: '1px solid rgba(255,255,255,0.5)',
+                    borderRadius: 'var(--radius)',
+                    fontSize: 13.5,
+                    fontWeight: 700,
+                    fontFamily: 'inherit',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Run All Tests
                 </button>
                 <button
                   type="button"

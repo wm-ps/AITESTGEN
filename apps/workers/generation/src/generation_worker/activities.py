@@ -7,9 +7,18 @@ attaches to Pages before calling the AI provider, and persists the returned
 at-least-once retry (AD-9): if `Scenario` rows already exist for this
 Journey's current `(journey_id, generation_run_id)` pair, returns them
 without re-generating.
+
+Each persisted `Scenario` also gets a `safety_classification` (Run All
+Tests feature), via `safety_classifier.classify_scenario_steps` — the same
+`classify()` `discovery_worker`'s live-crawl `safety_engine.evaluate()`
+calls, aggregated across the Scenario's plain-language steps at generation
+time, not `evaluate()` itself (there's no live-crawl "posture" to resolve
+here; the policy-permission check for a non-`SAFE` classification happens
+later, at execution time, via `ExecutionPolicy`).
 """
 
 import asyncio
+import logging
 import re
 import uuid
 
@@ -17,6 +26,8 @@ from ai_provider.hosted import HostedAIProvider
 from domain import (
     ApiEndpoint,
     Component,
+    ComponentLocator,
+    DiscoverySettings,
     Form,
     Journey,
     JourneyStep,
@@ -25,6 +36,8 @@ from domain import (
     TestAsset,
     TestSuite,
 )
+from safety_classifier import classify_scenario_steps
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio import activity
@@ -36,6 +49,9 @@ from workflows import (
 )
 
 from generation_worker.db import engine
+from generation_worker.typecheck import typecheck_playwright_code
+
+logger = logging.getLogger(__name__)
 
 # Non-AI, deterministic default-value generator (Story 4.2) — mirrors
 # discovery_worker/crawler.py's `_generic_value` convention: a field's
@@ -48,14 +64,21 @@ _PASSWORD_FIELD_RE = re.compile(r"pass(word)?", re.IGNORECASE)
 _CARD_FIELD_RE = re.compile(r"card", re.IGNORECASE)
 
 
-def _default_test_data_value(field_name: str) -> str:
+def _default_test_data_value(field_name: str, used_values: set[str]) -> str:
     if _PASSWORD_FIELD_RE.search(field_name):
-        return "Password1$"
-    if _CARD_FIELD_RE.search(field_name):
-        return "4111111111111111"
-    if _EMAIL_FIELD_RE.search(field_name):
-        return "test@example.com"
-    return "Test value"
+        candidates = ("Password1$", "Password2$", "Password3$")
+    elif _CARD_FIELD_RE.search(field_name):
+        candidates = ("4111111111111111", "5555555555554444", "4000000000000002")
+    elif _EMAIL_FIELD_RE.search(field_name):
+        candidates = ("test@example.com", "test2@example.com", "test3@example.com")
+    else:
+        candidates = ("Test value", "Test value 2", "Test value 3")
+    # Checklist rule 6: a scenario whose whole point is "X and Y differ"
+    # (confirm-mismatch, before/after) needs genuinely distinct literals —
+    # reusing the same pattern-matched placeholder for every same-shaped
+    # field (e.g. "password" and "confirmPassword" both -> "Password1$")
+    # silently destroys that scenario.
+    return next((c for c in candidates if c not in used_values), candidates[-1])
 
 
 @activity.defn(name="ScenarioGenerationActivity")
@@ -139,10 +162,16 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
             object.__setattr__(page, "stage_label", step.stage_label)
             ordered_pages.append(page)
 
-        candidates = await HostedAIProvider().generate_scenarios(journey, ordered_pages)
+        settings = session.exec(select(DiscoverySettings)).one()
+        candidates = await HostedAIProvider().generate_scenarios(
+            journey, ordered_pages, limit=settings.max_scenarios_per_journey
+        )
 
         scenario_external_ids: list[str] = []
         for candidate in candidates:
+            safety_classification, safety_classification_reason = classify_scenario_steps(
+                candidate.steps
+            )
             scenario = Scenario(
                 journey_id=journey.id,
                 type=candidate.type,
@@ -155,6 +184,8 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
                 ],
                 generation_run_id=journey.attempt,
                 current=True,
+                safety_classification=safety_classification,
+                safety_classification_reason=safety_classification_reason,
             )
             session.add(scenario)
             session.flush()
@@ -288,14 +319,35 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
     if existing_id is not None:
         return existing_id
 
+    if await asyncio.to_thread(_test_case_limit_reached_sync, input.scenario_id):
+        logger.warning(
+            "PlaywrightGenerationActivity: max_test_cases_per_application reached — "
+            "skipping scenario_id=%s",
+            input.scenario_id,
+        )
+        return ""
+
     # Default test-data values, part of this same single flow (Story 4.2
     # AC 1) — never a second trigger. Reviewer-provided values always take
     # precedence; a still-blank field (mandatory or optional) gets a
     # field-name-pattern default, persisted back onto Scenario.test_data
     # before the AI call reads it.
-    scenario = await asyncio.to_thread(_resolve_scenario_defaults_sync, input.scenario_id)
+    scenario, known_pages, known_locators = await asyncio.to_thread(
+        _resolve_scenario_defaults_sync, input.scenario_id
+    )
 
-    code = await HostedAIProvider().generate_playwright(scenario)
+    code = await HostedAIProvider().generate_playwright(scenario, known_pages, known_locators)
+
+    # Checklist rule 3: a spec isn't "generated successfully" until it
+    # compiles against real @playwright/test types — this catches
+    # undefined-variable/hallucinated-matcher bugs at generation time
+    # instead of at real-test-run time. Raising (rather than persisting
+    # anyway) lets Temporal's activity retry re-run generation.
+    typecheck_errors = await typecheck_playwright_code(code.code)
+    if typecheck_errors:
+        raise ValueError(
+            "Generated Playwright spec failed typecheck:\n" + "\n".join(typecheck_errors)
+        )
 
     return await asyncio.to_thread(
         _persist_test_asset_sync, input.scenario_id, input.test_suite_id, code.code
@@ -316,7 +368,148 @@ def _existing_test_asset_id_sync(scenario_external_id: str) -> str | None:
         return str(existing.external_id) if existing is not None else None
 
 
-def _resolve_scenario_defaults_sync(scenario_external_id: str) -> Scenario:
+def _test_case_limit_reached_sync(scenario_external_id: str) -> bool:
+    with Session(engine) as session:
+        settings = session.exec(select(DiscoverySettings)).one()
+        if settings.max_test_cases_per_application is None:
+            return False
+
+        scenario = session.exec(
+            select(Scenario).where(Scenario.external_id == uuid.UUID(scenario_external_id))
+        ).one()
+        journey = session.get(Journey, scenario.journey_id)
+        assert journey is not None
+
+        current_count = session.exec(
+            select(func.count())
+            .select_from(TestAsset)
+            .join(Scenario, Scenario.id == TestAsset.scenario_id)  # type: ignore[arg-type]
+            .join(Journey, Journey.id == Scenario.journey_id)  # type: ignore[arg-type]
+            .where(
+                Journey.application_id == journey.application_id,
+                TestAsset.current.is_(True),  # type: ignore[attr-defined]
+            )
+        ).one()
+        return current_count >= settings.max_test_cases_per_application
+
+
+def _resolve_known_application_model_sync(
+    session: Session, journey_id: uuid.UUID
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """Grounds Playwright generation in what Discovery actually captured for
+    this Journey, mirroring `scenario_generation_activity`'s own
+    steps->components->pages resolution above (duplicated rather than
+    shared — that function serves a different Activity and touching it for
+    marginal reuse isn't worth the regression risk here).
+
+    Returns `(known_pages, known_locators)`, both plain dicts (never ORM
+    objects, so the result stays valid once this function's caller's session
+    closes):
+    - `known_pages`: one entry per distinct Page actually visited by this
+      Journey's steps, in step order, `{"stage_label", "url"}` — a page
+      revisited by a later step keeps its first stage_label.
+    - `known_locators`: every Component on those same Pages (not just
+      step-referenced ones — a real JourneyStep today only ever sets
+      `page_id`, never `component_id`, so restricting to step-referenced
+      Components would starve this of almost everything) that has at least
+      one `ComponentLocator`, picking its `kind="preferred"` row if one
+      exists, else the `kind="fallback"` row with the lowest `priority`
+      (`discovery_worker/model_builder.py` assigns `priority` in
+      already-durability-ranked order, so the lowest-priority fallback is
+      always the most durable survivor)."""
+    steps = list(
+        session.exec(
+            select(JourneyStep)
+            .where(JourneyStep.journey_id == journey_id)
+            .order_by(JourneyStep.step_order)  # type: ignore[arg-type]
+        ).all()
+    )
+    if not steps:
+        return [], []
+
+    component_ids = {s.component_id for s in steps if s.component_id}
+    components_by_id = {
+        c.id: c
+        for c in (
+            session.exec(
+                select(Component).where(Component.id.in_(component_ids))  # type: ignore[attr-defined]
+            ).all()
+            if component_ids
+            else []
+        )
+    }
+    page_ids = {s.page_id for s in steps if s.page_id} | {
+        c.page_id for c in components_by_id.values()
+    }
+    if not page_ids:
+        return [], []
+
+    pages_by_id = {
+        p.id: p
+        for p in session.exec(select(Page).where(Page.id.in_(page_ids))).all()  # type: ignore[attr-defined]
+    }
+
+    known_pages: list[dict[str, str]] = []
+    stage_label_by_page_id: dict[uuid.UUID, str] = {}
+    for step in steps:
+        step_page_id = step.page_id
+        if step_page_id is None and step.component_id:
+            component = components_by_id.get(step.component_id)
+            step_page_id = component.page_id if component else None
+        if step_page_id is None or step_page_id not in pages_by_id:
+            continue
+        if step_page_id not in stage_label_by_page_id:
+            stage_label_by_page_id[step_page_id] = step.stage_label
+            known_pages.append(
+                {"stage_label": step.stage_label, "url": pages_by_id[step_page_id].url}
+            )
+
+    all_components = list(
+        session.exec(
+            select(Component)
+            .where(Component.page_id.in_(page_ids))  # type: ignore[attr-defined]
+            .order_by(Component.name)  # deterministic prompt/test ordering
+        ).all()
+    )
+    if not all_components:
+        return known_pages, []
+
+    locators = list(
+        session.exec(
+            select(ComponentLocator).where(
+                ComponentLocator.component_id.in_(  # type: ignore[attr-defined]
+                    [c.id for c in all_components]
+                )
+            )
+        ).all()
+    )
+    locators_by_component: dict[uuid.UUID, list[ComponentLocator]] = {}
+    for locator in locators:
+        locators_by_component.setdefault(locator.component_id, []).append(locator)
+
+    known_locators: list[dict[str, str]] = []
+    for component in all_components:
+        candidates = locators_by_component.get(component.id, [])
+        preferred = next((loc for loc in candidates if loc.kind == "preferred"), None)
+        fallbacks = [loc for loc in candidates if loc.kind == "fallback"]
+        chosen = preferred or (min(fallbacks, key=lambda loc: loc.priority) if fallbacks else None)
+        if chosen is None:
+            continue
+        known_locators.append(
+            {
+                "stage_label": stage_label_by_page_id.get(component.page_id, ""),
+                "component_type": component.type,
+                "component_name": component.name,
+                "selector": chosen.value,
+                "strategy": chosen.strategy,
+            }
+        )
+    return known_pages, known_locators
+
+
+def _resolve_scenario_defaults_sync(
+    scenario_external_id: str,
+) -> tuple[Scenario, list[dict[str, str]], list[dict[str, str]]]:
     with Session(engine) as session:
         scenario = session.exec(
             select(Scenario).where(Scenario.external_id == uuid.UUID(scenario_external_id))
@@ -324,20 +517,28 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> Scenario:
 
         updated_fields = [dict(field) for field in scenario.test_data]
         changed = False
+        used_values = {field["value"] for field in updated_fields if field.get("value")}
         for field in updated_fields:
             if not field.get("value"):
-                field["value"] = _default_test_data_value(field["name"])
+                value = _default_test_data_value(field["name"], used_values)
+                field["value"] = value
+                used_values.add(value)
                 changed = True
         if changed:
             scenario.test_data = updated_fields
             session.add(scenario)
             session.commit()
             session.refresh(scenario)
+
+        known_pages, known_locators = _resolve_known_application_model_sync(
+            session, scenario.journey_id
+        )
+
         # Detach so the caller can read its attributes (name/type/steps/
         # test_data/expected_result — everything generate_playwright needs)
         # after this session closes, without triggering a lazy DB reload.
         session.expunge(scenario)
-        return scenario
+        return scenario, known_pages, known_locators
 
 
 def _persist_test_asset_sync(scenario_external_id: str, test_suite_external_id: str, code: str) -> str:

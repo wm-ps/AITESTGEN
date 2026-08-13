@@ -131,6 +131,50 @@ def _selector_strategy(value: str) -> str:
     return "css"
 
 
+# Story 2.21 AC 1/2/4: tier order for the ranked-candidate shape crawler.py's
+# `_build_locator_candidates` produces (`{"strategy", "value", "fragile"}`).
+# Lower is more durable; a fragile match is penalized regardless of tier so
+# it always sorts below every non-fragile candidate.
+_CANDIDATE_TIER_ORDER = {
+    "testid": 0,
+    "aria": 1,
+    "text": 2,
+    "label": 3,
+    "css_scoped": 4,
+    "css_absolute": 5,
+}
+_FRAGILE_SCORE_PENALTY = 10
+
+
+def _rank_locator_candidates(candidate_lists: list[list[dict] | None]) -> list[dict]:
+    """Flattens every raw capture's candidate list (one per Action/FormField
+    in the group), dedupes by (strategy, value), and sorts non-fragile
+    before fragile, then by tier — AC 2's down-rank, never discard."""
+    seen: set[tuple[str, str]] = set()
+    flattened: list[dict] = []
+    for candidates in candidate_lists:
+        if not candidates:
+            continue
+        for candidate in candidates:
+            key = (candidate.get("strategy", ""), candidate.get("value", ""))
+            if key in seen or not candidate.get("value"):
+                continue
+            seen.add(key)
+            flattened.append(candidate)
+    flattened.sort(
+        key=lambda c: (
+            bool(c.get("fragile")),
+            _CANDIDATE_TIER_ORDER.get(c.get("strategy", ""), 9),
+        )
+    )
+    return flattened
+
+
+def _durability_score(candidate: dict) -> int:
+    score = _CANDIDATE_TIER_ORDER.get(candidate.get("strategy", ""), 9)
+    return score + _FRAGILE_SCORE_PENALTY if candidate.get("fragile") else score
+
+
 def _get_or_create_component(
     session: Session,
     application_id: uuid.UUID,
@@ -171,34 +215,76 @@ def _get_or_create_component(
 
 
 def _derive_locators(
-    session: Session, component: Component, raw_selectors: list[str | None]
+    session: Session,
+    component: Component,
+    raw_captures: list[tuple[str | None, list[dict] | None]],
 ) -> None:
+    """Story 2.21: consumes each raw capture's ranked candidate list
+    (`locator_candidates`) when present, falling back to a single candidate
+    built from the legacy `captured_selector` string for rows captured
+    before this story landed — existing `ComponentLocator` consumers keep
+    working either way (AC 5)."""
+    candidate_lists: list[list[dict] | None] = []
+    for captured_selector, locator_candidates in raw_captures:
+        if locator_candidates:
+            candidate_lists.append(locator_candidates)
+        elif captured_selector:
+            candidate_lists.append(
+                [
+                    {
+                        "strategy": _selector_strategy(captured_selector),
+                        "value": captured_selector,
+                        "fragile": False,
+                    }
+                ]
+            )
+    ranked = _rank_locator_candidates(candidate_lists)
+
     existing_values = {
         loc.value
         for loc in session.exec(
             select(ComponentLocator).where(ComponentLocator.component_id == component.id)
         ).all()
     }
-    seen: set[str] = set()
     priority = 0
-    for selector in raw_selectors:
-        if not selector or selector in seen:
-            continue
-        seen.add(selector)
-        if selector in existing_values:
+    for candidate in ranked:
+        value = candidate["value"]
+        if value in existing_values:
             priority += 1
             continue
         session.add(
             ComponentLocator(
                 component_id=component.id,
                 kind="preferred" if priority == 0 else "fallback",
-                strategy=_selector_strategy(selector),
-                value=selector,
+                strategy=candidate.get("strategy", _selector_strategy(value)),
+                value=value,
                 priority=priority,
+                fragile=bool(candidate.get("fragile")),
+                durability_score=_durability_score(candidate),
             )
         )
         priority += 1
     session.commit()
+
+
+def fragile_locator_proportion(session: Session, application_id: uuid.UUID) -> float | None:
+    """Story 2.21 AC 4/Task 4: the aggregate Story 2.22's report surfaces —
+    "N% of captured elements have no durable locator." Scoped to each
+    Component's single best (`priority == 0`) locator, since a Component
+    with *any* durable candidate is fine even if its fallbacks are fragile.
+    Returns `None` when the Application has no locators yet, rather than a
+    misleading 0%."""
+    preferred = list(
+        session.exec(
+            select(ComponentLocator)
+            .join(Component, ComponentLocator.component_id == Component.id)  # type: ignore[arg-type]
+            .where(Component.application_id == application_id, ComponentLocator.priority == 0)
+        ).all()
+    )
+    if not preferred:
+        return None
+    fragile_count = sum(1 for loc in preferred if loc.fragile)
+    return fragile_count / len(preferred)
 
 
 def derive_components_and_assertions(
@@ -231,7 +317,11 @@ def derive_components_and_assertions(
             target_page_id=None,
         )
         component_count += 1
-        _derive_locators(session, component, [a.captured_selector for a in group_actions])
+        _derive_locators(
+            session,
+            component,
+            [(a.captured_selector, a.locator_candidates) for a in group_actions],
+        )
         for a in group_actions:
             action_component_by_id[a.id] = component
 
@@ -285,7 +375,11 @@ def derive_components_and_assertions(
             target_page_id=None,
         )
         component_count += 1
-        _derive_locators(session, component, [f.captured_selector for f in group_fields])
+        _derive_locators(
+            session,
+            component,
+            [(f.captured_selector, f.locator_candidates) for f in group_fields],
+        )
         for field_row in group_fields:
             if field_row.component_id != component.id:
                 field_row.component_id = component.id

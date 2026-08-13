@@ -44,7 +44,7 @@ def test_login_success_sets_cookie_and_returns_user(client: TestClient) -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == {"name": "Ada Lovelace", "email": email}
+    assert response.json() == {"name": "Ada Lovelace", "email": email, "role": "admin"}
     assert "session" in response.cookies
 
 

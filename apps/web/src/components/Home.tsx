@@ -1,5 +1,9 @@
-import { useEffect, useState } from 'react'
-import { api, type ApplicationRead, type UserRead } from '../api'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { createPortal } from 'react-dom'
+import { api, type ApplicationRead, type HomeApplicationRead, type UserRead } from '../api'
+import { StatusPill } from './StatusPill'
+
+const POLL_INTERVAL_MS = 15000
 
 function FolderIcon({ size }: { size: number }) {
   return (
@@ -19,43 +23,151 @@ function FolderIcon({ size }: { size: number }) {
   )
 }
 
+function WarningIcon({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 3.5 21.5 20h-19L12 3.5Z" />
+      <path d="M12 10v4" />
+      <circle cx="12" cy="17.2" r="0.4" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+function MoreIcon({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <circle cx="12" cy="5" r="1.8" />
+      <circle cx="12" cy="12" r="1.8" />
+      <circle cx="12" cy="19" r="1.8" />
+    </svg>
+  )
+}
+
 function ApplicationCard({
   application,
+  isAdmin,
   onResume,
+  onBlocked,
+  onChanged,
+  onError,
 }: {
-  application: ApplicationRead
+  application: HomeApplicationRead
+  isAdmin: boolean
   onResume: () => void
+  onBlocked: () => void
+  onChanged: () => void
+  onError: (message: string) => void
 }) {
-  const [journeyCount, setJourneyCount] = useState<number | null>(null)
-  const [scenarioCount, setScenarioCount] = useState<number | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [nameDraft, setNameDraft] = useState(application.name)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const skipBlurRef = useRef(false)
 
-  useEffect(() => {
-    let cancelled = false
-    Promise.all([api.listJourneys(application.id), api.listScenarios(application.id)]).then(
-      ([journeys, scenarios]) => {
-        if (cancelled) return
-        setJourneyCount(journeys.length)
-        setScenarioCount(scenarios.length)
-      },
-    )
-    return () => {
-      cancelled = true
+  const discoveryStatus = application.discovery_status
+  const stage =
+    discoveryStatus === 'failed' || discoveryStatus === 'paused'
+      ? discoveryStatus
+      : application.suite_count > 0
+        ? 'suite_generated'
+        : application.scenario_count > 0
+          ? 'scenarios_generated'
+          : application.journey_count > 0
+            ? 'journeys_generated'
+            : discoveryStatus === 'complete'
+              ? 'discovery_completed'
+              : 'running'
+
+  const isRunning = discoveryStatus === 'running'
+
+  const kebabButtonStyle: CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    border: 'none',
+    background: 'none',
+    color: 'var(--ink-muted)',
+    padding: 0,
+    flexShrink: 0,
+  }
+
+  const menuItemStyle: CSSProperties = {
+    display: 'block',
+    width: '100%',
+    textAlign: 'left',
+    padding: '9px 14px',
+    fontSize: 13.5,
+    fontWeight: 500,
+    border: 'none',
+    background: 'none',
+    color: 'var(--ink)',
+    cursor: 'pointer',
+  }
+
+  const renameActionButtonStyle: CSSProperties = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    border: 'none',
+    background: 'none',
+    padding: 0,
+    fontSize: 14,
+    lineHeight: 1,
+    cursor: 'pointer',
+    flexShrink: 0,
+  }
+
+  function cancelRename() {
+    skipBlurRef.current = true
+    setNameDraft(application.name)
+    setEditing(false)
+  }
+
+  async function saveRename() {
+    skipBlurRef.current = true
+    const trimmed = nameDraft.trim()
+    if (!trimmed || trimmed === application.name) {
+      cancelRename()
+      return
     }
-  }, [application.id])
+    setEditing(false)
+    try {
+      await api.renameApplication(application.id, trimmed)
+      onChanged()
+    } catch {
+      setNameDraft(application.name)
+      onError('Could not rename project — try again.')
+    }
+  }
 
-  // ponytail: the prototype's third status ("Suite generated") can't be
-  // derived — ApplicationRead has no suite-generation flag — so this
-  // approximates with the two states the API actually supports. Upgrade
-  // once the backend tracks whether a suite has been generated.
-  const statusLabel =
-    application.discovery_status === 'completed' && (scenarioCount ?? 0) > 0
-      ? 'Ready for suite'
-      : 'Mapping in progress'
+  async function confirmDelete() {
+    setDeleting(true)
+    try {
+      await api.deleteApplication(application.id)
+      onChanged()
+    } catch {
+      onError('Could not delete project — try again.')
+    } finally {
+      setDeleting(false)
+      setConfirmingDelete(false)
+    }
+  }
 
   return (
-    <button
-      type="button"
-      onClick={onResume}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={isRunning ? onBlocked : onResume}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') (isRunning ? onBlocked : onResume)()
+      }}
       className="card-panel home-app-card"
       style={{
         textAlign: 'left',
@@ -93,56 +205,289 @@ function ApplicationCard({
         >
           <FolderIcon size={19} />
         </span>
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            background: 'var(--accent-wash)',
-            color: 'var(--accent)',
-            borderRadius: 'var(--radius-full)',
-            padding: '4px 10px',
-            whiteSpace: 'nowrap',
-            flexShrink: 0,
-          }}
-        >
-          {statusLabel}
+        <StatusPill status={stage} pulsing={isRunning} />
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', marginBottom: 'var(--space-5)' }}>
+        {editing ? (
+          <>
+            <input
+              autoFocus
+              value={nameDraft}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') saveRename()
+                if (e.key === 'Escape') cancelRename()
+              }}
+              onBlur={() => {
+                if (skipBlurRef.current) {
+                  skipBlurRef.current = false
+                  return
+                }
+                saveRename()
+              }}
+              style={{
+                fontSize: 15,
+                fontWeight: 700,
+                border: '1px solid var(--border)',
+                borderRadius: 6,
+                padding: '2px 6px',
+                flex: 1,
+                minWidth: 0,
+                boxSizing: 'border-box',
+                font: 'inherit',
+              }}
+            />
+            <button
+              type="button"
+              title="Save"
+              onClick={(e) => {
+                e.stopPropagation()
+                saveRename()
+              }}
+              style={{ ...renameActionButtonStyle, color: 'var(--accent)' }}
+            >
+              ✓
+            </button>
+            <button
+              type="button"
+              title="Cancel"
+              onClick={(e) => {
+                e.stopPropagation()
+                cancelRename()
+              }}
+              style={{ ...renameActionButtonStyle, color: 'var(--ink-muted)' }}
+            >
+              ✕
+            </button>
+          </>
+        ) : (
+          <div
+            style={{
+              fontSize: 15,
+              fontWeight: 700,
+              whiteSpace: 'nowrap',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              minWidth: 0,
+              maxWidth: 'calc(100% - 28px)',
+            }}
+          >
+            {application.name}
+          </div>
+        )}
+        {isAdmin && !editing && (
+          <div style={{ position: 'relative', flexShrink: 0 }}>
+            <button
+              type="button"
+              title="More options"
+              onClick={(e) => {
+                e.stopPropagation()
+                setMenuOpen((v) => !v)
+              }}
+              style={kebabButtonStyle}
+            >
+              <MoreIcon size={16} />
+            </button>
+            {menuOpen && (
+              <>
+                <div
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setMenuOpen(false)
+                  }}
+                  style={{ position: 'fixed', inset: 0, zIndex: 9 }}
+                />
+                <div
+                  onClick={(e) => e.stopPropagation()}
+                  className="card-panel"
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    right: 0,
+                    marginTop: 4,
+                    minWidth: 140,
+                    padding: 4,
+                    zIndex: 10,
+                    boxShadow: 'var(--shadow-dropdown-lg)',
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false)
+                      setNameDraft(application.name)
+                      setEditing(true)
+                    }}
+                    style={menuItemStyle}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isRunning}
+                    title={isRunning ? 'Discovery is still running' : undefined}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setMenuOpen(false)
+                      setConfirmingDelete(true)
+                    }}
+                    style={{
+                      ...menuItemStyle,
+                      color: 'var(--danger)',
+                      opacity: isRunning ? 0.4 : 1,
+                      cursor: isRunning ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-4)' }}>
+        <span>
+          <span style={{ fontSize: 15, fontWeight: 700 }}>{application.journey_count}</span>{' '}
+          <span className="caption" style={{ fontSize: 12 }}>
+            journeys
+          </span>
+        </span>
+        <span aria-hidden="true" style={{ width: 1, height: 12, background: 'var(--border)' }} />
+        <span>
+          <span style={{ fontSize: 15, fontWeight: 700 }}>{application.scenario_count}</span>{' '}
+          <span className="caption" style={{ fontSize: 12 }}>
+            test cases
+          </span>
         </span>
       </div>
-      <div
-        style={{
-          fontSize: 15,
-          fontWeight: 700,
-          marginBottom: 3,
-          whiteSpace: 'nowrap',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-        }}
-      >
-        {application.name}
-      </div>
-      <div
-        className="caption"
-        style={{ fontSize: 12.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-      >
-        {journeyCount ?? '…'} journeys · {scenarioCount ?? '…'} scenarios
-      </div>
-    </button>
+      {confirmingDelete && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Delete project"
+          onClick={(e) => {
+            e.stopPropagation()
+            if (!deleting) setConfirmingDelete(false)
+          }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15,23,42,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 'var(--space-9)',
+            zIndex: 100,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="card-panel"
+            style={{ maxWidth: 420, width: '100%', padding: 'var(--space-8)' }}
+          >
+            <div style={{ display: 'flex', gap: 'var(--space-6)', marginBottom: 'var(--space-7)' }}>
+              <span
+                aria-hidden="true"
+                style={{
+                  display: 'inline-flex',
+                  width: 40,
+                  height: 40,
+                  borderRadius: 'var(--radius-full)',
+                  background: 'var(--danger-wash)',
+                  color: 'var(--danger)',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0,
+                }}
+              >
+                <WarningIcon size={19} />
+              </span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>
+                  Delete &ldquo;{application.name}&rdquo;?
+                </div>
+                <p className="caption" style={{ margin: 0, lineHeight: 1.5 }}>
+                  This removes the project from your workspace. This can&apos;t be undone from here.
+                </p>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-4)' }}>
+              <button
+                type="button"
+                className="button-secondary"
+                disabled={deleting}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setConfirmingDelete(false)
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  confirmDelete()
+                }}
+                style={{
+                  padding: '9px 16px',
+                  borderRadius: 'var(--radius)',
+                  border: 'none',
+                  background: 'var(--danger)',
+                  color: '#FFFFFF',
+                  fontWeight: 600,
+                  cursor: deleting ? 'default' : 'pointer',
+                  opacity: deleting ? 0.7 : 1,
+                }}
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body,
+      )}
+    </div>
   )
 }
 
 export function Home({
   user,
-  application,
   onConnectApp,
   onResumeApplication,
 }: {
   user: UserRead
-  application: ApplicationRead | null
   onConnectApp: () => void
-  onResumeApplication: () => void
+  onResumeApplication: (application: ApplicationRead) => void
 }) {
   const firstName = user.name.trim().split(/\s+/)[0]
+  const isAdmin = user.role === 'admin'
   const [showDemo, setShowDemo] = useState(false)
+  const [applications, setApplications] = useState<HomeApplicationRead[] | null>(null)
+  const [snackbar, setSnackbar] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!snackbar) return
+    const timeout = setTimeout(() => setSnackbar(null), 3000)
+    return () => clearTimeout(timeout)
+  }, [snackbar])
+
+  async function refreshApplications() {
+    try {
+      setApplications(await api.getHome())
+    } catch {
+      // best-effort — a transient failure just skips this refresh
+    }
+  }
+
+  useEffect(() => {
+    refreshApplications()
+    const interval = setInterval(refreshApplications, POLL_INTERVAL_MS)
+    return () => clearInterval(interval)
+  }, [])
 
   return (
     <main
@@ -194,12 +539,38 @@ export function Home({
             >
               Watch Demo
             </button>
+            {applications && applications.length > 0 && (
+              <button type="button" className="button-primary" onClick={onConnectApp} style={{ padding: '11px 18px' }}>
+                + New Project
+              </button>
+            )}
           </div>
         </div>
 
-        {application ? (
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', animation: 'aitg-fade-up 0.4s ease-out 0.1s both' }}>
-            <ApplicationCard application={application} onResume={onResumeApplication} />
+        {applications === null ? null : applications.length > 0 ? (
+          <div
+            style={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignContent: 'flex-start',
+              gap: 'var(--space-6)',
+              animation: 'aitg-fade-up 0.4s ease-out 0.1s both',
+            }}
+          >
+            {applications.map((application) => (
+              <ApplicationCard
+                key={application.id}
+                application={application}
+                isAdmin={isAdmin}
+                onResume={() => onResumeApplication(application)}
+                onBlocked={() => setSnackbar('Please wait while the discovery process completes.')}
+                onChanged={refreshApplications}
+                onError={setSnackbar}
+              />
+            ))}
           </div>
         ) : (
           <div
@@ -307,6 +678,64 @@ export function Home({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {snackbar && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            right: 'var(--space-9)',
+            bottom: 'var(--space-9)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-4)',
+            background: 'var(--ink)',
+            color: '#FFFFFF',
+            padding: '12px 18px',
+            borderRadius: 'var(--radius)',
+            fontSize: 13.5,
+            boxShadow: '0 12px 28px rgba(15,23,42,0.25)',
+            zIndex: 60,
+          }}
+        >
+          <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+            <span
+              aria-hidden="true"
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: 'var(--radius-full)',
+                background: '#FFFFFF',
+                animation: 'aitg-dot-bounce 1s ease-in-out infinite',
+                animationDelay: '0s',
+              }}
+            />
+            <span
+              aria-hidden="true"
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: 'var(--radius-full)',
+                background: '#FFFFFF',
+                animation: 'aitg-dot-bounce 1s ease-in-out infinite',
+                animationDelay: '0.15s',
+              }}
+            />
+            <span
+              aria-hidden="true"
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: 'var(--radius-full)',
+                background: '#FFFFFF',
+                animation: 'aitg-dot-bounce 1s ease-in-out infinite',
+                animationDelay: '0.3s',
+              }}
+            />
+          </div>
+          {snackbar}
         </div>
       )}
     </main>

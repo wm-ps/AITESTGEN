@@ -35,6 +35,12 @@ from ai_provider.test_asset_code import TestAssetCode
 AI_MODEL = os.environ.get("AI_MODEL", "anthropic/claude-sonnet-5")
 LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "")
 LITELLM_API_KEY = os.environ.get("LITELLM_API_KEY", "")
+# Low, near-deterministic — these calls extract structured data or follow
+# prescriptive rules, not creative writing. Some proxy-routed models (e.g.
+# reasoning models) reject any non-default temperature — set AI_TEMPERATURE=""
+# to omit the field entirely and let the model use its own default.
+_AI_TEMPERATURE_RAW = os.environ.get("AI_TEMPERATURE", "0.2")
+AI_TEMPERATURE = float(_AI_TEMPERATURE_RAW) if _AI_TEMPERATURE_RAW else None
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +50,10 @@ logger = logging.getLogger(__name__)
 # prompting, not the primary enforcement mechanism.
 _ROUTE_SHAPED_NAME = re.compile(r"^(/|https?://)")
 
-_PROMPT = """You are analyzing a structured Application Model (canonical pages, their \
+_PROMPT_SYSTEM = """You are analyzing a structured Application Model (canonical pages, their \
 forms, automatable components, API calls, and how users actually navigate between \
 pages) discovered from a web application, to identify the underlying business \
 workflows ("Journeys") a QA engineer would care about.
-
-Pages (indexed):
-{page_listing}
 
 Each page's "outgoing_transitions" lists the URLs a user actually reached from it \
 during crawling (a real navigation path, not a guess) — use this to sequence pages \
@@ -71,6 +74,9 @@ entry per page (from the indexed list above) that supports this Journey, in flow
 Respond with ONLY a JSON object of this shape, no prose: \
 {{"journeys": [{{"name": "...", "capability_name": "...", "description": "...", "steps": [ \
 {{"page_index": 0, "stage_label": "..."}}, {{"page_index": 2, "stage_label": "..."}}]}}, ...]}}"""
+
+_PROMPT_USER = """Pages (indexed):
+{page_listing}"""
 
 
 def _describe_page(page: Page) -> str:
@@ -100,18 +106,30 @@ def _describe_page(page: Page) -> str:
     return json.dumps(description)
 
 
-_SCENARIO_PROMPT = """You are writing integration test Scenarios for a specific business \
+# A single "generate everything for this Journey" call let the model's own
+# output budget silently cap the whole response (observed: a large "digital
+# banking" Journey stopped at 40 Scenarios with no error). Splitting by
+# Scenario type bounds each call's output separately and isolates a
+# truncated/failed type instead of losing the whole Journey's Scenarios.
+_SCENARIO_TYPE_INSTRUCTIONS = {
+    "happy": "ONLY Happy Path Scenarios — the successful, intended way a user completes this "
+    "Journey. Usually just one; include more only if there are genuinely distinct successful "
+    "paths through this Journey (e.g. two different valid ways to reach the same outcome).",
+    "negative": "ONLY Negative Path Scenarios — every validation/error condition a QA engineer "
+    "would want covered (e.g. missing required field, invalid format, expired/declined input). "
+    "Cover each meaningfully distinct failure condition implied by the captured forms/fields; "
+    "do not pad with near-duplicate variations of the same condition.",
+    "edge": "ONLY Edge Case Scenarios — boundary/unusual-but-valid conditions distinct from "
+    "both the happy path and plain validation errors (e.g. a boundary value, a race condition, "
+    "an unusual but legitimate input). Cover each meaningfully distinct edge condition implied "
+    "by the captured forms/fields; do not pad with near-duplicates.",
+}
+
+_SCENARIO_PROMPT_SYSTEM = """You are writing integration test Scenarios for a specific business \
 Journey in a web application, based on its discovered steps and the underlying captured \
 pages/forms/API calls.
 
-Journey: "{journey_name}"
-
-Steps (in order — each is a business-language stage of this Journey, with the captured \
-page/form/API/component detail behind it):
-{step_listing}
-
-Generate integration test Scenarios covering this Journey, including a Happy Path, at \
-least one Negative Path (a validation/error condition), and at least one Edge Case. Each \
+Generate {scenario_type_instructions} Each \
 Scenario needs:
 - "name": a short business-language name (e.g. "Guest checkout with an expired card")
 - "type": one of "happy", "negative", "edge"
@@ -126,8 +144,13 @@ Respond with ONLY a JSON object of this shape, no prose: \
 {{"scenarios": [{{"name": "...", "type": "happy", "steps": ["...", "..."], \
 "expected_result": "...", "test_data": [{{"name": "...", "mandatory": true}}]}}, ...]}}"""
 
-_PLAYWRIGHT_PROMPT = """You are converting one integration test Scenario into a single, \
-executable Playwright (TypeScript, @playwright/test) test.
+_SCENARIO_PROMPT_USER = """Journey: "{journey_name}"
+
+Steps (in order — each is a business-language stage of this Journey, with the captured \
+page/form/API/component detail behind it):
+{step_listing}"""
+
+_PLAYWRIGHT_PROMPT_USER = """Application base URL: {base_url}
 
 Scenario: "{scenario_name}" ({scenario_type})
 
@@ -140,14 +163,390 @@ Test data (use these exact values in the generated code, they are already resolv
 either reviewer-provided or a sensible default):
 {test_data_listing}
 
+Known pages (real URLs discovered on this application during crawling, listed as \
+"business stage name -> URL"). When a step navigates to, or asserts being on, a page \
+matching one of these, use `page.goto("<url>")` / assert against this exact URL — only \
+invent your own URL for a step with no match here:
+{known_pages_listing}
+
+Known element locators (real locators discovered on this application, listed as "business \
+stage name / component type:component name -> locator"). When a step interacts with an \
+element matching one of these, use the locator exactly as shown — most entries are a literal \
+`page.locator("<selector>")` selector string, use it verbatim; an entry already shown as \
+`getByLabel("<text>")` is a ready-to-use `page.getByLabel(...)` call, not a `page.locator(...)` \
+selector string — call it directly, do NOT wrap it as `page.locator('getByLabel("...")')` or \
+as `page.locator('label="..."')` (`label=` is not a real Playwright selector engine). Only \
+invent your own locator (e.g. `page.getByRole(...)`) for an element with no match here.
+
+Exception — do NOT trust a known locator for a form-field component (input/select/textarea) \
+whose value is an internal name/id/model-property string rather than real human-readable text \
+(e.g. `text="txtUserName"`, `getByLabel("model.email")`). An input/select/textarea never \
+renders its internal name as visible text and never has that string as its accessible label, \
+so that locator will never resolve — it is discovery-crawl noise, not a real selector/label. \
+Ignore it and build the field's locator yourself following the Locator rules below instead.
+
+Exception — do NOT use a known `role=<role>[name="..."]` locator's full quoted `name` as an \
+exact match when that name is visibly a concatenation of multiple fragments: an icon/emoji, \
+a stable entity/title fragment, a dynamic figure (price, date, count, rating), and/or a \
+decorative arrow/chevron glyph (e.g. `role=link[name="🏥\nHealth Plan\nFrom ₹ 12,500/yr · Up \
+to ₹50 L cover\n›"]`). That figure changes between runs/environments and the icon/chevron are \
+noise, so an exact match on the full string is guaranteed to break. Instead extract only the \
+stable entity-name fragment and match it with `getByRole(...)` using a partial/regex `name`, \
+e.g. `page.getByRole('link', {{ name: /Health Plan/ }})`. This applies to any card, list item, \
+or dashboard tile whose accessible name mixes an icon/title/dynamic-value/chevron this way — \
+not just this one example.
+{known_locators_listing}"""
+
+_PLAYWRIGHT_PROMPT_SYSTEM = """You are converting one integration test Scenario into a single, \
+executable Playwright (TypeScript, @playwright/test) test.
+
 Write one complete, runnable test using `import {{ test, expect }} from '@playwright/test'`, \
 following the steps in order and asserting the expected result. Use the given test data \
-values literally where they'd naturally be used (form fields, query params, etc). Output \
-ONLY the TypeScript code, no markdown fences, no prose, no explanation."""
+values literally where they'd naturally be used (form fields, query params, etc) — except \
+where the Input-type fill rule, Credential rule, or Data-uniqueness rule below require \
+reformatting, sourcing from an environment variable, or appending a unique suffix instead.
+
+Input-type fill rule — before calling `.fill(...)`, match the value's format to the field's \
+actual input type. A native `<input type="date">` (and `type="month"`/`type="week"`/ \
+`type="time"`) only accepts its own format via `.fill(...)` — e.g. `YYYY-MM-DD` for a date \
+input — a human-readable string like "Jan 5, 2026" is silently rejected by the browser and \
+leaves the field empty. Reformat the given literal to match that specific input's required \
+format; never reuse one generic string across fields of different native input types.
+
+Credential rule — a login/authentication field's test-data value may be an automatically \
+resolved placeholder, not a real seeded account, and a generated test cannot know what \
+accounts actually exist on the target application. If the Scenario's Expected result requires \
+a genuine successful authentication (not merely submitting the form and checking a failure \
+path), read that field from an environment variable at runtime instead of hardcoding the given \
+literal, e.g. `const username = process.env.TEST_USERNAME ?? "<the given value>";` — falling \
+back to the given value only so the test still runs when the variable is unset. Only apply this to \
+Scenarios that need a real successful login; a negative-path Scenario expecting failure should \
+use the given literal as-is.
+
+Data-uniqueness rule — for a step that creates a new account/record (sign-up, registration, \
+"create new X"), never reuse the given test-data literal exactly if doing so risks colliding \
+with data left behind by a previous or concurrent run of this same test (e.g. a duplicate-email \
+error). Append a runtime-unique suffix built from the given literal's shape instead, e.g.:
+const email = `user_${{Date.now()}}@example.com`;
+so each run is self-sufficient and safe \
+under parallel execution — never assume another test already created, or will clean up, shared \
+data. Only skip this when the step authenticates as an EXISTING account (login, not creation), \
+where the given literal must be used exactly as provided.
+
+Timeout rules — target applications vary widely in how long they take to load or process \
+a submission. Define TWO constants near the top of the file — never reuse one constant for \
+both jobs, they solve different problems:
+const ASSERTION_TIMEOUT_MS = 15000;
+const TEST_TIMEOUT_MS = 180000;
+`ASSERTION_TIMEOUT_MS` is the per-step wait: real render/network latency needs a few seconds, \
+but a genuinely broken locator should fail fast, not stall — pass `{{ timeout: \
+ASSERTION_TIMEOUT_MS }}` to every `page.goto(...)`, `page.waitForLoadState(...)`, \
+`page.waitForURL(...)`, every locator action (`.click(...)`, `.fill(...)`, `.check(...)`, \
+etc), and every polling `expect(locator)` matcher (`toBeVisible()`, `toHaveText()`, \
+`toHaveURL()`, etc — anything that polls a locator/page until it matches or times out). \
+`TEST_TIMEOUT_MS` is ONLY the overall safety-net ceiling passed to `test.setTimeout()` — \
+never pass it to an individual call. Reusing the long constant everywhere turns every broken \
+locator into a multi-minute stall instead of a fast failure — across a whole suite that's the \
+difference between a run taking minutes versus hours.
+
+Rule — only a polling matcher accepts `{{ timeout }}`. `expect(locator).toBeVisible(...)`, \
+`.toHaveText(...)`, `.toHaveURL(...)` (and other locator/page pollers) poll until the \
+condition holds or the timeout elapses, so `{{ timeout: ASSERTION_TIMEOUT_MS }}` is correct \
+there. A plain-value matcher (`toBeTruthy()`, `toBe(...)`, `toEqual(...)`, \
+`toBeGreaterThan(...)`, etc.) checks an already-computed value exactly once — it has no \
+polling behavior, so passing it `{{ timeout: ... }}` is a matcher-usage error, not a slower \
+check. Never pass `{{ timeout }}` to a plain-value matcher.
+
+Matcher-existence rule — only use `expect(...)` matchers that are part of Playwright's real, \
+documented API (`toBeVisible`, `toHaveText`, `toHaveURL`, `toHaveValue`, `toHaveClass`, \
+`toHaveAttribute`, `toHaveCount`, `toBeChecked`, `toBeDisabled`, `toBeEnabled`, `toBeEditable`, \
+`toBeFocused`, `toBeTruthy`, `toBe`, `toEqual`, etc). Never invent a matcher name that sounds \
+plausible by analogy but does not exist (e.g. `toBeInvalid`, `toBeValid`) — if you need to \
+check a validity/error state, express it via a real matcher against the actual DOM signal \
+(`toHaveAttribute('aria-invalid', 'true')`, a CSS class via `toHaveClass(...)`, or a \
+`:invalid`/custom selector combined with `toBeVisible()`), never a matcher you are only \
+assuming must exist.
+
+Not every Playwright method accepts a `timeout` option either — do not add `{{ timeout: \
+ASSERTION_TIMEOUT_MS }}` to a call unless that specific method's signature actually has an \
+options parameter. Most notably, `page.content()`, `page.url()`, and `response.status()` take \
+NO arguments at all — calling e.g. `page.content({{ timeout: ASSERTION_TIMEOUT_MS }})` is a \
+compile error, not a slower call. When in doubt, only pass `{{ timeout: ... }}` to navigation \
+(`page.goto`), waiting (`page.waitForLoadState`, `page.waitForURL`), locator actions \
+(`.click`, `.fill`, `.check`, etc), and polling `expect(...)` matchers — never to a plain \
+getter/accessor method, and never to a plain-value matcher.
+
+Critical: Playwright's own overall per-test timeout defaults to 30000ms regardless of any \
+`{{ timeout: ASSERTION_TIMEOUT_MS }}` passed to individual calls — a per-assertion timeout \
+does NOT extend how long the test as a whole is allowed to run, and the test will still be \
+killed at 30 seconds even while an individual `expect(...)` is still legitimately waiting \
+within its own budget. There is no `playwright.config.ts` to raise this globally, so every \
+generated test MUST raise its own timeout as the very first line inside the test body:
+test('...', async ({{ page }}) => {{
+  test.setTimeout(TEST_TIMEOUT_MS);
+  // ...rest of the test
+}});
+
+Session/navigation rules — many target applications are session-dependent and will return \
+a server error or broken markup if a deep link is the very first thing opened in a fresh \
+browser context with no prior cookies. Follow these rules for every test, not just login \
+Scenarios:
+
+1. Before navigating anywhere else, first visit the application's base URL ({base_url}) with \
+`{{ timeout: ASSERTION_TIMEOUT_MS }}` and wait for it to finish loading with `await \
+page.waitForLoadState('networkidle', {{ timeout: ASSERTION_TIMEOUT_MS }})`. This establishes the \
+session/cookies a real user's browser would already have. Only after that initial visit \
+should the test navigate on to whatever page the Scenario's steps actually need (via \
+`page.goto`, or by clicking a discovered link/button). Never `page.goto()` straight to a \
+deep URL as the first action of the test.
+
+2. After every `page.goto(...)` call, capture the returned response and verify it \
+succeeded before doing anything else with the page:
+const response = await page.goto(url, {{ timeout: ASSERTION_TIMEOUT_MS }});
+if (!response || response.status() >= 400) {{
+  throw new Error(`Failed to load page. HTTP status: ${{response?.status()}}`);
+}}
+
+3. Before locating or asserting on any element, confirm the page did not render a server \
+error page in place of real application markup (this can happen even after a 200 \
+response, if the app fails server-side while rendering). Define and call a small helper \
+for this, e.g.:
+async function assertNoServerError(page) {{
+  const bodyText = await page.content();
+  const errorMarkers = ['Internal Server Error', 'Exception Report', 'HTTP Status 500', \
+'HTTP Status 404', 'Service Unavailable'];
+  for (const marker of errorMarkers) {{
+    if (bodyText.includes(marker)) {{
+      throw new Error(`Server returned an error page instead of the expected content: \
+${{marker}}`);
+    }}
+  }}
+}}
+Call `await assertNoServerError(page)` right after each navigation, before locating any \
+element — this turns a misleading "element not found" failure into a clear, actionable \
+error when the real cause is a server-side failure rather than a bad locator.
+
+4. After any step that changes auth/session state (logout, session expiry, a redirect), \
+never assume the next page has the element you expect it to. Either navigate to the known \
+target URL explicitly (`page.goto(...)`) or verify the landing page first — one \
+`expect(page).toHaveURL(..., {{ timeout: ASSERTION_TIMEOUT_MS }})` (or a content check) right \
+after the state-changing click, before touching any element on whatever page you land on. \
+Never guess a redirect target from convention (e.g. assuming a successful action lands on \
+`/` or "the home page") — if the destination isn't given by the Test steps or a Known page \
+match, verify the actual landing page via a content check rather than asserting an invented URL.
+
+Selector-collision rule — default `exact: true` on `getByLabel(...)`, `getByText(...)`, and \
+`getByRole(..., {{ name }})` whenever the given text/label could plausibly be a substring of \
+another label on the same page (e.g. `getByLabel('Password')` also matches "Confirm \
+Password" without `exact: true`, causing a strict-mode violation or the wrong field getting \
+filled). Only omit `exact: true` when you've confirmed the text is unique on the page, or \
+when the Multi-fragment accessible-name rule (below) applies — that rule requires a partial/ \
+regex match instead, since there the full name is never stable enough to write an exact \
+string at all. Separately: when an element has both an `id`/`name`/`data-testid` attribute \
+AND label/text, prefer the attribute — attributes can't collide via substring the way label \
+text can.
+
+Locator rules — accessible-name-based locators (`getByLabel`, `getByRole` on non-button \
+elements) are NOT safe for form fields: a name/label regex like `/password/i` will also \
+match unrelated controls that merely mention the same word (e.g. a "Show password" \
+visibility-toggle button), causing a Playwright strict-mode violation ("resolved to N \
+elements"). For every form field, prefer a CSS attribute locator restricted to the \
+correct element type over any accessibility-based locator, in this priority order:
+
+For a password field: `input[name="password"]`, then `input[type="password"]`, then \
+`input[id="password"]`, then `getByPlaceholder(/password/i)`, and only as a last resort \
+`getByLabel(/password/i)`.
+
+For a username/email field: `input[name="username"]`, `input[name="email"]`, \
+`input[type="email"]`, then `getByPlaceholder(/user|email/i)`, and only as a last resort \
+`getByLabel(/user|email/i)`.
+
+Never generate `text="<value>"` (in a `page.locator(...)`) against a form field's internal \
+name, id, or model-property string — input/select/textarea elements have no text content, \
+so that locator is guaranteed to never resolve, regardless of app state. When you do fall back \
+to `getByLabel(...)`, its argument must be the field's real visible label text/accessible \
+name (what a sighted user reads next to the field) — never the field's internal name, id, or \
+model-property string.
+
+Combine the CSS-attribute options as one comma-separated selector passed to `page.locator(...)` \
+and take `.first()`, so any one of them matching resolves the field unambiguously. Assert \
+visibility (with `{{ timeout: ASSERTION_TIMEOUT_MS }}`) before interacting, so a locator mismatch fails \
+clearly instead of a confusing fill/click error. For example, instead of:
+await page.getByLabel(/password/i).fill(password);
+generate:
+const passwordField = page.locator(
+  'input[name="password"], input[type="password"], input[id="password"]'
+).first();
+await expect(passwordField).toBeVisible({{ timeout: ASSERTION_TIMEOUT_MS }});
+await passwordField.fill(password);
+
+Never treat a button (e.g. `<button aria-label="Show password">`, `<button aria-label="Hide \
+password">`, or any other visibility-toggle control) as a candidate for a text/password \
+input locator — always constrain field locators to `input` elements only. Only fall back to \
+an accessibility-based locator (`getByLabel`/`getByPlaceholder`) for a field when no \
+CSS attribute selector for it is available, and even then only if that locator's regex is \
+specific enough that it would not plausibly also match a button or other non-field control.
+
+Multi-fragment accessible-name rule — the same "no exact match" reasoning applies whenever \
+you build your own `getByRole(...)`/`getByText(...)` locator (not just when reusing a known \
+locator, above) for a product card, list item, or dashboard tile whose accessible name \
+concatenates an icon/emoji, an entity/title fragment, a dynamic figure (price, date, count, \
+rating), and/or a decorative chevron/arrow. Never hard-code the full computed accessible name \
+as an exact match — it will break the moment the dynamic figure changes. Match only the \
+stable entity-name fragment via partial/regex `name`:
+Don't: `page.locator('role=link[name="🏥\nHealth Plan\nFrom ₹ 12,500/yr · Up to ₹50 L cover\n\
+›"]')`
+Do: `page.getByRole('link', {{ name: /Health Plan/ }})`
+
+Field-level validation rules — when a step checks that a field shows a validation/error \
+state (e.g. "shows required field error", "marks the field invalid"), do NOT search the \
+page for arbitrary validation-message text, and do NOT assume any single mechanism (e.g. \
+`aria-invalid`) is how THIS application signals it — apps signal an invalid field wildly \
+differently: native `:invalid`, `aria-invalid`, a CSS class, a sibling error element, a \
+page-level banner. None of those is a safe universal default. Assert on whichever mechanism \
+the step/page context actually implies (e.g. `input[name="..."][aria-invalid="true"]`, \
+`input[name="..."][data-validate="..."]`, the native `:invalid` pseudo-class, or an \
+application-specific attribute named in the step) — treat any one of these as an unverified \
+fallback guess, not a known-good default, and prefer whichever the Test steps/Expected result \
+actually name over guessing. Only assert on visible error text if that exact text is given to \
+you via the Test data or Expected result above — never invent your own generic message (e.g. \
+"This field is required") and search for it.
+
+Form-field value-persistence rule — never assert that a field "retains its value" after a \
+submit/postback (or that it was cleared) unless the Test steps or Expected result explicitly \
+say so. Frameworks differ deliberately here: some clear password fields for security, some \
+clear the whole form, some retain everything. Don't default to "text inputs usually keep \
+their value" — if persistence/clearing isn't the thing the Scenario is actually testing, \
+don't assert on it at all.
+
+Failure-outcome assertion rules — the same "don't invent wording" rule applies to any \
+failure/error outcome, not just field validation (e.g. an invalid-login message). Use the \
+literal text ONLY if it is explicitly given to you via the Test data or Expected result \
+above — copy it verbatim, never paraphrase or invent your own phrasing. If no literal \
+expected message text is given, do not assert on any specific fabricated wording at all; \
+instead assert on an observable, application-agnostic signal that the action failed. Prefer \
+checking that the page did NOT navigate away from where the failing action was attempted \
+(e.g. compare `page.url()` before and after, or assert the same form/field is still present) \
+as the primary signal — this is always queryable regardless of the application's markup \
+conventions. Only additionally assert a generic error/alert container becoming visible \
+(e.g. `page.locator('[role="alert"], .error, [aria-live]').first()`) when you have reason to \
+believe the application actually renders one — never assert on that locator as your ONLY \
+failure signal, since many applications validate via native browser dialogs or custom markup \
+this pattern won't match, and a test that only waits on it will time out even though the \
+action genuinely failed as expected. Never hardcode a message like "Invalid username or \
+password" unless that exact string was given to you as data.
+
+Step-ordering rule — perform every listed Test step, in order, BEFORE asserting the Expected \
+result. Never assert the Expected result (or any failure/success signal derived from it) \
+before the actions that are supposed to produce it have actually been executed — e.g. do not \
+check for a login-error indicator before filling in credentials and clicking submit.
+
+Shared-state cleanup rule — if a Scenario's steps mutate state that isn't obviously scoped to \
+this one test run alone (e.g. changing a setting, editing a shared/reused record, updating a \
+profile field on an account other tests also log in as), add the matching restore step(s) at \
+the end of the SAME test, after the Expected result has been asserted — put the value back to \
+what it was before this test mutated it. Only skip the restore if the Scenario's own steps \
+already end in a state that undoes the change (e.g. the flow itself deletes what it created), \
+or if the Scenario's own point IS the mutation's permanence (e.g. "account is deleted").
+
+Output ONLY the TypeScript code, no markdown fences, no prose, no explanation."""
 
 
 def _describe_test_data(scenario: Scenario) -> str:
     return "\n".join(f"- {f['name']}: {f.get('value')}" for f in scenario.test_data) or "(none)"
+
+
+def _describe_known_pages(known_pages: list[dict[str, str]] | None) -> str:
+    if not known_pages:
+        return "(none)"
+    return "\n".join(f"- {p['stage_label']} -> {p['url']}" for p in known_pages)
+
+
+def _describe_known_locators(known_locators: list[dict[str, str]] | None) -> str:
+    if not known_locators:
+        return "(none)"
+
+    def _describe_one(loc: dict[str, str]) -> str:
+        prefix = f"{loc['stage_label']} / {loc['component_type']}:{loc['component_name']}"
+        # "label" strategy's value is real visible label text, not a
+        # `page.locator()` selector string — `label=` isn't a real
+        # Playwright selector engine, so this must render as a
+        # `getByLabel(...)` call, never interpolated into `page.locator(...)`.
+        if loc.get("strategy") == "label":
+            return f'- {prefix} -> getByLabel("{loc["selector"]}")'
+        return f"- {prefix} -> {loc['selector']}"
+
+    return "\n".join(_describe_one(loc) for loc in known_locators)
+
+
+# Story 2.10 AC 3: a short, plain-language (not JSON) opinion — this is
+# supporting evidence recorded in diagnostics, never a structured decision
+# the caller branches on, so there's nothing here worth a schema for.
+_STATE_SIMILARITY_PROMPT = """Two captured application states share the same URL route \
+pattern. Based only on their headings and the actions available on each, is state B the \
+SAME screen as state A with different data, a VARIANT (same route, materially different \
+behaviour — e.g. a different workflow stage with different actions available), or \
+genuinely a NEW/unrelated screen?
+
+State A — heading: "{heading_a}", actions: {actions_a}
+State B — heading: "{heading_b}", actions: {actions_b}
+
+Respond with one word (SAME, VARIANT, or NEW) followed by a one-sentence reason."""
+
+# Story 2.12 AC 3: called only when the verb-list classifier found no match
+# at all — supporting evidence only, recorded in diagnostics; the Safety
+# Engine's own posture-driven verdict never changes based on this opinion.
+_ACTION_SAFETY_PROMPT = """An automated web crawler found a clickable UI action with no \
+verb-based safety classification. Based on its accessible name and the surrounding page \
+context, is this action likely SAFE (read-only, no side effects), DESTRUCTIVE (deletes, \
+removes, or irreversibly changes data), or AMBIGUOUS (changes state, but not clearly \
+destructive)?
+
+Action label: "{label}"
+Page context: {page_context}
+
+Respond with one word (SAFE, DESTRUCTIVE, or AMBIGUOUS) followed by a one-sentence reason."""
+
+
+async def _chat_completion(
+    messages: list[dict[str, str]],
+    *,
+    response_format: dict[str, str] | None = None,
+    timeout: int = 60,
+    max_tokens: int | None = None,
+) -> str:
+    payload = {
+        "model": AI_MODEL,
+        "messages": messages,
+    }
+    if "gpt" in AI_MODEL.lower():
+        payload["reasoning_effort"] = "high"
+    elif AI_TEMPERATURE is not None:
+        payload["temperature"] = AI_TEMPERATURE
+    if response_format is not None:
+        payload["response_format"] = response_format
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+    async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=timeout) as client:
+        response = await client.post(
+            "/chat/completions",
+            headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
+            json=payload,
+        )
+        response.raise_for_status()
+    choice = response.json()["choices"][0]
+    # Without this, a response cut off by the token budget (finish_reason
+    # "length") either fails json.loads with a confusing error deep in the
+    # caller, or — worse — happens to still be valid-but-incomplete JSON
+    # (e.g. truncated right after a complete array element) and silently
+    # short-changes the caller (Story: "digital banking" scenario generation
+    # stopping at 40 items with no error at all).
+    if choice.get("finish_reason") == "length":
+        raise RuntimeError(
+            f"LLM response truncated by max_tokens (model={AI_MODEL}, "
+            f"max_tokens={max_tokens}) — increase max_tokens"
+        )
+    return choice["message"]["content"]
 
 
 class HostedAIProvider:
@@ -155,19 +554,15 @@ class HostedAIProvider:
 
     async def infer_journeys(self, pages: list[Page]) -> list[JourneyCandidate]:
         listing = "\n".join(f"{i}: {_describe_page(p)}" for i, p in enumerate(pages))
-        payload = {
-            "model": AI_MODEL,
-            "messages": [{"role": "user", "content": _PROMPT.format(page_listing=listing)}],
-            "response_format": {"type": "json_object"},
-        }
-        async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=60) as client:
-            response = await client.post(
-                "/chat/completions",
-                headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
-                json=payload,
-            )
-            response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+        content = await _chat_completion(
+            [
+                {"role": "system", "content": _PROMPT_SYSTEM},
+                {"role": "user", "content": _PROMPT_USER.format(page_listing=listing)},
+            ],
+            response_format={"type": "json_object"},
+            timeout=240,
+            max_tokens=20000,
+        )
         groups = json.loads(content)["journeys"]
 
         candidates = []
@@ -215,7 +610,7 @@ class HostedAIProvider:
         return candidates
 
     async def generate_scenarios(
-        self, journey: Journey, pages: list[Page]
+        self, journey: Journey, pages: list[Page], limit: int | None = None
     ) -> list[ScenarioCandidate]:
         # `pages` is already in step order, each carrying a transient
         # `.stage_label` (attached by ScenarioGenerationActivity the same way
@@ -223,69 +618,143 @@ class HostedAIProvider:
         # listing below doubles as both the step sequence and the supporting
         # capture detail, no separate steps argument needed.
         listing = "\n".join(f"{i + 1}: {_describe_page(p)}" for i, p in enumerate(pages))
-        payload = {
-            "model": AI_MODEL,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": _SCENARIO_PROMPT.format(
-                        journey_name=journey.name, step_listing=listing
-                    ),
-                }
-            ],
-            "response_format": {"type": "json_object"},
-        }
-        async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=60) as client:
-            response = await client.post(
-                "/chat/completions",
-                headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
-                json=payload,
-            )
-            response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
-        raw_scenarios = json.loads(content)["scenarios"]
 
         candidates = []
-        for raw in raw_scenarios:
-            candidates.append(
-                ScenarioCandidate(
-                    name=raw["name"],
-                    type=raw["type"],
-                    steps=list(raw["steps"]),
-                    expected_result=raw["expected_result"],
-                    test_data=[
-                        TestDataFieldCandidate(name=f["name"], mandatory=bool(f["mandatory"]))
-                        for f in raw.get("test_data", [])
+        failures: list[str] = []
+        for scenario_type, instructions in _SCENARIO_TYPE_INSTRUCTIONS.items():
+            if limit is not None and len(candidates) >= limit:
+                break
+            try:
+                content = await _chat_completion(
+                    [
+                        {
+                            "role": "system",
+                            "content": _SCENARIO_PROMPT_SYSTEM.format(
+                                scenario_type_instructions=instructions
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": _SCENARIO_PROMPT_USER.format(
+                                journey_name=journey.name, step_listing=listing
+                            ),
+                        },
                     ],
+                    response_format={"type": "json_object"},
+                    timeout=240,
+                    max_tokens=20000,
                 )
+                raw_scenarios = json.loads(content)["scenarios"]
+            except Exception:
+                # Fault isolation, same convention as elsewhere in this codebase
+                # (Story 4.2): one bad batch is logged and skipped, not fatal to
+                # the whole Journey's Scenarios — a truncated/failed "edge" call
+                # should not also throw away an already-good "happy" batch.
+                logger.exception(
+                    "HostedAIProvider: dropped %r scenarios for journey %r", scenario_type, journey.name
+                )
+                failures.append(scenario_type)
+                continue
+
+            for raw in raw_scenarios:
+                if limit is not None and len(candidates) >= limit:
+                    break
+                candidates.append(
+                    ScenarioCandidate(
+                        name=raw["name"],
+                        # Forced from the loop, not trusted from the model —
+                        # each call was already scoped to one type.
+                        type=scenario_type,
+                        steps=list(raw["steps"]),
+                        expected_result=raw["expected_result"],
+                        test_data=[
+                            TestDataFieldCandidate(name=f["name"], mandatory=bool(f["mandatory"]))
+                            for f in raw.get("test_data", [])
+                        ],
+                    )
+                )
+
+        if not candidates and failures:
+            # Every scenario-type call errored — nothing was silently "fine",
+            # the Journey just got zero Scenarios with no visible failure
+            # (observed live: GenerationWorkflow reports Completed either
+            # way, so Temporal's own retry_policy on the Activity never had
+            # a failure to retry). Raising here only in the all-failed case
+            # keeps the partial-success fault isolation above intact while
+            # giving Temporal's already-configured retries something to act on.
+            raise RuntimeError(
+                f"HostedAIProvider: all scenario types failed for journey {journey.name!r}: {failures}"
             )
         return candidates
 
-    async def generate_playwright(self, scenario: Scenario) -> TestAssetCode:
-        step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
-        payload = {
-            "model": AI_MODEL,
-            "messages": [
+    async def infer_state_similarity(
+        self, heading_a: str, actions_a: list[str], heading_b: str, actions_b: list[str]
+    ) -> str:
+        content = await _chat_completion(
+            [
                 {
                     "role": "user",
-                    "content": _PLAYWRIGHT_PROMPT.format(
+                    "content": _STATE_SIMILARITY_PROMPT.format(
+                        heading_a=heading_a,
+                        actions_a=actions_a,
+                        heading_b=heading_b,
+                        actions_b=actions_b,
+                    ),
+                }
+            ],
+            timeout=30,
+        )
+        return content.strip()
+
+    async def classify_action_safety(self, label: str, page_context: str) -> str:
+        content = await _chat_completion(
+            [
+                {
+                    "role": "user",
+                    "content": _ACTION_SAFETY_PROMPT.format(
+                        label=label, page_context=page_context
+                    ),
+                }
+            ],
+            timeout=30,
+        )
+        return content.strip()
+
+    async def generate_playwright(
+        self,
+        scenario: Scenario,
+        known_pages: list[dict[str, str]] | None = None,
+        known_locators: list[dict[str, str]] | None = None,
+    ) -> TestAssetCode:
+        step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
+        base_url = getattr(scenario, "base_url", None) or ""
+        content = await _chat_completion(
+            [
+                {"role": "system", "content": _PLAYWRIGHT_PROMPT_SYSTEM.format(base_url=base_url)},
+                {
+                    "role": "user",
+                    "content": _PLAYWRIGHT_PROMPT_USER.format(
+                        base_url=base_url,
                         scenario_name=scenario.name,
                         scenario_type=scenario.type,
                         step_listing=step_listing,
                         expected_result=scenario.expected_result,
                         test_data_listing=_describe_test_data(scenario),
+                        known_pages_listing=_describe_known_pages(known_pages),
+                        known_locators_listing=_describe_known_locators(known_locators),
                     ),
-                }
+                },
             ],
-        }
-        async with httpx.AsyncClient(base_url=LITELLM_BASE_URL, timeout=60) as client:
-            response = await client.post(
-                "/chat/completions",
-                headers={"Authorization": f"Bearer {LITELLM_API_KEY}"},
-                json=payload,
-            )
-            response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+            # A real Generate Suite submission fans out one Playwright call
+            # per Scenario across every candidate Journey at once (a dozen+
+            # Journeys x dozens of Scenarios isn't unusual) — the default
+            # 60s timeout gets exceeded once that concurrency is real,
+            # observed live as `httpx.ReadTimeout` for a chunk of Scenarios
+            # (silently dropped by SuiteGenerationWorkflow's per-Scenario
+            # fault isolation, no way to tell "slow" from "actually broken").
+            # Matches generate_scenarios' own timeout=240 for the same reason.
+            timeout=240,
+        )
         # No JSON response_format here (unlike infer_journeys/generate_scenarios)
         # — the model's own code fences are the one common failure mode worth
         # stripping defensively, since raw TypeScript code has no equivalent

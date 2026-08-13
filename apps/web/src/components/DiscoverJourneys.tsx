@@ -2,10 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import { api, type JourneyRead, type JourneyStepRead } from '../api'
 import { useDiscoveryProgress } from '../hooks/useDiscoveryProgress'
 import { ImportProgress } from './ImportProgress'
-import { Stepper } from './Stepper'
+import { Stepper, type StepKey } from './Stepper'
 import { StatusPill } from './StatusPill'
 
-const POLL_INTERVAL_MS = 1500
+const POLL_INTERVAL_MS = 3000
 const JOURNEYS_PER_PAGE = 5
 
 // Collapses consecutive steps sharing a stage (e.g. a page visit + its form
@@ -89,19 +89,21 @@ function JourneyRowMenu({ onRename, onDelete }: { onRename: () => void; onDelete
         ⋯
       </button>
       {open && (
-        <div
-          role="menu"
-          className="card-panel"
-          style={{
-            position: 'absolute',
-            right: 0,
-            top: 30,
-            minWidth: 140,
-            boxShadow: '0 12px 28px rgba(15,23,42,0.14)',
-            overflow: 'hidden',
-            zIndex: 10,
-          }}
-        >
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9 }} onClick={() => setOpen(false)} />
+          <div
+            role="menu"
+            className="card-panel"
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: 30,
+              minWidth: 140,
+              boxShadow: '0 12px 28px rgba(15,23,42,0.14)',
+              overflow: 'hidden',
+              zIndex: 10,
+            }}
+          >
           <button
             type="button"
             role="menuitem"
@@ -146,7 +148,8 @@ function JourneyRowMenu({ onRename, onDelete }: { onRename: () => void; onDelete
           >
             Delete
           </button>
-        </div>
+          </div>
+        </>
       )}
     </div>
   )
@@ -159,6 +162,10 @@ export function DiscoverJourneys({
   discoveryStage,
   discoveryFailureReason,
   onContinueToScenarios,
+  furthestCount,
+  onStepClick,
+  onPrevious,
+  onNext,
 }: {
   applicationId: string
   applicationName: string
@@ -166,6 +173,10 @@ export function DiscoverJourneys({
   discoveryStage: string | null
   discoveryFailureReason: string | null
   onContinueToScenarios: () => void
+  furthestCount: number
+  onStepClick?: (key: StepKey) => void
+  onPrevious?: () => void
+  onNext?: () => void
 }) {
   const [journeys, setJourneys] = useState<JourneyRead[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -174,6 +185,14 @@ export function DiscoverJourneys({
   const [continuing, setContinuing] = useState(false)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
+  // Story 2.17: pause/resume already round-trips through the API — this
+  // just reflects the response immediately rather than waiting for
+  // useDiscoveryProgress's next poll tick (which stops polling entirely
+  // once Journeys exist, so it may never pick the change up on its own).
+  const [statusOverride, setStatusOverride] = useState<string | null>(null)
+  const [pauseResumeBusy, setPauseResumeBusy] = useState(false)
+  const [pauseResumeError, setPauseResumeError] = useState<string | null>(null)
   // Distinguishes "discovery hasn't produced any Journeys yet" (show
   // Discovery Progress) from "every Journey was deleted" (show the bare
   // "All journeys have been removed." empty state, EXPERIENCE.md State
@@ -194,10 +213,51 @@ export function DiscoverJourneys({
     journeys.length > 0,
   )
 
-  const sessionExpired = liveStatus === 'failed' && liveFailureReason === 'session_expired'
+  useEffect(() => setStatusOverride(null), [liveStatus])
+  const status = statusOverride ?? liveStatus
+
+  const sessionExpired = status === 'failed' && liveFailureReason === 'session_expired'
+
+  async function handlePause() {
+    setPauseResumeError(null)
+    setPauseResumeBusy(true)
+    try {
+      const application = await api.pauseDiscovery(applicationId)
+      setStatusOverride(application.discovery_status)
+    } catch {
+      setPauseResumeError('Could not pause discovery. Try again.')
+    } finally {
+      setPauseResumeBusy(false)
+    }
+  }
+
+  async function handleResume() {
+    setPauseResumeError(null)
+    setPauseResumeBusy(true)
+    try {
+      const application = await api.resumeDiscovery(applicationId)
+      setStatusOverride(application.discovery_status)
+    } catch {
+      setPauseResumeError('Could not resume discovery. Try again.')
+    } finally {
+      setPauseResumeBusy(false)
+    }
+  }
+
+  // Read via refs inside the poll tick rather than depending on `liveStatus`/
+  // `liveStage` directly — those flip through several transient values
+  // (initializing/authenticating/discovering/analyzing) during one run, and
+  // making the effect depend on them would tear down and recreate the
+  // interval (with an extra immediate `poll()`) on every one of those, not
+  // just the two terminal ones this actually needs to stop on.
+  const liveStatusRef = useRef(liveStatus)
+  liveStatusRef.current = liveStatus
+  const liveStageRef = useRef(liveStage)
+  liveStageRef.current = liveStage
 
   useEffect(() => {
     let cancelled = false
+    let interval: ReturnType<typeof setInterval> | undefined
 
     async function poll() {
       try {
@@ -206,24 +266,34 @@ export function DiscoverJourneys({
       } catch {
         // best-effort poll — a transient failure just skips this tick
       }
+      // `[FIXED 2026-07-22]` Inference writes Journeys one at a time (its own
+      // commit per candidate, Story 2.6) — stopping as soon as
+      // `journeys.length > 0` (the old condition) stopped polling the
+      // instant the *first* Journey landed, silently missing every one
+      // written after it (a real run producing 11 Journeys only ever showed
+      // 1). `discovery_stage` reaching "analyzed" (backend's terminal
+      // marker, written once InferenceActivity finishes creating all
+      // Journeys) is the real "analysis fully finished" signal; a failed
+      // run is the other stop case.
+      if (!cancelled && (liveStatusRef.current === 'failed' || liveStageRef.current === 'analyzed')) {
+        clearInterval(interval)
+      }
     }
 
     poll()
-    // `[FIXED 2026-07-22]` Inference writes Journeys one at a time (its own
-    // commit per candidate, Story 2.6) — stopping as soon as `journeys.length
-    // > 0` (the old condition) stopped polling the instant the *first*
-    // Journey landed, silently missing every one written after it (a real
-    // run producing 11 Journeys only ever showed 1). There's no
-    // "analysis fully finished" signal from the backend today (`stage` only
-    // ever reaches "analyzing" and never moves past it), so the only correct
-    // stop condition available is the run having failed outright.
-    if (liveStatus === 'failed') return
-    const interval = setInterval(poll, POLL_INTERVAL_MS)
+    interval = setInterval(poll, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
-  }, [applicationId, liveStatus])
+  }, [applicationId])
+
+  // Land on the first Journey selected by default, not an empty canvas —
+  // also re-picks the first one if the selected Journey was deleted.
+  useEffect(() => {
+    if (selectedId && journeys.some((j) => j.id === selectedId)) return
+    setSelectedId(journeys[0]?.id ?? null)
+  }, [journeys, selectedId])
 
   useEffect(() => {
     if (!selectedId) {
@@ -280,7 +350,7 @@ export function DiscoverJourneys({
 
   return (
     <>
-      <Stepper current="discover" />
+      <Stepper current="discover" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
       <main
         style={{
           maxWidth: 'var(--content-max)',
@@ -302,7 +372,7 @@ export function DiscoverJourneys({
               <h1 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
                 Discover Journeys
               </h1>
-              <StatusPill status={liveStatus} />
+              <StatusPill status={status} />
             </div>
             <div className="caption" style={{ fontSize: 13, marginTop: 3 }}>
               {journeys.length} Journey{journeys.length === 1 ? '' : 's'} Discovered
@@ -329,6 +399,16 @@ export function DiscoverJourneys({
                 color: 'var(--ink)',
               }}
             />
+            {(status === 'running' || status === 'paused') && (
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={status === 'running' ? handlePause : handleResume}
+                disabled={pauseResumeBusy}
+              >
+                {status === 'running' ? 'Pause Discovery' : 'Resume Discovery'}
+              </button>
+            )}
             <button
               type="button"
               onClick={handleContinueToScenarios}
@@ -357,11 +437,23 @@ export function DiscoverJourneys({
             Session expired mid-crawl. Re-authenticate to continue discovery.
           </p>
         ) : (
-          liveStatus === 'failed' && (
+          status === 'failed' && (
             <p className="caption" role="alert" style={{ color: 'var(--danger)' }}>
               Discovery Run failed.
             </p>
           )
+        )}
+
+        {status === 'paused' && (
+          <p className="caption" style={{ color: 'var(--warn-strong)' }}>
+            Discovery paused. Resume to continue exploring from where it left off.
+          </p>
+        )}
+
+        {pauseResumeError && (
+          <p className="caption" role="alert" style={{ color: 'var(--danger)' }}>
+            {pauseResumeError}
+          </p>
         )}
 
         {journeys.length > 0 && (
@@ -420,11 +512,6 @@ export function DiscoverJourneys({
                         >
                           {journey.name}
                         </div>
-                        {journey.description && (
-                          <div className="caption" style={{ fontSize: 12, marginTop: 2 }}>
-                            {journey.description}
-                          </div>
-                        )}
                         <div className="caption" style={{ fontSize: 12 }}>
                           {journey.step_count} step{journey.step_count === 1 ? '' : 's'}
                         </div>
@@ -492,6 +579,11 @@ export function DiscoverJourneys({
                     <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 'var(--space-1)' }}>
                       {selectedJourney.name}
                     </div>
+                    {selectedJourney.description && (
+                      <div className="caption" style={{ fontSize: 13, marginBottom: 'var(--space-2)' }}>
+                        {selectedJourney.description}
+                      </div>
+                    )}
                     <div className="caption" style={{ fontSize: 13, fontWeight: 600, marginBottom: 'var(--space-4)' }}>
                       Discovered flow · {selectedJourney.step_count} step
                       {selectedJourney.step_count === 1 ? '' : 's'}
@@ -529,9 +621,8 @@ export function DiscoverJourneys({
                     </div>
                   </div>
                   <div
-                    aria-hidden="true"
                     style={{
-                      width: 260,
+                      width: 480,
                       flexShrink: 0,
                       alignSelf: 'flex-start',
                       position: 'sticky',
@@ -550,32 +641,47 @@ export function DiscoverJourneys({
                     >
                       Reference screenshot
                     </div>
-                    <div
-                      style={{
-                        height: 420,
-                        borderRadius: 'var(--radius-xl)',
-                        border: '1px solid var(--border)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        background:
-                          'repeating-linear-gradient(135deg, var(--canvas-wash-alt), var(--canvas-wash-alt) 10px, var(--canvas-wash) 10px, var(--canvas-wash) 20px)',
-                      }}
-                    >
-                      <span
-                        className="caption"
+                    {steps.at(-1)?.screenshot_url ? (
+                      <img
+                        src={steps.at(-1)?.screenshot_url ?? undefined}
+                        alt="Journey's final step screenshot"
+                        onClick={() => setLightboxUrl(steps.at(-1)?.screenshot_url ?? null)}
                         style={{
-                          fontFamily: 'var(--font-mono)',
-                          fontSize: 11.5,
-                          background: 'var(--canvas)',
+                          width: '100%',
+                          height: 'auto',
+                          objectFit: 'contain',
+                          cursor: 'zoom-in',
                           border: '1px solid var(--border)',
-                          borderRadius: 'var(--radius-xs)',
-                          padding: '4px 10px',
+                        }}
+                      />
+                    ) : (
+                      <div
+                        style={{
+                          height: 420,
+                          borderRadius: 'var(--radius-xl)',
+                          border: '1px solid var(--border)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          background:
+                            'repeating-linear-gradient(135deg, var(--canvas-wash-alt), var(--canvas-wash-alt) 10px, var(--canvas-wash) 10px, var(--canvas-wash) 20px)',
                         }}
                       >
-                        journey screenshot
-                      </span>
-                    </div>
+                        <span
+                          className="caption"
+                          style={{
+                            fontFamily: 'var(--font-mono)',
+                            fontSize: 11.5,
+                            background: 'var(--canvas)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 'var(--radius-xs)',
+                            padding: '4px 10px',
+                          }}
+                        >
+                          no screenshot available
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </>
               ) : (
@@ -587,7 +693,7 @@ export function DiscoverJourneys({
           </div>
         )}
 
-        {journeys.length === 0 && liveStatus !== 'failed' && (
+        {journeys.length === 0 && status !== 'failed' && (
           hadJourneysRef.current ? (
             <p style={{ textAlign: 'center', padding: '80px 24px', color: 'var(--ink-muted)', fontSize: 14 }}>
               All journeys have been removed.
@@ -597,6 +703,50 @@ export function DiscoverJourneys({
           )
         )}
       </main>
+      {lightboxUrl && (
+        <div
+          onClick={() => setLightboxUrl(null)}
+          role="dialog"
+          aria-modal="true"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15,23,42,0.85)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 100,
+          }}
+        >
+          <button
+            type="button"
+            aria-label="Close"
+            onClick={() => setLightboxUrl(null)}
+            style={{
+              position: 'fixed',
+              top: 'var(--space-5)',
+              right: 'var(--space-5)',
+              width: 40,
+              height: 40,
+              borderRadius: 'var(--radius-full)',
+              border: '1px solid rgba(255,255,255,0.3)',
+              background: 'rgba(255,255,255,0.1)',
+              color: '#fff',
+              fontSize: 20,
+              lineHeight: 1,
+              cursor: 'pointer',
+            }}
+          >
+            ×
+          </button>
+          <img
+            src={lightboxUrl}
+            alt="Journey's final step screenshot, enlarged"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '90vw', maxHeight: '90vh', objectFit: 'contain' }}
+          />
+        </div>
+      )}
     </>
   )
 }

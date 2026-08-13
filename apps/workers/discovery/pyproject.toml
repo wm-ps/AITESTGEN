@@ -9,11 +9,11 @@ dependencies = [
     "domain",
     "secrets-client",
     "ai-provider",
+    "object-store",
+    "safety-classifier",
     "sqlmodel>=0.0.24",
     "psycopg[binary]>=3.2",
     "playwright>=1.57",
-    "minio>=7.2",
-    "boto3>=1.43",
 ]
 
 [dependency-groups]
@@ -30,6 +30,8 @@ workflows = { workspace = true }
 domain = { workspace = true }
 secrets-client = { workspace = true }
 ai-provider = { workspace = true }
+object-store = { workspace = true }
+safety-classifier = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -446,9 +446,37 @@ So that the platform relies on managed, durable cloud storage rather than an in-
 
 **Notes:** Local-dev behavior is intentionally out of scope — MinIO in `docker-compose.yml` remains the local/CI substitute (S3 wire-compatible). Only the production (`ops/k8s/`) deployment and its ConfigMap/Secret wiring change. See `sprint-change-proposal-2026-07-24.md` for the full impact analysis.
 
-### Story 2.9: Page Readiness & Infinite Scroll/Pagination Sampling `[ADDED 2026-07-29]`
+> **`[REWRITTEN 2026-08-03]` Stories 2.9–2.22 — read `docs/DISCOVERY_ENGINE_V2.md` first.**
+> A feasibility review of the 2026-07-29 batch replaced its design spine. That document is now
+> authoritative for the whole Discovery Engine; the individual story files under
+> `_bmad-output/implementation-artifacts/` carry the detailed, current acceptance criteria. Where
+> an entry below is terser than its story file, the story file wins.
+>
+> What the review changed:
+> - **Story 2.16's mechanism was replaced** — generic step-replay resume is not reliable across
+>   arbitrary applications (AD-21 concedes this); it is now re-crawl from a confirmed entry point.
+>   **AD-21 requires a matching amendment.**
+> - **Story 2.11 gained a State Return ladder** — getting back to a state to try its next action
+>   was assumed free and was the largest unbounded cost in the original design.
+> - **Story 2.14 gained iframe traversal and shadow-DOM piercing** — absent from every story,
+>   epic and architecture decision in the batch, and pervasive in enterprise targets.
+> - **Story 2.15's aggregation key** changed from exact prose match to a normalized key.
+> - **Story 2.12 gained a per-Application safety posture** — always-deferring on ambiguity had an
+>   unbounded, unacknowledged coverage cost.
+> - **Stories 2.20, 2.21 and 2.22 were added** (test-data pool, locator durability, coverage
+>   report) — see below.
+> - **Stories 2.9 and 2.10 were marked `done` in error.** Their story files carried detailed
+>   completion records for work that does not exist in the source tree. Both are reset to
+>   `ready-for-dev`; treat all of 2.9–2.22 as unbuilt.
+>
+> **Build order:** **[2.22 Task 1 only — the `record_diagnostic()` sink contract]** → 2.14 → 2.9 →
+> 2.21 → 2.10 → 2.11 → 2.19 → 2.20 → 2.13 → 2.12 → 2.15 → **[2.22 remainder]** → 2.18 → 2.17 →
+> 2.16. Story 2.22 deliberately splits: seven stories write through its Task 1 sink, so that one
+> task lands before any of them.
 
-*Added per `sprint-change-proposal-2026-07-29.md`, triggered by the Discovery Engine redesign document. Full Tasks/Dev-Notes-level story file to be created via `bmad-create-story` when picked up for development, per this repo's existing convention (see Story 4.3's history).*
+### Story 2.9: Page Readiness & Infinite Scroll/Pagination Sampling `[ADDED 2026-07-29]` `[REWRITTEN 2026-08-03]`
+
+*Added per `sprint-change-proposal-2026-07-29.md`. Rewritten 2026-08-03 per `docs/DISCOVERY_ENGINE_V2.md` — readiness is now three explicit signals (network quiet with polling/analytics filtered out, DOM stability via an injected `MutationObserver`, non-empty rendered content), all bounded by the Page Load Timeout, and the run is never blocked by readiness.*
 
 As a user, I want the platform to wait for a page to genuinely finish loading before capturing it, and to sample rather than endlessly scroll/paginate a repeating list, so that discovery captures complete, accurate snapshots without stalling on unbounded content.
 
@@ -471,9 +499,9 @@ As a user, I want the platform to tell genuinely new application behavior apart 
 
 ### Story 2.11: Exploration Planner & Action Priority Tiering `[ADDED 2026-07-29]`
 
-*Added per `sprint-change-proposal-2026-07-29.md`. Supersedes Story 2.2's navigation-first rule (AC 5) for the untried-in-page-action-vs-unvisited-nav case; see Architecture AD-17.*
+*Added per `sprint-change-proposal-2026-07-29.md`. Supersedes Story 2.2's navigation-first rule (AC 5) for the untried-in-page-action-vs-unvisited-nav case; see Architecture AD-17.* **`[REWRITTEN 2026-08-03]` Retitled "Exploration Planner, Action Tiering & State Return". Now also owns the State Return ladder — the bounded strategy for getting back to a state to try its next action (no-op → browser back → re-navigate → bounded safe replay → give up and mark `unreached`), plus a per-state return budget. The specialist chain dropped from five questions to three (state identity is decided per-state in Story 2.10, not per-action; action/transition history moved to Story 2.19). Ships with pass-through default specialists so it is independently shippable.**
 
-As a user, I want the platform to fully explore a page's own actions before navigating away from it, so that no page's behavior is left partially understood because the crawler moved on too soon.
+As a user, I want the platform to fully explore a page's own actions before navigating away from it — and to be honest about the actions it could not get back to — so that no page's behavior is left partially understood and the cost of thorough exploration stays bounded and reportable.
 
 **Acceptance Criteria:**
 
@@ -506,9 +534,9 @@ As a user, I want the platform to reuse real or safely-synthesized data before e
 
 ### Story 2.14: Widget Coverage — Tabs, Dialogs, Multi-Window, File Upload `[ADDED 2026-07-29]`
 
-*Added per `sprint-change-proposal-2026-07-29.md`.*
+*Added per `sprint-change-proposal-2026-07-29.md`.* **`[REWRITTEN 2026-08-03]` Retitled "Widget & Container Coverage". Adds two container types absent from the entire original batch: recursive same-origin `iframe` traversal (cross-origin frames logged as unreachable containers) and open-shadow-root piercing for capture and fingerprinting (closed roots logged as unreachable). Both are pervasive in enterprise targets — SAP/Salesforce portals, Lightning Web Components, Polymer/Stencil design systems — and today's crawler sees inside neither, reporting an empty host page as a successful capture. **Build this story first in the remaining backlog.***
 
-As a user, I want the platform to correctly handle tabs, modals, new browser windows, and file uploads across any frontend framework, so that discovery doesn't silently skip or get stranded by common enterprise UI patterns.
+As a user, I want the platform to see inside the containers real enterprise applications actually use — frames, shadow roots, tabs, modals, popups — and to handle uploads, so that discovery doesn't report an empty page and call it success.
 
 **Acceptance Criteria:**
 
@@ -522,11 +550,13 @@ As a user, I want the platform to correctly handle tabs, modals, new browser win
 
 *Added per `sprint-change-proposal-2026-07-29.md`.*
 
+**`[REWRITTEN 2026-08-03]` Aggregation now keys on a normalized key (field name + input type + route family), not exact-string match of a generated prose description. The original silently produced one ask per page whenever wording varied ("Active Policy Number" vs "Policy Number (Active)") — the exact failure the story exists to prevent. `required_description` is now a display label only. The same normalizer is shared with Story 2.20's Test Data Pool so seeded values satisfy blocks automatically.**
+
 As a user, I want blocked exploration areas that need the same missing data consolidated into one request, so that I'm not asked the same question once per page.
 
 **Acceptance Criteria:**
 
-**Given** the Planner reaches a DEFER decision, **when** a `BlockedTask` is created or updated, **then** it is checked against existing open requirements with identical required content and aggregated rather than duplicated (FR-42).
+**Given** the Planner reaches a DEFER decision, **when** a `BlockedTask` is created or updated, **then** it carries a normalized `aggregation_key` and is attached to an existing open task with the same key rather than duplicated (FR-42).
 **Given** a blocked area, **when** autonomous exploration is otherwise exhausted and the area is meaningful, **then** one consolidated request is presented, with an explicit option to finish without supplying it.
 **Given** a DEFER from the Safety Engine (approval needed) versus the Data Resolver (data needed), **when** a `BlockedTask` is written, **then** both use the identical `BlockedTask` structure and resume path — only `required_type` differs; a single blocked path may carry both requirements at once.
 
@@ -534,12 +564,15 @@ As a user, I want blocked exploration areas that need the same missing data cons
 
 *Added per `sprint-change-proposal-2026-07-29.md`. `ExplorationStep` is deliberately named to avoid collision with the existing `Journey` domain entity — see Architecture AD-20.*
 
-As a user, I want a blocked exploration path's full route from the start of the run to be remembered, so that supplying the missing data later resumes exactly where it left off instead of losing everything already discovered along the way.
+**`[MECHANISM REPLACED 2026-08-03]` Retitled "Blocked Path Record & Re-Crawl Resume". Step-replay resume was found unreliable against arbitrary applications for four independent reasons: "known-irreversible" is not knowable from the DOM (and guessing wrong creates a duplicate real business record); deep-linking past a skipped step fails wherever server-side state is required; stored inputs go stale and were never staleness-checked (only the newly supplied value was); and the target application may have changed between block and resume. AD-21 already concedes the general case is unsolved — **AD-21 requires a matching amendment.** Replaced with: record the path as a human-readable diagnostic, write the supplied value into the Test Data Pool (Story 2.20), and re-crawl forward from the nearest URL-reachable confirmed entry point under normal crawl rules. Slower, far more robust, no duplicate-record risk. Build last; a legitimate cut candidate if Story 2.20 removes most blocks in pilot use.**
+
+As a user, I want the route to a blocked area remembered and re-reachable once I supply what was missing, so that answering the question actually unblocks exploration — without the platform blindly re-submitting forms and creating duplicate records in my application.
 
 **Acceptance Criteria:**
 
-**Given** a block occurs after N successful steps, **when** the `BlockedTask` is written, **then** all N steps are persisted as ordered `ExplorationStep` rows referencing their already-confirmed `Page` (not duplicating it), including the exact input values used at each step, verbatim (FR-43).
-**Given** a user supplies the missing value, **when** resume begins, **then** the value is validated first (staleness check), a new browser session starts (no assumption the old one survived), and every already-succeeded step is replayed via its stored action/inputs — except a step that already caused a known-irreversible effect, which is instead skipped in favor of navigating directly to its resulting Page, to avoid creating a duplicate record.
+**Given** a block occurs after N successful steps, **when** the `BlockedTask` is written, **then** all N steps are persisted as ordered `ExplorationStep` rows referencing their already-confirmed `Page` (not duplicating it), as a human-readable diagnostic record of how the crawler reached the blocked point — explicitly not as a replay script (FR-43).
+**Given** a user supplies the missing value, **when** resume begins, **then** the value is written to the Test Data Pool under the block's `aggregation_key`, a fresh browser session is established, and the engine re-crawls forward from the nearest confirmed entry point reachable by URL, under normal crawl rules. No stored step is blindly re-executed.
+**Given** no confirmed entry point on the recorded path is reachable by URL, **when** resume is attempted, **then** the engine re-crawls from the Application root and the report states that the shorter path could not be used — resume degrades, it never fails silently.
 **Given** a resumed path reaches its previously-blocked step, **when** the new value/authorization is supplied, **then** the `BlockedTask` is marked Resolved and exploration continues downstream.
 **Given** a single exploration path, **when** it blocks a second time later in its own continuation, **then** the same `BlockedTask`/step-list record is extended, not replaced with a new, unrelated record.
 
@@ -578,6 +611,52 @@ As a user, I want all of the discovery engine's anti-loop safeguards to run cons
 
 **Given** a candidate action about to execute, **when** the Planner checks it, **then** it applies, in order: state dedup (Story 2.10), action-history check, transition-cycle detection (A→B→A→B), route normalization (parameterized-duplicate sampling), the infinite-scroll/pagination budget (Story 2.9), and a final depth/action/scroll budget ceiling (FR-46).
 **Given** these checks are backstops, **when** Story 2.9/2.10's primary sampling mechanisms already prevent a specific loop, **then** this story does not duplicate that logic — it adds the checks not already covered (action-history tracker, transition-cycle detection are the two genuinely new pieces here).
+
+### Story 2.20: Test Data Pool — Seeded Application Test Data `[ADDED 2026-08-03]`
+
+*Added per `docs/DISCOVERY_ENGINE_V2.md`, following the feasibility review of the 2026-07-29 batch. The highest-leverage gap it found: the cheapest time to obtain test data is **before** the crawl, not after. Stories 2.15 and 2.16 are substantial machinery built to recover from a situation a few seeded values prevent outright. Story 4.1 already applies this pattern at scenario-generation time — this brings it one stage earlier.*
+
+As a user, I want to give the platform the business-specific values it will need before discovery starts, so that it explores straight through the areas that would otherwise block instead of stopping and asking me afterwards.
+
+**Acceptance Criteria:**
+
+**Given** an Application, **when** a user seeds test data, **then** entries of (label, normalized key, value, sensitive flag) persist per Application across Discovery Runs.
+**Given** the Data Resolver (Story 2.13) needs a value, **when** it resolves, **then** the pool is consulted first, ahead of page scanning, run reuse and synthesis.
+**Given** a pool entry, **when** its key is computed, **then** it uses the identical shared normalization function as Story 2.15's `aggregation_key`, so pool entries and blocked requirements match automatically.
+**Given** a user supplies a value against an open `BlockedTask`, **when** it is accepted, **then** it is written to the pool under that block's key and satisfies **every** path needing that key, not only the one that surfaced the ask.
+**Given** an entry marked sensitive, **when** stored, **then** it uses the existing `packages/secrets_client` Vault client and is masked in all logs, `SyntheticDataEntry` output and reports.
+
+**`[GAP — needs UX pass]`** No management screen exists in the current 6-screen IA. V1 scope is backend + API only, which is independently useful (values can be seeded via API and by answering blocks).
+
+### Story 2.21: Locator Durability — Ranked Capture & Fragility Detection `[ADDED 2026-08-03]`
+
+*Added per `docs/DISCOVERY_ENGINE_V2.md`, following the feasibility review. Nothing in the 2026-07-29 batch addressed whether captured locators survive the target application's next deployment — meaning a crawl could fully succeed and still produce a worthless test suite. Extends the existing `_selector_strategy`/`_derive_locators` path in `model_builder.py` rather than replacing it.*
+
+As a user, I want the platform to capture the most durable way to find each element, and to tell me when it couldn't find a durable one, so that generated tests still pass after my application's next deploy — and so I know in advance when they won't.
+
+**Acceptance Criteria:**
+
+**Given** an interactive element is captured, **when** locators are derived, **then** a ranked candidate list is stored: `data-testid`/`data-test`/`data-cy` → ARIA role + accessible name → visible text → label-to-field association → scoped CSS → absolute CSS.
+**Given** a candidate contains a machine-generated identifier — CSS-in-JS hashes (`css-1x2y3z`), framework IDs (`ctl00_ContentPlaceHolder1_…`, GWT/Ext JS auto-IDs), long hex/UUID fragments, index-only paths — **when** ranked, **then** it is down-ranked below every human-meaningful alternative (never discarded; a fragile locator still beats none).
+**Given** an element inside an iframe or shadow root (Story 2.14), **when** its locator is stored, **then** it records the full container chain so it resolves from the top-level page.
+**Given** locators are captured, **when** a durability score is computed per element, **then** it is persisted so Story 2.22 can report the proportion of captured elements with no durable locator — the most actionable number in the report, since the fix (add test IDs) is one the customer controls.
+
+### Story 2.22: Coverage Report & Run Diagnostics `[ADDED 2026-08-03]`
+
+*Added per `docs/DISCOVERY_ENGINE_V2.md`, following the feasibility review, which found no feedback or observability signal anywhere in the design despite every heuristic in the engine requiring per-application tuning. Without visible numbers nobody can distinguish an over-merging threshold from a genuinely small application, and the product becomes unfalsifiable.*
+
+As a user, I want an honest account of what discovery reached, what it couldn't, and why it made the calls it made, so that I can trust the result, act on the gaps, and tune the engine against my application instead of guessing.
+
+**Acceptance Criteria:**
+
+**Given** a Discovery Run reaches a terminal state, **when** its result is presented, **then** it reports five categories: **Reached**, **Blocked** (distinct aggregated asks + waiting-path counts), **Skipped for safety**, **Unreached** (states abandoned at Story 2.11's return-ladder rung 5, cross-origin frames, closed shadow roots), and **Errored** (DISC-coded branches).
+**Given** `DiscoveryRun.status = complete`, **when** surfaced anywhere, **then** it is never presented alone — always with those counts. Per AD-15 the crawl is deliberate sampling, and an unqualified "Complete" invites a user to read it as "my whole application was covered".
+**Given** the engine's heuristics ran, **when** diagnostics are collected, **then** the report includes Story 2.10 state-identity scores and verdicts (and whether widened no-route-discrimination mode was entered), Story 2.14 low-confidence detections and unreachable containers, Story 2.21's fragile-locator proportion, Story 2.13 values the application rejected, Story 2.12 verdicts and posture in force, and which Story 2.19 guard fired where.
+**Given** a producing story has not yet landed, **when** its diagnostics are absent, **then** the report renders the sections it has rather than failing — every producer writes through one named sink function, so sections light up incrementally.
+
+**Note:** This story's Task 1 (the diagnostics sink contract) is a **prerequisite for Stories 2.10, 2.11, 2.12, 2.13, 2.14, 2.19 and 2.21** — define it before its producers, or reconciling seven independently-invented logging shapes becomes larger than the feature itself.
+
+**`[GAP — needs UX pass]`** No screen exists in the current 6-screen IA. V1 is the structured backend report, queryable and exportable via API.
 
 ## Epic 3: Human Curation & Trusted Knowledge Model `[RENAMED 2026-07-15, was "Human Review & Trusted Knowledge Model"]`
 
