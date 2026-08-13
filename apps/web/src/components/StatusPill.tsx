@@ -12,6 +12,7 @@ const COLORS: Record<string, { background: string; foreground: string }> = {
   discovery_completed: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   journeys_generated: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   scenarios_generated: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
+  generating_tests: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   suite_generated: { background: 'var(--good-wash)', foreground: 'var(--good-strong)' },
   complete: { background: 'var(--good-wash)', foreground: 'var(--good-strong)' },
   failed: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },
@@ -33,6 +34,7 @@ const LABELS: Record<string, string> = {
   discovery_completed: 'Discovery completed',
   journeys_generated: 'Journeys generated',
   scenarios_generated: 'Scenarios generated',
+  generating_tests: 'Generating test cases',
   suite_generated: 'Test suite generated',
   completed: 'Completed',
   // "Skipped", not "Blocked" — `blocked_count`/status="blocked" are vestigial
@@ -70,23 +72,26 @@ export function StatusPill({
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 'var(--space-2)',
+        gap: 6,
         background: colors.background,
         color: colors.foreground,
       }}
     >
-      {showPulse && (
-        <span
-          className="status-pill-pulse-dot"
-          aria-hidden="true"
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: 'var(--radius-full)',
-            background: colors.foreground,
-          }}
-        />
-      )}
+      {/* A leading dot always shows, not only while pulsing — reads as a
+          proper status indicator (like a build/CI chip) instead of plain
+          tinted text, and the pulse becomes "in motion" rather than the
+          only thing that made this a status at all. */}
+      <span
+        className={showPulse ? 'status-pill-pulse-dot' : undefined}
+        aria-hidden="true"
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: 'var(--radius-full)',
+          background: colors.foreground,
+          flexShrink: 0,
+        }}
+      />
       {label}
     </span>
   )

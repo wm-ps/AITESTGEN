@@ -44,7 +44,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from domain import Application, Form, FormField, Page, TestSuite
+from domain import Application, ComponentLocator, Form, FormField, Page, TestSuite
 from sqlmodel import Session, select
 
 # Windows-reserved device names (case-insensitive) — never emit one of these
@@ -108,13 +108,46 @@ def dedupe_slugs(items: list[tuple[str, str]]) -> dict[str, str]:
 @dataclass(frozen=True)
 class LoginPageEvidence:
     """Non-secret login-page facts captured by Discovery — never a credential
-    value. `username_selector`/`password_selector` are plain CSS selectors
-    (Playwright `page.locator(...)`-compatible), the same shape
-    `discovery_worker.crawler._capture_selector` produces."""
+    value. `username_locator`/`password_locator` are ready-to-use Playwright
+    locator expressions (e.g. `page.locator('#username')` or
+    `page.getByLabel('Email')`), not bare selector strings — built by
+    `_field_locator_call` from whichever ground truth is available."""
 
     url: str
-    username_selector: str | None
-    password_selector: str
+    username_locator: str | None
+    password_locator: str
+
+
+def _playwright_locator_call(strategy: str, value: str) -> str:
+    """Mirrors `ai_provider.hosted._describe_known_locators`'s own rendering
+    convention for the same `ComponentLocator` strategy vocabulary: `label`'s
+    value is real visible label text for `getByLabel(...)`, never a
+    `page.locator()` selector string; every other strategy's value already
+    is one."""
+    if strategy == "label":
+        return f"page.getByLabel({value!r})"
+    return f"page.locator({value!r})"
+
+
+def _field_locator_call(session: Session, field: FormField | None) -> str | None:
+    """Ground truth over guess (same principle Story 4.2's Playwright
+    generation already applies to element locators): prefer Discovery's
+    derived, durability-ranked `ComponentLocator` over the field's own raw
+    `captured_selector`, which is only ever a fallback here."""
+    if field is None:
+        return None
+    if field.component_id is not None:
+        candidates = session.exec(
+            select(ComponentLocator).where(ComponentLocator.component_id == field.component_id)
+        ).all()
+        preferred = next((loc for loc in candidates if loc.kind == "preferred"), None)
+        fallbacks = [loc for loc in candidates if loc.kind == "fallback"]
+        chosen = preferred or (min(fallbacks, key=lambda loc: loc.priority) if fallbacks else None)
+        if chosen is not None:
+            return _playwright_locator_call(chosen.strategy, chosen.value)
+    if field.captured_selector:
+        return f"page.locator({field.captured_selector!r}).first()"
+    return None
 
 
 def find_login_page_evidence(
@@ -161,8 +194,11 @@ def find_login_page_evidence(
         )
         return LoginPageEvidence(
             url=page.url,
-            username_selector=username_field.captured_selector if username_field else None,
-            password_selector=password_field.captured_selector or 'input[type="password"]',
+            username_locator=_field_locator_call(session, username_field),
+            password_locator=(
+                _field_locator_call(session, password_field)
+                or 'page.locator(\'input[type="password"]\').first()'
+            ),
         )
     return None
 
@@ -182,7 +218,34 @@ def _build_package_json() -> str:
     )
 
 
-def _build_playwright_config(base_url: str) -> str:
+def _build_playwright_config(base_url: str, *, has_login: bool) -> str:
+    """No manual chromium/signed-in project split to maintain: when Discovery
+    captured a login page, the split below is driven entirely by the
+    `@auth`/`@public` tag every generated spec carries — deterministically
+    written by `PlaywrightGenerationActivity` (`spec_linter.apply_auth_tag`)
+    from Discovery's own captured auth requirement, never a manual choice
+    made per suite. Apps with no captured login get one plain project — a
+    `setup`/auth project split would have nothing to authenticate."""
+    # `retain-on-failure`, not `on-first-retry` — this project's default
+    # `retries: 0` means a first-attempt failure never gets a second try, so
+    # `on-first-retry` would silently never capture a trace at all. Both
+    # artifacts are only written on failure either way (Run All Tests
+    # feature: TestResultArtifact rows only ever exist for a
+    # failing/timed-out/errored TestResult).
+    if not has_login:
+        return (
+            "import { defineConfig, devices } from '@playwright/test'\n\n"
+            "export default defineConfig({\n"
+            "  testDir: './tests',\n"
+            "  fullyParallel: true,\n"
+            "  use: {\n"
+            f"    baseURL: '{base_url}',\n"
+            "    trace: 'retain-on-failure',\n"
+            "    screenshot: 'only-on-failure',\n"
+            "    ...devices['Desktop Chrome'],\n"
+            "  },\n"
+            "})\n"
+        )
     return (
         "import { defineConfig, devices } from '@playwright/test'\n\n"
         "export default defineConfig({\n"
@@ -190,21 +253,23 @@ def _build_playwright_config(base_url: str) -> str:
         "  fullyParallel: true,\n"
         "  use: {\n"
         f"    baseURL: '{base_url}',\n"
-        # `retain-on-failure`, not `on-first-retry` — this project's default
-        # `retries: 0` means a first-attempt failure never gets a second
-        # try, so `on-first-retry` would silently never capture a trace at
-        # all. Both artifacts are only written on failure either way (Run
-        # All Tests feature: TestResultArtifact rows only ever exist for a
-        # failing/timed-out/errored TestResult).
         "    trace: 'retain-on-failure',\n"
         "    screenshot: 'only-on-failure',\n"
         "  },\n"
         "  projects: [\n"
         "    { name: 'setup', testMatch: /.*\\.setup\\.ts$/ },\n"
         "    {\n"
-        "      name: 'chromium',\n"
+        "      name: 'authenticated',\n"
+        "      testMatch: /.*\\.spec\\.ts$/,\n"
+        "      grep: /@auth/,\n"
         "      use: { ...devices['Desktop Chrome'], storageState: '.auth/state.json' },\n"
         "      dependencies: ['setup'],\n"
+        "    },\n"
+        "    {\n"
+        "      name: 'public',\n"
+        "      testMatch: /.*\\.spec\\.ts$/,\n"
+        "      grepInvert: /@auth/,\n"
+        "      use: { ...devices['Desktop Chrome'] },\n"
         "    },\n"
         "  ],\n"
         "})\n"
@@ -278,48 +343,76 @@ def _build_auth_setup_script(auth_method: str, login_evidence: LoginPageEvidence
             "})\n"
         )
 
-    # standard_login — captured selectors when Discovery found the login
-    # form, otherwise the same generic fallback selectors
-    # `discovery_worker.session.attempt_login` already uses live.
+    # standard_login — reuses the same shared fillCredentials helper every
+    # generated spec calls (support/auth.ts), so the login flow itself is
+    # defined in exactly one place, not duplicated between this setup script
+    # and every generated spec (feature: shared auth-flow helper).
     login_url = login_evidence.url if login_evidence else "/"
-    username_selector = (
-        f'page.locator({login_evidence.username_selector!r})'
-        if login_evidence and login_evidence.username_selector
+    return (
+        "import { test as setup } from '@playwright/test'\n"
+        "import { fillCredentials } from '../support/auth'\n\n"
+        "// Logs in once (via the shared fillCredentials helper — see support/auth.ts) and\n"
+        "// saves the resulting session for every other test to reuse.\n"
+        "setup('authenticate', async ({ page }) => {\n"
+        f"  await page.goto({login_url!r})\n"
+        "  await fillCredentials(page)\n"
+        "  await page.context().storageState({ path: '.auth/state.json' })\n"
+        "})\n"
+    )
+
+
+def _build_config_script() -> str:
+    return (
+        "// Central credential registry (feature: single source of truth for test\n"
+        "// credentials) — every generated spec and the auth setup script import from\n"
+        "// here, never `process.env` directly, so the env var name is defined in exactly\n"
+        "// one place instead of drifting between files. Falls back to a placeholder\n"
+        "// account so the suite still runs when the env vars are unset; override them\n"
+        "// with a real account for an actual run:\n"
+        "// AITESTGEN_LOGIN_USERNAME=... AITESTGEN_LOGIN_PASSWORD=... npx playwright test\n"
+        "export const CREDENTIALS = {\n"
+        "  username: process.env.AITESTGEN_LOGIN_USERNAME ?? 'testuser@example.com',\n"
+        "  password: process.env.AITESTGEN_LOGIN_PASSWORD ?? 'Test1234!',\n"
+        "}\n"
+    )
+
+
+def _build_auth_helper_script(login_evidence: LoginPageEvidence | None) -> str:
+    """Feature: shared auth-flow helper, not per-spec generation. Every
+    generated spec that needs an authenticated session as a precondition
+    calls this instead of writing its own fill/click steps — the "forgot a
+    field" bug class becomes structurally impossible to reintroduce per
+    spec, since there's only one login implementation to get right."""
+    username_locator = (
+        login_evidence.username_locator
+        if login_evidence and login_evidence.username_locator
         else (
             'page.locator(\'input[type="email"], input[name*="user" i], '
             'input[type="text"]\').first()'
         )
     )
-    password_selector = (
-        f'page.locator({login_evidence.password_selector!r})'
+    password_locator = (
+        login_evidence.password_locator
         if login_evidence
         else 'page.locator(\'input[type="password"]\').first()'
     )
     return (
-        "import { test as setup } from '@playwright/test'\n\n"
-        "// Logs in once using the login page captured by Discovery (falls back to generic\n"
-        "// selectors if none was captured) and saves the resulting session for every other\n"
-        "// test to reuse. Credentials are read only from environment variables at runtime —\n"
-        "// never a literal value in this file.\n"
-        "setup('authenticate', async ({ page }) => {\n"
-        "  const username = process.env.AITESTGEN_LOGIN_USERNAME\n"
-        "  const password = process.env.AITESTGEN_LOGIN_PASSWORD\n"
-        "  if (!username || !password) {\n"
-        "    throw new Error("
-        "'AITESTGEN_LOGIN_USERNAME and AITESTGEN_LOGIN_PASSWORD are required'"
-        ")\n"
-        "  }\n"
-        f"  await page.goto({login_url!r})\n"
-        f"  await {username_selector}.fill(username)\n"
-        f"  await {password_selector}.fill(password)\n"
+        "import type { Page } from '@playwright/test'\n"
+        "import { CREDENTIALS } from './config'\n\n"
+        "export async function fillCredentials(\n"
+        "  page: Page,\n"
+        "  username: string = CREDENTIALS.username,\n"
+        "  password: string = CREDENTIALS.password,\n"
+        "): Promise<void> {\n"
+        f"  await {username_locator}.fill(username)\n"
+        f"  await {password_locator}.fill(password)\n"
         "  const submit = page.locator('button[type=\"submit\"], input[type=\"submit\"]').first()\n"
         "  if (await submit.count() > 0) {\n"
         "    await submit.click()\n"
         "  } else {\n"
-        f"    await {password_selector}.press('Enter')\n"
+        f"    await {password_locator}.press('Enter')\n"
         "  }\n"
-        "  await page.context().storageState({ path: '.auth/state.json' })\n"
-        "})\n"
+        "}\n"
     )
 
 
@@ -426,7 +519,10 @@ def _write_project_files(
     )
 
     writer.write("package.json", _build_package_json())
-    writer.write("playwright.config.ts", _build_playwright_config(application.url))
+    writer.write(
+        "playwright.config.ts",
+        _build_playwright_config(application.url, has_login=login_evidence is not None),
+    )
     writer.write("README.md", _build_readme(application.name, application.auth_method))
     writer.write("fixtures/.gitkeep", "")
     writer.write("utils/.gitkeep", "")
@@ -434,6 +530,8 @@ def _write_project_files(
         "tests/auth.setup.ts",
         _build_auth_setup_script(application.auth_method, login_evidence),
     )
+    writer.write("support/config.ts", _build_config_script())
+    writer.write("support/auth.ts", _build_auth_helper_script(login_evidence))
 
     written_suite_folders = 0
     written_test_files = 0

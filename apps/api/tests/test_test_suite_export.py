@@ -118,8 +118,27 @@ class TestAssembleTestSuiteProject:
         zf = self._basic_zip()
         config = zf.read("playwright.config.ts").decode()
         assert "https://acme.example.com" in config
+        # No login evidence passed -> nothing to authenticate -> one plain
+        # project, no auth/public split to maintain.
+        assert "projects" not in config
+
+    def test_baseurl_injected_into_config_with_login_evidence(self) -> None:
+        evidence = LoginPageEvidence(
+            url="https://acme.example.com/login",
+            username_locator='page.locator(\'[name="email"]\')',
+            password_locator='page.locator(\'[name="password"]\')',
+        )
+        zf = self._basic_zip(login_evidence=evidence)
+        config = zf.read("playwright.config.ts").decode()
+        assert "https://acme.example.com" in config
         assert "storageState" in config
         assert "dependencies: ['setup']" in config
+        # Project split is tag-driven, not a manual chromium/signed-in split
+        # ("public" matches every non-@auth spec via grepInvert, not a
+        # literal "@public" tag string).
+        assert "@auth" in config
+        assert "grepInvert" in config
+        assert "'public'" in config
 
     def test_empty_current_suite_still_gets_a_folder(self) -> None:
         application = _application()
@@ -172,28 +191,35 @@ class TestAssembleTestSuiteProject:
         second = assemble_test_suite_project(*args)
         assert first == second
 
-    def test_standard_login_setup_reads_credentials_from_env_only(self) -> None:
+    def test_standard_login_uses_shared_auth_helper_and_config_registry(self) -> None:
         evidence = LoginPageEvidence(
             url="https://acme.example.com/login",
-            username_selector='[name="email"]',
-            password_selector='[name="password"]',
+            username_locator='page.locator(\'[name="email"]\')',
+            password_locator='page.locator(\'[name="password"]\')',
         )
         zf = self._basic_zip(auth_method="standard_login", login_evidence=evidence)
         setup_script = zf.read("tests/auth.setup.ts").decode()
-        assert "AITESTGEN_LOGIN_USERNAME" in setup_script
-        assert "AITESTGEN_LOGIN_PASSWORD" in setup_script
+        auth_helper = zf.read("support/auth.ts").decode()
+        config_script = zf.read("support/config.ts").decode()
+
+        # auth.setup.ts and every generated spec share one login
+        # implementation (support/auth.ts) instead of each writing its own.
+        assert "fillCredentials" in setup_script
         assert "https://acme.example.com/login" in setup_script
-        assert '[name="email"]' in setup_script
-        assert '[name="password"]' in setup_script
+        assert "AITESTGEN_LOGIN_USERNAME" in config_script
+        assert "AITESTGEN_LOGIN_PASSWORD" in config_script
+        assert '[name="email"]' in auth_helper
+        assert '[name="password"]' in auth_helper
         # No literal credential value, and no Vault/SecretsClient call, ever.
-        assert "SecretsClient" not in setup_script
-        assert "resolve(" not in setup_script
+        combined = setup_script + auth_helper + config_script
+        assert "SecretsClient" not in combined
+        assert "resolve(" not in combined
 
     def test_standard_login_falls_back_to_generic_selectors_without_evidence(self) -> None:
         zf = self._basic_zip(auth_method="standard_login", login_evidence=None)
-        setup_script = zf.read("tests/auth.setup.ts").decode()
-        assert 'input[type="password"]' in setup_script
-        assert 'input[type="email"]' in setup_script
+        auth_helper = zf.read("support/auth.ts").decode()
+        assert 'input[type="password"]' in auth_helper
+        assert 'input[type="email"]' in auth_helper
 
     def test_sso_session_reuse_setup_never_logs_in(self) -> None:
         zf = self._basic_zip(auth_method="sso_session_reuse")

@@ -858,6 +858,8 @@ export interface components {
             scenario_count: number;
             /** Suite Count */
             suite_count: number;
+            /** Test Case Count */
+            test_case_count: number;
         };
         /** InviteCreate */
         InviteCreate: {

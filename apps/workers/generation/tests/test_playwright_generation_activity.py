@@ -57,6 +57,8 @@ class _FakeAIProvider:
         scenario: Scenario,
         known_pages: list[dict] | None = None,
         known_locators: list[dict] | None = None,
+        *,
+        requires_auth: bool = False,
     ) -> TestAssetCode:
         self.calls.append(str(scenario.external_id))
         self.known_pages_calls.append(known_pages or [])
@@ -364,12 +366,17 @@ def test_playwright_generation_activity_creates_a_test_asset(
         test_asset = session.exec(
             select(TestAsset).where(TestAsset.external_id == uuid.UUID(asset_id))
         ).one()
+        # PlaywrightGenerationActivity deterministically tags the test() call
+        # with the requires_auth-derived `@public`/`@auth` tag — no login
+        # page was ever seeded for this Application, so no auth is required.
         assert test_asset.code == (
             "import { test, expect } from '@playwright/test'\n\n"
-            "test('test_guest_checkout', async ({ page }) => {})\n"
+            "test('test_guest_checkout', { tag: '@public' }, async ({ page }) => {})\n"
         )
         assert test_asset.scenario_id == scenario.id
         assert test_asset.current is True
+        assert test_asset.requires_auth is False
+        assert test_asset.status == "ready"
 
         refreshed_scenario = session.get(Scenario, scenario.id)
         assert refreshed_scenario is not None

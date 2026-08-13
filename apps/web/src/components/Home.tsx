@@ -4,6 +4,7 @@ import { api, type ApplicationRead, type HomeApplicationRead, type UserRead } fr
 import { StatusPill } from './StatusPill'
 
 const POLL_INTERVAL_MS = 15000
+const APPS_PER_PAGE = 9
 
 function FolderIcon({ size }: { size: number }) {
   return (
@@ -66,18 +67,32 @@ function ApplicationCard({
   const skipBlurRef = useRef(false)
 
   const discoveryStatus = application.discovery_status
+  // `suite_count` alone can't tell "generation finished" from "generation
+  // just started": EnsureTestSuiteActivity creates the TestSuite row before
+  // its TestAssets exist. `test_case_count` (mirrors TestSuiteResults.tsx's
+  // own isComplete check) is what actually flips the pill to "generated".
+  const suiteGenerating = application.suite_count > 0 && application.test_case_count < application.scenario_count
+  // Scenario generation runs one background job per Journey and writes a
+  // variable number of Scenarios each — `scenario_count` alone climbs mid-run
+  // (this card polls every 15s) so it reads as "wrong" if shown before every
+  // Journey has landed at least one. Gate on `scenario_journeys_covered`
+  // instead, same signal ReviewScenarios.tsx uses for its own isComplete.
+  const scenariosComplete =
+    application.journey_count > 0 && application.scenario_journeys_covered >= application.journey_count
   const stage =
     discoveryStatus === 'failed' || discoveryStatus === 'paused'
       ? discoveryStatus
-      : application.suite_count > 0
-        ? 'suite_generated'
-        : application.scenario_count > 0
-          ? 'scenarios_generated'
-          : application.journey_count > 0
-            ? 'journeys_generated'
-            : discoveryStatus === 'complete'
-              ? 'discovery_completed'
-              : 'running'
+      : suiteGenerating
+        ? 'generating_tests'
+        : application.suite_count > 0
+          ? 'suite_generated'
+          : application.scenario_count > 0
+            ? 'scenarios_generated'
+            : application.journey_count > 0
+              ? 'journeys_generated'
+              : discoveryStatus === 'complete'
+                ? 'discovery_completed'
+                : 'running'
 
   const isRunning = discoveryStatus === 'running'
 
@@ -205,7 +220,7 @@ function ApplicationCard({
         >
           <FolderIcon size={19} />
         </span>
-        <StatusPill status={stage} pulsing={isRunning} />
+        <StatusPill status={stage} pulsing={isRunning || suiteGenerating} />
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', marginBottom: 'var(--space-5)' }}>
         {editing ? (
@@ -354,13 +369,17 @@ function ApplicationCard({
             journeys
           </span>
         </span>
-        <span aria-hidden="true" style={{ width: 1, height: 12, background: 'var(--border)' }} />
-        <span>
-          <span style={{ fontSize: 15, fontWeight: 700 }}>{application.scenario_count}</span>{' '}
-          <span className="caption" style={{ fontSize: 12 }}>
-            test cases
-          </span>
-        </span>
+        {scenariosComplete && (
+          <>
+            <span aria-hidden="true" style={{ width: 1, height: 12, background: 'var(--border)' }} />
+            <span>
+              <span style={{ fontSize: 15, fontWeight: 700 }}>{application.scenario_count}</span>{' '}
+              <span className="caption" style={{ fontSize: 12 }}>
+                scenarios
+              </span>
+            </span>
+          </>
+        )}
       </div>
       {confirmingDelete && createPortal(
         <div
@@ -468,6 +487,7 @@ export function Home({
   const [showDemo, setShowDemo] = useState(false)
   const [applications, setApplications] = useState<HomeApplicationRead[] | null>(null)
   const [snackbar, setSnackbar] = useState<string | null>(null)
+  const [page, setPage] = useState(0)
 
   useEffect(() => {
     if (!snackbar) return
@@ -488,6 +508,14 @@ export function Home({
     const interval = setInterval(refreshApplications, POLL_INTERVAL_MS)
     return () => clearInterval(interval)
   }, [])
+
+  const applicationList = Array.isArray(applications) ? applications : []
+  const totalPages = Math.max(1, Math.ceil(applicationList.length / APPS_PER_PAGE))
+  const pageClamped = Math.min(page, totalPages - 1)
+  const pagedApplications = applicationList.slice(
+    pageClamped * APPS_PER_PAGE,
+    pageClamped * APPS_PER_PAGE + APPS_PER_PAGE,
+  )
 
   return (
     <main
@@ -548,30 +576,50 @@ export function Home({
         </div>
 
         {applications === null ? null : applications.length > 0 ? (
-          <div
-            style={{
-              flex: 1,
-              minHeight: 0,
-              overflowY: 'auto',
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignContent: 'flex-start',
-              gap: 'var(--space-6)',
-              animation: 'aitg-fade-up 0.4s ease-out 0.1s both',
-            }}
-          >
-            {applications.map((application) => (
-              <ApplicationCard
-                key={application.id}
-                application={application}
-                isAdmin={isAdmin}
-                onResume={() => onResumeApplication(application)}
-                onBlocked={() => setSnackbar('Please wait while the discovery process completes.')}
-                onChanged={refreshApplications}
-                onError={setSnackbar}
-              />
-            ))}
-          </div>
+          <>
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflowY: 'auto',
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignContent: 'flex-start',
+                gap: 'var(--space-6)',
+                animation: 'aitg-fade-up 0.4s ease-out 0.1s both',
+              }}
+            >
+              {pagedApplications.map((application) => (
+                <ApplicationCard
+                  key={application.id}
+                  application={application}
+                  isAdmin={isAdmin}
+                  onResume={() => onResumeApplication(application)}
+                  onBlocked={() => setSnackbar('Please wait while the discovery process completes.')}
+                  onChanged={refreshApplications}
+                  onError={setSnackbar}
+                />
+              ))}
+            </div>
+            {applications.length > APPS_PER_PAGE && (
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 'var(--space-4)', flexShrink: 0 }}>
+                <button type="button" className="button-secondary" disabled={pageClamped <= 0} onClick={() => setPage(pageClamped - 1)}>
+                  Prev
+                </button>
+                <span className="caption" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                  Page {pageClamped + 1} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="button-secondary"
+                  disabled={pageClamped >= totalPages - 1}
+                  onClick={() => setPage(pageClamped + 1)}
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </>
         ) : (
           <div
             style={{

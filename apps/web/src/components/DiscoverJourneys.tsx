@@ -699,7 +699,7 @@ export function DiscoverJourneys({
               All journeys have been removed.
             </p>
           ) : (
-            <ImportProgress stage={liveStage} applicationName={applicationName} />
+            <ImportProgress applicationName={applicationName} />
           )
         )}
       </main>

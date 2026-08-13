@@ -470,6 +470,14 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                         session.add(
                             ValidationRule(form_field_id=field_row.id, rule_type="required")
                         )
+                    if captured_field.validation_message:
+                        session.add(
+                            ValidationRule(
+                                form_field_id=field_row.id,
+                                rule_type="html5_message",
+                                value=captured_field.validation_message,
+                            )
+                        )
                 session.commit()
             elif isinstance(item, CapturedAction):
                 page_id = page_ids_by_url.get(item.page_url)

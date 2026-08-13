@@ -6,7 +6,6 @@ import { DiscoverJourneys } from './components/DiscoverJourneys'
 import { GenerateSuite } from './components/GenerateSuite'
 import { Home } from './components/Home'
 import { InviteTeammateModal } from './components/InviteTeammateModal'
-import { LoadingDots } from './components/LoadingDots'
 import { ReviewScenarios } from './components/ReviewScenarios'
 import { Settings } from './components/Settings'
 import { SignIn } from './components/SignIn'
@@ -143,9 +142,15 @@ function App() {
         api.listScenarios(app.id),
         api.listTestSuites(app.id),
       ])
+      // A TestSuite row exists as soon as generation starts (before its
+      // TestAssets do) — resuming mid-generation must land back on the
+      // Generate Suite results screen (it already polls and shows its own
+      // "generating" state), not jump into Workspace with a partial suite.
+      const testCaseCount = suites.reduce((sum, s) => sum + s.test_cases.length, 0)
+      const suiteComplete = suites.length > 0 && testCaseCount >= scenarios.length
       setFurthestCount(suites.length > 0 ? 4 : scenarios.length > 0 ? 2 : 1)
       setWorkspaceEntry({ initialTab: 'overview', autoTriggerRun: false })
-      setView(suites.length > 0 ? 'workspace' : 'discover')
+      setView(suiteComplete ? 'workspace' : suites.length > 0 ? 'test-suite-results' : 'discover')
     } catch {
       setApplication(null)
       setErrorToast('Failed to load project. Please try again.')
@@ -248,7 +253,10 @@ function App() {
       {view === 'test-suite-results' && application && (
         <TestSuiteResults
           applicationId={application.id}
-          onGoToDashboard={() => setView('home')}
+          onGoToDashboard={() => {
+            setWorkspaceEntry({ initialTab: 'overview', autoTriggerRun: false })
+            setView('workspace')
+          }}
           onRunAllTests={() => {
             setWorkspaceEntry({ initialTab: 'runs', autoTriggerRun: true })
             setView('workspace')
@@ -261,7 +269,6 @@ function App() {
       {view === 'workspace' && application && (
         <Workspace
           applicationId={application.id}
-          applicationName={application.name}
           initialTab={workspaceEntry.initialTab}
           autoTriggerRun={workspaceEntry.autoTriggerRun}
         />
@@ -271,17 +278,32 @@ function App() {
       {globalLoading && (
         <div
           role="status"
+          aria-label={globalLoading}
           style={{
             position: 'fixed',
             inset: 0,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: 'rgba(15,23,42,0.15)',
             zIndex: 100,
+            pointerEvents: 'none',
           }}
         >
-          <LoadingDots label={globalLoading} />
+          <span style={{ display: 'flex', gap: 6 }} aria-hidden="true">
+            {[0, 0.15, 0.3].map((delay) => (
+              <span
+                key={delay}
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 'var(--radius-full)',
+                  background: 'var(--accent)',
+                  animation: 'aitg-dot-bounce 1s ease-in-out infinite',
+                  animationDelay: `${delay}s`,
+                }}
+              />
+            ))}
+          </span>
         </div>
       )}
 

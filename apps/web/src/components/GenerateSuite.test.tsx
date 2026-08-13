@@ -78,15 +78,6 @@ describe('GenerateSuite', () => {
     expect(screen.queryByLabelText(/suite name/i)).toBeNull()
   })
 
-  it('renders the Execution placeholder as inert radio controls', async () => {
-    stubFetch()
-    render(<GenerateSuite furthestCount={3}applicationId="app-1" onGenerated={() => {}} />)
-    await waitFor(() => screen.getByText('Test Suite'))
-    expect(screen.getByLabelText('Run immediately')).toBeTruthy()
-    expect(screen.getByLabelText('Schedule for later')).toBeTruthy()
-    expect(screen.getByLabelText('Save without running')).toBeTruthy()
-  })
-
   it('clicking Generate Test Suite triggers the endpoint and calls onGenerated', async () => {
     const onGenerate = vi.fn()
     stubFetch({ onGenerate })

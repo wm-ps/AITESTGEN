@@ -15,7 +15,9 @@ export type ApplicationRead = components['schemas']['ApplicationRead']
 export type HomeApplicationRead = ApplicationRead & {
   journey_count: number
   scenario_count: number
+  scenario_journeys_covered: number
   suite_count: number
+  test_case_count: number
 }
 export type JourneyRead = components['schemas']['JourneyRead']
 export type JourneyStepRead = components['schemas']['JourneyStepRead']

@@ -317,7 +317,17 @@ class ApplicationRead(BaseModel):
 class HomeApplicationRead(ApplicationRead):
     journey_count: int
     scenario_count: int
+    # Dashboard scenario stat: `scenario_count` alone grows mid-generation
+    # (GenerationWorkflow runs one per Journey, writing a variable number of
+    # Scenarios) — this is `journey_count`'s counterpart so the card can hide
+    # the count until every Journey is covered, same as ReviewScenarios.tsx.
+    scenario_journeys_covered: int
     suite_count: int
+    # Dashboard "generating" vs "generated" pill: `suite_count` alone can't
+    # tell them apart — EnsureTestSuiteActivity creates the TestSuite row
+    # before its TestAssets exist. Mirrors TestSuiteResults.tsx's own
+    # `isComplete` check (test_case_count >= scenario_count).
+    test_case_count: int
 
 
 def _coverage_counts(session: Session, discovery_run: DiscoveryRun) -> dict[str, int]:
@@ -527,7 +537,9 @@ def get_home(
     journey_ids = list(app_id_by_journey_id.keys())
 
     scenario_counts: dict[uuid.UUID, int] = {}
+    scenario_journeys_covered: dict[uuid.UUID, int] = {}
     suite_counts: dict[uuid.UUID, int] = {}
+    test_case_counts: dict[uuid.UUID, int] = {}
     if journey_ids:
         for journey_id, count in session.exec(
             select(Scenario.journey_id, func.count())
@@ -539,6 +551,10 @@ def get_home(
         ).all():
             app_id = app_id_by_journey_id[journey_id]
             scenario_counts[app_id] = scenario_counts.get(app_id, 0) + count
+            # Grouped by journey_id, so each row here is one Journey that has
+            # >=1 current Scenario — same "journeys covered" signal
+            # ReviewScenarios.tsx uses to gate its own isComplete.
+            scenario_journeys_covered[app_id] = scenario_journeys_covered.get(app_id, 0) + 1
         for journey_id, count in session.exec(
             select(TestSuite.journey_id, func.count())
             .where(
@@ -549,6 +565,18 @@ def get_home(
         ).all():
             app_id = app_id_by_journey_id[journey_id]
             suite_counts[app_id] = suite_counts.get(app_id, 0) + count
+        for journey_id, count in session.exec(
+            select(TestSuite.journey_id, func.count(TestAsset.id))  # type: ignore[arg-type]
+            .join(TestAsset, TestAsset.test_suite_id == TestSuite.id)  # type: ignore[arg-type]
+            .where(
+                TestSuite.journey_id.in_(journey_ids),  # type: ignore[attr-defined]
+                TestSuite.current.is_(True),  # type: ignore[attr-defined]
+                TestAsset.current.is_(True),  # type: ignore[attr-defined]
+            )
+            .group_by(TestSuite.journey_id)  # type: ignore[arg-type]
+        ).all():
+            app_id = app_id_by_journey_id[journey_id]
+            test_case_counts[app_id] = test_case_counts.get(app_id, 0) + count
 
     result = []
     for application in applications:
@@ -560,7 +588,9 @@ def get_home(
                 **base.model_dump(),
                 journey_count=journey_counts.get(application.id, 0),
                 scenario_count=scenario_counts.get(application.id, 0),
+                scenario_journeys_covered=scenario_journeys_covered.get(application.id, 0),
                 suite_count=suite_counts.get(application.id, 0),
+                test_case_count=test_case_counts.get(application.id, 0),
             )
         )
     return result
