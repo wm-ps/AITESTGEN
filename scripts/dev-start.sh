@@ -45,6 +45,11 @@ if ! pgrep -f "discovery_worker.worker" >/dev/null 2>&1; then
 fi
 
 if ! pgrep -f "generation_worker.worker" >/dev/null 2>&1; then
+  # PlaywrightGenerationActivity's typecheck gate (Checklist rule 3) shells
+  # out to a real tsc here - without this install every Generate Suite run
+  # fails the typecheck step for every Scenario, silently (SuiteGeneration-
+  # Workflow reports COMPLETED with 0 TestAssets written, no error surfaced).
+  [ -d "$ROOT/apps/workers/generation/typecheck/node_modules" ] || (cd "$ROOT/apps/workers/generation/typecheck" && npm install)
   echo "[dev-up] starting generation worker..."
   "$ROOT/scripts/run-generation-worker.sh" >"$LOG_DIR/generation-worker.log" 2>&1 &
 fi

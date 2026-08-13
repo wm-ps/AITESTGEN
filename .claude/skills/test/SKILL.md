@@ -45,6 +45,22 @@ silently does nothing from the user's perspective (the UI polls for a
 `.env` too, since it resolves target-app credentials from Vault the same
 way discovery does.
 
+**The generation worker's typecheck gate needs its own `npm install`, once,
+in `apps/workers/generation/typecheck/` — a bare local project of just
+`package.json`/`package-lock.json` (real `typescript` + `@playwright/test`,
+no source of its own) that `PlaywrightGenerationActivity` shells out to for
+Checklist rule 3's mandatory typecheck of every AI-generated spec before
+it's persisted as a `TestAsset`.** Skipping this doesn't error loudly: every
+`PlaywrightGenerationActivity` call fails identically (`tsc not found`),
+`SuiteGenerationWorkflow`'s fault-isolation retries 3x/wave × 3 waves then
+gives up on the whole batch and returns normally — the workflow reports
+`COMPLETED` with zero `TestAsset`s ever written, and the wizard's "Generate
+Suite" step just spins on "Generating your test suite…" forever with no
+visible error (observed live: every Journey generated in a fresh clone
+before this install existed came back empty). Step 6b below runs `npm
+install` there automatically if `node_modules` is missing, same pattern as
+the web app's.
+
 **The API and discovery worker need `AI_MODEL`/`LITELLM_BASE_URL`/
 `LITELLM_API_KEY` from a local `.env` — launch both with `uv run --env-file
 .env ...` instead of a bare `uv run ...`.** Neither loads `.env` on its own —
@@ -145,6 +161,12 @@ Then, in parallel (single message, multiple tool calls):
    permanently-`Running` `GenerationWorkflow`s):
    ```
    cmd //c start "AITestGen Generation Worker" cmd //k "scripts\\run-generation-worker.cmd"
+   ```
+   Before launching it, also check `apps/workers/generation/typecheck/node_modules`
+   exists (see the typecheck-gate note above) — if not, run `npm install`
+   there first:
+   ```
+   cd apps/workers/generation/typecheck && npm install
    ```
 6c. Check if the execution worker is already running (`ps -W | grep -i
    execution_worker`). If not, same pattern — needed for the "Run All
