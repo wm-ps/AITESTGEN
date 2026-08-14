@@ -157,3 +157,6 @@ def test_get_home_returns_counts_scoped_to_org() -> None:
     assert body[0]["journey_count"] == 1
     assert body[0]["scenario_count"] == 2
     assert body[0]["suite_count"] == 1
+    # TestSuite row exists but no TestAsset yet — generation still running,
+    # not "generated" (dashboard status pill relies on this distinction).
+    assert body[0]["test_case_count"] == 0

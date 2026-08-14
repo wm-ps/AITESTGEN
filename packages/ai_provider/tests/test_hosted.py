@@ -13,12 +13,26 @@ import uuid
 
 import httpx
 import pytest
-from ai_provider.hosted import HostedAIProvider
-from domain import Journey, Page, Scenario
+from ai_provider.hosted import HostedAIProvider, _describe_form
+from domain import Form, Journey, Page, Scenario
 
 
 def _fake_page(url: str, title: str = "") -> Page:
     return Page(application_id=uuid.uuid4(), discovery_run_id=uuid.uuid4(), url=url, title=title)
+
+
+def _fake_form(action_url: str, fields: list[dict]) -> Form:
+    form = Form(
+        application_id=uuid.uuid4(),
+        discovery_run_id=uuid.uuid4(),
+        page_id=uuid.uuid4(),
+        action_url=action_url,
+        method="POST",
+    )
+    # Transient, same technique `scenario_generation_activity` uses to attach
+    # each field's captured `ValidationRule`s (generation_worker/activities.py).
+    object.__setattr__(form, "fields", fields)
+    return form
 
 
 def _monkeypatch_post(monkeypatch: pytest.MonkeyPatch, fake_response_body: str) -> dict:
@@ -36,6 +50,64 @@ def _monkeypatch_post(monkeypatch: pytest.MonkeyPatch, fake_response_body: str) 
 
     monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
     return captured
+
+
+_LOGIN_URL = "https://digitalbankingportal.onwavemaker.com/Account/Login"
+# Real Chrome's own native `validationMessage` text for an empty
+# `required` input — what `crawler.py`'s `checkValidity()` call actually
+# captures, not a made-up string.
+_REQUIRED_MESSAGE = "Please fill out this field."
+
+
+def test_describe_form_reports_html5_message_when_username_is_missing() -> None:
+    # Username left empty, password filled in — mirrors what the crawler
+    # captures on https://digitalbankingportal.onwavemaker.com/Account/Login
+    # when only the username field fails constraint validation.
+    form = _fake_form(
+        _LOGIN_URL,
+        fields=[
+            {
+                "name": "username",
+                "rules": [
+                    {"rule_type": "required", "value": None},
+                    {"rule_type": "html5_message", "value": _REQUIRED_MESSAGE},
+                ],
+            },
+            {"name": "password", "rules": [{"rule_type": "required", "value": None}]},
+        ],
+    )
+
+    described = _describe_form(form)
+
+    assert described["action_url"] == _LOGIN_URL
+    rules_by_field = {f["name"]: f["validation_rules"] for f in described["fields"]}
+    assert {"rule_type": "html5_message", "value": _REQUIRED_MESSAGE} in rules_by_field["username"]
+    # Password was filled in — still "required", but no validation message.
+    assert rules_by_field["password"] == [{"rule_type": "required", "value": None}]
+
+
+def test_describe_form_reports_html5_message_when_password_is_missing() -> None:
+    # Password left empty, username filled in — the mirror case.
+    form = _fake_form(
+        _LOGIN_URL,
+        fields=[
+            {"name": "username", "rules": [{"rule_type": "required", "value": None}]},
+            {
+                "name": "password",
+                "rules": [
+                    {"rule_type": "required", "value": None},
+                    {"rule_type": "html5_message", "value": _REQUIRED_MESSAGE},
+                ],
+            },
+        ],
+    )
+
+    described = _describe_form(form)
+
+    assert described["action_url"] == _LOGIN_URL
+    rules_by_field = {f["name"]: f["validation_rules"] for f in described["fields"]}
+    assert {"rule_type": "html5_message", "value": _REQUIRED_MESSAGE} in rules_by_field["password"]
+    assert rules_by_field["username"] == [{"rule_type": "required", "value": None}]
 
 
 async def test_infer_journeys_maps_ordered_steps_to_page_ids(

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, type TestCaseRead, type TestSuiteRead } from '../api'
 import { Stepper, type StepKey } from './Stepper'
 import { LoadingDots } from './LoadingDots'
+import { GenerationLoader } from './GenerationLoader'
 
 const POLL_INTERVAL_MS = 3000
 const SECONDS_PER_TEST_CASE = 45
@@ -15,14 +16,6 @@ function toTestFileName(journeyName: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
   return `${slug || 'journey'}.spec.ts`
-}
-
-function ArrowRightIcon() {
-  return (
-    <svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M5 12h14M13 6l6 6-6 6" />
-    </svg>
-  )
 }
 
 function CheckIcon() {
@@ -92,16 +85,45 @@ function ChevronIcon({ size, color, open }: { size: number; color: string; open:
   )
 }
 
-function StatTile({ icon, value, label }: { icon: React.ReactNode; value: string | number; label: string }) {
+// Tinted per DESIGN.md's stat-tile spec (background: accent-wash-soft, radius-md)
+// rather than the flat white card this used before — plus a `tone` so a
+// dashboard/report stat can carry its own semantic color (Failed → danger,
+// Passed → good) instead of every tile reading identically neutral.
+export type StatTone = 'accent' | 'good' | 'danger' | 'warn' | 'muted'
+
+// `strong` drives both the icon and the border (via color-mix, not a fixed
+// per-tone wash-border token) — every tone gets a border at the same
+// perceived weight instead of good/danger's border silently matching their
+// own background (invisible) while warn/muted's happened to be visible.
+const STAT_TONE: Record<StatTone, { tileBackground: string; strong: string }> = {
+  accent: { tileBackground: 'var(--accent-wash-soft)', strong: 'var(--accent)' },
+  good: { tileBackground: 'var(--good-wash)', strong: 'var(--good-strong)' },
+  danger: { tileBackground: 'var(--danger-wash)', strong: 'var(--danger-strong)' },
+  warn: { tileBackground: 'var(--warn-wash)', strong: 'var(--warn-strong)' },
+  muted: { tileBackground: 'var(--canvas-wash-alt)', strong: 'var(--ink-muted)' },
+}
+
+export function StatTile({
+  icon,
+  value,
+  label,
+  tone = 'accent',
+}: {
+  icon: React.ReactNode
+  value: string | number
+  label: string
+  tone?: StatTone
+}) {
+  const colors = STAT_TONE[tone]
   return (
     <div
       style={{
-        background: 'var(--canvas)',
-        border: '1px solid var(--border-hairline)',
-        borderRadius: 'var(--radius-lg)',
+        background: colors.tileBackground,
+        border: `1px solid color-mix(in srgb, ${colors.strong} 30%, transparent)`,
+        borderRadius: 'var(--radius-md)',
         boxSizing: 'border-box',
         padding: '14px 16px',
-        boxShadow: '0 4px 14px -3px rgba(15,23,42,0.12), 0 1px 3px rgba(15,23,42,0.07)',
+        boxShadow: '0 4px 14px -3px rgba(15,23,42,0.1), 0 1px 3px rgba(15,23,42,0.06)',
         display: 'flex',
         alignItems: 'center',
         gap: 12,
@@ -110,21 +132,22 @@ function StatTile({ icon, value, label }: { icon: React.ReactNode; value: string
       <div
         aria-hidden="true"
         style={{
-          width: 28,
-          height: 28,
+          width: 30,
+          height: 30,
           borderRadius: 9,
-          background: 'var(--accent-wash)',
-          color: 'var(--accent)',
+          background: 'var(--canvas)',
+          color: colors.strong,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           flexShrink: 0,
+          boxShadow: '0 1px 3px rgba(15,23,42,0.1)',
         }}
       >
         {icon}
       </div>
       <div>
-        <div style={{ fontSize: 19, fontWeight: 700, color: 'var(--ink)', lineHeight: 1.1 }}>{value}</div>
+        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)', lineHeight: 1.1 }}>{value}</div>
         <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 3 }}>{label}</div>
       </div>
     </div>
@@ -142,7 +165,10 @@ const TYPE_BADGE: Record<string, { label: string; background: string; color: str
   edge: { label: 'Edge Case', background: 'var(--warn-wash)', color: 'var(--warn-strong)' },
 }
 
-function CodeModal({ testCase, onClose }: { testCase: TestCaseRead; onClose: () => void }) {
+// Loosened to `{ name, code }` rather than the full `TestCaseRead` so the
+// Application Workspace's Test Suite tab (which only has a lazily-fetched
+// code string, not a whole TestCaseRead) can reuse this modal too.
+export function CodeModal({ testCase, onClose }: { testCase: { name: string; code: string }; onClose: () => void }) {
   return (
     <div
       role="dialog"
@@ -220,12 +246,14 @@ function CodeModal({ testCase, onClose }: { testCase: TestCaseRead; onClose: () 
 export function TestSuiteResults({
   applicationId,
   onGoToDashboard,
+  onRunAllTests,
   furthestCount,
   onStepClick,
   onPrevious,
 }: {
   applicationId: string
   onGoToDashboard: () => void
+  onRunAllTests: () => void
   furthestCount: number
   onStepClick?: (key: StepKey) => void
   onPrevious?: () => void
@@ -298,47 +326,26 @@ export function TestSuiteResults({
       <>
         <Stepper current="generate" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} />
         <main style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, boxSizing: 'border-box' }}>
-          <div role="status" style={{ textAlign: 'center' }}>
-            <div
-              aria-hidden="true"
-              style={{
-                width: 64,
-                height: 64,
-                borderRadius: 'var(--radius-full)',
-                background: 'var(--accent-wash)',
-                color: 'var(--accent)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto 22px',
-                boxSizing: 'border-box',
-                animation: 'aitg-transition-icon 0.5s ease-out both, aitg-pulse 1.6s ease-in-out 0.5s infinite',
-              }}
-            >
-              <ArrowRightIcon />
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--ink)', marginBottom: 16 }}>
-              Generating your test suite…
-            </div>
-            <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 16 }}>
-              <span style={{ width: 7, height: 7, borderRadius: 'var(--radius-full)', background: 'var(--accent)', animation: 'aitg-dot-bounce 1s ease-in-out infinite', animationDelay: '0s' }} />
-              <span style={{ width: 7, height: 7, borderRadius: 'var(--radius-full)', background: 'var(--accent)', animation: 'aitg-dot-bounce 1s ease-in-out infinite', animationDelay: '0.15s' }} />
-              <span style={{ width: 7, height: 7, borderRadius: 'var(--radius-full)', background: 'var(--accent)', animation: 'aitg-dot-bounce 1s ease-in-out infinite', animationDelay: '0.3s' }} />
-            </div>
-            <p className="caption" style={{ margin: 0, fontSize: 12.5 }}>
-              {testCaseCount}/{expectedTestCaseCount || '…'} test cases so far
-            </p>
-            <p className="caption" style={{ margin: '6px 0 0', fontSize: 12, opacity: 0.7 }}>
-              Stuck?{' '}
-              <button
-                type="button"
-                onClick={() => onStepClick?.('generate')}
-                style={{ font: 'inherit', color: 'var(--accent)', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
-              >
-                Resume generation
-              </button>
-            </p>
-          </div>
+          <GenerationLoader
+            title="Generating your test suite…"
+            caption={
+              <p className="caption" style={{ margin: 0, fontSize: 12.5 }}>
+                {testCaseCount}/{expectedTestCaseCount || '…'} test cases so far
+              </p>
+            }
+            footer={
+              <p className="caption" style={{ margin: '6px 0 0', fontSize: 12, opacity: 0.7 }}>
+                Stuck?{' '}
+                <button
+                  type="button"
+                  onClick={() => onStepClick?.('generate')}
+                  style={{ font: 'inherit', color: 'var(--accent)', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
+                >
+                  Resume generation
+                </button>
+              </p>
+            }
+          />
         </main>
       </>
     )
@@ -434,6 +441,23 @@ export function TestSuiteResults({
                 >
                   <DownloadIcon />
                   {downloading ? <LoadingDots label="Downloading" /> : 'Download Test Suite'}
+                </button>
+                <button
+                  type="button"
+                  onClick={onRunAllTests}
+                  style={{
+                    padding: '9px 20px',
+                    background: 'rgba(255,255,255,0.16)',
+                    color: '#FFFFFF',
+                    border: '1px solid rgba(255,255,255,0.5)',
+                    borderRadius: 'var(--radius)',
+                    fontSize: 13.5,
+                    fontWeight: 700,
+                    fontFamily: 'inherit',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Run All Tests
                 </button>
                 <button
                   type="button"

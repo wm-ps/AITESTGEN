@@ -43,3 +43,17 @@ def test_put_then_get_round_trips_through_s3_backend(monkeypatch):
     assert store._bucket == "prod-bucket"
     key = store.put(b"hello", uuid.uuid4())
     assert store.get(key) == b"hello"
+
+
+def test_put_test_artifact_uses_test_runs_prefix(monkeypatch):
+    fake_s3 = _FakeS3Client()
+    monkeypatch.setattr(object_store_module, "AWS_S3_BUCKET", "prod-bucket")
+    monkeypatch.setattr(object_store_module.boto3, "client", lambda *a, **k: fake_s3)
+
+    store = ObjectStore()
+    test_run_id = uuid.uuid4()
+
+    key = store.put_test_artifact(b"screenshot-bytes", test_run_id)
+
+    assert key.startswith(f"test-runs/{test_run_id}/")
+    assert store.get(key) == b"screenshot-bytes"

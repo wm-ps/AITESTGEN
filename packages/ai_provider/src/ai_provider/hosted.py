@@ -79,9 +79,31 @@ _PROMPT_USER = """Pages (indexed):
 {page_listing}"""
 
 
+def _describe_form(form) -> dict:
+    # `.fields` is transient, attached by `scenario_generation_activity`
+    # (generation_worker/activities.py) the same way `.forms`/`.api_endpoints`
+    # are attached below — absent during `infer_journeys`, where a form's
+    # action_url alone is enough to sequence pages into a Journey.
+    fields = [
+        {
+            "name": field["name"],
+            # rule_type kept alongside value (not just the value alone) so
+            # the model can tell a hard constraint ("required") from an
+            # informational one ("html5_message") rather than guessing.
+            "validation_rules": [
+                {"rule_type": rule["rule_type"], "value": rule["value"]}
+                for rule in field["rules"]
+            ],
+        }
+        for field in getattr(form, "fields", [])
+        if field["rules"]
+    ]
+    return {"action_url": form.action_url, "fields": fields} if fields else form.action_url
+
+
 def _describe_page(page: Page) -> str:
     components = [f"{c.type}:{c.name}" for c in getattr(page, "components", [])]
-    forms = [f.action_url for f in getattr(page, "forms", [])]
+    forms = [_describe_form(f) for f in getattr(page, "forms", [])]
     api_calls = [f"{e.method} {e.path}" for e in getattr(page, "api_endpoints", [])]
     outgoing_transitions = [t.url for t in getattr(page, "outgoing_transitions", [])]
     assertions = [
@@ -118,7 +140,11 @@ _SCENARIO_TYPE_INSTRUCTIONS = {
     "negative": "ONLY Negative Path Scenarios — every validation/error condition a QA engineer "
     "would want covered (e.g. missing required field, invalid format, expired/declined input). "
     "Cover each meaningfully distinct failure condition implied by the captured forms/fields; "
-    "do not pad with near-duplicate variations of the same condition.",
+    "do not pad with near-duplicate variations of the same condition. When a field lists "
+    "\"validation_rules\" (each a {rule_type, value}), ground that condition's steps/expected_result "
+    "in the actual rule_type and value captured — e.g. quote an \"html5_message\" value verbatim as "
+    "the expected error text — rather than inventing generic wording; only invent wording for a "
+    "condition with no captured rule.",
     "edge": "ONLY Edge Case Scenarios — boundary/unusual-but-valid conditions distinct from "
     "both the happy path and plain validation errors (e.g. a boundary value, a race condition, "
     "an unusual but legitimate input). Cover each meaningfully distinct edge condition implied "
@@ -213,15 +239,23 @@ input — a human-readable string like "Jan 5, 2026" is silently rejected by the
 leaves the field empty. Reformat the given literal to match that specific input's required \
 format; never reuse one generic string across fields of different native input types.
 
-Credential rule — a login/authentication field's test-data value may be an automatically \
-resolved placeholder, not a real seeded account, and a generated test cannot know what \
-accounts actually exist on the target application. If the Scenario's Expected result requires \
-a genuine successful authentication (not merely submitting the form and checking a failure \
-path), read that field from an environment variable at runtime instead of hardcoding the given \
-literal, e.g. `const username = process.env.TEST_USERNAME ?? "<the given value>";` — falling \
-back to the given value only so the test still runs when the variable is unset. Only apply this to \
-Scenarios that need a real successful login; a negative-path Scenario expecting failure should \
-use the given literal as-is.
+Credential rule — never write raw fill/click steps against username/password fields just to \
+establish a session as a precondition for reaching this Scenario's actual target; import and \
+call the shared helper instead (the generated file lives two directories below the exported \
+project's root, at tests/<suite>/<name>.spec.ts, so the shared support/ folder at the project \
+root is reached via '../../support/...', not '../support/...'):
+import {{ fillCredentials }} from '../../support/auth';
+// ...
+await fillCredentials(page);
+Only write explicit fill/click steps against a login form when the Scenario is itself testing \
+that form's own behavior (e.g. asserting a login error, or a genuine login-success assertion \
+that is the Scenario's whole point) — and even then, source the literal values from the shared \
+credential registry instead of hardcoding a string or reading `process.env` yourself:
+import {{ CREDENTIALS }} from '../../support/config';
+// ...
+const username = CREDENTIALS.username;
+const password = CREDENTIALS.password;
+{auth_precondition_note}
 
 Data-uniqueness rule — for a step that creates a new account/record (sign-up, registration, \
 "create new X"), never reuse the given test-data literal exactly if doing so risks colliding \
@@ -497,6 +531,24 @@ literal text explicitly given via Test data/Expected result above — that text 
 real captured/given value, so match it exactly (still case-insensitively is fine, but never \
 paraphrase or re-case it).
 
+Search-submit scoping rule — when a step's intended action is submitting a search (fill a \
+search input, then trigger the search), do not pick the submit control by name-matching \
+anywhere on the page — a page often has more than one candidate (e.g. a global nav search \
+plus a page-level search, or an unrelated button that happens to share the word "search"). \
+Scope the candidate search to the same `<form>`/logical container as the input you just \
+filled, e.g.:
+const searchInput = page.locator('input[name="q"], input[type="search"]').first();
+await searchInput.fill(query);
+const submitButton = page.locator('form:has(input[name="q"])').getByRole('button', {{ name: /search/i }});
+if (await submitButton.count() > 0) {{
+  await submitButton.first().click({{ timeout: ASSERTION_TIMEOUT_MS }});
+}} else {{
+  await searchInput.press('Enter');
+}}
+If no submit control resolves within that same form/container, default to \
+`await searchInput.press('Enter')` on the field itself — the safe generic fallback for a \
+search box — rather than clicking a page-wide name match that may belong to an unrelated form.
+
 Field-level validation rules — when a step checks that a field shows a validation/error \
 state (e.g. "shows required field error", "marks the field invalid"), do NOT search the \
 page for arbitrary validation-message text, and do NOT assume any single mechanism (e.g. \
@@ -534,6 +586,22 @@ failure signal, since many applications validate via native browser dialogs or c
 this pattern won't match, and a test that only waits on it will time out even though the \
 action genuinely failed as expected. Never hardcode a message like "Invalid username or \
 password" unless that exact string was given to you as data.
+
+Empty-result assertion rule — when a Scenario's Expected result is that a search/filter \
+yields no results (an empty state), do not assume the application renders a text message \
+like "No results found" — many applications simply render an empty result list with no copy \
+at all. Treat the structural signal as the authoritative pass condition: \
+`await expect(page.locator('<result-item selector>')).toHaveCount(0, {{ timeout: \
+ASSERTION_TIMEOUT_MS }})` against the same locator that would match individual result items \
+on a non-empty search. Only additionally check for empty-state copy if that literal text is \
+given to you via the Test data/Expected result above, and even then make it a soft, log-only \
+check that cannot fail the test on its own, e.g.:
+const emptyMessage = page.getByText('<the given literal text>');
+if (await emptyMessage.count() === 0) {{
+  console.warn('Empty-state message not found; relying on structural assertion only.');
+}}
+Never let an absent/mismatched text message fail an otherwise structurally-correct \
+empty-state test — the `toHaveCount(0)` check above is what must pass.
 
 Step-ordering rule — perform every listed Test step, in order, BEFORE asserting the Expected \
 result. Never assert the Expected result (or any failure/success signal derived from it) \
@@ -845,12 +913,27 @@ class HostedAIProvider:
         known_pages: list[dict[str, str]] | None = None,
         known_locators: list[dict[str, str]] | None = None,
         grounding_feedback: str | None = None,
+        *,
+        requires_auth: bool = False,
     ) -> TestAssetCode:
         step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
         base_url = getattr(scenario, "base_url", None) or ""
+        auth_precondition_note = (
+            "This Scenario's target page requires an authenticated session to reach — call "
+            "`fillCredentials(page)` as part of establishing that session before proceeding "
+            "with the Test steps below."
+            if requires_auth
+            else "This Scenario's target page does not require authentication — do not call "
+            "`fillCredentials` unless a Test step is itself the login flow."
+        )
         content = await _chat_completion(
             [
-                {"role": "system", "content": _PLAYWRIGHT_PROMPT_SYSTEM.format(base_url=base_url)},
+                {
+                    "role": "system",
+                    "content": _PLAYWRIGHT_PROMPT_SYSTEM.format(
+                        base_url=base_url, auth_precondition_note=auth_precondition_note
+                    ),
+                },
                 {
                     "role": "user",
                     "content": _PLAYWRIGHT_PROMPT_USER.format(

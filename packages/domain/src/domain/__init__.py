@@ -13,7 +13,11 @@ adds `TestSuite`/`TestAsset` (one `TestSuite` per Journey per attempt,
 auto-named from the Journey; one `TestAsset` per Scenario, belonging to its
 Journey's `TestSuite`). Story 2.22 adds `DiagnosticRecord`, the single sink
 table every Discovery Engine v2 heuristic (2.10-2.14, 2.19, 2.21) writes
-observability through.
+observability through. The Run All Tests feature adds `ExecutionPolicy`
+(per-Application execution allowlist/toggle), `TestRun`/`TestResult`
+(one execution attempt and its per-`TestAsset` outcomes), and
+`TestResultArtifact` (object-storage pointers for failure screenshots/
+traces) — and adds `Scenario.safety_classification`.
 """
 
 from domain.action import Action
@@ -28,6 +32,7 @@ from domain.diagnostic_record import DiagnosticRecord
 from domain.discovery_error import DiscoveryError, ErrorCode
 from domain.discovery_run import DiscoveryRun
 from domain.discovery_settings import DiscoverySettings, InteractionLevel
+from domain.execution_policy import ExecutionPolicy
 from domain.exploration_step import ExplorationStep
 from domain.form import Form
 from domain.form_field import FormField
@@ -43,6 +48,9 @@ from domain.scenario import Scenario, ScenarioType
 from domain.synthetic_data_entry import SyntheticDataEntry
 from domain.test_asset import TestAsset
 from domain.test_data_entry import TestDataEntry
+from domain.test_result import TestResult, TestResultStatus
+from domain.test_result_artifact import ArtifactType, TestResultArtifact
+from domain.test_run import TestRun, TestRunStatus
 from domain.test_suite import TestSuite
 from domain.validation_rule import ValidationRule
 
@@ -65,6 +73,7 @@ __all__ = [
     "DiscoveryRun",
     "DiscoverySettings",
     "InteractionLevel",
+    "ExecutionPolicy",
     "ExplorationStep",
     "Form",
     "FormField",
@@ -79,8 +88,14 @@ __all__ = [
     "Scenario",
     "ScenarioType",
     "SyntheticDataEntry",
+    "ArtifactType",
     "TestAsset",
     "TestDataEntry",
+    "TestResult",
+    "TestResultStatus",
+    "TestResultArtifact",
+    "TestRun",
+    "TestRunStatus",
     "TestSuite",
     "ValidationRule",
     "aggregation_key",

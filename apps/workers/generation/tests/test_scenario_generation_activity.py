@@ -188,3 +188,70 @@ def test_scenario_generation_activity_is_idempotent_on_retry(
             session.exec(select(Scenario).where(Scenario.journey_id == journey.id)).all()
         )
         assert count == 1
+
+
+def test_scenario_generation_activity_persists_safety_classification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run All Tests feature: each persisted Scenario is classified from its
+    own steps at generation time, most-severe-step-wins, using the same
+    `safety_classifier.classify()` discovery's live-crawl safety_engine
+    calls — see `activities_module._classify_scenario_steps`."""
+    init_db()
+    journey = _seed_journey()
+
+    candidates = [
+        ScenarioCandidate(
+            name="Safe browsing",
+            type="happy",
+            steps=["View item details", "Open the cart"],
+            expected_result="Cart is shown",
+            test_data=[],
+        ),
+        ScenarioCandidate(
+            name="Deletes an order",
+            type="negative",
+            steps=["View item details", "Delete the order"],
+            expected_result="Order is removed",
+            test_data=[],
+        ),
+        ScenarioCandidate(
+            name="Ambiguous save",
+            type="happy",
+            steps=["View item details", "Save changes"],
+            expected_result="Changes are saved",
+            test_data=[],
+        ),
+        ScenarioCandidate(
+            name="No steps at all",
+            type="edge",
+            steps=[],
+            expected_result="N/A",
+            test_data=[],
+        ),
+    ]
+    monkeypatch.setattr(
+        activities_module, "HostedAIProvider", lambda: _FakeAIProvider(candidates)
+    )
+
+    asyncio.run(
+        activities_module.scenario_generation_activity(
+            ScenarioGenerationActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+
+    with Session(engine) as session:
+        scenarios_by_name = {
+            s.name: s
+            for s in session.exec(
+                select(Scenario).where(Scenario.journey_id == journey.id)
+            ).all()
+        }
+
+    assert scenarios_by_name["Safe browsing"].safety_classification == "SAFE"
+    assert scenarios_by_name["Deletes an order"].safety_classification == "DESTRUCTIVE"
+    assert scenarios_by_name["Ambiguous save"].safety_classification == "UNKNOWN"
+    assert scenarios_by_name["No steps at all"].safety_classification == "UNKNOWN"
+    assert scenarios_by_name["No steps at all"].safety_classification_reason == (
+        "scenario has no steps to classify"
+    )

@@ -35,8 +35,23 @@ if errorlevel 1 (
 
 tasklist /v /fi "windowtitle eq AITestGen Generation Worker" 2>nul | findstr /i "cmd.exe" >nul
 if errorlevel 1 (
+  rem PlaywrightGenerationActivity's typecheck gate (Checklist rule 3) shells
+  rem out to a real tsc here - without this install every Generate Suite run
+  rem fails the typecheck step for every Scenario, silently (SuiteGeneration-
+  rem Workflow reports COMPLETED with 0 TestAssets written, no error surfaced).
+  if not exist apps\workers\generation\typecheck\node_modules (
+    pushd apps\workers\generation\typecheck
+    call npm install
+    popd
+  )
   echo [dev-up] starting generation worker...
   start "AITestGen Generation Worker" cmd /k "scripts\run-generation-worker.cmd"
+)
+
+tasklist /v /fi "windowtitle eq AITestGen Execution Worker" 2>nul | findstr /i "cmd.exe" >nul
+if errorlevel 1 (
+  echo [dev-up] starting execution worker...
+  start "AITestGen Execution Worker" cmd /k "scripts\run-execution-worker.cmd"
 )
 
 rem Best-effort, backgrounded: refresh generated API types once the API

@@ -20,6 +20,7 @@ from domain import (
     Component,
     DiscoveryRun,
     DiscoverySettings,
+    ExecutionPolicy,
     Form,
     InteractionLevel,
     Invite,
@@ -30,6 +31,9 @@ from domain import (
     Scenario,
     TestAsset,
     TestDataEntry,
+    TestResult,
+    TestResultArtifact,
+    TestRun,
     TestSuite,
     aggregation_key,
 )
@@ -42,7 +46,14 @@ from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio.exceptions import WorkflowAlreadyStartedError
-from workflows import GENERATION_TASK_QUEUE, GenerationWorkflow, SuiteGenerationWorkflow
+from workflows import (
+    EXECUTION_TASK_QUEUE,
+    GENERATION_TASK_QUEUE,
+    ApplicationTestExecutionWorkflow,
+    ExecutionWorkflowInput,
+    GenerationWorkflow,
+    SuiteGenerationWorkflow,
+)
 
 from api.auth import (
     CurrentAdminDep,
@@ -306,7 +317,17 @@ class ApplicationRead(BaseModel):
 class HomeApplicationRead(ApplicationRead):
     journey_count: int
     scenario_count: int
+    # Dashboard scenario stat: `scenario_count` alone grows mid-generation
+    # (GenerationWorkflow runs one per Journey, writing a variable number of
+    # Scenarios) — this is `journey_count`'s counterpart so the card can hide
+    # the count until every Journey is covered, same as ReviewScenarios.tsx.
+    scenario_journeys_covered: int
     suite_count: int
+    # Dashboard "generating" vs "generated" pill: `suite_count` alone can't
+    # tell them apart — EnsureTestSuiteActivity creates the TestSuite row
+    # before its TestAssets exist. Mirrors TestSuiteResults.tsx's own
+    # `isComplete` check (test_case_count >= scenario_count).
+    test_case_count: int
 
 
 def _coverage_counts(session: Session, discovery_run: DiscoveryRun) -> dict[str, int]:
@@ -516,7 +537,9 @@ def get_home(
     journey_ids = list(app_id_by_journey_id.keys())
 
     scenario_counts: dict[uuid.UUID, int] = {}
+    scenario_journeys_covered: dict[uuid.UUID, int] = {}
     suite_counts: dict[uuid.UUID, int] = {}
+    test_case_counts: dict[uuid.UUID, int] = {}
     if journey_ids:
         for journey_id, count in session.exec(
             select(Scenario.journey_id, func.count())
@@ -528,6 +551,10 @@ def get_home(
         ).all():
             app_id = app_id_by_journey_id[journey_id]
             scenario_counts[app_id] = scenario_counts.get(app_id, 0) + count
+            # Grouped by journey_id, so each row here is one Journey that has
+            # >=1 current Scenario — same "journeys covered" signal
+            # ReviewScenarios.tsx uses to gate its own isComplete.
+            scenario_journeys_covered[app_id] = scenario_journeys_covered.get(app_id, 0) + 1
         for journey_id, count in session.exec(
             select(TestSuite.journey_id, func.count())
             .where(
@@ -538,6 +565,18 @@ def get_home(
         ).all():
             app_id = app_id_by_journey_id[journey_id]
             suite_counts[app_id] = suite_counts.get(app_id, 0) + count
+        for journey_id, count in session.exec(
+            select(TestSuite.journey_id, func.count(TestAsset.id))  # type: ignore[arg-type]
+            .join(TestAsset, TestAsset.test_suite_id == TestSuite.id)  # type: ignore[arg-type]
+            .where(
+                TestSuite.journey_id.in_(journey_ids),  # type: ignore[attr-defined]
+                TestSuite.current.is_(True),  # type: ignore[attr-defined]
+                TestAsset.current.is_(True),  # type: ignore[attr-defined]
+            )
+            .group_by(TestSuite.journey_id)  # type: ignore[arg-type]
+        ).all():
+            app_id = app_id_by_journey_id[journey_id]
+            test_case_counts[app_id] = test_case_counts.get(app_id, 0) + count
 
     result = []
     for application in applications:
@@ -549,7 +588,9 @@ def get_home(
                 **base.model_dump(),
                 journey_count=journey_counts.get(application.id, 0),
                 scenario_count=scenario_counts.get(application.id, 0),
+                scenario_journeys_covered=scenario_journeys_covered.get(application.id, 0),
                 suite_count=suite_counts.get(application.id, 0),
+                test_case_count=test_case_counts.get(application.id, 0),
             )
         )
     return result
@@ -1553,6 +1594,639 @@ def download_test_suite_project(
         content=zip_bytes,
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}-tests.zip"'},
+    )
+
+
+class ExecutionPolicyRead(BaseModel):
+    execution_enabled: bool
+    allowed_base_urls: list[str]
+    destructive_actions_permitted: bool
+    video_capture_enabled: bool
+    version: int
+
+
+class ExecutionPolicyUpdate(BaseModel):
+    execution_enabled: bool | None = None
+    allowed_base_urls: list[str] | None = None
+    destructive_actions_permitted: bool | None = None
+    video_capture_enabled: bool | None = None
+
+
+def _to_execution_policy_read(policy: ExecutionPolicy) -> ExecutionPolicyRead:
+    return ExecutionPolicyRead(
+        execution_enabled=policy.execution_enabled,
+        allowed_base_urls=policy.allowed_base_urls,
+        destructive_actions_permitted=policy.destructive_actions_permitted,
+        video_capture_enabled=policy.video_capture_enabled,
+        version=policy.version,
+    )
+
+
+@app.get(
+    "/applications/{external_id}/execution-policy",
+    response_model=ExecutionPolicyRead,
+)
+def get_execution_policy(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> ExecutionPolicyRead:
+    application = _get_org_application(session, organization_id, external_id)
+    policy = session.exec(
+        select(ExecutionPolicy).where(ExecutionPolicy.application_id == application.id)
+    ).first()
+    if policy is None:
+        raise HTTPException(status_code=404, detail="no execution policy configured yet")
+    return _to_execution_policy_read(policy)
+
+
+@app.put(
+    "/applications/{external_id}/execution-policy",
+    response_model=ExecutionPolicyRead,
+)
+def update_execution_policy(
+    external_id: uuid.UUID,
+    payload: ExecutionPolicyUpdate,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> ExecutionPolicyRead:
+    """Upsert — without this, "Run All Tests" has nothing to validate a run
+    against and can never be clickable (decision from the grill-me design
+    review). `version` is bumped on every field change, never on a no-op
+    PUT, so a `TestRun`'s `execution_policy_version` snapshot stays a
+    meaningful "was this the policy in effect" marker."""
+    application = _get_org_application(session, organization_id, external_id)
+    policy = session.exec(
+        select(ExecutionPolicy).where(ExecutionPolicy.application_id == application.id)
+    ).first()
+    is_new = policy is None
+    if policy is None:
+        policy = ExecutionPolicy(application_id=application.id)
+
+    changed = False
+    for field_name in (
+        "execution_enabled",
+        "allowed_base_urls",
+        "destructive_actions_permitted",
+        "video_capture_enabled",
+    ):
+        value = getattr(payload, field_name)
+        if value is not None and value != getattr(policy, field_name):
+            setattr(policy, field_name, value)
+            changed = True
+
+    if changed and not is_new:
+        policy.version += 1
+    policy.updated_at = datetime.now(UTC)
+    session.add(policy)
+    session.commit()
+    session.refresh(policy)
+    return _to_execution_policy_read(policy)
+
+
+class TestResultRead(BaseModel):
+    id: uuid.UUID
+    scenario_name: str
+    status: str
+    duration_ms: int | None
+    error_message: str | None
+    stack_trace: str | None
+    blocked_reason: str | None
+
+
+class TestRunRead(BaseModel):
+    id: uuid.UUID
+    status: str
+    trigger: str
+    pass_rate: float | None
+    total_count: int
+    passed_count: int
+    failed_count: int
+    timed_out_count: int
+    errored_count: int
+    blocked_count: int
+    blocked_reason: str | None
+    environment_snapshot: str
+    target_base_url_snapshot: str
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    results: list[TestResultRead] | None = None
+
+
+class TestResultArtifactRead(BaseModel):
+    id: uuid.UUID
+    artifact_type: str
+    content_type: str
+    size_bytes: int
+    url: str
+
+
+def _to_test_run_read(
+    test_run: TestRun, *, results: list[TestResultRead] | None
+) -> TestRunRead:
+    return TestRunRead(
+        id=test_run.external_id,
+        status=test_run.status,
+        trigger=(
+            f"Manual run by {test_run.triggered_by_name}"
+            if test_run.triggered_by_name
+            else "Manual run"
+        ),
+        pass_rate=(
+            test_run.passed_count / test_run.total_count if test_run.total_count else None
+        ),
+        total_count=test_run.total_count,
+        passed_count=test_run.passed_count,
+        failed_count=test_run.failed_count,
+        timed_out_count=test_run.timed_out_count,
+        errored_count=test_run.errored_count,
+        blocked_count=test_run.blocked_count,
+        blocked_reason=test_run.blocked_reason,
+        environment_snapshot=test_run.environment_snapshot,
+        target_base_url_snapshot=test_run.target_base_url_snapshot,
+        created_at=test_run.created_at,
+        started_at=test_run.started_at,
+        completed_at=test_run.completed_at,
+        results=results,
+    )
+
+
+@app.post("/applications/{external_id}/test-runs", status_code=202)
+async def trigger_test_run(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
+) -> dict[str, bool]:
+    """No body — every "Run All Tests" click is a fresh, full-scope run
+    covering every current TestAsset for the application (no rerun-scoped
+    mode). `PrepareTestRunActivity` creates the actual `TestRun` row
+    asynchronously, so the very first `GET .../test-runs` poll may briefly
+    see nothing yet — the same gap `TestSuiteResults.tsx`'s existing poll
+    loop already tolerates for generation.
+
+    ponytail: no `ExecutionPolicy` precondition check here anymore —
+    removed per explicit request so this never needs setup before it can
+    be clicked. `GET`/`PUT .../execution-policy` below still exist; nothing
+    on this path reads them. To restore the original gate: re-add a
+    `select(ExecutionPolicy)...` lookup and 409 when it's missing (see git
+    history for the removed version)."""
+    application = _get_org_application(session, organization_id, external_id)
+
+    client = await get_temporal_client()
+    await client.start_workflow(
+        ApplicationTestExecutionWorkflow.run,
+        ExecutionWorkflowInput(
+            application_id=str(application.external_id), triggered_by_name=user.name
+        ),
+        # Every run is a genuinely new TestRun (no rerun/idempotency key the
+        # way suite-{journey_id}-{attempt} has) — the id only needs to be
+        # unique, never deterministic/replayable.
+        id=f"execution-{application.external_id}-{uuid.uuid4()}",
+        task_queue=EXECUTION_TASK_QUEUE,
+    )
+    return {"started": True}
+
+
+class TestRunPageRead(BaseModel):
+    items: list[TestRunRead]
+    page: int
+    page_size: int
+    total: int
+
+
+@app.get("/applications/{external_id}/test-runs", response_model=TestRunPageRead)
+def list_test_runs(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+    page: int = 1,
+    page_size: int = 10,
+) -> TestRunPageRead:
+    """Paginated (Application Workspace feature's Runs tab) — every run for
+    an Application is kept forever (immutable history), so an unpaginated
+    list would grow without bound."""
+    application = _get_org_application(session, organization_id, external_id)
+    base_query = select(TestRun).where(TestRun.application_id == application.id)
+    total = session.exec(select(func.count()).select_from(base_query.subquery())).one()
+    test_runs = session.exec(
+        base_query.order_by(TestRun.created_at.desc())  # type: ignore[arg-type]
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
+    return TestRunPageRead(
+        items=[_to_test_run_read(tr, results=None) for tr in test_runs],
+        page=page,
+        page_size=page_size,
+        total=total,
+    )
+
+
+@app.get(
+    "/applications/{external_id}/test-runs/{test_run_external_id}",
+    response_model=TestRunRead,
+)
+def get_test_run(
+    external_id: uuid.UUID,
+    test_run_external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> TestRunRead:
+    """The endpoint the frontend polls while a run is in flight (mirrors
+    `list_test_suites`'s shape)."""
+    application = _get_org_application(session, organization_id, external_id)
+    test_run = session.exec(
+        select(TestRun).where(
+            TestRun.external_id == test_run_external_id,
+            TestRun.application_id == application.id,
+        )
+    ).first()
+    if test_run is None:
+        raise HTTPException(status_code=404, detail="test run not found")
+
+    results = session.exec(
+        select(TestResult).where(TestResult.test_run_id == test_run.id)
+    ).all()
+    scenario_ids = {r.scenario_id for r in results}
+    scenarios_by_id = (
+        {
+            s.id: s
+            for s in session.exec(
+                select(Scenario).where(Scenario.id.in_(scenario_ids))  # type: ignore[attr-defined]
+            ).all()
+        }
+        if scenario_ids
+        else {}
+    )
+    result_reads = [
+        TestResultRead(
+            id=r.external_id,
+            scenario_name=scenarios_by_id[r.scenario_id].name
+            if r.scenario_id in scenarios_by_id
+            else "",
+            status=r.status,
+            duration_ms=r.duration_ms,
+            error_message=r.error_message,
+            stack_trace=r.stack_trace,
+            blocked_reason=r.blocked_reason,
+        )
+        for r in results
+    ]
+    return _to_test_run_read(test_run, results=result_reads)
+
+
+@app.get(
+    "/test-results/{external_id}/artifacts",
+    response_model=list[TestResultArtifactRead],
+)
+def list_test_result_artifacts(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[TestResultArtifactRead]:
+    """Presigned URLs (mirrors the existing screenshot-URL pattern used
+    elsewhere in this file) — never proxies the blob itself through this
+    API."""
+    test_result = session.exec(
+        select(TestResult).where(TestResult.external_id == external_id)
+    ).first()
+    test_run = (
+        session.get(TestRun, test_result.test_run_id) if test_result is not None else None
+    )
+    application = (
+        session.get(Application, test_run.application_id) if test_run is not None else None
+    )
+    if (
+        test_result is None
+        or test_run is None
+        or application is None
+        or application.organization_id != organization_id
+    ):
+        raise HTTPException(status_code=404, detail="test result not found")
+
+    artifacts = session.exec(
+        select(TestResultArtifact).where(TestResultArtifact.test_result_id == test_result.id)
+    ).all()
+    object_store = ObjectStore()
+    return [
+        TestResultArtifactRead(
+            id=a.external_id,
+            artifact_type=a.artifact_type,
+            content_type=a.content_type,
+            size_bytes=a.size_bytes,
+            url=object_store.presigned_get_url(a.object_store_key),
+        )
+        for a in artifacts
+    ]
+
+
+def _current_test_assets_for_application(
+    session: Session, application: Application
+) -> tuple[list[TestAsset], dict[uuid.UUID, Scenario]]:
+    """The same `Journey(candidate) -> TestSuite(current) -> TestAsset(current)`
+    join `list_test_suites` and `_prepare_test_run_sync`
+    (`execution_worker/activities.py`) already use — factored out here so
+    the Application Workspace's Suite-tab and Overview endpoints don't each
+    duplicate it. Returns every current `TestAsset` plus a
+    `Scenario.id -> Scenario` map (for name/type/steps)."""
+    journeys = session.exec(
+        select(Journey).where(
+            Journey.application_id == application.id,
+            Journey.status == "candidate",
+        )
+    ).all()
+    if not journeys:
+        return [], {}
+    journey_ids = [j.id for j in journeys]
+
+    test_suites = session.exec(
+        select(TestSuite).where(
+            TestSuite.journey_id.in_(journey_ids),  # type: ignore[attr-defined]
+            TestSuite.current.is_(True),  # type: ignore[attr-defined]
+        )
+    ).all()
+    if not test_suites:
+        return [], {}
+    suite_ids = [ts.id for ts in test_suites]
+
+    test_assets = session.exec(
+        select(TestAsset).where(
+            TestAsset.test_suite_id.in_(suite_ids),  # type: ignore[attr-defined]
+            TestAsset.current.is_(True),  # type: ignore[attr-defined]
+        )
+    ).all()
+    scenario_ids = {a.scenario_id for a in test_assets}
+    scenarios_by_id = {
+        s.id: s
+        for s in (
+            session.exec(select(Scenario).where(Scenario.id.in_(scenario_ids))).all()  # type: ignore[attr-defined]
+            if scenario_ids
+            else []
+        )
+    }
+    return test_assets, scenarios_by_id
+
+
+def _latest_result_by_asset(
+    session: Session, application: Application, asset_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, TestResult]:
+    """The most recent `TestResult` per `TestAsset`, across every `TestRun`
+    the Application has ever had — no window function exists elsewhere in
+    this codebase, so this uses the same order-by-desc + `setdefault` idiom
+    already established for "most recent X" lookups (mirrors
+    `_latest_discovery_run` above, just keyed per-asset instead of
+    per-application). An asset with no key in the returned dict has never
+    been executed at all ("Not Run")."""
+    if not asset_ids:
+        return {}
+    results = session.exec(
+        select(TestResult)
+        .join(TestRun, TestResult.test_run_id == TestRun.id)  # type: ignore[arg-type]
+        .where(
+            TestRun.application_id == application.id,
+            TestResult.test_asset_id.in_(asset_ids),  # type: ignore[attr-defined]
+        )
+        .order_by(TestResult.created_at.desc())  # type: ignore[arg-type]
+    ).all()
+    latest_by_asset: dict[uuid.UUID, TestResult] = {}
+    for result in results:
+        latest_by_asset.setdefault(result.test_asset_id, result)
+    return latest_by_asset
+
+
+def _collapse_to_suite_row_status(result: TestResult | None) -> str:
+    """The Suite tab shows exactly 3 buckets (Passed/Failed/Not Run) —
+    narrower than `TestResultStatus`'s full vocabulary. `timed_out`/
+    `errored`/`blocked` all read as "Failed" here: an attempted-and-didn't-pass
+    test is a more honest reading for a suite-health table than lumping it
+    with never-attempted. The Runs tab's per-result detail view still shows
+    the full status via `StatusPill`, so nothing is lost overall — only in
+    this one summary."""
+    if result is None or result.status == "pending":
+        return "not_run"
+    if result.status == "passed":
+        return "passed"
+    return "failed"
+
+
+def _get_org_test_asset(
+    session: Session, organization_id: uuid.UUID, external_id: uuid.UUID
+) -> TestAsset:
+    test_asset = session.exec(
+        select(TestAsset).where(TestAsset.external_id == external_id)
+    ).first()
+    test_suite = session.get(TestSuite, test_asset.test_suite_id) if test_asset else None
+    journey = session.get(Journey, test_suite.journey_id) if test_suite else None
+    application = session.get(Application, journey.application_id) if journey else None
+    if (
+        test_asset is None
+        or test_suite is None
+        or journey is None
+        or application is None
+        or application.organization_id != organization_id
+    ):
+        raise HTTPException(status_code=404, detail="test asset not found")
+    return test_asset
+
+
+class TestAssetStatusRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    type: str
+    steps: list[str]
+    status: str
+    last_run_at: datetime | None
+    duration_ms: int | None
+    error_message: str | None
+    latest_test_result_id: uuid.UUID | None
+
+
+class TestAssetStatusPageRead(BaseModel):
+    items: list[TestAssetStatusRead]
+    page: int
+    page_size: int
+    total: int
+
+
+@app.get(
+    "/applications/{external_id}/test-suite-status",
+    response_model=TestAssetStatusPageRead,
+)
+def get_test_suite_status(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+    page: int = 1,
+    page_size: int = 10,
+) -> TestAssetStatusPageRead:
+    """Application Workspace's Test Suite tab — one row per current
+    TestAsset, showing its most recent result (or "not_run" if it's never
+    been executed) across every TestRun, not just the latest one."""
+    application = _get_org_application(session, organization_id, external_id)
+    test_assets, scenarios_by_id = _current_test_assets_for_application(session, application)
+
+    def _scenario_name(asset: TestAsset) -> str:
+        scenario = scenarios_by_id.get(asset.scenario_id)
+        return scenario.name if scenario else ""
+
+    test_assets = sorted(test_assets, key=_scenario_name)
+    total = len(test_assets)
+    page_assets = test_assets[(page - 1) * page_size : (page - 1) * page_size + page_size]
+
+    latest_by_asset = _latest_result_by_asset(session, application, [a.id for a in page_assets])
+
+    items = []
+    for asset in page_assets:
+        scenario = scenarios_by_id.get(asset.scenario_id)
+        result = latest_by_asset.get(asset.id)
+        items.append(
+            TestAssetStatusRead(
+                id=asset.external_id,
+                name=scenario.name if scenario else "",
+                type=scenario.type if scenario else "happy",
+                steps=scenario.steps if scenario else [],
+                status=_collapse_to_suite_row_status(result),
+                last_run_at=result.completed_at if result else None,
+                duration_ms=result.duration_ms if result else None,
+                error_message=result.error_message if result else None,
+                latest_test_result_id=result.external_id if result else None,
+            )
+        )
+    return TestAssetStatusPageRead(items=items, page=page, page_size=page_size, total=total)
+
+
+class TestAssetCodeRead(BaseModel):
+    code: str
+
+
+@app.get("/test-assets/{external_id}/code", response_model=TestAssetCodeRead)
+def get_test_asset_code(
+    external_id: uuid.UUID, session: SessionDep, organization_id: CurrentOrgIdDep
+) -> TestAssetCodeRead:
+    """Lazy code fetch for the Suite tab's "View Code" button — keeps the
+    (large, rarely-viewed) source text out of `get_test_suite_status`'s
+    paginated rows."""
+    test_asset = _get_org_test_asset(session, organization_id, external_id)
+    return TestAssetCodeRead(code=test_asset.code)
+
+
+class HealthRead(BaseModel):
+    tier: str
+    headline: str
+
+
+class RunTrendPointRead(BaseModel):
+    run_id: uuid.UUID
+    pass_rate: float | None
+    created_at: datetime
+
+
+class LatestRunSummaryRead(BaseModel):
+    id: uuid.UUID
+    created_at: datetime
+    passed_count: int
+    failed_count: int
+    blocked_count: int
+    duration_ms: int | None
+
+
+class OverviewRead(BaseModel):
+    health: HealthRead
+    total_tests: int
+    passed: int
+    failed: int
+    not_run: int
+    pass_rate: float | None
+    trend: list[RunTrendPointRead]
+    latest_run: LatestRunSummaryRead | None
+    # `DiscoveryRun` has no completion timestamp (only `created_at`, i.e.
+    # start time, and `status`) — this is honestly the most recent
+    # *completed* run's start time, not when it finished.
+    last_discovery_started_at: datetime | None
+
+
+def _health_tier(pass_rate: float | None) -> HealthRead:
+    if pass_rate is None:
+        return HealthRead(tier="needs_attention", headline="No tests have run yet")
+    if pass_rate >= 0.90:
+        return HealthRead(tier="healthy", headline=f"{pass_rate:.0%} of tests are passing")
+    if pass_rate >= 0.70:
+        return HealthRead(tier="needs_attention", headline=f"{pass_rate:.0%} of tests are passing")
+    return HealthRead(tier="critical", headline=f"{pass_rate:.0%} of tests are passing")
+
+
+_OVERVIEW_TREND_RUN_COUNT = 10
+
+
+@app.get("/applications/{external_id}/overview", response_model=OverviewRead)
+def get_overview(
+    external_id: uuid.UUID, session: SessionDep, organization_id: CurrentOrgIdDep
+) -> OverviewRead:
+    """Application Workspace's Overview tab — one bundled endpoint (health,
+    stat counts, recent-run trend, latest run, last discovery) rather than
+    several, mirroring `get_home`'s own "aggregate once, don't reintroduce a
+    polling waterfall" rationale."""
+    application = _get_org_application(session, organization_id, external_id)
+    test_assets, scenarios_by_id = _current_test_assets_for_application(session, application)
+    asset_ids = [a.id for a in test_assets]
+    latest_by_asset = _latest_result_by_asset(session, application, asset_ids)
+
+    total_tests = len(test_assets)
+    passed = sum(
+        1 for a in test_assets if _collapse_to_suite_row_status(latest_by_asset.get(a.id)) == "passed"
+    )
+    failed = sum(
+        1 for a in test_assets if _collapse_to_suite_row_status(latest_by_asset.get(a.id)) == "failed"
+    )
+    not_run = total_tests - passed - failed
+    pass_rate = (passed / total_tests) if total_tests else None
+
+    recent_runs = session.exec(
+        select(TestRun)
+        .where(TestRun.application_id == application.id)
+        .order_by(TestRun.created_at.desc())  # type: ignore[arg-type]
+        .limit(_OVERVIEW_TREND_RUN_COUNT)
+    ).all()
+    trend = [
+        RunTrendPointRead(
+            run_id=r.external_id,
+            pass_rate=(r.passed_count / r.total_count) if r.total_count else None,
+            created_at=r.created_at,
+        )
+        for r in reversed(recent_runs)  # oldest first, for a left-to-right trend chart
+    ]
+    latest_run = None
+    if recent_runs:
+        latest = recent_runs[0]
+        duration_ms = None
+        if latest.started_at and latest.completed_at:
+            duration_ms = int((latest.completed_at - latest.started_at).total_seconds() * 1000)
+        latest_run = LatestRunSummaryRead(
+            id=latest.external_id,
+            created_at=latest.created_at,
+            passed_count=latest.passed_count,
+            failed_count=latest.failed_count,
+            blocked_count=latest.blocked_count,
+            duration_ms=duration_ms,
+        )
+
+    discovery_run = _latest_discovery_run(session, application.id)
+    last_discovery_started_at = (
+        discovery_run.created_at if discovery_run and discovery_run.status == "complete" else None
+    )
+
+    return OverviewRead(
+        health=_health_tier(pass_rate),
+        total_tests=total_tests,
+        passed=passed,
+        failed=failed,
+        not_run=not_run,
+        pass_rate=pass_rate,
+        trend=trend,
+        latest_run=latest_run,
+        last_discovery_started_at=last_discovery_started_at,
     )
 
 

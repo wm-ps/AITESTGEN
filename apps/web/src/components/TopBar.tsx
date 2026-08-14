@@ -3,6 +3,13 @@ import type { UserRead } from '../api'
 import { Logo } from './Logo'
 
 const ENV_LABELS: Record<string, string> = { staging: 'Staging', qa: 'QA', production: 'Production' }
+// Distinct dot color per environment — production reads as the "real"
+// deliberate one (good/green), not an alarm color; staging/qa share accent.
+const ENV_DOT_COLOR: Record<string, string> = {
+  staging: 'var(--accent)',
+  qa: 'var(--warn-strong)',
+  production: 'var(--good-strong)',
+}
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/)
@@ -67,18 +74,35 @@ export function TopBar({
           <>
             <span style={{ width: 1, height: 20, background: 'var(--border)', margin: '0 4px' }} aria-hidden="true" />
             <span style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)' }}>{applicationBadge.name}</span>
+            {/* A small outlined tag, not a filled pill — the app name is the
+                thing that matters here, the environment is context, so it
+                reads quieter and smaller than a status pill would. */}
             <span
               style={{
-                display: 'inline-block',
-                fontSize: 11,
-                fontWeight: 600,
-                background: 'var(--accent-wash)',
-                color: 'var(--accent)',
-                borderRadius: 'var(--radius-full)',
-                padding: '3px 9px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 4,
+                fontSize: 9.5,
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em',
+                color: 'var(--ink-muted)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-xs)',
+                padding: '2px 6px',
                 whiteSpace: 'nowrap',
               }}
             >
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 5,
+                  height: 5,
+                  borderRadius: 'var(--radius-full)',
+                  background: ENV_DOT_COLOR[applicationBadge.environment] ?? 'var(--accent)',
+                  flexShrink: 0,
+                }}
+              />
               {ENV_LABELS[applicationBadge.environment] || 'Staging'}
             </span>
           </>
@@ -155,7 +179,7 @@ export function TopBar({
                     fontFamily: 'inherit',
                   }}
                 >
-                  Invite teammate
+                  Invite
                 </button>
               )}
               {user.role === 'admin' && onOpenSettings && (

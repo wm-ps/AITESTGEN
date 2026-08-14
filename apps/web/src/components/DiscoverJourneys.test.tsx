@@ -188,14 +188,14 @@ describe('DiscoverJourneys', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Discovering journeys in Test App')).toBeTruthy()
-      // 25%, not 75% — the percentage reflects the stage that just finished
-      // (authentication), not "discovering"'s own target; see ImportProgress.tsx.
-      expect(screen.getByText('25%')).toBeTruthy()
     })
     // No internal stage naming, and no crawl-specific/technical terminology
-    // in this view (CR-2 + live UX correction).
+    // in this view (CR-2 + live UX correction), and no percent-fill progress
+    // bar — this uses the same generation-loader animation as scenario/test
+    // suite generation instead (GenerationLoader).
     expect(screen.queryByText('Discovery')).toBeNull()
     expect(screen.queryByText('Authentication')).toBeNull()
+    expect(screen.queryByRole('progressbar')).toBeNull()
     expect(document.body.textContent).not.toMatch(/crawl|queue|fingerprint/i)
   })
 

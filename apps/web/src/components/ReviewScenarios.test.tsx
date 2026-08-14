@@ -26,10 +26,19 @@ const COMPLETE_SCENARIO = {
   test_data_complete: true,
 }
 
+// Every Journey referenced by a given Scenario is treated as "covered" —
+// isComplete (journeysCovered >= journeys.length) needs a matching /journeys
+// response, not just /scenarios, or the Review screen never leaves the
+// "still generating" loader.
 function stubFetch(
   scenarios: (typeof INCOMPLETE_SCENARIO)[],
   overrides: { onTestDataUpdate?: (body: unknown) => void } = {},
 ) {
+  const journeys = [...new Set(scenarios.map((s) => s.journey_id))].map((id) => ({
+    id,
+    name: scenarios.find((s) => s.journey_id === id)!.journey_name,
+    step_count: 1,
+  }))
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -54,6 +63,9 @@ function stubFetch(
       }
       if (init?.method === 'DELETE') {
         return { ok: true, status: 204, json: async () => undefined }
+      }
+      if (url.includes('/journeys')) {
+        return { ok: true, status: 200, json: async () => journeys }
       }
       if (url.includes('/scenarios')) {
         return { ok: true, status: 200, json: async () => scenarios }
@@ -162,12 +174,42 @@ describe('ReviewScenarios', () => {
     expect(onContinueToGenerate).toHaveBeenCalledOnce()
   })
 
-  it('shows a loading animation while scenarios are still generating', async () => {
+  it('shows the shared generation-loader animation, not the scenario list, while scenarios are still generating', async () => {
     stubFetch([])
     render(<ReviewScenarios furthestCount={2}applicationId="app-1" onContinueToGenerate={() => {}} />)
 
     await waitFor(() => {
-      expect(screen.getByRole('progressbar', { name: 'Scenario generation progress' })).toBeTruthy()
+      expect(screen.getByRole('status').textContent).toContain('Generating scenarios')
     })
+    expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+
+  it('keeps showing the loader — not a partial list — once some Scenarios have landed but their Journeys are not all covered yet', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/journeys')) {
+          // Two Journeys exist, but only one has a Scenario so far.
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [
+              { id: 'journey-1', name: 'Checkout', step_count: 1 },
+              { id: 'journey-2', name: 'Returns', step_count: 1 },
+            ],
+          }
+        }
+        if (url.includes('/scenarios')) {
+          return { ok: true, status: 200, json: async () => [INCOMPLETE_SCENARIO] }
+        }
+        return { ok: true, status: 200, json: async () => [] }
+      }),
+    )
+    render(<ReviewScenarios furthestCount={2}applicationId="app-1" onContinueToGenerate={() => {}} />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('status').textContent).toContain('Generating scenarios')
+    })
+    expect(screen.queryByText('Guest checkout')).toBeNull()
   })
 })
