@@ -375,7 +375,7 @@ function ApplicationCard({
             <span>
               <span style={{ fontSize: 15, fontWeight: 700 }}>{application.scenario_count}</span>{' '}
               <span className="caption" style={{ fontSize: 12 }}>
-                scenarios
+                test cases
               </span>
             </span>
           </>

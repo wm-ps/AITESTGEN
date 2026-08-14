@@ -856,6 +856,8 @@ export interface components {
             journey_count: number;
             /** Scenario Count */
             scenario_count: number;
+            /** Scenario Journeys Covered */
+            scenario_journeys_covered: number;
             /** Suite Count */
             suite_count: number;
             /** Test Case Count */

@@ -504,6 +504,14 @@ def _find_artifacts(output_dir: Path) -> list[Path]:
     return [p for p in output_dir.rglob("*") if p.is_file() and p.suffix in (".png", ".zip")]
 
 
+def _tally_counts(results: list[TestResult]) -> dict[str, int]:
+    counts = {status: 0 for status in ("passed", "failed", "timed_out", "errored", "blocked")}
+    for result in results:
+        if result.status in counts:
+            counts[result.status] += 1
+    return counts
+
+
 def _persist_test_result_sync(
     input: ExecuteTestActivityInput, context: _ExecutionContext, outcome: dict
 ) -> None:
@@ -539,6 +547,23 @@ def _persist_test_result_sync(
                 )
             )
 
+        # Live progress for the polling frontend — without this, StatTiles
+        # sit at 0 for the whole run since FinalizeTestRunActivity only
+        # tallies once, at the very end.
+        run_results = session.exec(
+            select(TestResult).where(TestResult.test_run_id == test_result.test_run_id)
+        ).all()
+        counts = _tally_counts(run_results)
+        test_run = session.exec(
+            select(TestRun).where(TestRun.id == test_result.test_run_id)
+        ).one()
+        test_run.passed_count = counts["passed"]
+        test_run.failed_count = counts["failed"]
+        test_run.timed_out_count = counts["timed_out"]
+        test_run.errored_count = counts["errored"]
+        test_run.blocked_count = counts["blocked"]
+        session.add(test_run)
+
         session.commit()
 
 
@@ -558,7 +583,6 @@ def _finalize_test_run_sync(input: FinalizeTestRunActivityInput) -> None:
         results = session.exec(
             select(TestResult).where(TestResult.test_run_id == test_run.id)
         ).all()
-        counts = {status: 0 for status in ("passed", "failed", "timed_out", "errored", "blocked")}
         for result in results:
             if result.status == "pending":
                 # ponytail: an ExecuteTestActivity that exhausted its own
@@ -578,9 +602,8 @@ def _finalize_test_run_sync(input: FinalizeTestRunActivityInput) -> None:
                 )
                 result.completed_at = datetime.now(UTC)
                 session.add(result)
-            if result.status in counts:
-                counts[result.status] += 1
 
+        counts = _tally_counts(results)
         test_run.total_count = len(results)
         test_run.passed_count = counts["passed"]
         test_run.failed_count = counts["failed"]
