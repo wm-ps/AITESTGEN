@@ -61,16 +61,6 @@ function AlertIcon() {
 
 const NON_PASSED_STATUSES = new Set(['failed', 'timed_out', 'errored'])
 
-// A colored left border reads as a quick pass/fail signal on scan — same
-// technique DESIGN.md already uses for the green expected-result-rule,
-// generalized here per status instead of a single fixed color.
-function resultSignalColor(status: string): string {
-  if (status === 'passed') return 'var(--good)'
-  if (status === 'blocked') return 'var(--warn)'
-  if (NON_PASSED_STATUSES.has(status)) return 'var(--danger)'
-  return 'var(--accent)'
-}
-
 function runSignalColor(run: TestRunRead): string {
   if (run.status === 'blocked') return 'var(--warn)'
   if (run.status === 'pending' || run.status === 'running') return 'var(--accent)'
@@ -235,7 +225,9 @@ function ResultListHeader() {
         justifyContent: 'space-between',
         alignItems: 'center',
         gap: 12,
-        padding: '6px 14px',
+        padding: '8px 16px',
+        background: 'var(--canvas-wash-alt)',
+        borderBottom: '1px solid var(--border-hairline)',
       }}
     >
       <span style={columnHeaderLabelStyle}>Test Case</span>
@@ -255,14 +247,12 @@ function TestResultRow({ result }: { result: TestResultRead }) {
 
   return (
     <div
-      className="list-row"
       style={{
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: 12,
-        padding: '10px 14px',
-        borderLeft: `3px solid ${resultSignalColor(result.status)}`,
+        padding: '10px 16px',
       }}
     >
       <div style={{ minWidth: 0 }}>
@@ -389,11 +379,13 @@ function RunDetail({
         </p>
       )}
 
-      {run.results && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {results.length > 0 && <ResultListHeader />}
+      {run.results && results.length > 0 && (
+        <div className="card-panel" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <ResultListHeader />
           {pagedResults.map((result) => (
-            <TestResultRow key={result.id} result={result} />
+            <div key={result.id} style={{ borderBottom: '1px solid var(--border-hairline)' }}>
+              <TestResultRow result={result} />
+            </div>
           ))}
           <Pagination
             page={resultsPage}

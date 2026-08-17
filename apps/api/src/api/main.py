@@ -1576,10 +1576,21 @@ def list_test_suites(
         )
     ).all()
     scenario_ids = {a.scenario_id for a in test_assets}
+    # `Scenario.current` matters here: a superseded Scenario (edited/
+    # regenerated, old row flipped non-current) can still have a TestAsset
+    # that was never invalidated. Without this filter that stale asset counts
+    # as a live test case here even though list_scenarios (Scenario.current
+    # only) already dropped it — the exact source of the two screens'
+    # counts drifting apart.
     scenarios_by_id = {
         s.id: s
         for s in (
-            session.exec(select(Scenario).where(Scenario.id.in_(scenario_ids))).all()  # type: ignore[attr-defined]
+            session.exec(
+                select(Scenario).where(
+                    Scenario.id.in_(scenario_ids),  # type: ignore[attr-defined]
+                    Scenario.current.is_(True),  # type: ignore[attr-defined]
+                )
+            ).all()
             if scenario_ids
             else []
         )
@@ -1711,10 +1722,14 @@ def download_test_suite_project(
     scenario_ids = {a.scenario_id for a in test_assets}
     scenario_name_by_asset_id = {}
     if scenario_ids:
+        # See list_test_suites for why Scenario.current is required here too.
         scenarios_by_id = {
             s.id: s
             for s in session.exec(
-                select(Scenario).where(Scenario.id.in_(scenario_ids))  # type: ignore[attr-defined]
+                select(Scenario).where(
+                    Scenario.id.in_(scenario_ids),  # type: ignore[attr-defined]
+                    Scenario.current.is_(True),  # type: ignore[attr-defined]
+                )
             ).all()
         }
         for asset in test_assets:
@@ -2135,10 +2150,16 @@ def _current_test_assets_for_application(
         )
     ).all()
     scenario_ids = {a.scenario_id for a in test_assets}
+    # See list_test_suites for why Scenario.current is required here too.
     scenarios_by_id = {
         s.id: s
         for s in (
-            session.exec(select(Scenario).where(Scenario.id.in_(scenario_ids))).all()  # type: ignore[attr-defined]
+            session.exec(
+                select(Scenario).where(
+                    Scenario.id.in_(scenario_ids),  # type: ignore[attr-defined]
+                    Scenario.current.is_(True),  # type: ignore[attr-defined]
+                )
+            ).all()
             if scenario_ids
             else []
         )

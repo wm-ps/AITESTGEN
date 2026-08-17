@@ -79,13 +79,7 @@ function ApplicationCard({
   // isComplete had. `suites_generating_count` is the suite.status-based
   // signal that fix uses: whether any suite is still actually mid-run.
   const suiteGenerating = application.suite_count > 0 && application.suites_generating_count > 0
-  // Scenario generation runs one background job per Journey and writes a
-  // variable number of Scenarios each — `scenario_count` alone climbs mid-run
-  // (this card polls every 15s) so it reads as "wrong" if shown before every
-  // Journey has landed at least one. Gate on `scenario_journeys_covered`
-  // instead, same signal ReviewScenarios.tsx uses for its own isComplete.
-  const scenariosComplete =
-    application.journey_count > 0 && application.scenario_journeys_covered >= application.journey_count
+  const testCasesComplete = application.suite_count > 0 && !suiteGenerating
   const stage =
     discoveryStatus === 'failed' || discoveryStatus === 'paused'
       ? discoveryStatus
@@ -376,13 +370,13 @@ function ApplicationCard({
             journeys
           </span>
         </span>
-        {scenariosComplete && (
+        {testCasesComplete && (
           <>
             <span aria-hidden="true" style={{ width: 1, height: 12, background: 'var(--border)' }} />
             <span>
-              <span style={{ fontSize: 15, fontWeight: 700 }}>{application.scenario_count}</span>{' '}
+              <span style={{ fontSize: 15, fontWeight: 700 }}>{application.test_case_count}</span>{' '}
               <span className="caption" style={{ fontSize: 12 }}>
-                scenarios
+                test cases
               </span>
             </span>
           </>

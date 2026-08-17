@@ -308,11 +308,22 @@ export function TestSuiteResults({
 
   useEffect(() => {
     let cancelled = false
-    api.listScenarios(applicationId).then((scenarios) => {
-      if (cancelled) return
-      setExpectedTestCaseCount(scenarios.length)
-      setExpectedJourneyCount(new Set(scenarios.map((s) => s.journey_id)).size)
-    })
+    // `expectedJourneyCount` must come from every candidate Journey
+    // (listJourneys), not from listScenarios' journey_ids — a Journey whose
+    // Scenario generation hasn't landed a row yet contributes nothing to
+    // that set, so it silently drops out of the total. isComplete then
+    // flips true one Journey short, and generate_suite's own
+    // `if not current_scenarios: continue` skips that Journey's suite
+    // forever — the exact mismatch between this screen's count and Review
+    // Scenarios'. listJourneys is the stable total ReviewScenarios.tsx
+    // already uses for the same reason.
+    Promise.all([api.listJourneys(applicationId), api.listScenarios(applicationId)]).then(
+      ([journeys, scenarios]) => {
+        if (cancelled) return
+        setExpectedTestCaseCount(scenarios.length)
+        setExpectedJourneyCount(journeys.length)
+      },
+    )
     return () => {
       cancelled = true
     }

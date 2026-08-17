@@ -509,13 +509,8 @@ export function ReviewScenarios({
     if (readinessFilter === 'Needs data') return !s.test_data_complete
     return true
   })
-  const needsDataCount = scenarios.filter((s) => !s.test_data_complete).length
   const headerSub =
-    scenarios.length === 0
-      ? ''
-      : needsDataCount > 0
-        ? `${needsDataCount} scenario${needsDataCount === 1 ? '' : 's'} require${needsDataCount === 1 ? 's' : ''} test data before the suite can be generated.`
-        : 'All scenarios are Ready — you can generate the test suite.'
+    scenarios.length === 0 ? '' : `${scenarios.length} scenario${scenarios.length === 1 ? '' : 's'} generated.`
   const totalPages = Math.max(1, Math.ceil(visibleScenarios.length / SCENARIOS_PER_PAGE))
   const pageClamped = Math.min(page, totalPages - 1)
   const pagedScenarios = visibleScenarios.slice(

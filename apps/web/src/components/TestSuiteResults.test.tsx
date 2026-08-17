@@ -61,6 +61,10 @@ function stubFetch(
       if (url.includes('/scenarios')) {
         return { ok: true, status: 200, json: async () => scenarios }
       }
+      if (url.includes('/journeys')) {
+        const journeyIds = [...new Set((scenarios as { journey_id: string }[]).map((s) => s.journey_id))]
+        return { ok: true, status: 200, json: async () => journeyIds.map((id) => ({ id })) }
+      }
       if (url.includes('/generation-status')) {
         return { ok: true, status: 200, json: async () => ({ available: true }) }
       }

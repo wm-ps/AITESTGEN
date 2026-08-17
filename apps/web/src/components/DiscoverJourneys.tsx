@@ -662,18 +662,29 @@ export function DiscoverJourneys({
                       Reference screenshot
                     </div>
                     {steps.at(-1)?.screenshot_url ? (
-                      <img
-                        src={steps.at(-1)?.screenshot_url ?? undefined}
-                        alt="Journey's final step screenshot"
-                        onClick={() => setLightboxUrl(steps.at(-1)?.screenshot_url ?? null)}
+                      <div
                         style={{
-                          width: '100%',
-                          height: 'auto',
-                          objectFit: 'contain',
-                          cursor: 'zoom-in',
-                          border: '1px solid var(--border)',
+                          padding: 10,
+                          borderRadius: 'var(--radius-lg)',
+                          border: '1px solid var(--border-strong)',
+                          background: 'var(--canvas-wash-alt)',
+                          boxShadow: '0 8px 20px rgba(15,23,42,0.12)',
                         }}
-                      />
+                      >
+                        <img
+                          src={steps.at(-1)?.screenshot_url ?? undefined}
+                          alt="Journey's final step screenshot"
+                          onClick={() => setLightboxUrl(steps.at(-1)?.screenshot_url ?? null)}
+                          style={{
+                            display: 'block',
+                            width: '100%',
+                            height: 'auto',
+                            objectFit: 'contain',
+                            cursor: 'zoom-in',
+                            borderRadius: 'var(--radius-xs)',
+                          }}
+                        />
+                      </div>
                     ) : (
                       <div
                         style={{
