@@ -51,19 +51,10 @@ const TABS: { key: WorkspaceTab; label: string; icon: () => React.JSX.Element }[
   { key: 'runs', label: 'Runs', icon: RunsIcon },
 ]
 
-function BackIcon() {
-  return (
-    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M19 12H5M12 19l-7-7 7-7" />
-    </svg>
-  )
-}
-
 export function Workspace({
   applicationId,
   initialTab = 'overview',
   autoTriggerRun = false,
-  onBack,
   onViewSetup,
 }: {
   applicationId: string
@@ -73,9 +64,6 @@ export function Workspace({
   // (if any) has somewhere to surface, mirroring what the old standalone
   // TestExecutionResults.tsx screen used to show.
   autoTriggerRun?: boolean
-  // Optional so tests/other entry points with nowhere sensible to go back
-  // to can omit either.
-  onBack?: () => void
   onViewSetup?: () => void
 }) {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>(initialTab)
@@ -152,19 +140,7 @@ export function Workspace({
             borderBottom: '1px solid var(--border)',
           }}
         >
-          {onBack ? (
-            <button
-              type="button"
-              className="button-secondary"
-              onClick={onBack}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, justifySelf: 'start' }}
-            >
-              <BackIcon />
-              Back
-            </button>
-          ) : (
-            <span aria-hidden="true" />
-          )}
+          <span aria-hidden="true" />
           {/* Underline variant, not a segmented pill: icon + label per tab,
               active tab gets an accent underline + accent text — reads as
               primary navigation instead of a filter control (which is what

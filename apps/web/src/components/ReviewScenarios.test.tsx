@@ -90,7 +90,6 @@ describe('ReviewScenarios', () => {
     await waitFor(() => {
       expect(screen.getByText('Guest checkout')).toBeTruthy()
     })
-    expect(screen.getByText('from Checkout')).toBeTruthy()
     expect(screen.getByText('Happy Path')).toBeTruthy()
   })
 
@@ -99,7 +98,10 @@ describe('ReviewScenarios', () => {
     render(<ReviewScenarios furthestCount={2}applicationId="app-1" onContinueToGenerate={() => {}} />)
 
     await waitFor(() => screen.getByText('Guest checkout'))
-    expect(screen.getAllByText('Test Data Required').length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByText('Guest checkout'))
+    await waitFor(() => {
+      expect(screen.getAllByText('Test Data Required').length).toBeGreaterThan(0)
+    })
     const button = screen.getByRole('button', {
       name: 'Generate Test Suite →',
     }) as HTMLButtonElement

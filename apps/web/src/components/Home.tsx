@@ -2,9 +2,10 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { api, type ApplicationRead, type HomeApplicationRead, type UserRead } from '../api'
 import { StatusPill } from './StatusPill'
+import { Pagination } from './Pagination'
 
 const POLL_INTERVAL_MS = 15000
-const APPS_PER_PAGE = 9
+const APPS_PER_PAGE = 5
 // Mirrors MAX_ACTIVE_PROJECTS in apps/api/src/api/main.py — server enforces
 // this for real, this just keeps the button from inviting a 409.
 const MAX_ACTIVE_PROJECTS = 4
@@ -228,7 +229,7 @@ function ApplicationCard({
         </span>
         <StatusPill status={stage} pulsing={isRunning || suiteGenerating} />
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)', marginBottom: 'var(--space-5)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-4)', marginBottom: 'var(--space-5)' }}>
         {editing ? (
           <>
             <input
@@ -381,7 +382,7 @@ function ApplicationCard({
             <span>
               <span style={{ fontSize: 15, fontWeight: 700 }}>{application.scenario_count}</span>{' '}
               <span className="caption" style={{ fontSize: 12 }}>
-                test cases
+                scenarios
               </span>
             </span>
           </>
@@ -622,24 +623,12 @@ export function Home({
                 />
               ))}
             </div>
-            {applications.length > APPS_PER_PAGE && (
-              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 'var(--space-4)', flexShrink: 0 }}>
-                <button type="button" className="button-secondary" disabled={pageClamped <= 0} onClick={() => setPage(pageClamped - 1)}>
-                  Prev
-                </button>
-                <span className="caption" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-                  Page {pageClamped + 1} of {totalPages}
-                </span>
-                <button
-                  type="button"
-                  className="button-secondary"
-                  disabled={pageClamped >= totalPages - 1}
-                  onClick={() => setPage(pageClamped + 1)}
-                >
-                  Next
-                </button>
-              </div>
-            )}
+            <Pagination
+              page={pageClamped}
+              totalPages={totalPages}
+              onPrev={() => setPage(pageClamped - 1)}
+              onNext={() => setPage(pageClamped + 1)}
+            />
           </>
         ) : (
           <div

@@ -3,8 +3,9 @@ import { ApiError, api, type TestAssetStatusRead, type TestResultRead } from '..
 import { CodeModal } from '../TestSuiteResults'
 import { StatusPill } from '../StatusPill'
 import { ArtifactsModal } from './RunsTab'
+import { Pagination } from '../Pagination'
 
-const ASSETS_PER_PAGE = 10
+const ASSETS_PER_PAGE = 5
 
 function ChevronIcon({ open }: { open: boolean }) {
   return (
@@ -254,37 +255,12 @@ export function TestSuiteTab({ applicationId }: { applicationId: string }) {
           {assets.map((asset) => (
             <AssetRow key={asset.id} asset={asset} />
           ))}
-          {totalPages > 1 && (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 'var(--space-3)',
-                padding: 'var(--space-4) var(--space-5)',
-              }}
-            >
-              <button
-                type="button"
-                className="button-secondary"
-                disabled={page <= 0}
-                onClick={() => setPage((p) => p - 1)}
-              >
-                Prev
-              </button>
-              <span className="caption" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-                Page {page + 1} of {totalPages}
-              </span>
-              <button
-                type="button"
-                className="button-secondary"
-                disabled={page >= totalPages - 1}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next
-              </button>
-            </div>
-          )}
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            onPrev={() => setPage((p) => p - 1)}
+            onNext={() => setPage((p) => p + 1)}
+          />
         </div>
       )}
     </div>

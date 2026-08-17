@@ -178,6 +178,19 @@ function App() {
   // place (its own clickable check) — no need to re-guard here.
   const onStepClick = (key: StepKey) => setView(VIEW_FOR_STEP[key])
 
+  // Every non-home view gets a back icon in the header instead of its own
+  // inner back button — wizard steps walk backward through VIEW_ORDER
+  // (same as Previous), Workspace/Settings go to whichever screen actually
+  // preceded them.
+  const onBack =
+    view === 'home'
+      ? undefined
+      : view === 'workspace'
+        ? () => setView('home')
+        : view === 'settings'
+          ? () => setView(previousView)
+          : (onPrevious ?? (() => setView('home')))
+
   return (
     <>
       <TopBar
@@ -187,6 +200,7 @@ function App() {
         }
         onLogout={handleLogout}
         onGoHome={() => setView('home')}
+        onBack={onBack}
         onInviteTeammate={() => setInviteModalOpen(true)}
         onOpenSettings={() => {
           setPreviousView(view)
@@ -280,7 +294,6 @@ function App() {
           applicationId={application.id}
           initialTab={workspaceEntry.initialTab}
           autoTriggerRun={workspaceEntry.autoTriggerRun}
-          onBack={() => setView('home')}
           onViewSetup={() => setView('test-suite-results')}
         />
       )}

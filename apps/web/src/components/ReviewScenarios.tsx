@@ -3,9 +3,10 @@ import { api, type JourneyRead, type ScenarioRead } from '../api'
 import { Stepper, type StepKey } from './Stepper'
 import { GenerationLoader } from './GenerationLoader'
 import { ServiceErrorNote } from './ServiceError'
+import { Pagination } from './Pagination'
 
 const POLL_INTERVAL_MS = 3000
-const SCENARIOS_PER_PAGE = 6
+const SCENARIOS_PER_PAGE = 5
 
 const TYPE_BADGE: Record<string, { label: string; background: string; color: string }> = {
   happy: { label: 'Happy Path', background: 'var(--happy-wash)', color: 'var(--happy-strong)' },
@@ -15,6 +16,46 @@ const TYPE_BADGE: Record<string, { label: string; background: string; color: str
 
 const READINESS_FILTERS = ['All', 'Ready', 'Needs data'] as const
 type ReadinessFilter = (typeof READINESS_FILTERS)[number]
+
+const TYPE_FILTERS = ['All', 'happy', 'negative', 'edge'] as const
+type TypeFilter = (typeof TYPE_FILTERS)[number]
+
+function EmptyBoxIcon() {
+  return (
+    <svg width={28} height={28} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3.5 8.5 12 4l8.5 4.5-8.5 4.5-8.5-4.5Z" />
+      <path d="M3.5 8.5v7L12 20l8.5-4.5v-7" />
+      <path d="M12 13v7" />
+    </svg>
+  )
+}
+
+function EmptyState({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div style={{ textAlign: 'center', padding: '48px 20px' }}>
+      <div
+        aria-hidden="true"
+        style={{
+          display: 'inline-flex',
+          width: 56,
+          height: 56,
+          borderRadius: 'var(--radius-full)',
+          background: 'var(--canvas-wash-alt)',
+          color: 'var(--ink-faint)',
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginBottom: 'var(--space-4)',
+        }}
+      >
+        <EmptyBoxIcon />
+      </div>
+      <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>{title}</div>
+      <div className="caption" style={{ fontSize: 12, marginTop: 4 }}>
+        {subtitle}
+      </div>
+    </div>
+  )
+}
 
 function ReadinessPill({ ready }: { ready: boolean }) {
   return (
@@ -71,6 +112,85 @@ function ScenarioRenameInput({
         marginRight: 'var(--space-3)',
       }}
     />
+  )
+}
+
+function SingleSelectFilterDropdown<T extends string>({
+  label,
+  options,
+  selected,
+  formatOption,
+  onChange,
+}: {
+  label: string
+  options: readonly T[]
+  selected: T
+  formatOption?: (value: T) => string
+  onChange: (value: T) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const display = formatOption ? formatOption(selected) : selected
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="button-secondary"
+        style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+      >
+        {label}: {display} ▾
+      </button>
+      {open && (
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9 }} onClick={() => setOpen(false)} />
+          <div
+            role="menu"
+            aria-label={`Filter by ${label.toLowerCase()}`}
+            className="card-panel"
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: 34,
+              minWidth: 170,
+              boxShadow: '0 12px 28px rgba(15,23,42,0.14)',
+              zIndex: 10,
+              padding: 'var(--space-2) 0',
+            }}
+          >
+            {options.map((option) => (
+              <button
+                key={option}
+                type="button"
+                role="menuitemradio"
+                aria-checked={selected === option}
+                onClick={() => {
+                  onChange(option)
+                  setOpen(false)
+                }}
+                style={{
+                  display: 'block',
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '8px 12px',
+                  background: selected === option ? 'var(--canvas-wash-alt)' : 'none',
+                  border: 'none',
+                  fontSize: 12.5,
+                  fontWeight: selected === option ? 600 : 500,
+                  color: selected === option ? 'var(--accent)' : 'var(--ink)',
+                  cursor: 'pointer',
+                  fontFamily: 'inherit',
+                }}
+              >
+                {formatOption ? formatOption(option) : option}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -290,6 +410,7 @@ export function ReviewScenarios({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [readinessFilter, setReadinessFilter] = useState<ReadinessFilter>('All')
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('All')
   const [journeyFilter, setJourneyFilter] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
@@ -383,6 +504,7 @@ export function ReviewScenarios({
   const visibleScenarios = scenarios.filter((s) => {
     if (!(s.name ?? '').toLowerCase().includes(searchLower)) return false
     if (journeyFilter.size > 0 && !journeyFilter.has(s.journey_id)) return false
+    if (typeFilter !== 'All' && s.type !== typeFilter) return false
     if (readinessFilter === 'Ready') return s.test_data_complete
     if (readinessFilter === 'Needs data') return !s.test_data_complete
     return true
@@ -432,44 +554,25 @@ export function ReviewScenarios({
             )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)', flexShrink: 0 }}>
-              <div
-                role="group"
-                aria-label="Filter by readiness"
-                style={{
-                  display: 'inline-flex',
-                  background: 'var(--canvas-wash-alt)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius)',
-                  padding: 3,
-                  gap: 3,
+              <SingleSelectFilterDropdown
+                label="Readiness"
+                options={READINESS_FILTERS}
+                selected={readinessFilter}
+                onChange={(value) => {
+                  setReadinessFilter(value)
+                  setPage(0)
                 }}
-              >
-                {READINESS_FILTERS.map((filterOption) => (
-                  <button
-                    key={filterOption}
-                    type="button"
-                    aria-pressed={readinessFilter === filterOption}
-                    onClick={() => {
-                      setReadinessFilter(filterOption)
-                      setPage(0)
-                    }}
-                    style={{
-                      padding: '6px 11px',
-                      border: 'none',
-                      borderRadius: 'var(--radius-xs)',
-                      fontSize: 12,
-                      fontWeight: 600,
-                      fontFamily: 'inherit',
-                      cursor: 'pointer',
-                      whiteSpace: 'nowrap',
-                      background: readinessFilter === filterOption ? 'var(--canvas)' : 'transparent',
-                      color: readinessFilter === filterOption ? 'var(--ink)' : 'var(--ink-muted)',
-                    }}
-                  >
-                    {filterOption}
-                  </button>
-                ))}
-              </div>
+              />
+              <SingleSelectFilterDropdown
+                label="Type"
+                options={TYPE_FILTERS}
+                selected={typeFilter}
+                formatOption={(value) => (value === 'All' ? 'All' : TYPE_BADGE[value].label)}
+                onChange={(value) => {
+                  setTypeFilter(value)
+                  setPage(0)
+                }}
+              />
               <JourneyFilterDropdown
                 journeys={journeys}
                 selected={journeyFilter}
@@ -522,9 +625,10 @@ export function ReviewScenarios({
         </div>
 
         {scenarios.length === 0 && hadScenariosRef.current ? (
-          <p style={{ textAlign: 'center', padding: '80px 24px', color: 'var(--ink-muted)', fontSize: 14 }}>
-            No scenarios remain — add journeys back to generate scenarios.
-          </p>
+          <EmptyState
+            title="No scenarios remain"
+            subtitle="Add journeys back to generate new scenarios."
+          />
         ) : !isComplete && generationUnavailable ? (
           <div
             className="card-panel"
@@ -628,13 +732,9 @@ export function ReviewScenarios({
                           >
                             {scenario.name}
                           </div>
-                          <div className="caption" style={{ fontSize: 12, marginBottom: 4 }}>
-                            from {scenario.journey_name}
-                          </div>
                           <span className="badge" style={{ background: badge.background, color: badge.color }}>
                             {badge.label}
-                          </span>{' '}
-                          <ReadinessPill ready={scenario.test_data_complete} />
+                          </span>
                         </div>
                       )}
                       <ScenarioRowMenu
@@ -645,42 +745,20 @@ export function ReviewScenarios({
                   )
                 })}
                 {pagedScenarios.length === 0 && (
-                  <p className="caption" style={{ textAlign: 'center', padding: '40px 14px', fontSize: 12.5 }}>
-                    No matches.
-                  </p>
+                  <EmptyState
+                    title="No scenarios match these filters"
+                    subtitle="Try clearing a filter or the search term."
+                  />
                 )}
               </ul>
               {showPagination && (
-                <div
-                  style={{
-                    flexShrink: 0,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 'var(--space-3)',
-                    padding: 'var(--space-4) var(--space-5) var(--space-6)',
-                    borderTop: '1px solid var(--border-hairline)',
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="button-secondary"
-                    disabled={pageClamped <= 0}
-                    onClick={() => setPage(pageClamped - 1)}
-                  >
-                    Prev
-                  </button>
-                  <span className="caption" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-                    Page {pageClamped + 1} of {totalPages}
-                  </span>
-                  <button
-                    type="button"
-                    className="button-secondary"
-                    disabled={pageClamped >= totalPages - 1}
-                    onClick={() => setPage(pageClamped + 1)}
-                  >
-                    Next
-                  </button>
+                <div style={{ flexShrink: 0, borderTop: '1px solid var(--border-hairline)' }}>
+                  <Pagination
+                    page={pageClamped}
+                    totalPages={totalPages}
+                    onPrev={() => setPage(pageClamped - 1)}
+                    onNext={() => setPage(pageClamped + 1)}
+                  />
                 </div>
               )}
             </div>

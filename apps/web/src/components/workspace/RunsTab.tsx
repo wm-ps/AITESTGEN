@@ -9,9 +9,11 @@ import {
 import { StatTile } from '../TestSuiteResults'
 import { StatusPill } from '../StatusPill'
 import { ServiceErrorNote } from '../ServiceError'
+import { Pagination } from '../Pagination'
 
 const POLL_INTERVAL_MS = 1500
-const RUNS_PER_PAGE = 10
+const RUNS_PER_PAGE = 5
+const RESULTS_PER_PAGE = 5
 
 function ClipboardCheckIcon() {
   return (
@@ -326,6 +328,10 @@ function RunDetail({
   executionUnavailable: boolean
 }) {
   const isRunning = run.status === 'pending' || run.status === 'running'
+  const [resultsPage, setResultsPage] = useState(0)
+  const results = run.results ?? []
+  const resultsTotalPages = Math.max(1, Math.ceil(results.length / RESULTS_PER_PAGE))
+  const pagedResults = results.slice(resultsPage * RESULTS_PER_PAGE, resultsPage * RESULTS_PER_PAGE + RESULTS_PER_PAGE)
 
   return (
     <div>
@@ -385,10 +391,16 @@ function RunDetail({
 
       {run.results && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {run.results.length > 0 && <ResultListHeader />}
-          {run.results.map((result) => (
+          {results.length > 0 && <ResultListHeader />}
+          {pagedResults.map((result) => (
             <TestResultRow key={result.id} result={result} />
           ))}
+          <Pagination
+            page={resultsPage}
+            totalPages={resultsTotalPages}
+            onPrev={() => setResultsPage((p) => p - 1)}
+            onNext={() => setResultsPage((p) => p + 1)}
+          />
         </div>
       )}
     </div>
@@ -610,37 +622,12 @@ export function RunsTab({
               <RunListRow run={run} onOpen={() => setSelectedRunId(run.id)} />
             </div>
           ))}
-          {totalPages > 1 && (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 'var(--space-3)',
-                padding: 'var(--space-4) var(--space-5)',
-              }}
-            >
-              <button
-                type="button"
-                className="button-secondary"
-                disabled={page <= 0}
-                onClick={() => setPage((p) => p - 1)}
-              >
-                Prev
-              </button>
-              <span className="caption" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-                Page {page + 1} of {totalPages}
-              </span>
-              <button
-                type="button"
-                className="button-secondary"
-                disabled={page >= totalPages - 1}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next
-              </button>
-            </div>
-          )}
+          <Pagination
+            page={page}
+            totalPages={totalPages}
+            onPrev={() => setPage((p) => p - 1)}
+            onNext={() => setPage((p) => p + 1)}
+          />
         </div>
       )}
     </div>

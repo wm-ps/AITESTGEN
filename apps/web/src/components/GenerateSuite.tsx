@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react'
 import { api, type JourneyRead, type ScenarioRead } from '../api'
 import { ServiceErrorNote } from './ServiceError'
 import { Stepper, type StepKey } from './Stepper'
+import { Pagination } from './Pagination'
+
+const JOURNEYS_PER_PAGE = 5
 
 const ENV_OPTIONS = [
   ['staging', 'Staging'],
@@ -42,6 +45,7 @@ export function GenerateSuite({
   const [generating, setGenerating] = useState(false)
   const [generateError, setGenerateError] = useState(false)
   const [environment, setEnvironment] = useState<(typeof ENV_OPTIONS)[number][0]>('staging')
+  const [journeysPage, setJourneysPage] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -66,6 +70,11 @@ export function GenerateSuite({
     }))
     .filter((row) => row.scenarioCount > 0)
   const suiteCount = journeysWithScenarios.length
+  const journeysTotalPages = Math.max(1, Math.ceil(journeysWithScenarios.length / JOURNEYS_PER_PAGE))
+  const pagedJourneysWithScenarios = journeysWithScenarios.slice(
+    journeysPage * JOURNEYS_PER_PAGE,
+    journeysPage * JOURNEYS_PER_PAGE + JOURNEYS_PER_PAGE,
+  )
   const canGenerate = suiteCount > 0 && !generating
   const envLabel = ENV_OPTIONS.find(([value]) => value === environment)?.[1] ?? 'Staging'
 
@@ -223,8 +232,6 @@ export function GenerateSuite({
                   borderRadius: 10,
                   overflow: 'hidden',
                   marginBottom: 20,
-                  maxHeight: 190,
-                  overflowY: 'auto',
                 }}
               >
                 {journeysWithScenarios.length === 0 && (
@@ -232,7 +239,7 @@ export function GenerateSuite({
                     No journeys with reviewed scenarios yet.
                   </div>
                 )}
-                {journeysWithScenarios.map(({ journey, scenarioCount }) => (
+                {pagedJourneysWithScenarios.map(({ journey, scenarioCount }) => (
                   <div
                     key={journey.id}
                     style={{
@@ -253,6 +260,12 @@ export function GenerateSuite({
                     </span>
                   </div>
                 ))}
+                <Pagination
+                  page={journeysPage}
+                  totalPages={journeysTotalPages}
+                  onPrev={() => setJourneysPage((p) => p - 1)}
+                  onNext={() => setJourneysPage((p) => p + 1)}
+                />
               </div>
 
               <div

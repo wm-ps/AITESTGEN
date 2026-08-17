@@ -11,6 +11,14 @@ const ENV_DOT_COLOR: Record<string, string> = {
   production: 'var(--good-strong)',
 }
 
+function BackIcon() {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M19 12H5M12 19l-7-7 7-7" />
+    </svg>
+  )
+}
+
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/)
   return parts
@@ -24,6 +32,7 @@ export function TopBar({
   applicationBadge,
   onLogout,
   onGoHome,
+  onBack,
   onInviteTeammate,
   onOpenSettings,
 }: {
@@ -31,6 +40,7 @@ export function TopBar({
   applicationBadge?: { name: string; environment: string }
   onLogout: () => void
   onGoHome?: () => void
+  onBack?: () => void
   onInviteTeammate?: () => void
   onOpenSettings?: () => void
 }) {
@@ -51,6 +61,29 @@ export function TopBar({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)' }}>
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            aria-label="Back"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 28,
+              height: 28,
+              borderRadius: 6,
+              border: 'none',
+              background: 'none',
+              color: 'var(--ink-muted)',
+              padding: 0,
+              cursor: 'pointer',
+              flexShrink: 0,
+            }}
+          >
+            <BackIcon />
+          </button>
+        )}
         <button
           type="button"
           onClick={onGoHome}

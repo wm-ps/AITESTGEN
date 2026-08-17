@@ -4,9 +4,12 @@ import { Stepper, type StepKey } from './Stepper'
 import { LoadingDots } from './LoadingDots'
 import { GenerationLoader } from './GenerationLoader'
 import { ServiceError } from './ServiceError'
+import { Pagination } from './Pagination'
 
 const POLL_INTERVAL_MS = 3000
 const SECONDS_PER_TEST_CASE = 45
+const SUITES_PER_PAGE = 5
+const TEST_CASES_PER_PAGE = 5
 
 // Generated Test Assets are Playwright (TypeScript, @playwright/test) — group
 // by that real generated file structure, matching the reference prototype's
@@ -264,6 +267,8 @@ export function TestSuiteResults({
   const [expectedJourneyCount, setExpectedJourneyCount] = useState(0)
   const [testsExpanded, setTestsExpanded] = useState(false)
   const [expandedSuiteIds, setExpandedSuiteIds] = useState<Set<string>>(new Set())
+  const [suitesPage, setSuitesPage] = useState(0)
+  const [testCasePages, setTestCasePages] = useState<Record<string, number>>({})
   const [activeCode, setActiveCode] = useState<TestCaseRead | null>(null)
   const [downloading, setDownloading] = useState(false)
   const [generationUnavailable, setGenerationUnavailable] = useState(false)
@@ -314,6 +319,11 @@ export function TestSuiteResults({
   }, [applicationId])
 
   const testCaseCount = suites.reduce((sum, s) => sum + s.test_cases.length, 0)
+  const suitesTotalPages = Math.max(1, Math.ceil(suites.length / SUITES_PER_PAGE))
+  const pagedSuites = suites.slice(suitesPage * SUITES_PER_PAGE, suitesPage * SUITES_PER_PAGE + SUITES_PER_PAGE)
+  function setTestCasePage(suiteId: string, page: number) {
+    setTestCasePages((prev) => ({ ...prev, [suiteId]: page }))
+  }
   // Count parity alone (testCaseCount >= expectedTestCaseCount) never
   // recovers once SuiteGenerationWorkflow gives up on a Scenario after its
   // wave retries — that Scenario's TestAsset never arrives, so the raw
@@ -574,8 +584,14 @@ export function TestSuiteResults({
             </button>
 
             {testsExpanded &&
-              suites.map((suite) => {
+              pagedSuites.map((suite) => {
                 const suiteOpen = expandedSuiteIds.has(suite.id)
+                const testCasePage = testCasePages[suite.id] ?? 0
+                const testCasesTotalPages = Math.max(1, Math.ceil(suite.test_cases.length / TEST_CASES_PER_PAGE))
+                const pagedTestCases = suite.test_cases.slice(
+                  testCasePage * TEST_CASES_PER_PAGE,
+                  testCasePage * TEST_CASES_PER_PAGE + TEST_CASES_PER_PAGE,
+                )
                 return (
                   <div key={suite.id} style={{ borderBottom: '1px solid var(--border-hairline)' }}>
                     <button
@@ -678,7 +694,7 @@ export function TestSuiteResults({
 
                     {suiteOpen && (
                       <div style={{ padding: '0 20px 14px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {suite.test_cases.map((testCase) => {
+                        {pagedTestCases.map((testCase) => {
                           const badge = TYPE_BADGE[testCase.type] ?? TYPE_BADGE.happy
                           return (
                             <div
@@ -742,11 +758,25 @@ export function TestSuiteResults({
                             </div>
                           )
                         })}
+                        <Pagination
+                          page={testCasePage}
+                          totalPages={testCasesTotalPages}
+                          onPrev={() => setTestCasePage(suite.id, testCasePage - 1)}
+                          onNext={() => setTestCasePage(suite.id, testCasePage + 1)}
+                        />
                       </div>
                     )}
                   </div>
                 )
               })}
+            {testsExpanded && (
+              <Pagination
+                page={suitesPage}
+                totalPages={suitesTotalPages}
+                onPrev={() => setSuitesPage((p) => p - 1)}
+                onNext={() => setSuitesPage((p) => p + 1)}
+              />
+            )}
           </div>
 
           {activeCode && <CodeModal testCase={activeCode} onClose={() => setActiveCode(null)} />}
