@@ -40,22 +40,41 @@ class ObjectStore:
         # rather than fighting pyright over an untyped SDK.
         self._s3_client: Any = boto3.client("s3", region_name=AWS_REGION, config=_S3_CONFIG)
 
-    def put(self, data: bytes, discovery_run_id: uuid.UUID) -> str:
+    def put(self, data: bytes, discovery_run_id: uuid.UUID, content_type: str = "image/png") -> str:
         key = f"discovery-runs/{discovery_run_id}/{uuid.uuid4()}"
-        self._s3_client.put_object(Bucket=self._bucket, Key=key, Body=data)
+        self._s3_client.put_object(
+            Bucket=self._bucket, Key=key, Body=data, ContentType=content_type
+        )
         return key
 
-    def put_test_artifact(self, data: bytes, test_run_id: uuid.UUID) -> str:
+    def put_test_artifact(self, data: bytes, test_run_id: uuid.UUID, content_type: str) -> str:
         key = f"test-runs/{test_run_id}/{uuid.uuid4()}"
-        self._s3_client.put_object(Bucket=self._bucket, Key=key, Body=data)
+        self._s3_client.put_object(
+            Bucket=self._bucket, Key=key, Body=data, ContentType=content_type
+        )
         return key
 
     def get(self, key: str) -> bytes:
         return self._s3_client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
 
-    def presigned_get_url(self, key: str, expires_seconds: int = 900) -> str:
+    def presigned_get_url(
+        self,
+        key: str,
+        expires_seconds: int = 900,
+        *,
+        response_content_type: str | None = None,
+        filename: str | None = None,
+    ) -> str:
+        # Overrides the *response's* Content-Type/Content-Disposition for this
+        # one signed request — doesn't touch the object's own S3 metadata, so
+        # it also repairs objects already stored (pre-fix) as the S3 default
+        # `binary/octet-stream` with no extension, which browsers refuse to
+        # open/preview on download.
+        params: dict[str, Any] = {"Bucket": self._bucket, "Key": key}
+        if response_content_type is not None:
+            params["ResponseContentType"] = response_content_type
+        if filename is not None:
+            params["ResponseContentDisposition"] = f'inline; filename="{filename}"'
         return self._s3_client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": self._bucket, "Key": key},
-            ExpiresIn=expires_seconds,
+            "get_object", Params=params, ExpiresIn=expires_seconds
         )

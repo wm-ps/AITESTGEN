@@ -528,7 +528,9 @@ def _persist_test_result_sync(
                 continue
             artifact_type = "trace" if path.suffix == ".zip" else "screenshot"
             content_type = "application/zip" if artifact_type == "trace" else "image/png"
-            key = ObjectStore().put_test_artifact(data, uuid.UUID(input.test_run_id))
+            key = ObjectStore().put_test_artifact(
+                data, uuid.UUID(input.test_run_id), content_type=content_type
+            )
             session.add(
                 TestResultArtifact(
                     test_result_id=test_result.id,

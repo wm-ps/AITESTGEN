@@ -907,7 +907,9 @@ def list_journey_steps(
         )
         if last_page is not None and last_page.object_storage_key:
             result[-1].screenshot_url = ObjectStore().presigned_get_url(
-                last_page.object_storage_key
+                last_page.object_storage_key,
+                response_content_type="image/png",
+                filename="screenshot.png",
             )
 
     return result
@@ -1886,7 +1888,11 @@ def list_test_result_artifacts(
             artifact_type=a.artifact_type,
             content_type=a.content_type,
             size_bytes=a.size_bytes,
-            url=object_store.presigned_get_url(a.object_store_key),
+            url=object_store.presigned_get_url(
+                a.object_store_key,
+                response_content_type=a.content_type,
+                filename=f"{a.artifact_type}.{'zip' if a.artifact_type == 'trace' else 'png'}",
+            ),
         )
         for a in artifacts
     ]
