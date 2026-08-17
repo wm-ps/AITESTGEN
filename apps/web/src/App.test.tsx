@@ -22,7 +22,7 @@ describe('App', () => {
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Sign in' })).toBeTruthy()
     })
-    expect(document.title).toBe('AITestGen')
+    expect(document.title).toBe('waveQA')
     expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.svg')
   })
 
@@ -38,7 +38,7 @@ describe('App', () => {
     })
     expect(screen.getByText('Welcome, Ada')).toBeTruthy()
     expect(screen.getByText('+ Create New Project')).toBeTruthy()
-    expect(document.title).toBe('AITestGen')
+    expect(document.title).toBe('waveQA')
     expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.svg')
 
     fireEvent.click(screen.getByRole('button', { name: 'AL' }))
@@ -95,7 +95,7 @@ describe('App', () => {
     expect(screen.getByText('Discovery in Progress')).toBeTruthy()
 
     // Tab title/favicon are static platform branding — unaffected by the Application.
-    expect(document.title).toBe('AITestGen')
+    expect(document.title).toBe('waveQA')
     expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.svg')
   })
 
