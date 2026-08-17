@@ -22,8 +22,14 @@ spec:
           image: REPLACE_IMAGE
           env:
             # $(VAR) below only expands against vars defined in this *env*
-            # list (not envFrom), so POSTGRES_HOST/PORT/DB are re-declared
-            # here from the ConfigMap even though envFrom also brings them in.
+            # list (not envFrom), so POSTGRES_USER/HOST/PORT/DB are
+            # re-declared here from the ConfigMap even though envFrom also
+            # brings them in.
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: aitestgen-config
+                  key: POSTGRES_USER
             - name: POSTGRES_HOST
               valueFrom:
                 configMapKeyRef:
@@ -73,6 +79,8 @@ spec:
                 secretKeyRef:
                   name: aitestgen-secrets
                   key: ANTHROPIC_API_KEY
+            - name: DISCOVERY_WORKER_MAX_CONCURRENT_ACTIVITIES
+              value: "6"
           envFrom:
             - configMapRef:
                 name: aitestgen-config
@@ -80,8 +88,8 @@ spec:
                 name: aitestgen-secrets      
           resources:
             requests:
-              cpu: "50m"
-              memory: "128Mi"
+              cpu: "500m"
+              memory: "1Gi"
             limits:
-              cpu: "1"
-              memory: "2Gi"
+              cpu: "4"
+              memory: "4Gi"

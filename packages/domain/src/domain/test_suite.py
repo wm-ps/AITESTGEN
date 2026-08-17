@@ -17,7 +17,7 @@ constraint, not just a select-then-create query.
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, UniqueConstraint, text
+from sqlalchemy import Column, DateTime, ForeignKey, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -51,6 +51,16 @@ class TestSuite(SQLModel, table=True):
     name: str
     generation_run_id: int
     current: bool = Field(default=True)
+    # generating -> complete | incomplete (SuiteGenerationWorkflow's own
+    # terminal write, once every wave/retry has been tried) -> terminated
+    # (user-triggered, only valid from incomplete — see
+    # `terminate_test_suite` in main.py). Existing rows predate this and are
+    # backfilled 'complete' by the migration since they already finished
+    # under the old code path.
+    status: str = Field(
+        default="generating",
+        sa_column=Column(String, server_default=text("'complete'"), nullable=False),
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

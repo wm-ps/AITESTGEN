@@ -162,6 +162,53 @@ class TestTriggerTestRun:
         assert response.status_code == 202
         assert response.json() == {"started": True}
 
+    @pytest.mark.skipif(not _temporal_available(), reason="requires Temporal reachable")
+    def test_trigger_reports_unavailable_when_execution_queue_has_no_worker(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from api import main as api_main
+
+        async def _no_pollers(client: object, task_queue: str) -> bool:
+            return False
+
+        monkeypatch.setattr(api_main, "has_pollers", _no_pollers)
+
+        init_db()
+        client, _ = _signed_in_client("Org Trigger Worker Down")
+        application = _create_application(client, "No Execution Worker App")
+
+        response = client.post(f"/applications/{application['id']}/test-runs")
+
+        assert response.status_code == 503
+        assert response.json()["detail"] == "EXECUTION_UNAVAILABLE"
+
+
+class TestExecutionStatus:
+    @pytest.mark.skipif(not _temporal_available(), reason="requires Temporal reachable")
+    def test_reports_unavailable_when_execution_queue_has_no_worker(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """`has_pollers` is only checked once, before the workflow starts —
+        a worker that crashes right after leaves the run sitting at
+        "running" with nothing to explain why. RunsTab polls this
+        separately to tell that apart from a run genuinely still in
+        flight."""
+        from api import main as api_main
+
+        async def _no_pollers(client: object, task_queue: str) -> bool:
+            return False
+
+        monkeypatch.setattr(api_main, "has_pollers", _no_pollers)
+
+        init_db()
+        client, _ = _signed_in_client("Org Execution Status Down")
+        application = _create_application(client, "No Execution Worker Status App")
+
+        response = client.get(f"/applications/{application['id']}/execution-status")
+
+        assert response.status_code == 200
+        assert response.json() == {"available": False}
+
 
 class TestListTestRuns:
     def test_returns_paginated_envelope_newest_first(self) -> None:

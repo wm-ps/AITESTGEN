@@ -25,6 +25,69 @@ function ChevronIcon({ open }: { open: boolean }) {
   )
 }
 
+// Duration/Status get a fixed `minWidth` in both the header and every row
+// (below) — without it, a header label like "Duration" is wider or narrower
+// than the actual "12.3s" it sits over, so the column boundary drifts row to
+// row instead of lining up under the header.
+const DURATION_COL_WIDTH = 56
+const STATUS_COL_WIDTH = 78
+
+function ColumnHeaderLabel({
+  children,
+  align,
+  minWidth,
+}: {
+  children: string
+  align?: 'right'
+  minWidth?: number
+}) {
+  return (
+    <span
+      style={{
+        fontSize: 11,
+        fontWeight: 700,
+        color: 'var(--ink-faint)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.05em',
+        whiteSpace: 'nowrap',
+        textAlign: align,
+        minWidth,
+        display: minWidth ? 'inline-block' : undefined,
+      }}
+    >
+      {children}
+    </span>
+  )
+}
+
+// Column headers so a "Test Case" name and its "Duration"/"Status" line up
+// with the same columns a Test Run's results list uses (RunsTab.tsx) —
+// correlating a failing test case here with its run result elsewhere relies
+// on both lists reading the same way.
+function AssetListHeader() {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 12,
+        padding: '8px 16px 8px 40px',
+        background: 'var(--canvas-wash-alt)',
+        borderBottom: '1px solid var(--border-hairline)',
+      }}
+    >
+      <ColumnHeaderLabel>Test Case</ColumnHeaderLabel>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <ColumnHeaderLabel align="right" minWidth={DURATION_COL_WIDTH}>
+          Duration
+        </ColumnHeaderLabel>
+        <ColumnHeaderLabel minWidth={STATUS_COL_WIDTH}>Status</ColumnHeaderLabel>
+      </div>
+    </div>
+  )
+}
+
 function assetToTestResult(asset: TestAssetStatusRead): TestResultRead | null {
   if (!asset.latest_test_result_id) return null
   return {
@@ -95,12 +158,15 @@ function AssetRow({ asset }: { asset: TestAssetStatusRead }) {
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-          {asset.duration_ms != null && (
-            <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>
-              {(asset.duration_ms / 1000).toFixed(1)}s
-            </span>
-          )}
-          <StatusPill status={asset.status} />
+          <span
+            className="caption"
+            style={{ fontSize: 11.5, whiteSpace: 'nowrap', minWidth: DURATION_COL_WIDTH, textAlign: 'right' }}
+          >
+            {asset.duration_ms != null ? `${(asset.duration_ms / 1000).toFixed(1)}s` : ''}
+          </span>
+          <span style={{ minWidth: STATUS_COL_WIDTH }}>
+            <StatusPill status={asset.status} />
+          </span>
         </div>
       </button>
 
@@ -157,18 +223,10 @@ function AssetRow({ asset }: { asset: TestAssetStatusRead }) {
   )
 }
 
-export function TestSuiteTab({
-  applicationId,
-  onRunStarted,
-}: {
-  applicationId: string
-  onRunStarted: () => void
-}) {
+export function TestSuiteTab({ applicationId }: { applicationId: string }) {
   const [assets, setAssets] = useState<TestAssetStatusRead[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
-  const [running, setRunning] = useState(false)
-  const [runError, setRunError] = useState<string | null>(null)
   const totalPages = Math.max(1, Math.ceil(total / ASSETS_PER_PAGE))
 
   useEffect(() => {
@@ -184,38 +242,15 @@ export function TestSuiteTab({
     }
   }, [applicationId, page])
 
-  async function handleRunSuite() {
-    setRunning(true)
-    setRunError(null)
-    try {
-      await api.triggerTestRun(applicationId)
-      onRunStarted()
-    } catch (err) {
-      setRunError(err instanceof ApiError ? err.message : 'Failed to start the test run')
-    } finally {
-      setRunning(false)
-    }
-  }
-
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
-        <button type="button" className="button-primary" disabled={running} onClick={handleRunSuite}>
-          {running ? 'Starting…' : 'Run Suite'}
-        </button>
-      </div>
-      {runError && (
-        <p role="alert" style={{ color: 'var(--danger-strong)', fontSize: 13 }}>
-          {runError}
-        </p>
-      )}
-
       {assets.length === 0 ? (
         <p className="caption" style={{ fontSize: 13 }}>
           No tests generated yet.
         </p>
       ) : (
         <div className="card-panel" style={{ overflow: 'hidden' }}>
+          <AssetListHeader />
           {assets.map((asset) => (
             <AssetRow key={asset.id} asset={asset} />
           ))}

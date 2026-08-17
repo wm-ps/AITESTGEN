@@ -8,6 +8,7 @@ import {
 } from '../../api'
 import { StatTile } from '../TestSuiteResults'
 import { StatusPill } from '../StatusPill'
+import { ServiceErrorNote } from '../ServiceError'
 
 const POLL_INTERVAL_MS = 1500
 const RUNS_PER_PAGE = 10
@@ -57,6 +58,25 @@ function AlertIcon() {
 }
 
 const NON_PASSED_STATUSES = new Set(['failed', 'timed_out', 'errored'])
+
+// A colored left border reads as a quick pass/fail signal on scan — same
+// technique DESIGN.md already uses for the green expected-result-rule,
+// generalized here per status instead of a single fixed color.
+function resultSignalColor(status: string): string {
+  if (status === 'passed') return 'var(--good)'
+  if (status === 'blocked') return 'var(--warn)'
+  if (NON_PASSED_STATUSES.has(status)) return 'var(--danger)'
+  return 'var(--accent)'
+}
+
+function runSignalColor(run: TestRunRead): string {
+  if (run.status === 'blocked') return 'var(--warn)'
+  if (run.status === 'pending' || run.status === 'running') return 'var(--accent)'
+  if (run.pass_rate == null) return 'var(--border-strong)'
+  if (run.pass_rate >= 0.9) return 'var(--good)'
+  if (run.pass_rate >= 0.7) return 'var(--warn)'
+  return 'var(--danger)'
+}
 
 export function ArtifactsModal({ testResult, onClose }: { testResult: TestResultRead; onClose: () => void }) {
   const [artifacts, setArtifacts] = useState<TestResultArtifactRead[] | null>(null)
@@ -183,6 +203,50 @@ export function ArtifactsModal({ testResult, onClose }: { testResult: TestResult
   )
 }
 
+const columnHeaderLabelStyle: React.CSSProperties = {
+  fontSize: 11,
+  fontWeight: 700,
+  color: 'var(--ink-faint)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.05em',
+  whiteSpace: 'nowrap',
+}
+
+// A fixed `minWidth` on Duration/Status/Pass Rate/Results, matched between
+// each header below and its row (TestResultRow/RunListRow) — otherwise a
+// header label is wider or narrower than the value under it and the column
+// boundary drifts row to row instead of lining up under the header.
+const DURATION_COL_WIDTH = 56
+const STATUS_COL_WIDTH = 78
+const PASS_RATE_COL_WIDTH = 60
+const RESULTS_COL_WIDTH = 90
+
+// Same "Test Case" / "Duration" / "Status" columns as the Test Suite tab's
+// asset list (TestSuiteTab.tsx) — a failing test case reads the same way in
+// both places, so correlating one against the other doesn't require
+// re-learning the layout.
+function ResultListHeader() {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 12,
+        padding: '6px 14px',
+      }}
+    >
+      <span style={columnHeaderLabelStyle}>Test Case</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span style={{ ...columnHeaderLabelStyle, minWidth: DURATION_COL_WIDTH, textAlign: 'right' }}>
+          Duration
+        </span>
+        <span style={{ ...columnHeaderLabelStyle, minWidth: STATUS_COL_WIDTH }}>Status</span>
+      </div>
+    </div>
+  )
+}
+
 function TestResultRow({ result }: { result: TestResultRead }) {
   const [artifactsFor, setArtifactsFor] = useState<TestResultRead | null>(null)
   const canShowArtifacts = NON_PASSED_STATUSES.has(result.status)
@@ -196,6 +260,7 @@ function TestResultRow({ result }: { result: TestResultRead }) {
         justifyContent: 'space-between',
         gap: 12,
         padding: '10px 14px',
+        borderLeft: `3px solid ${resultSignalColor(result.status)}`,
       }}
     >
       <div style={{ minWidth: 0 }}>
@@ -214,12 +279,15 @@ function TestResultRow({ result }: { result: TestResultRead }) {
         )}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-        {result.duration_ms != null && (
-          <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>
-            {(result.duration_ms / 1000).toFixed(1)}s
-          </span>
-        )}
-        <StatusPill status={result.status} />
+        <span
+          className="caption"
+          style={{ fontSize: 11.5, whiteSpace: 'nowrap', minWidth: DURATION_COL_WIDTH, textAlign: 'right' }}
+        >
+          {result.duration_ms != null ? `${(result.duration_ms / 1000).toFixed(1)}s` : ''}
+        </span>
+        <span style={{ minWidth: STATUS_COL_WIDTH }}>
+          <StatusPill status={result.status} />
+        </span>
         {canShowArtifacts && (
           <button type="button" className="button-secondary" onClick={() => setArtifactsFor(result)}>
             Artifacts
@@ -248,7 +316,15 @@ function formatDateTime(iso: string): string {
   })
 }
 
-function RunDetail({ run, onBack }: { run: TestRunRead; onBack: () => void }) {
+function RunDetail({
+  run,
+  onBack,
+  executionUnavailable,
+}: {
+  run: TestRunRead
+  onBack: () => void
+  executionUnavailable: boolean
+}) {
   const isRunning = run.status === 'pending' || run.status === 'running'
 
   return (
@@ -281,7 +357,7 @@ function RunDetail({ run, onBack }: { run: TestRunRead; onBack: () => void }) {
       </div>
 
       {run.status === 'blocked' && (
-        <div className="card-panel" style={{ padding: '16px 20px', marginBottom: 20, borderColor: 'var(--warn-strong)' }}>
+        <div className="card-panel" style={{ padding: '16px 20px', marginBottom: 20, borderColor: 'var(--warn-wash-border)' }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--warn-strong)', marginBottom: 4 }}>
             Execution blocked
           </div>
@@ -291,15 +367,17 @@ function RunDetail({ run, onBack }: { run: TestRunRead; onBack: () => void }) {
 
       {run.status !== 'blocked' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 20 }}>
-          <StatTile icon={<ClipboardCheckIcon />} value={run.total_count} label="Total" />
-          <StatTile icon={<CheckIcon />} value={run.passed_count} label="Passed" />
-          <StatTile icon={<XIcon />} value={run.failed_count} label="Failed" />
-          <StatTile icon={<ClockIcon />} value={run.timed_out_count} label="Timed out" />
-          <StatTile icon={<AlertIcon />} value={run.errored_count + run.blocked_count} label="Errored/Skipped" />
+          <StatTile icon={<ClipboardCheckIcon />} value={run.total_count} label="Total" tone="muted" />
+          <StatTile icon={<CheckIcon />} value={run.passed_count} label="Passed" tone="good" />
+          <StatTile icon={<XIcon />} value={run.failed_count} label="Failed" tone="danger" />
+          <StatTile icon={<ClockIcon />} value={run.timed_out_count} label="Timed out" tone="warn" />
+          <StatTile icon={<AlertIcon />} value={run.errored_count + run.blocked_count} label="Errored/Skipped" tone="warn" />
         </div>
       )}
 
-      {isRunning && run.results == null && (
+      {isRunning && executionUnavailable && <ServiceErrorNote code="EXECUTION_UNAVAILABLE" />}
+
+      {isRunning && !executionUnavailable && run.results == null && (
         <p className="caption" style={{ fontSize: 12.5 }}>
           Running tests — this list fills in as each test finishes.
         </p>
@@ -307,11 +385,41 @@ function RunDetail({ run, onBack }: { run: TestRunRead; onBack: () => void }) {
 
       {run.results && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {run.results.length > 0 && <ResultListHeader />}
           {run.results.map((result) => (
             <TestResultRow key={result.id} result={result} />
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+// Mirrors RunListRow's own column order (date/trigger, then pass rate,
+// results, status) so the header lines up with what each row shows.
+function RunListHeader() {
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 12,
+        padding: '8px 16px',
+        background: 'var(--canvas-wash-alt)',
+        borderBottom: '1px solid var(--border-hairline)',
+      }}
+    >
+      <span style={columnHeaderLabelStyle}>Run</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        <span style={{ ...columnHeaderLabelStyle, minWidth: PASS_RATE_COL_WIDTH, textAlign: 'right' }}>
+          Pass Rate
+        </span>
+        <span style={{ ...columnHeaderLabelStyle, minWidth: RESULTS_COL_WIDTH, textAlign: 'right' }}>
+          Results
+        </span>
+        <span style={{ ...columnHeaderLabelStyle, minWidth: STATUS_COL_WIDTH }}>Status</span>
+      </div>
     </div>
   )
 }
@@ -333,6 +441,7 @@ function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
         gap: 12,
         padding: '12px 16px',
         cursor: 'pointer',
+        borderLeft: `3px solid ${runSignalColor(run)}`,
       }}
     >
       <div style={{ minWidth: 0 }}>
@@ -342,13 +451,21 @@ function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0 }}>
-        <span className="caption" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+        <span
+          className="caption"
+          style={{ fontSize: 12, whiteSpace: 'nowrap', minWidth: PASS_RATE_COL_WIDTH, textAlign: 'right' }}
+        >
           {run.pass_rate != null ? `${Math.round(run.pass_rate * 100)}% pass` : '—'}
         </span>
-        <span className="caption" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+        <span
+          className="caption"
+          style={{ fontSize: 12, whiteSpace: 'nowrap', minWidth: RESULTS_COL_WIDTH, textAlign: 'right' }}
+        >
           {run.passed_count}/{run.total_count} results
         </span>
-        <StatusPill status={run.status} label={testRunStatusLabel(run.status)} />
+        <span style={{ minWidth: STATUS_COL_WIDTH }}>
+          <StatusPill status={run.status} label={testRunStatusLabel(run.status)} />
+        </span>
       </div>
     </div>
   )
@@ -373,6 +490,7 @@ export function RunsTab({
 }) {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [selectedRun, setSelectedRun] = useState<TestRunRead | null>(null)
+  const [executionUnavailable, setExecutionUnavailable] = useState(false)
   const [runs, setRuns] = useState<TestRunRead[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
@@ -419,21 +537,37 @@ export function RunsTab({
   useEffect(() => {
     if (!selectedRunId) {
       setSelectedRun(null)
+      setExecutionUnavailable(false)
       return
     }
     let cancelled = false
     let interval: ReturnType<typeof setInterval> | undefined
 
     async function poll() {
+      let status: string | undefined
       try {
         const detail = await api.getTestRun(applicationId, selectedRunId!)
         if (cancelled) return
         setSelectedRun(detail)
+        status = detail.status
         if ((detail.status === 'completed' || detail.status === 'blocked') && interval) {
           clearInterval(interval)
         }
       } catch {
         // best-effort poll — a transient failure just skips this tick
+      }
+      // `trigger_test_run` only checks for a live worker before starting —
+      // a worker that crashes right after leaves the run sitting at
+      // "running" with nothing to explain why (same gap generation-status/
+      // discovery-status close for their own workers). Only worth asking
+      // while the run could still be in flight.
+      if (status === 'pending' || status === 'running') {
+        try {
+          const { available } = await api.getExecutionStatus(applicationId)
+          if (!cancelled) setExecutionUnavailable(!available)
+        } catch {
+          // best-effort poll — a transient failure just skips this tick
+        }
       }
     }
 
@@ -447,7 +581,11 @@ export function RunsTab({
 
   if (selectedRunId) {
     return selectedRun ? (
-      <RunDetail run={selectedRun} onBack={() => setSelectedRunId(null)} />
+      <RunDetail
+        run={selectedRun}
+        onBack={() => setSelectedRunId(null)}
+        executionUnavailable={executionUnavailable}
+      />
     ) : (
       <p className="caption" style={{ fontSize: 12.5 }}>
         Loading run…
@@ -466,6 +604,7 @@ export function RunsTab({
           className="card-panel"
           style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
         >
+          <RunListHeader />
           {runs.map((run) => (
             <div key={run.id} style={{ borderBottom: '1px solid var(--border-hairline)' }}>
               <RunListRow run={run} onOpen={() => setSelectedRunId(run.id)} />

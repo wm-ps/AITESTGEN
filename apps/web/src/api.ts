@@ -15,13 +15,19 @@ export type ApplicationRead = components['schemas']['ApplicationRead']
 export type HomeApplicationRead = ApplicationRead & {
   journey_count: number
   scenario_count: number
+  scenario_journeys_covered: number
   suite_count: number
+  test_case_count: number
+  suites_generating_count: number
 }
 export type JourneyRead = components['schemas']['JourneyRead']
 export type JourneyStepRead = components['schemas']['JourneyStepRead']
 export type ScenarioRead = components['schemas']['ScenarioRead']
 export type TestCaseRead = components['schemas']['TestCaseRead']
-export type TestSuiteRead = components['schemas']['TestSuiteRead']
+// `status` isn't in api-types.gen.ts yet (regenerate via `npm run
+// generate:api-types` once the API is running) — added by hand.
+export type TestSuiteStatus = 'generating' | 'complete' | 'incomplete' | 'terminated'
+export type TestSuiteRead = components['schemas']['TestSuiteRead'] & { status: TestSuiteStatus }
 // Not in api-types.gen.ts yet (backend schema is new, regenerate via
 // `npm run generate:api-types` once the API is running) — added by hand.
 export type InteractionLevel = 'passive' | 'normal' | 'aggressive'
@@ -222,6 +228,18 @@ export const api = {
     }),
   listTestSuites: (applicationId: string) =>
     request<TestSuiteRead[]>(`/applications/${applicationId}/test-suites`),
+  terminateTestSuite: (applicationId: string, suiteId: string) =>
+    request<TestSuiteRead>(`/applications/${applicationId}/test-suites/${suiteId}/terminate`, {
+      method: 'POST',
+    }),
+  getGenerationStatus: (applicationId: string) =>
+    request<{ available: boolean }>(`/applications/${applicationId}/generation-status`),
+  getDiscoveryStatus: (applicationId: string) =>
+    request<{ available: boolean; retry_count: number }>(
+      `/applications/${applicationId}/discovery-status`,
+    ),
+  getExecutionStatus: (applicationId: string) =>
+    request<{ available: boolean }>(`/applications/${applicationId}/execution-status`),
   getSettings: () => request<SettingsRead>('/settings'),
   updateSettings: (payload: SettingsUpdate) =>
     request<SettingsRead>('/settings', { method: 'PATCH', body: JSON.stringify(payload) }),

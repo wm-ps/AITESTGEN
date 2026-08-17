@@ -27,11 +27,13 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError
 
 DISCOVERY_TASK_QUEUE = "discovery-task-queue"
 DISCOVERY_ACTIVITY_NAME = "DiscoveryActivity"
 APPLICATION_MODEL_BUILDER_ACTIVITY_NAME = "ApplicationModelBuilderActivity"
 INFERENCE_ACTIVITY_NAME = "InferenceActivity"
+MARK_DISCOVERY_RUN_FAILED_ACTIVITY_NAME = "MarkDiscoveryRunFailedActivity"
 
 
 @dataclass
@@ -73,6 +75,12 @@ class InferenceActivityInput:
     discovery_run_id: str
 
 
+@dataclass
+class MarkDiscoveryRunFailedActivityInput:
+    discovery_run_id: str
+    failure_reason: str
+
+
 @workflow.defn(name="DiscoveryWorkflow")
 class DiscoveryWorkflow:
     @workflow.run
@@ -105,27 +113,47 @@ class DiscoveryWorkflow:
         if discovery_result.status != "complete":
             return discovery_result.status
 
-        await workflow.execute_activity(
-            APPLICATION_MODEL_BUILDER_ACTIVITY_NAME,
-            ApplicationModelBuilderActivityInput(discovery_run_id=discovery_run_id),
-            start_to_close_timeout=timedelta(minutes=10),
-            result_type=ApplicationModelBuilderActivityOutput,
-        )
+        # Unlike DiscoveryActivity (which catches its own crashes and writes
+        # `failed` itself), a crash here has nowhere to write to — the
+        # workflow has no DB access (AD-2) — so `discovery_run.status` was
+        # previously left at `complete` (set back in DiscoveryActivity, well
+        # before this analysis phase even runs) forever, with the frontend's
+        # spinner gated on `hasJourneys`, never on this failure. Catching the
+        # exhausted-retries error here and marking the run failed is what
+        # actually surfaces it instead of an infinite "Analyzing..." spinner.
+        try:
+            await workflow.execute_activity(
+                APPLICATION_MODEL_BUILDER_ACTIVITY_NAME,
+                ApplicationModelBuilderActivityInput(discovery_run_id=discovery_run_id),
+                start_to_close_timeout=timedelta(minutes=10),
+                result_type=ApplicationModelBuilderActivityOutput,
+            )
 
-        await workflow.execute_activity(
-            INFERENCE_ACTIVITY_NAME,
-            InferenceActivityInput(discovery_run_id=discovery_run_id),
-            # Generous for LLM latency — InferenceActivity may make several
-            # sequential per-batch calls for a large Application (Story 2.6's
-            # navigation-graph clustering).
-            # ponytail: batches run sequentially within one Activity attempt,
-            # not concurrently — the simplest thing that satisfies this
-            # story's tasks. If a very-many-batch Application makes this
-            # timeout too tight, dispatching batches concurrently (they're
-            # independent) is the upgrade path, not a longer timeout alone.
-            start_to_close_timeout=timedelta(minutes=5),
-            retry_policy=RetryPolicy(maximum_attempts=3),
-            result_type=list[str],
-        )
+            await workflow.execute_activity(
+                INFERENCE_ACTIVITY_NAME,
+                InferenceActivityInput(discovery_run_id=discovery_run_id),
+                # Generous for LLM latency — InferenceActivity may make several
+                # sequential per-batch calls for a large Application (Story 2.6's
+                # navigation-graph clustering).
+                # ponytail: batches run sequentially within one Activity attempt,
+                # not concurrently — the simplest thing that satisfies this
+                # story's tasks. If a very-many-batch Application makes this
+                # timeout too tight, dispatching batches concurrently (they're
+                # independent) is the upgrade path, not a longer timeout alone.
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+                result_type=list[str],
+            )
+        except ActivityError as exc:
+            await workflow.execute_activity(
+                MARK_DISCOVERY_RUN_FAILED_ACTIVITY_NAME,
+                MarkDiscoveryRunFailedActivityInput(
+                    discovery_run_id=discovery_run_id,
+                    failure_reason=str(exc)[:500],
+                ),
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+            return "failed"
 
         return discovery_result.status

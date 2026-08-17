@@ -15,7 +15,7 @@ import pytest
 from api.db import engine, init_db
 from api.main import app
 from api.scripts.seed_dev_data import seed
-from domain import Application
+from domain import Application, DiscoveryRun
 from fastapi.testclient import TestClient
 from hvac.exceptions import VaultError
 from secrets_client.vault_client import VAULT_ADDR, VAULT_TOKEN
@@ -466,3 +466,86 @@ def test_create_application_sets_discovery_stage_initializing() -> None:
 
     assert response.status_code == 201
     assert response.json()["discovery_stage"] == "initializing"
+
+
+def test_create_application_reports_worker_unavailable_when_discovery_queue_has_no_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """API up + Temporal up + zero discovery workers polling the queue must
+    not look identical to a normal in-progress discovery run (starting a
+    workflow succeeds either way) — it should fail fast with a
+    `failure_reason` the frontend can recognize and show distinctly, instead
+    of the DiscoveryRun sitting at "running" forever with nothing to explain
+    why."""
+    from api import discovery as api_discovery
+
+    async def _no_pollers(client: object, task_queue: str) -> bool:
+        return False
+
+    monkeypatch.setattr(api_discovery, "has_pollers", _no_pollers)
+
+    init_db()
+    client = _signed_in_client("Org Discovery Worker Down")
+
+    response = _post_application(client, "No Worker App")
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["discovery_status"] == "failed"
+    assert body["discovery_failure_reason"] == "worker_unavailable"
+
+
+def test_discovery_status_reports_unavailable_when_worker_crashes_mid_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`has_pollers` is only checked once, before the workflow starts — a
+    worker that crashes right after leaves discovery_status="running" with
+    nothing to explain why it's stuck. This is the separate mid-run check
+    the frontend polls to tell that apart from a discovery genuinely still
+    in progress."""
+    init_db()
+    client = _signed_in_client("Org Discovery Status Down")
+
+    response = _post_application(client, "Discovery Status App")
+    assert response.status_code == 201
+    body = response.json()
+    assert body["discovery_status"] == "running"
+
+    from api import main as api_main
+
+    async def _no_pollers(client: object, task_queue: str) -> bool:
+        return False
+
+    monkeypatch.setattr(api_main, "has_pollers", _no_pollers)
+
+    status_response = client.get(f"/applications/{body['id']}/discovery-status")
+
+    assert status_response.status_code == 200
+    assert status_response.json() == {"available": False, "retry_count": 0}
+
+    # A DISC-001 row (Story 2.18's is_temporal_retry diagnostic) for this run
+    # should surface as a non-zero retry_count, so the frontend can tell the
+    # user it recovered from a worker restart instead of polling in silence.
+    from domain import DiscoveryError
+
+    with Session(engine) as session:
+        application = session.exec(
+            select(Application).where(Application.external_id == uuid.UUID(body["id"]))
+        ).one()
+        discovery_run = session.exec(
+            select(DiscoveryRun).where(DiscoveryRun.application_id == application.id)
+        ).one()
+        session.add(
+            DiscoveryError(
+                application_id=application.id,
+                discovery_run_id=discovery_run.id,
+                error_code="DISC-001",
+                message="Engine restarted (Temporal attempt 2) — resuming",
+                retry_count=1,
+            )
+        )
+        session.commit()
+
+    retried_response = client.get(f"/applications/{body['id']}/discovery-status")
+    assert retried_response.status_code == 200
+    assert retried_response.json() == {"available": False, "retry_count": 1}

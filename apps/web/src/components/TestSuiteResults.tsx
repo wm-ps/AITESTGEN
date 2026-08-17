@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { api, type TestCaseRead, type TestSuiteRead } from '../api'
 import { Stepper, type StepKey } from './Stepper'
 import { LoadingDots } from './LoadingDots'
+import { GenerationLoader } from './GenerationLoader'
+import { ServiceError } from './ServiceError'
 
 const POLL_INTERVAL_MS = 3000
 const SECONDS_PER_TEST_CASE = 45
@@ -15,14 +17,6 @@ function toTestFileName(journeyName: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
   return `${slug || 'journey'}.spec.ts`
-}
-
-function ArrowRightIcon() {
-  return (
-    <svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M5 12h14M13 6l6 6-6 6" />
-    </svg>
-  )
 }
 
 function CheckIcon() {
@@ -92,16 +86,45 @@ function ChevronIcon({ size, color, open }: { size: number; color: string; open:
   )
 }
 
-export function StatTile({ icon, value, label }: { icon: React.ReactNode; value: string | number; label: string }) {
+// Tinted per DESIGN.md's stat-tile spec (background: accent-wash-soft, radius-md)
+// rather than the flat white card this used before — plus a `tone` so a
+// dashboard/report stat can carry its own semantic color (Failed → danger,
+// Passed → good) instead of every tile reading identically neutral.
+export type StatTone = 'accent' | 'good' | 'danger' | 'warn' | 'muted'
+
+// `strong` drives both the icon and the border (via color-mix, not a fixed
+// per-tone wash-border token) — every tone gets a border at the same
+// perceived weight instead of good/danger's border silently matching their
+// own background (invisible) while warn/muted's happened to be visible.
+const STAT_TONE: Record<StatTone, { tileBackground: string; strong: string }> = {
+  accent: { tileBackground: 'var(--accent-wash-soft)', strong: 'var(--accent)' },
+  good: { tileBackground: 'var(--good-wash)', strong: 'var(--good-strong)' },
+  danger: { tileBackground: 'var(--danger-wash)', strong: 'var(--danger-strong)' },
+  warn: { tileBackground: 'var(--warn-wash)', strong: 'var(--warn-strong)' },
+  muted: { tileBackground: 'var(--canvas-wash-alt)', strong: 'var(--ink-muted)' },
+}
+
+export function StatTile({
+  icon,
+  value,
+  label,
+  tone = 'accent',
+}: {
+  icon: React.ReactNode
+  value: string | number
+  label: string
+  tone?: StatTone
+}) {
+  const colors = STAT_TONE[tone]
   return (
     <div
       style={{
-        background: 'var(--canvas)',
-        border: '1px solid var(--border-hairline)',
-        borderRadius: 'var(--radius-lg)',
+        background: colors.tileBackground,
+        border: `1px solid color-mix(in srgb, ${colors.strong} 30%, transparent)`,
+        borderRadius: 'var(--radius-md)',
         boxSizing: 'border-box',
         padding: '14px 16px',
-        boxShadow: '0 4px 14px -3px rgba(15,23,42,0.12), 0 1px 3px rgba(15,23,42,0.07)',
+        boxShadow: '0 4px 14px -3px rgba(15,23,42,0.1), 0 1px 3px rgba(15,23,42,0.06)',
         display: 'flex',
         alignItems: 'center',
         gap: 12,
@@ -110,21 +133,22 @@ export function StatTile({ icon, value, label }: { icon: React.ReactNode; value:
       <div
         aria-hidden="true"
         style={{
-          width: 28,
-          height: 28,
+          width: 30,
+          height: 30,
           borderRadius: 9,
-          background: 'var(--accent-wash)',
-          color: 'var(--accent)',
+          background: 'var(--canvas)',
+          color: colors.strong,
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
           flexShrink: 0,
+          boxShadow: '0 1px 3px rgba(15,23,42,0.1)',
         }}
       >
         {icon}
       </div>
       <div>
-        <div style={{ fontSize: 19, fontWeight: 700, color: 'var(--ink)', lineHeight: 1.1 }}>{value}</div>
+        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)', lineHeight: 1.1 }}>{value}</div>
         <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 3 }}>{label}</div>
       </div>
     </div>
@@ -222,25 +246,40 @@ export function CodeModal({ testCase, onClose }: { testCase: { name: string; cod
 
 export function TestSuiteResults({
   applicationId,
-  onGoToDashboard,
   onRunAllTests,
+  onViewExecutions,
   furthestCount,
   onStepClick,
   onPrevious,
 }: {
   applicationId: string
-  onGoToDashboard: () => void
   onRunAllTests: () => void
+  onViewExecutions: () => void
   furthestCount: number
   onStepClick?: (key: StepKey) => void
   onPrevious?: () => void
 }) {
   const [suites, setSuites] = useState<TestSuiteRead[]>([])
   const [expectedTestCaseCount, setExpectedTestCaseCount] = useState(0)
+  const [expectedJourneyCount, setExpectedJourneyCount] = useState(0)
   const [testsExpanded, setTestsExpanded] = useState(false)
   const [expandedSuiteIds, setExpandedSuiteIds] = useState<Set<string>>(new Set())
   const [activeCode, setActiveCode] = useState<TestCaseRead | null>(null)
   const [downloading, setDownloading] = useState(false)
+  const [generationUnavailable, setGenerationUnavailable] = useState(false)
+  const [terminatingSuiteId, setTerminatingSuiteId] = useState<string | null>(null)
+
+  async function handleTerminate(suiteId: string) {
+    setTerminatingSuiteId(suiteId)
+    try {
+      const updated = await api.terminateTestSuite(applicationId, suiteId)
+      setSuites((prev) => prev.map((s) => (s.id === suiteId ? updated : s)))
+    } catch {
+      // best-effort — a failed terminate just leaves the button re-enabled
+    } finally {
+      setTerminatingSuiteId(null)
+    }
+  }
 
   async function handleDownload() {
     setDownloading(true)
@@ -267,6 +306,7 @@ export function TestSuiteResults({
     api.listScenarios(applicationId).then((scenarios) => {
       if (cancelled) return
       setExpectedTestCaseCount(scenarios.length)
+      setExpectedJourneyCount(new Set(scenarios.map((s) => s.journey_id)).size)
     })
     return () => {
       cancelled = true
@@ -274,7 +314,17 @@ export function TestSuiteResults({
   }, [applicationId])
 
   const testCaseCount = suites.reduce((sum, s) => sum + s.test_cases.length, 0)
-  const isComplete = expectedTestCaseCount > 0 && testCaseCount >= expectedTestCaseCount
+  // Count parity alone (testCaseCount >= expectedTestCaseCount) never
+  // recovers once SuiteGenerationWorkflow gives up on a Scenario after its
+  // wave retries — that Scenario's TestAsset never arrives, so the raw
+  // count sits short forever and this screen would spin on the loader past
+  // the point the workflow actually finished. Every expected Journey having
+  // a suite that's left "generating" (its terminal write, complete/
+  // incomplete/terminated, already happened) is the real "done" signal.
+  const isComplete =
+    expectedJourneyCount > 0 &&
+    suites.length >= expectedJourneyCount &&
+    suites.every((s) => s.status !== 'generating')
 
   useEffect(() => {
     let cancelled = false
@@ -283,6 +333,12 @@ export function TestSuiteResults({
       try {
         const rows = await api.listTestSuites(applicationId)
         if (!cancelled) setSuites(rows)
+      } catch {
+        // best-effort poll — a transient failure just skips this tick
+      }
+      try {
+        const { available } = await api.getGenerationStatus(applicationId)
+        if (!cancelled) setGenerationUnavailable(!available)
       } catch {
         // best-effort poll — a transient failure just skips this tick
       }
@@ -298,52 +354,40 @@ export function TestSuiteResults({
   }, [applicationId, isComplete])
   const estRuntimeMin = Math.max(1, Math.ceil((testCaseCount * SECONDS_PER_TEST_CASE) / 60))
 
+  if (!isComplete && generationUnavailable) {
+    return (
+      <>
+        <Stepper current="generate" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} />
+        <ServiceError code="GENERATION_UNAVAILABLE" onRetry={() => onStepClick?.('generate')} />
+      </>
+    )
+  }
+
   if (!isComplete) {
     return (
       <>
         <Stepper current="generate" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} />
         <main style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, boxSizing: 'border-box' }}>
-          <div role="status" style={{ textAlign: 'center' }}>
-            <div
-              aria-hidden="true"
-              style={{
-                width: 64,
-                height: 64,
-                borderRadius: 'var(--radius-full)',
-                background: 'var(--accent-wash)',
-                color: 'var(--accent)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                margin: '0 auto 22px',
-                boxSizing: 'border-box',
-                animation: 'aitg-transition-icon 0.5s ease-out both, aitg-pulse 1.6s ease-in-out 0.5s infinite',
-              }}
-            >
-              <ArrowRightIcon />
-            </div>
-            <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--ink)', marginBottom: 16 }}>
-              Generating your test suite…
-            </div>
-            <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 16 }}>
-              <span style={{ width: 7, height: 7, borderRadius: 'var(--radius-full)', background: 'var(--accent)', animation: 'aitg-dot-bounce 1s ease-in-out infinite', animationDelay: '0s' }} />
-              <span style={{ width: 7, height: 7, borderRadius: 'var(--radius-full)', background: 'var(--accent)', animation: 'aitg-dot-bounce 1s ease-in-out infinite', animationDelay: '0.15s' }} />
-              <span style={{ width: 7, height: 7, borderRadius: 'var(--radius-full)', background: 'var(--accent)', animation: 'aitg-dot-bounce 1s ease-in-out infinite', animationDelay: '0.3s' }} />
-            </div>
-            <p className="caption" style={{ margin: 0, fontSize: 12.5 }}>
-              {testCaseCount}/{expectedTestCaseCount || '…'} test cases so far
-            </p>
-            <p className="caption" style={{ margin: '6px 0 0', fontSize: 12, opacity: 0.7 }}>
-              Stuck?{' '}
-              <button
-                type="button"
-                onClick={() => onStepClick?.('generate')}
-                style={{ font: 'inherit', color: 'var(--accent)', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
-              >
-                Resume generation
-              </button>
-            </p>
-          </div>
+          <GenerationLoader
+            title="Generating your test suite…"
+            caption={
+              <p className="caption" style={{ margin: 0, fontSize: 12.5 }}>
+                {testCaseCount}/{expectedTestCaseCount || '…'} test cases so far
+              </p>
+            }
+            footer={
+              <p className="caption" style={{ margin: '6px 0 0', fontSize: 12, opacity: 0.7 }}>
+                Stuck?{' '}
+                <button
+                  type="button"
+                  onClick={() => onStepClick?.('generate')}
+                  style={{ font: 'inherit', color: 'var(--accent)', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
+                >
+                  Resume generation
+                </button>
+              </p>
+            }
+          />
         </main>
       </>
     )
@@ -459,21 +503,20 @@ export function TestSuiteResults({
                 </button>
                 <button
                   type="button"
-                  onClick={onGoToDashboard}
+                  onClick={onViewExecutions}
                   style={{
-                    padding: '9px 22px',
-                    background: '#FFFFFF',
-                    color: 'var(--accent)',
-                    border: 'none',
+                    padding: '9px 20px',
+                    background: 'rgba(255,255,255,0.16)',
+                    color: '#FFFFFF',
+                    border: '1px solid rgba(255,255,255,0.5)',
                     borderRadius: 'var(--radius)',
                     fontSize: 13.5,
                     fontWeight: 700,
                     fontFamily: 'inherit',
                     cursor: 'pointer',
-                    boxShadow: '0 8px 16px -6px rgba(0,0,0,0.2)',
                   }}
                 >
-                  Go to Dashboard →
+                  View Executions
                 </button>
               </div>
             </div>
@@ -569,9 +612,69 @@ export function TestSuiteResults({
                         <span style={{ fontSize: 12, color: 'var(--ink-muted)', whiteSpace: 'nowrap', flexShrink: 0 }}>
                           {suite.test_cases.length} test{suite.test_cases.length === 1 ? '' : 's'}
                         </span>
+                        {suite.status === 'incomplete' && (
+                          <span
+                            style={{
+                              fontSize: 10.5,
+                              fontWeight: 600,
+                              padding: '2px 7px',
+                              borderRadius: 6,
+                              background: 'var(--warn-wash)',
+                              color: 'var(--warn-strong)',
+                              whiteSpace: 'nowrap',
+                              flexShrink: 0,
+                            }}
+                          >
+                            Incomplete
+                          </span>
+                        )}
+                        {suite.status === 'terminated' && (
+                          <span
+                            style={{
+                              fontSize: 10.5,
+                              fontWeight: 600,
+                              padding: '2px 7px',
+                              borderRadius: 6,
+                              background: 'var(--canvas-wash-alt)',
+                              color: 'var(--ink-muted)',
+                              whiteSpace: 'nowrap',
+                              flexShrink: 0,
+                            }}
+                          >
+                            Terminated
+                          </span>
+                        )}
                       </div>
                       <ChevronIcon size={14} color="var(--ink-faint)" open={suiteOpen} />
                     </button>
+
+                    {suite.status === 'incomplete' && (
+                      <div style={{ padding: '0 20px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <p className="caption" style={{ margin: 0, fontSize: 12, color: 'var(--warn-strong)' }}>
+                          Some scenarios in this Journey couldn't be generated after several retries.
+                        </p>
+                        <button
+                          type="button"
+                          disabled={terminatingSuiteId === suite.id}
+                          onClick={() => handleTerminate(suite.id)}
+                          style={{
+                            padding: '4px 10px',
+                            background: 'var(--canvas)',
+                            border: '1px solid var(--border-strong)',
+                            borderRadius: 6,
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            color: 'var(--ink-secondary)',
+                            fontFamily: 'inherit',
+                            cursor: terminatingSuiteId === suite.id ? 'not-allowed' : 'pointer',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {terminatingSuiteId === suite.id ? 'Terminating…' : 'Terminate'}
+                        </button>
+                      </div>
+                    )}
 
                     {suiteOpen && (
                       <div style={{ padding: '0 20px 14px', display: 'flex', flexDirection: 'column', gap: 2 }}>

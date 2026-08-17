@@ -1025,6 +1025,7 @@ class CapturedFormField:
     # Story 2.21: ranked candidate locators, e.g.
     # [{"strategy": "testid", "value": "...", "fragile": False}, ...].
     locator_candidates: list[dict] | None = None
+    validation_message: str | None = None
 
 
 @dataclass
@@ -1431,6 +1432,45 @@ async def _submit_button_label(locator: Locator) -> str | None:
     return text or None
 
 
+async def _invalid_field_messages(page: Page | Frame, invalid_fields: Locator) -> list[str]:
+    """Resolves each `aria-invalid="true"` field's `aria-describedby` id to
+    the referenced element's text — the page's own error copy, not just the
+    presence signal `[aria-invalid="true"]` already gives us."""
+    messages: list[str] = []
+    for i in range(await invalid_fields.count()):
+        described_by = await invalid_fields.nth(i).get_attribute("aria-describedby")
+        if not described_by:
+            continue
+        try:
+            text = (await page.locator(f"#{described_by}").inner_text()).strip()
+        except Exception:
+            continue
+        if text:
+            messages.append(text)
+    return messages
+
+
+async def _mvc_validation_messages(form: Locator, invalid_fields: Locator) -> list[str]:
+    """ASP.NET MVC unobtrusive-validation's own convention: the error text
+    lives in a `[data-valmsg-for="<field name>"]` span, matched by the
+    input's `name` attribute — there's no id reference to resolve, unlike
+    `_invalid_field_messages`'s `aria-describedby` lookup."""
+    messages: list[str] = []
+    for i in range(await invalid_fields.count()):
+        name = await invalid_fields.nth(i).get_attribute("name")
+        if not name:
+            continue
+        try:
+            text = (
+                await form.locator(f'[data-valmsg-for="{name}"]').first.inner_text()
+            ).strip()
+        except Exception:
+            continue
+        if text:
+            messages.append(text)
+    return messages
+
+
 # Story 2.10 AC 2/6: the heading + structural-shape signals the State
 # Identity Engine scores against, computed in one round trip. The
 # structural walk descends into open shadow roots (Story 2.14) — without
@@ -1557,11 +1597,17 @@ async def _fill_and_submit_form(
     # per field — a field-heavy form (a checkout/payment page can easily have
     # a dozen+ inputs) would otherwise multiply into dozens of separate
     # browser round-trips just to decide whether this form was seen before.
+    # `checkValidity()` forces the browser to compute `validationMessage` —
+    # it's otherwise empty until constraint validation actually runs once.
     input_info = await all_inputs.evaluate_all(
-        "els => els.map(el => ({"
+        "els => els.map(el => {"
+        "el.checkValidity();"
+        "return {"
         "type: el.type || 'text', name: el.name || null, value: el.value || null, "
-        "id: el.id || null, required: el.required, accept: el.accept || null"
-        "}))"
+        "id: el.id || null, required: el.required, accept: el.accept || null, "
+        "validationMessage: el.validationMessage || null"
+        "};"
+        "})"
     )
 
     # Representative-form sampling: a form's initial state (shape + every
@@ -1616,6 +1662,7 @@ async def _fill_and_submit_form(
                         default_value=os.path.basename(path),
                         captured_selector=selector,
                         locator_candidates=candidates,
+                        validation_message=info.get("validationMessage"),
                     )
                 )
                 if on_diagnostic:
@@ -1697,6 +1744,7 @@ async def _fill_and_submit_form(
                     default_value=value,
                     captured_selector=selector,
                     locator_candidates=candidates,
+                    validation_message=info.get("validationMessage"),
                 )
             )
             used_key = data_resolver.field_key(field_name_for_resolution, input_type)
@@ -1770,23 +1818,42 @@ async def _fill_and_submit_form(
     after_url = _page_fingerprint(page.url)
 
     if resolved_this_submit:
-        # Story 2.13 AC 2/3: success feedback. `ponytail:` a single bounded
-        # heuristic, not the fuller "validation error OR no expected
+        # Story 2.13 AC 2/3: success feedback. `ponytail:` two bounded
+        # heuristics, not the fuller "validation error OR no expected
         # transition OR unchanged fingerprint" list Task 3 sketches — a
         # navigating submit is treated as success outright (Dev Notes:
         # don't over-build attribution); only the no-navigation case is
-        # checked at all, and only for the one cheap, broadly-supported
-        # signal (`aria-invalid`). Upgrade if a pilot shows real forms that
-        # reject without ever setting it. When several fields were filled in
-        # one submit and it's rejected, every one of them is demoted
-        # together (Dev Notes' "demote the set" attribution rule) — this
-        # function has no way to isolate which single field was at fault.
+        # checked at all. Upgrade if a pilot shows real forms that reject
+        # without ever setting either signal. When several fields were
+        # filled in one submit and it's rejected, every one of them is
+        # demoted together (Dev Notes' "demote the set" attribution rule) —
+        # this function has no way to isolate which single field was at
+        # fault.
         outcome = "success"
+        rejection_messages: list[str] = []
         if after_url == before_url:
+            has_error = False
             try:
-                has_error = await form.locator('[aria-invalid="true"]').count() > 0
+                aria_invalid = form.locator('[aria-invalid="true"]')
+                if await aria_invalid.count() > 0:
+                    has_error = True
+                    rejection_messages += await _invalid_field_messages(page, aria_invalid)
             except Exception:
-                has_error = False
+                pass
+            try:
+                # ASP.NET MVC unobtrusive-validation (jQuery) marks a
+                # rejected input with this class and its message in a
+                # sibling `[data-valmsg-for="<field name>"]` span, matched
+                # by name rather than an id reference — no `aria-invalid`/
+                # `aria-describedby` at all. Observed live on a real login
+                # form with no ARIA or native constraint-validation markup
+                # whatsoever (digitalbankingportal.onwavemaker.com, 2026-08-12).
+                mvc_invalid = form.locator(".input-validation-error")
+                if await mvc_invalid.count() > 0:
+                    has_error = True
+                    rejection_messages += await _mvc_validation_messages(form, mvc_invalid)
+            except Exception:
+                pass
             outcome = "rejected" if has_error else "unknown"
         for used_key, used_value in resolved_this_submit:
             log.record_outcome(used_key, used_value, outcome)
@@ -1810,6 +1877,7 @@ async def _fill_and_submit_form(
                             "normalized_key": used_key,
                             "outcome": "rejected",
                             "page_url": page_url,
+                            "messages": rejection_messages,
                         },
                     )
 

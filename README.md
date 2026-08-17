@@ -124,6 +124,7 @@ snapshots) is AWS S3 in production (Story 2.8) — there is no in-cluster
 | `s3` (AWS) | External (not deployed in-cluster) | n/a | Object storage for discovery evidence (screenshots/DOM snapshots) — production bucket, region set via the `aitestgen-config` ConfigMap, accessed via IRSA or the `aitestgen-secrets` access-key pair. |
 | `discovery-worker` | — (no Service) | n/a | Temporal worker — outbound only. Runs the Playwright crawler + AI inference activities. |
 | `generation-worker` | — (no Service) | n/a | Temporal worker — outbound only. Scenario/test-asset generation (Epic 4, not yet implemented). |
+| `execution-worker` | — (no Service) | n/a | Temporal worker — outbound only. Runs `ApplicationTestExecutionWorkflow` ("Run All Tests") — Playwright execution per TestAsset, on its own `execution-task-queue`. |
 
 ## Tests & checks (mirrors CI)
 

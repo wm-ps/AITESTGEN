@@ -73,7 +73,7 @@ export function Settings({ onCancel }: { onCancel: () => void }) {
               value={settings.max_pages}
               onChange={(e) => setSettings({ ...settings, max_pages: Number(e.target.value) })}
             >
-              {[50, 100, 250, 500, 1000].map((n) => (
+              {[5, 10, 20, 50, 100, 250, 500, 1000].map((n) => (
                 <option key={n} value={n}>
                   {n}
                 </option>
@@ -89,7 +89,7 @@ export function Settings({ onCancel }: { onCancel: () => void }) {
                 setSettings({ ...settings, max_discovery_duration_minutes: Number(e.target.value) })
               }
             >
-              {[5, 10, 15, 30, 60].map((n) => (
+              {[2, 5, 10, 15, 30, 60].map((n) => (
                 <option key={n} value={n}>
                   {n} min
                 </option>

@@ -21,6 +21,7 @@ logged, never present in the assembled project's source.
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
@@ -60,6 +61,8 @@ from workflows import (
 from execution_worker.db import engine
 from execution_worker.project_cache import cleanup_project_dir, project_dir_for
 
+logger = logging.getLogger(__name__)
+
 # A single ExecuteTestActivity call: browser launch + full scenario
 # walkthrough. Generous, but bounded — an app that never responds must not
 # hang a worker slot forever.
@@ -97,6 +100,122 @@ def _resolve_bin(name: str) -> str:
     return resolved
 
 
+@dataclass
+class _AssemblyInputs:
+    test_assets: list[TestAsset]
+    test_suites: list[TestSuite]
+    journeys_by_id: dict[uuid.UUID, Journey]
+    assets_by_suite: dict[uuid.UUID, list[TestAsset]]
+    scenario_name_by_asset_id: dict[uuid.UUID, str]
+    login_evidence: object
+
+
+def _load_assembly_inputs_sync(session: Session, application: Application) -> _AssemblyInputs:
+    journeys = session.exec(
+        select(Journey).where(
+            Journey.application_id == application.id, Journey.status == "candidate"
+        )
+    ).all()
+    journeys_by_id = {j.id: j for j in journeys}
+
+    test_suites = (
+        session.exec(
+            select(TestSuite).where(
+                TestSuite.journey_id.in_(journeys_by_id.keys()),  # type: ignore[attr-defined]
+                TestSuite.current.is_(True),  # type: ignore[attr-defined]
+            )
+        ).all()
+        if journeys_by_id
+        else []
+    )
+    suite_ids = [ts.id for ts in test_suites]
+
+    test_assets = (
+        session.exec(
+            select(TestAsset).where(
+                TestAsset.test_suite_id.in_(suite_ids),  # type: ignore[attr-defined]
+                TestAsset.current.is_(True),  # type: ignore[attr-defined]
+            )
+        ).all()
+        if suite_ids
+        else []
+    )
+    assets_by_suite: dict[uuid.UUID, list[TestAsset]] = {}
+    for asset in test_assets:
+        assets_by_suite.setdefault(asset.test_suite_id, []).append(asset)
+
+    scenario_ids = {a.scenario_id for a in test_assets}
+    scenarios_by_id = {
+        s.id: s
+        for s in (
+            session.exec(
+                select(Scenario).where(Scenario.id.in_(scenario_ids))  # type: ignore[attr-defined]
+            ).all()
+            if scenario_ids
+            else []
+        )
+    }
+    scenario_name_by_asset_id = {
+        a.id: scenarios_by_id[a.scenario_id].name
+        for a in test_assets
+        if a.scenario_id in scenarios_by_id
+    }
+
+    login_evidence = (
+        find_login_page_evidence(session, application)
+        if application.auth_method == "standard_login"
+        else None
+    )
+
+    return _AssemblyInputs(
+        test_assets=test_assets,
+        test_suites=test_suites,
+        journeys_by_id=journeys_by_id,
+        assets_by_suite=assets_by_suite,
+        scenario_name_by_asset_id=scenario_name_by_asset_id,
+        login_evidence=login_evidence,
+    )
+
+
+# Serializes rebuilds within this worker process — if a crash/restart wipes
+# `/tmp` mid-TestRun (the assembled project dir is local-disk, not
+# persisted; see project_cache.py's own docstring), several redelivered
+# ExecuteTestActivity calls can all discover the same missing directory at
+# once. One lock keyed globally, not per-TestRun: rebuilding is an
+# exceptional recovery path, not the hot path, so briefly serializing
+# unrelated runs' rebuilds too is a fine trade for staying simple.
+_project_rebuild_lock = asyncio.Lock()
+
+
+async def _ensure_project_dir(test_run_id: uuid.UUID, application_id: uuid.UUID) -> None:
+    dest_dir = project_dir_for(test_run_id)
+    if (dest_dir / "package.json").exists():
+        return
+    async with _project_rebuild_lock:
+        await asyncio.to_thread(_rebuild_project_dir_sync, test_run_id, application_id)
+
+
+def _rebuild_project_dir_sync(test_run_id: uuid.UUID, application_id: uuid.UUID) -> None:
+    dest_dir = project_dir_for(test_run_id)
+    if (dest_dir / "package.json").exists():
+        return
+    with Session(engine) as session:
+        application = session.exec(
+            select(Application).where(Application.external_id == application_id)
+        ).one()
+        inputs = _load_assembly_inputs_sync(session, application)
+        assemble_test_suite_project_to_dir(
+            dest_dir,
+            application,
+            inputs.test_suites,
+            inputs.journeys_by_id,
+            inputs.assets_by_suite,
+            inputs.scenario_name_by_asset_id,
+            inputs.login_evidence,
+        )
+    _install_project(dest_dir)
+
+
 @activity.defn(name="PrepareTestRunActivity")
 async def prepare_test_run_activity(
     input: PrepareTestRunActivityInput,
@@ -105,6 +224,7 @@ async def prepare_test_run_activity(
 
 
 def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRunActivityResult:
+    logger.info("PrepareTestRunActivity: starting for application_id=%s", input.application_id)
     # ponytail: no ExecutionPolicy/allowlist/destructive-action gating here
     # — deliberately removed per explicit request, to let "Run All Tests"
     # work with zero setup. The `ExecutionPolicy` model/table and its
@@ -133,55 +253,10 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
         session.commit()
         session.refresh(test_run)
 
-        journeys = session.exec(
-            select(Journey).where(
-                Journey.application_id == application.id, Journey.status == "candidate"
-            )
-        ).all()
-        journeys_by_id = {j.id: j for j in journeys}
-
-        test_suites = (
-            session.exec(
-                select(TestSuite).where(
-                    TestSuite.journey_id.in_(journeys_by_id.keys()),  # type: ignore[attr-defined]
-                    TestSuite.current.is_(True),  # type: ignore[attr-defined]
-                )
-            ).all()
-            if journeys_by_id
-            else []
-        )
-        suite_ids = [ts.id for ts in test_suites]
-
-        test_assets = (
-            session.exec(
-                select(TestAsset).where(
-                    TestAsset.test_suite_id.in_(suite_ids),  # type: ignore[attr-defined]
-                    TestAsset.current.is_(True),  # type: ignore[attr-defined]
-                )
-            ).all()
-            if suite_ids
-            else []
-        )
-        assets_by_suite: dict[uuid.UUID, list[TestAsset]] = {}
-        for asset in test_assets:
-            assets_by_suite.setdefault(asset.test_suite_id, []).append(asset)
-
-        scenario_ids = {a.scenario_id for a in test_assets}
-        scenarios_by_id = {
-            s.id: s
-            for s in (
-                session.exec(
-                    select(Scenario).where(Scenario.id.in_(scenario_ids))  # type: ignore[attr-defined]
-                ).all()
-                if scenario_ids
-                else []
-            )
-        }
-        scenario_name_by_asset_id = {
-            a.id: scenarios_by_id[a.scenario_id].name
-            for a in test_assets
-            if a.scenario_id in scenarios_by_id
-        }
+        inputs = _load_assembly_inputs_sync(session, application)
+        test_assets = inputs.test_assets
+        assets_by_suite = inputs.assets_by_suite
+        scenario_name_by_asset_id = inputs.scenario_name_by_asset_id
 
         # Per-test-result rows first — every TestAsset gets a row before any
         # project assembly/install so a slow npm install never delays the
@@ -211,22 +286,16 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
                 test_run_id=str(test_run.external_id), blocked=False, executable=[]
             )
 
-        login_evidence = (
-            find_login_page_evidence(session, application)
-            if application.auth_method == "standard_login"
-            else None
-        )
-
         dest_dir = project_dir_for(test_run.external_id)
         try:
             assemble_test_suite_project_to_dir(
                 dest_dir,
                 application,
-                test_suites,
-                journeys_by_id,
+                inputs.test_suites,
+                inputs.journeys_by_id,
                 assets_by_suite,
                 scenario_name_by_asset_id,
-                login_evidence,
+                inputs.login_evidence,
             )
             _install_project(dest_dir)
         except Exception as exc:  # noqa: BLE001 — infra failure, not a test outcome
@@ -241,6 +310,11 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
             test_run.completed_at = datetime.now(UTC)
             session.add(test_run)
             session.commit()
+            logger.error(
+                "PrepareTestRunActivity: test_run_id=%s failed to prepare project: %s",
+                test_run.external_id,
+                exc,
+            )
             return PrepareTestRunActivityResult(
                 test_run_id=str(test_run.external_id), blocked=False, executable=[]
             )
@@ -254,6 +328,11 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
                 )
             )
 
+        logger.info(
+            "PrepareTestRunActivity: test_run_id=%s prepared with %d executable tests",
+            test_run.external_id,
+            len(executable),
+        )
         return PrepareTestRunActivityResult(
             test_run_id=str(test_run.external_id), blocked=False, executable=executable
         )
@@ -293,8 +372,17 @@ async def execute_test_activity(input: ExecuteTestActivityInput) -> str:
         # Already handled by a prior Temporal attempt for this TestResult
         # (at-least-once retry) — idempotent no-op, matches
         # playwright_generation_activity's own re-check convention.
+        logger.info(
+            "ExecuteTestActivity: test_result_id=%s already handled, skipping", input.test_result_id
+        )
         return input.test_result_id
 
+    logger.info(
+        "ExecuteTestActivity: test_result_id=%s starting spec_path=%s",
+        input.test_result_id,
+        context.spec_path,
+    )
+    await _ensure_project_dir(uuid.UUID(input.test_run_id), uuid.UUID(input.application_id))
     env = await asyncio.to_thread(_build_subprocess_env, context.application)
     project_dir = project_dir_for(uuid.UUID(input.test_run_id))
     outcome = await _run_playwright_test(
@@ -305,6 +393,11 @@ async def execute_test_activity(input: ExecuteTestActivityInput) -> str:
         input.test_result_id,
     )
     await asyncio.to_thread(_persist_test_result_sync, input, context, outcome)
+    logger.info(
+        "ExecuteTestActivity: test_result_id=%s finished status=%s",
+        input.test_result_id,
+        outcome["status"],
+    )
     return input.test_result_id
 
 
@@ -406,6 +499,11 @@ async def _run_playwright_test(
     except TimeoutError:
         proc.kill()
         await proc.wait()
+        logger.warning(
+            "ExecuteTestActivity: test_result_id=%s timed out after %ds",
+            test_result_id,
+            timeout_seconds,
+        )
         return {
             "status": "timed_out",
             "duration_ms": int(timeout_seconds * 1000),
@@ -504,6 +602,14 @@ def _find_artifacts(output_dir: Path) -> list[Path]:
     return [p for p in output_dir.rglob("*") if p.is_file() and p.suffix in (".png", ".zip")]
 
 
+def _tally_counts(results: list[TestResult]) -> dict[str, int]:
+    counts = {status: 0 for status in ("passed", "failed", "timed_out", "errored", "blocked")}
+    for result in results:
+        if result.status in counts:
+            counts[result.status] += 1
+    return counts
+
+
 def _persist_test_result_sync(
     input: ExecuteTestActivityInput, context: _ExecutionContext, outcome: dict
 ) -> None:
@@ -541,6 +647,23 @@ def _persist_test_result_sync(
                 )
             )
 
+        # Live progress for the polling frontend — without this, StatTiles
+        # sit at 0 for the whole run since FinalizeTestRunActivity only
+        # tallies once, at the very end.
+        run_results = session.exec(
+            select(TestResult).where(TestResult.test_run_id == test_result.test_run_id)
+        ).all()
+        counts = _tally_counts(run_results)
+        test_run = session.exec(
+            select(TestRun).where(TestRun.id == test_result.test_run_id)
+        ).one()
+        test_run.passed_count = counts["passed"]
+        test_run.failed_count = counts["failed"]
+        test_run.timed_out_count = counts["timed_out"]
+        test_run.errored_count = counts["errored"]
+        test_run.blocked_count = counts["blocked"]
+        session.add(test_run)
+
         session.commit()
 
 
@@ -555,12 +678,15 @@ def _finalize_test_run_sync(input: FinalizeTestRunActivityInput) -> None:
             select(TestRun).where(TestRun.external_id == uuid.UUID(input.test_run_id))
         ).one()
         if test_run.status == "completed":
+            logger.info(
+                "FinalizeTestRunActivity: test_run_id=%s already finalized, skipping",
+                input.test_run_id,
+            )
             return  # already finalized by a prior Temporal attempt — idempotent no-op
 
         results = session.exec(
             select(TestResult).where(TestResult.test_run_id == test_run.id)
         ).all()
-        counts = {status: 0 for status in ("passed", "failed", "timed_out", "errored", "blocked")}
         for result in results:
             if result.status == "pending":
                 # ponytail: an ExecuteTestActivity that exhausted its own
@@ -580,9 +706,8 @@ def _finalize_test_run_sync(input: FinalizeTestRunActivityInput) -> None:
                 )
                 result.completed_at = datetime.now(UTC)
                 session.add(result)
-            if result.status in counts:
-                counts[result.status] += 1
 
+        counts = _tally_counts(results)
         test_run.total_count = len(results)
         test_run.passed_count = counts["passed"]
         test_run.failed_count = counts["failed"]
@@ -595,5 +720,15 @@ def _finalize_test_run_sync(input: FinalizeTestRunActivityInput) -> None:
         session.commit()
 
         external_id = test_run.external_id
+        logger.info(
+            "FinalizeTestRunActivity: test_run_id=%s finished passed=%d failed=%d "
+            "timed_out=%d errored=%d blocked=%d",
+            external_id,
+            counts["passed"],
+            counts["failed"],
+            counts["timed_out"],
+            counts["errored"],
+            counts["blocked"],
+        )
 
     cleanup_project_dir(external_id)

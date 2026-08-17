@@ -25,16 +25,19 @@ import uuid
 from ai_provider.hosted import HostedAIProvider
 from domain import (
     ApiEndpoint,
+    Application,
     Component,
     ComponentLocator,
     DiscoverySettings,
     Form,
+    FormField,
     Journey,
     JourneyStep,
     Page,
     Scenario,
     TestAsset,
     TestSuite,
+    ValidationRule,
 )
 from safety_classifier import classify_scenario_steps
 from sqlalchemy import func
@@ -44,10 +47,12 @@ from temporalio import activity
 from workflows import (
     EnsureTestSuiteActivityInput,
     EnsureTestSuiteActivityResult,
+    FinalizeSuiteGenerationActivityInput,
     PlaywrightGenerationActivityInput,
     ScenarioGenerationActivityInput,
 )
 
+from generation_worker import spec_linter
 from generation_worker.db import engine
 from generation_worker.typecheck import typecheck_playwright_code
 
@@ -95,7 +100,14 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
             )
         ).all()
         if existing:
+            logger.info(
+                "ScenarioGenerationActivity: journey_id=%s already has %d scenarios, skipping",
+                input.journey_id,
+                len(existing),
+            )
             return [str(s.external_id) for s in existing]
+
+        logger.info("ScenarioGenerationActivity: journey_id=%s starting", input.journey_id)
 
         steps = list(
             session.exec(
@@ -139,8 +151,48 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
                 select(ApiEndpoint).where(ApiEndpoint.page_id.in_(page_ids))  # type: ignore[attr-defined]
             ).all()
         ) if page_ids else []
+        form_ids = [f.id for f in forms]
+        fields = list(
+            session.exec(
+                select(FormField).where(FormField.form_id.in_(form_ids))  # type: ignore[attr-defined]
+            ).all()
+        ) if form_ids else []
+        field_ids = [f.id for f in fields]
+        rules = list(
+            session.exec(
+                select(ValidationRule).where(
+                    ValidationRule.form_field_id.in_(field_ids)  # type: ignore[attr-defined]
+                )
+            ).all()
+        ) if field_ids else []
+        rules_by_field: dict[uuid.UUID, list[ValidationRule]] = {}
+        for rule in rules:
+            rules_by_field.setdefault(rule.form_field_id, []).append(rule)
+        fields_by_form: dict[uuid.UUID, list[FormField]] = {}
+        for field_row in fields:
+            fields_by_form.setdefault(field_row.form_id, []).append(field_row)
+
         forms_by_page: dict[uuid.UUID, list[Form]] = {}
         for form in forms:
+            # Transient — same `object.__setattr__` technique as `.forms`/
+            # `.api_endpoints` below, so `_describe_page` (ai_provider/hosted.py)
+            # can show the LLM each field's actual captured validation rules
+            # (rule_type + value) generically, instead of it having to guess
+            # validation conditions from field names alone.
+            object.__setattr__(
+                form,
+                "fields",
+                [
+                    {
+                        "name": field_row.name,
+                        "rules": [
+                            {"rule_type": rule.rule_type, "value": rule.value}
+                            for rule in rules_by_field.get(field_row.id, [])
+                        ],
+                    }
+                    for field_row in fields_by_form.get(form.id, [])
+                ],
+            )
             forms_by_page.setdefault(form.page_id, []).append(form)
         api_by_page: dict[uuid.UUID, list[ApiEndpoint]] = {}
         for endpoint in api_endpoints:
@@ -190,8 +242,19 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
             session.add(scenario)
             session.flush()
             scenario_external_ids.append(str(scenario.external_id))
+            logger.info(
+                "ScenarioGenerationActivity: journey_id=%s created scenario_id=%s name=%r",
+                input.journey_id,
+                scenario.external_id,
+                scenario.name,
+            )
 
         session.commit()
+        logger.info(
+            "ScenarioGenerationActivity: journey_id=%s generated %d scenarios",
+            input.journey_id,
+            len(scenario_external_ids),
+        )
         return scenario_external_ids
 
 
@@ -295,6 +358,12 @@ def _ensure_test_suite_sync(input: EnsureTestSuiteActivityInput) -> EnsureTestSu
             )
         ).all()
 
+        logger.info(
+            "EnsureTestSuiteActivity: journey_id=%s test_suite_id=%s (%d scenarios)",
+            input.journey_id,
+            test_suite.external_id,
+            len(scenarios),
+        )
         return EnsureTestSuiteActivityResult(
             test_suite_id=str(test_suite.external_id),
             scenario_ids=[str(s.external_id) for s in scenarios],
@@ -317,6 +386,10 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
     created, zero `TestAsset`s ever written)."""
     existing_id = await asyncio.to_thread(_existing_test_asset_id_sync, input.scenario_id)
     if existing_id is not None:
+        logger.info(
+            "PlaywrightGenerationActivity: scenario_id=%s already has a test asset, skipping",
+            input.scenario_id,
+        )
         return existing_id
 
     if await asyncio.to_thread(_test_case_limit_reached_sync, input.scenario_id):
@@ -327,16 +400,25 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
         )
         return ""
 
+    logger.info("PlaywrightGenerationActivity: scenario_id=%s starting", input.scenario_id)
+
     # Default test-data values, part of this same single flow (Story 4.2
     # AC 1) — never a second trigger. Reviewer-provided values always take
     # precedence; a still-blank field (mandatory or optional) gets a
     # field-name-pattern default, persisted back onto Scenario.test_data
     # before the AI call reads it.
-    scenario, known_pages, known_locators = await asyncio.to_thread(
-        _resolve_scenario_defaults_sync, input.scenario_id
-    )
+    (
+        scenario,
+        known_pages,
+        known_locators,
+        required_fields,
+        requires_auth,
+        primary_page_id,
+    ) = await asyncio.to_thread(_resolve_scenario_defaults_sync, input.scenario_id)
 
-    code = await HostedAIProvider().generate_playwright(scenario, known_pages, known_locators)
+    code = await HostedAIProvider().generate_playwright(
+        scenario, known_pages, known_locators, requires_auth=requires_auth
+    )
 
     # Checklist rule 3: a spec isn't "generated successfully" until it
     # compiles against real @playwright/test types — this catches
@@ -345,13 +427,66 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
     # anyway) lets Temporal's activity retry re-run generation.
     typecheck_errors = await typecheck_playwright_code(code.code)
     if typecheck_errors:
+        logger.error(
+            "PlaywrightGenerationActivity: scenario_id=%s failed typecheck: %s",
+            input.scenario_id,
+            "; ".join(typecheck_errors),
+        )
         raise ValueError(
             "Generated Playwright spec failed typecheck:\n" + "\n".join(typecheck_errors)
         )
 
-    return await asyncio.to_thread(
-        _persist_test_asset_sync, input.scenario_id, input.test_suite_id, code.code
+    # Ground truth beats an LLM guess for the auth tag the same way it does
+    # for locators (Story: generation pipeline hardening) — rewritten
+    # deterministically here rather than trusted from the prompt alone.
+    tagged_code = spec_linter.apply_auth_tag(code.code, requires_auth)
+
+    test_asset_id = await asyncio.to_thread(
+        _persist_test_asset_sync,
+        input.scenario_id,
+        input.test_suite_id,
+        tagged_code,
+        requires_auth,
+        required_fields,
+        known_locators,
+        primary_page_id,
     )
+    logger.info(
+        "PlaywrightGenerationActivity: scenario_id=%s finished test_asset_id=%s",
+        input.scenario_id,
+        test_asset_id,
+    )
+    return test_asset_id
+
+
+@activity.defn(name="FinalizeSuiteGenerationActivity")
+async def finalize_suite_generation_activity(input: FinalizeSuiteGenerationActivityInput) -> None:
+    await asyncio.to_thread(_finalize_suite_generation_sync, input)
+
+
+def _finalize_suite_generation_sync(input: FinalizeSuiteGenerationActivityInput) -> None:
+    with Session(engine) as session:
+        test_suite = session.exec(
+            select(TestSuite).where(TestSuite.external_id == uuid.UUID(input.test_suite_id))
+        ).one()
+        # A user may have already terminated this suite (or a prior Temporal
+        # attempt of this same activity already ran) before this write lands
+        # — 'terminated' is a stronger, user-made decision than the workflow's
+        # own 'complete'/'incomplete' verdict and must never be overwritten.
+        if test_suite.status == "terminated":
+            logger.info(
+                "FinalizeSuiteGenerationActivity: test_suite_id=%s already terminated, skipping",
+                input.test_suite_id,
+            )
+            return
+        test_suite.status = input.status
+        session.add(test_suite)
+        session.commit()
+        logger.info(
+            "FinalizeSuiteGenerationActivity: test_suite_id=%s finished status=%s",
+            input.test_suite_id,
+            input.status,
+        )
 
 
 def _existing_test_asset_id_sync(scenario_external_id: str) -> str | None:
@@ -395,16 +530,17 @@ def _test_case_limit_reached_sync(scenario_external_id: str) -> bool:
 
 def _resolve_known_application_model_sync(
     session: Session, journey_id: uuid.UUID
-) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+) -> tuple[list[dict[str, str]], list[dict[str, str]], uuid.UUID | None]:
     """Grounds Playwright generation in what Discovery actually captured for
     this Journey, mirroring `scenario_generation_activity`'s own
     steps->components->pages resolution above (duplicated rather than
     shared — that function serves a different Activity and touching it for
     marginal reuse isn't worth the regression risk here).
 
-    Returns `(known_pages, known_locators)`, both plain dicts (never ORM
-    objects, so the result stays valid once this function's caller's session
-    closes):
+    Returns `(known_pages, known_locators, primary_page_id)`:
+    - `known_pages`/`known_locators`: plain dicts (never ORM objects, so the
+      result stays valid once this function's caller's session closes) —
+      see below.
     - `known_pages`: one entry per distinct Page actually visited by this
       Journey's steps, in step order, `{"stage_label", "url"}` — a page
       revisited by a later step keeps its first stage_label.
@@ -416,7 +552,10 @@ def _resolve_known_application_model_sync(
       exists, else the `kind="fallback"` row with the lowest `priority`
       (`discovery_worker/model_builder.py` assigns `priority` in
       already-durability-ranked order, so the lowest-priority fallback is
-      always the most durable survivor)."""
+      always the most durable survivor).
+    - `primary_page_id`: the first Page this Journey's steps visit — used
+      for the requires_auth heuristic and for grouping sibling TestAssets
+      (Story: generation pipeline hardening)."""
     steps = list(
         session.exec(
             select(JourneyStep)
@@ -425,7 +564,7 @@ def _resolve_known_application_model_sync(
         ).all()
     )
     if not steps:
-        return [], []
+        return [], [], None
 
     component_ids = {s.component_id for s in steps if s.component_id}
     components_by_id = {
@@ -442,7 +581,7 @@ def _resolve_known_application_model_sync(
         c.page_id for c in components_by_id.values()
     }
     if not page_ids:
-        return [], []
+        return [], [], None
 
     pages_by_id = {
         p.id: p
@@ -463,6 +602,9 @@ def _resolve_known_application_model_sync(
             known_pages.append(
                 {"stage_label": step.stage_label, "url": pages_by_id[step_page_id].url}
             )
+    # dict preserves insertion order — the first page a step actually
+    # resolves to is this Journey's primary page.
+    primary_page_id = next(iter(stage_label_by_page_id), None)
 
     all_components = list(
         session.exec(
@@ -472,7 +614,7 @@ def _resolve_known_application_model_sync(
         ).all()
     )
     if not all_components:
-        return known_pages, []
+        return known_pages, [], primary_page_id
 
     locators = list(
         session.exec(
@@ -504,12 +646,15 @@ def _resolve_known_application_model_sync(
                 "strategy": chosen.strategy,
             }
         )
-    return known_pages, known_locators
+    return known_pages, known_locators, primary_page_id
 
 
-def _resolve_scenario_defaults_sync(
-    scenario_external_id: str,
-) -> tuple[Scenario, list[dict[str, str]], list[dict[str, str]]]:
+_ScenarioDefaults = tuple[
+    Scenario, list[dict[str, str]], list[dict[str, str]], dict[str, bool], bool, uuid.UUID | None
+]
+
+
+def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefaults:
     with Session(engine) as session:
         scenario = session.exec(
             select(Scenario).where(Scenario.external_id == uuid.UUID(scenario_external_id))
@@ -530,18 +675,45 @@ def _resolve_scenario_defaults_sync(
             session.commit()
             session.refresh(scenario)
 
-        known_pages, known_locators = _resolve_known_application_model_sync(
+        known_pages, known_locators, primary_page_id = _resolve_known_application_model_sync(
             session, scenario.journey_id
         )
+
+        required_fields: dict[str, bool] = {}
+        requires_auth = False
+        if primary_page_id is not None:
+            required_fields = spec_linter.required_fields_for_page(session, primary_page_id)
+            journey = session.get(Journey, scenario.journey_id)
+            application = session.get(Application, journey.application_id) if journey else None
+            primary_page = session.get(Page, primary_page_id)
+            if application is not None:
+                requires_auth = spec_linter.resolve_requires_auth(
+                    session, application, primary_page
+                )
 
         # Detach so the caller can read its attributes (name/type/steps/
         # test_data/expected_result — everything generate_playwright needs)
         # after this session closes, without triggering a lazy DB reload.
         session.expunge(scenario)
-        return scenario, known_pages, known_locators
+        return (
+            scenario,
+            known_pages,
+            known_locators,
+            required_fields,
+            requires_auth,
+            primary_page_id,
+        )
 
 
-def _persist_test_asset_sync(scenario_external_id: str, test_suite_external_id: str, code: str) -> str:
+def _persist_test_asset_sync(
+    scenario_external_id: str,
+    test_suite_external_id: str,
+    code: str,
+    requires_auth: bool,
+    required_fields: dict[str, bool],
+    known_locators: list[dict[str, str]],
+    primary_page_id: uuid.UUID | None,
+) -> str:
     with Session(engine) as session:
         scenario = session.exec(
             select(Scenario).where(Scenario.external_id == uuid.UUID(scenario_external_id))
@@ -550,11 +722,37 @@ def _persist_test_asset_sync(scenario_external_id: str, test_suite_external_id: 
             select(TestSuite).where(TestSuite.external_id == uuid.UUID(test_suite_external_id))
         ).one()
 
+        # Feature 7 — the most recent other current TestAsset targeting the
+        # same primary Page, if any, is this spec's sibling for the
+        # structural consistency check below.
+        sibling = None
+        if primary_page_id is not None:
+            sibling = session.exec(
+                select(TestAsset)
+                .where(
+                    TestAsset.primary_page_id == primary_page_id,
+                    TestAsset.scenario_id != scenario.id,
+                    TestAsset.current.is_(True),  # type: ignore[attr-defined]
+                )
+                .order_by(TestAsset.created_at.desc())  # type: ignore[arg-type]
+            ).first()
+
+        warnings: list[str] = []
+        warnings += spec_linter.lint_required_fields(code, required_fields)
+        warnings += spec_linter.lint_locator_provenance(code, known_locators)
+        warnings += spec_linter.lint_uses_shared_auth_helper(code, requires_auth)
+        if sibling is not None:
+            warnings += spec_linter.lint_sibling_consistency(code, sibling.code)
+
         test_asset = TestAsset(
             scenario_id=scenario.id,
             test_suite_id=test_suite.id,
             code=code,
             current=True,
+            requires_auth=requires_auth,
+            status="needs_review" if warnings else "ready",
+            warnings=warnings,
+            primary_page_id=primary_page_id,
         )
         session.add(test_asset)
         session.commit()

@@ -14,7 +14,7 @@ from domain import Application, DiscoveryRun
 from sqlmodel import Session
 from workflows import DISCOVERY_TASK_QUEUE, DiscoveryWorkflow
 
-from api.temporal_client import get_temporal_client
+from api.temporal_client import get_temporal_client, has_pollers
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +22,26 @@ logger = logging.getLogger(__name__)
 async def start_discovery_run(
     session: Session, application: Application, *, resume: bool = False
 ) -> DiscoveryRun:
+    client = await get_temporal_client()
+
+    # Checked before writing anything: if the discovery worker pod is down,
+    # start_workflow below would still succeed (Temporal queues it
+    # regardless of whether a worker is polling) and this Run would sit at
+    # status="running" forever with nothing to explain why. `session_expired`
+    # sibling sentinel below is how the frontend already recognizes a
+    # specific failure_reason value.
+    if not await has_pollers(client, DISCOVERY_TASK_QUEUE):
+        discovery_run = DiscoveryRun(
+            application_id=application.id,
+            status="failed",
+            stage="initializing",
+            failure_reason="worker_unavailable",
+        )
+        session.add(discovery_run)
+        session.commit()
+        session.refresh(discovery_run)
+        return discovery_run
+
     discovery_run = DiscoveryRun(
         application_id=application.id, status="running", stage="initializing"
     )
@@ -30,7 +50,6 @@ async def start_discovery_run(
     session.refresh(application)
     session.refresh(discovery_run)
 
-    client = await get_temporal_client()
     await client.start_workflow(
         DiscoveryWorkflow.run,
         args=[

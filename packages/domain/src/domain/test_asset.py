@@ -19,7 +19,8 @@ applies to `Scenario.test_data_complete()`).
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -52,6 +53,23 @@ class TestAsset(SQLModel, table=True):
     )
     code: str
     current: bool = Field(default=True)
+    # Generation-pipeline hardening: does this TestAsset's target page need an
+    # authenticated session? Drives the exported project's auth/public
+    # Playwright project split (deterministically re-tagged onto the generated
+    # code by `spec_linter.apply_auth_tag`, never trusted from the LLM alone).
+    requires_auth: bool = Field(default=False, sa_column=Column(Boolean, nullable=False))
+    # "ready" or "needs_review" — set by the post-generation linter
+    # (`spec_linter.py`): locator provenance, required-field coverage, shared
+    # auth-helper usage, sibling-spec consistency. Flag-only, never blocks.
+    status: str = Field(default="ready")
+    warnings: list[str] = Field(default_factory=list, sa_column=Column(JSONB, nullable=False))
+    # This Scenario's primary Page (first Page its Journey's steps visit) —
+    # stored, not re-derived per read, so sibling-consistency linting can
+    # group TestAssets by target page with a plain equality filter.
+    primary_page_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("page.id"), nullable=True, index=True),
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

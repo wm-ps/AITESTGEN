@@ -45,6 +45,7 @@ htmlcov/
 
 # --- Node / React / Vite (apps/web) ---
 node_modules/
+apps/workers/generation/typecheck/.runs/
 dist/
 build/
 .vite/

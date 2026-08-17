@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type JourneyRead, type ScenarioRead } from '../api'
 import { Stepper, type StepKey } from './Stepper'
+import { GenerationLoader } from './GenerationLoader'
+import { ServiceErrorNote } from './ServiceError'
 
 const POLL_INTERVAL_MS = 3000
 const SCENARIOS_PER_PAGE = 6
@@ -295,6 +297,7 @@ export function ReviewScenarios({
   // running" and "every Scenario was removed" both look like an empty list.
   const hadScenariosRef = useRef(false)
   if (scenarios.length > 0) hadScenariosRef.current = true
+  const [generationUnavailable, setGenerationUnavailable] = useState(false)
 
   // GenerationWorkflow runs one per Journey but each writes a variable
   // number of Scenarios (happy/negative/edge) — so a raw scenario count
@@ -321,6 +324,16 @@ export function ReviewScenarios({
       try {
         const rows = await api.listScenarios(applicationId)
         if (!cancelled) setScenarios(rows)
+      } catch {
+        // best-effort poll — a transient failure just skips this tick
+      }
+      // Scenario generation and Suite generation share one worker/task queue
+      // (GENERATION_TASK_QUEUE) — this is the same dead-worker check
+      // TestSuiteResults uses, catching a worker that crashes mid-run rather
+      // than being down at submit time (already guarded separately).
+      try {
+        const { available } = await api.getGenerationStatus(applicationId)
+        if (!cancelled) setGenerationUnavailable(!available)
       } catch {
         // best-effort poll — a transient failure just skips this tick
       }
@@ -508,55 +521,58 @@ export function ReviewScenarios({
           </div>
         </div>
 
-        {scenarios.length === 0 ? (
-          hadScenariosRef.current ? (
-            <p style={{ textAlign: 'center', padding: '80px 24px', color: 'var(--ink-muted)', fontSize: 14 }}>
-              No scenarios remain — add journeys back to generate scenarios.
-            </p>
-          ) : (
-            <div
-              className="card-panel"
-              style={{
-                padding: 'var(--space-10) var(--space-5)',
-                marginTop: 'var(--space-5)',
-                textAlign: 'center',
-              }}
-            >
-              <div style={{ fontSize: 18, fontWeight: 700, marginBottom: 'var(--space-6)' }}>
-                Generating scenarios
-              </div>
-              <div
-                role="progressbar"
-                aria-label="Scenario generation progress"
-                style={{
-                  position: 'relative',
-                  maxWidth: 320,
-                  margin: '0 auto',
-                  height: 8,
-                  borderRadius: 'var(--radius-full)',
-                  background: 'var(--border)',
-                  overflow: 'hidden',
-                }}
+        {scenarios.length === 0 && hadScenariosRef.current ? (
+          <p style={{ textAlign: 'center', padding: '80px 24px', color: 'var(--ink-muted)', fontSize: 14 }}>
+            No scenarios remain — add journeys back to generate scenarios.
+          </p>
+        ) : !isComplete && generationUnavailable ? (
+          <div
+            className="card-panel"
+            style={{
+              padding: 'var(--space-10) var(--space-5)',
+              marginTop: 'var(--space-5)',
+              textAlign: 'center',
+            }}
+          >
+            <ServiceErrorNote code="GENERATION_UNAVAILABLE" />
+            <p className="caption" style={{ margin: '10px 0 0', fontSize: 12 }}>
+              <button
+                type="button"
+                onClick={() => onStepClick?.('discover')}
+                style={{ font: 'inherit', color: 'var(--accent)', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
               >
-                <div style={{ width: '100%', height: '100%', borderRadius: 'var(--radius-full)', background: 'var(--accent)' }} />
-                {/* Same `aitg-shimmer-sweep` keyframe as ImportProgress — there's no
-                    generation-stage signal from the backend to drive a real percent,
-                    so this reads as "actively working" instead of a fixed number. */}
-                <div
-                  aria-hidden="true"
-                  style={{
-                    position: 'absolute',
-                    inset: 0,
-                    background: 'linear-gradient(100deg, transparent 0%, rgba(255,255,255,0.65) 50%, transparent 100%)',
-                    animation: 'aitg-shimmer-sweep 1.8s ease-in-out infinite',
-                  }}
-                />
-              </div>
-              <div className="caption" style={{ fontSize: 12, marginTop: 'var(--space-2)' }}>
-                Generation runs in the background — this list updates automatically.
-              </div>
-            </div>
-          )
+                Go back and retry
+              </button>
+            </p>
+          </div>
+        ) : !isComplete ? (
+          // Gated on `isComplete` (every Journey covered), not `scenarios.length
+          // > 0` — otherwise this flips to the interactive list the instant the
+          // first Scenario lands, showing a partial set while generation is
+          // still running in the background. TestSuiteResults gates its results
+          // screen the same way, so both "something is generating" flows read
+          // consistently: stay on the loader until the whole batch is done.
+          <div
+            className="card-panel"
+            style={{
+              padding: 'var(--space-10) var(--space-5)',
+              marginTop: 'var(--space-5)',
+            }}
+          >
+            <GenerationLoader
+              title="Generating scenarios"
+              caption={
+                <p className="caption" style={{ margin: 0, fontSize: 12.5 }}>
+                  {journeysCovered}/{journeys.length || '…'} journeys covered
+                </p>
+              }
+              footer={
+                <p className="caption" style={{ margin: '6px 0 0', fontSize: 12, opacity: 0.7 }}>
+                  Generation runs in the background — this list updates automatically.
+                </p>
+              }
+            />
+          </div>
         ) : (
           <div className="card-panel" style={{ display: 'flex', overflow: 'hidden' }}>
             <div

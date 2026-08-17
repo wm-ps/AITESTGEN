@@ -25,7 +25,13 @@ describe('useDiscoveryProgress', () => {
       useDiscoveryProgress('app-1', 'running', 'initializing', null, false),
     )
 
-    expect(result.current).toEqual({ status: 'running', stage: 'initializing', failureReason: null })
+    expect(result.current).toEqual({
+      status: 'running',
+      stage: 'initializing',
+      failureReason: null,
+      workerAvailable: true,
+      retryCount: 0,
+    })
     // Let the in-flight poll settle before the test ends — otherwise its
     // state update lands after teardown and logs a spurious act() warning.
     await waitFor(() => expect(result.current.status).toBe('running'))

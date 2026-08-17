@@ -165,9 +165,11 @@ textarea:focus-visible,
 .status-pill {
   display: inline-block;
   border-radius: var(--radius-full);
-  font-size: 10px;
-  font-weight: 600;
-  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  padding: 5px 11px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
 /* status-pill's in-progress pulse dot (Story 2.1, DESIGN.md#Components) */
@@ -263,16 +265,6 @@ textarea:focus-visible,
   }
   100% {
     transform: translate(11px, 5px);
-  }
-}
-
-@keyframes aitg-shimmer-sweep {
-  0% {
-    transform: translateX(-140%) rotate(10deg);
-  }
-  55%,
-  100% {
-    transform: translateX(240%) rotate(10deg);
   }
 }
 

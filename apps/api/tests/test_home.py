@@ -115,13 +115,14 @@ def _add_scenario(journey: Journey, name: str = "Guest checkout") -> None:
         session.commit()
 
 
-def _add_test_suite(journey: Journey) -> None:
+def _add_test_suite(journey: Journey, status: str = "generating") -> None:
     with Session(engine) as session:
         session.add(
             TestSuite(
                 journey_id=journey.id,
                 name=f"{journey.name} Test Suite",
                 generation_run_id=journey.attempt,
+                status=status,
             )
         )
         session.commit()
@@ -157,3 +158,30 @@ def test_get_home_returns_counts_scoped_to_org() -> None:
     assert body[0]["journey_count"] == 1
     assert body[0]["scenario_count"] == 2
     assert body[0]["suite_count"] == 1
+    # TestSuite row exists but no TestAsset yet — generation still running,
+    # not "generated" (dashboard status pill relies on this distinction).
+    assert body[0]["test_case_count"] == 0
+    assert body[0]["suites_generating_count"] == 1
+
+
+def test_get_home_reports_zero_generating_once_a_suite_is_terminally_incomplete() -> None:
+    """A Scenario that's permanently skipped (over max_test_cases_per_application)
+    or exhausts its wave retries never gets a TestAsset — test_case_count
+    stays short of scenario_count forever even though SuiteGenerationWorkflow
+    already finished and wrote the suite "incomplete". The dashboard pill
+    must key off suite status, not that count, or it reads "Generating test
+    cases" forever."""
+    init_db()
+    client = _signed_in_client("Org Home Incomplete")
+
+    application = _create_application(client, "Home Incomplete App")
+    journey = _add_candidate_journey(application)
+    _add_scenario(journey, name="Guest checkout")
+    _add_scenario(journey, name="Member checkout")
+    _add_test_suite(journey, status="incomplete")
+
+    response = client.get("/home")
+    body = response.json()
+    assert body[0]["suite_count"] == 1
+    assert body[0]["test_case_count"] == 0
+    assert body[0]["suites_generating_count"] == 0

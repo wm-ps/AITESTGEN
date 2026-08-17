@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type JourneyRead, type ScenarioRead } from '../api'
+import { ServiceErrorNote } from './ServiceError'
 import { Stepper, type StepKey } from './Stepper'
 
 const ENV_OPTIONS = [
@@ -39,7 +40,7 @@ export function GenerateSuite({
   const [journeys, setJourneys] = useState<JourneyRead[]>([])
   const [scenarios, setScenarios] = useState<ScenarioRead[]>([])
   const [generating, setGenerating] = useState(false)
-  const [execution, setExecution] = useState<'run' | 'schedule' | 'save'>('run')
+  const [generateError, setGenerateError] = useState(false)
   const [environment, setEnvironment] = useState<(typeof ENV_OPTIONS)[number][0]>('staging')
 
   useEffect(() => {
@@ -70,9 +71,12 @@ export function GenerateSuite({
 
   async function handleGenerate() {
     setGenerating(true)
+    setGenerateError(false)
     try {
       await api.generateSuite(applicationId)
       onGenerated()
+    } catch {
+      setGenerateError(true)
     } finally {
       setGenerating(false)
     }
@@ -161,37 +165,6 @@ export function GenerateSuite({
                 </div>
               </div>
 
-              {/* DESIGN.md: "Visual restyle only; behavior unchanged from the
-                  2026-07-15 revision's placeholder-execution caveat" — this
-                  control isn't in prototype-v3 but stays, inert, per that
-                  explicit carve-out. */}
-              <fieldset style={{ border: 'none', padding: 0, margin: '16px 0 0' }} aria-label="Execution">
-                <legend style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-secondary)', marginBottom: 6 }}>
-                  Execution
-                </legend>
-                {(
-                  [
-                    ['run', 'Run immediately'],
-                    ['schedule', 'Schedule for later'],
-                    ['save', 'Save without running'],
-                  ] as const
-                ).map(([value, label]) => (
-                  <label
-                    key={value}
-                    style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginBottom: 6 }}
-                  >
-                    <input
-                      type="radio"
-                      name="execution"
-                      value={value}
-                      checked={execution === value}
-                      onChange={() => setExecution(value)}
-                    />
-                    {label}
-                  </label>
-                ))}
-              </fieldset>
-
               <button
                 type="button"
                 onClick={handleGenerate}
@@ -213,6 +186,11 @@ export function GenerateSuite({
               >
                 {generating ? 'Generating…' : 'Generate Test Suite →'}
               </button>
+              {generateError && (
+                <div style={{ marginTop: 10 }}>
+                  <ServiceErrorNote code="GENERATION_UNAVAILABLE" />
+                </div>
+              )}
             </div>
 
             <div
