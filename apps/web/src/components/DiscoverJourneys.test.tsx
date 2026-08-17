@@ -68,6 +68,9 @@ function stubFetch(overrides: {
           json: async () => ({ ...APPLICATION, ...overrides.application }),
         }
       }
+      if (url.includes('/discovery-status')) {
+        return { ok: true, status: 200, json: async () => ({ available: true }) }
+      }
       return { ok: true, status: 200, json: async () => [] }
     }),
   )

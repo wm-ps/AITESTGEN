@@ -210,6 +210,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/{external_id}/discovery-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Discovery Status */
+        get: operations["discovery_status_applications__external_id__discovery_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications/{external_id}/resume-discovery": {
         parameters: {
             query?: never;
@@ -445,6 +462,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/{external_id}/generation-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Generation Status */
+        get: operations["generation_status_applications__external_id__generation_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications/{external_id}/test-suites": {
         parameters: {
             query?: never;
@@ -456,6 +490,31 @@ export interface paths {
         get: operations["list_test_suites_applications__external_id__test_suites_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/test-suites/{suite_id}/terminate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Terminate Test Suite
+         * @description User-triggered alternative to re-clicking Generate Suite forever
+         *     (`generate_suite`'s own comment: a TestSuite left 'incomplete' is
+         *     otherwise silently re-triggerable, with no way to just call it done).
+         *     Only valid from 'incomplete' — a 'generating' suite is still legitimately
+         *     in flight, and a 'complete'/already-'terminated' one has nothing to
+         *     terminate.
+         */
+        post: operations["terminate_test_suite_applications__external_id__test_suites__suite_id__terminate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -536,6 +595,23 @@ export interface paths {
          *     history for the removed version).
          */
         post: operations["trigger_test_run_applications__external_id__test_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/execution-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Execution Status */
+        get: operations["execution_status_applications__external_id__execution_status_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -856,10 +932,14 @@ export interface components {
             journey_count: number;
             /** Scenario Count */
             scenario_count: number;
+            /** Scenario Journeys Covered */
+            scenario_journeys_covered: number;
             /** Suite Count */
             suite_count: number;
             /** Test Case Count */
             test_case_count: number;
+            /** Suites Generating Count */
+            suites_generating_count: number;
         };
         /** InviteCreate */
         InviteCreate: {
@@ -1280,6 +1360,8 @@ export interface components {
             name: string;
             /** Journey Name */
             journey_name: string;
+            /** Status */
+            status: string;
             /** Test Cases */
             test_cases: components["schemas"]["TestCaseRead"][];
         };
@@ -1770,6 +1852,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApplicationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    discovery_status_applications__external_id__discovery_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean | number;
+                    };
                 };
             };
             /** @description Validation Error */
@@ -2364,6 +2481,41 @@ export interface operations {
             };
         };
     };
+    generation_status_applications__external_id__generation_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_test_suites_applications__external_id__test_suites_get: {
         parameters: {
             query?: never;
@@ -2384,6 +2536,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TestSuiteRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    terminate_test_suite_applications__external_id__test_suites__suite_id__terminate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+                suite_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestSuiteRead"];
                 };
             };
             /** @description Validation Error */
@@ -2551,6 +2737,41 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    execution_status_applications__external_id__execution_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type JourneyRead, type JourneyStepRead } from '../api'
 import { useDiscoveryProgress } from '../hooks/useDiscoveryProgress'
+import { ServiceErrorNote } from './ServiceError'
 import { ImportProgress } from './ImportProgress'
 import { Stepper, type StepKey } from './Stepper'
 import { StatusPill } from './StatusPill'
@@ -183,6 +184,7 @@ export function DiscoverJourneys({
   const [steps, setSteps] = useState<JourneyStepRead[]>([])
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [continuing, setContinuing] = useState(false)
+  const [continueError, setContinueError] = useState(false)
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
@@ -205,6 +207,8 @@ export function DiscoverJourneys({
     status: liveStatus,
     stage: liveStage,
     failureReason: liveFailureReason,
+    workerAvailable,
+    retryCount,
   } = useDiscoveryProgress(
     applicationId,
     discoveryStatus,
@@ -217,6 +221,9 @@ export function DiscoverJourneys({
   const status = statusOverride ?? liveStatus
 
   const sessionExpired = status === 'failed' && liveFailureReason === 'session_expired'
+  const discoveryWorkerDown =
+    (status === 'failed' && liveFailureReason === 'worker_unavailable') ||
+    (status === 'running' && !workerAvailable)
 
   async function handlePause() {
     setPauseResumeError(null)
@@ -340,9 +347,12 @@ export function DiscoverJourneys({
 
   async function handleContinueToScenarios() {
     setContinuing(true)
+    setContinueError(false)
     try {
       await api.generateScenarios(applicationId)
       onContinueToScenarios()
+    } catch {
+      setContinueError(true)
     } finally {
       setContinuing(false)
     }
@@ -436,6 +446,8 @@ export function DiscoverJourneys({
           <p className="caption" role="alert" style={{ color: 'var(--danger)' }}>
             Session expired mid-crawl. Re-authenticate to continue discovery.
           </p>
+        ) : discoveryWorkerDown ? (
+          <ServiceErrorNote code="DISCOVERY_UNAVAILABLE" />
         ) : (
           status === 'failed' && (
             <p className="caption" role="alert" style={{ color: 'var(--danger)' }}>
@@ -443,6 +455,14 @@ export function DiscoverJourneys({
             </p>
           )
         )}
+
+        {status === 'running' && retryCount > 0 && (
+          <p className="caption" style={{ color: 'var(--warn-strong)' }}>
+            Recovered from a worker restart — resuming from where it left off.
+          </p>
+        )}
+
+        {continueError && <ServiceErrorNote code="GENERATION_UNAVAILABLE" />}
 
         {status === 'paused' && (
           <p className="caption" style={{ color: 'var(--warn-strong)' }}>

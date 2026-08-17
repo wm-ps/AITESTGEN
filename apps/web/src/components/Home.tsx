@@ -5,6 +5,9 @@ import { StatusPill } from './StatusPill'
 
 const POLL_INTERVAL_MS = 15000
 const APPS_PER_PAGE = 9
+// Mirrors MAX_ACTIVE_PROJECTS in apps/api/src/api/main.py — server enforces
+// this for real, this just keeps the button from inviting a 409.
+const MAX_ACTIVE_PROJECTS = 4
 
 function FolderIcon({ size }: { size: number }) {
   return (
@@ -69,9 +72,12 @@ function ApplicationCard({
   const discoveryStatus = application.discovery_status
   // `suite_count` alone can't tell "generation finished" from "generation
   // just started": EnsureTestSuiteActivity creates the TestSuite row before
-  // its TestAssets exist. `test_case_count` (mirrors TestSuiteResults.tsx's
-  // own isComplete check) is what actually flips the pill to "generated".
-  const suiteGenerating = application.suite_count > 0 && application.test_case_count < application.scenario_count
+  // its TestAssets exist. A count-based check here (test_case_count <
+  // scenario_count) never recovers once a Scenario is permanently skipped
+  // or fails all its wave retries — same gap TestSuiteResults.tsx's
+  // isComplete had. `suites_generating_count` is the suite.status-based
+  // signal that fix uses: whether any suite is still actually mid-run.
+  const suiteGenerating = application.suite_count > 0 && application.suites_generating_count > 0
   // Scenario generation runs one background job per Journey and writes a
   // variable number of Scenarios each — `scenario_count` alone climbs mid-run
   // (this card polls every 15s) so it reads as "wrong" if shown before every
@@ -375,7 +381,7 @@ function ApplicationCard({
             <span>
               <span style={{ fontSize: 15, fontWeight: 700 }}>{application.scenario_count}</span>{' '}
               <span className="caption" style={{ fontSize: 12 }}>
-                scenarios
+                test cases
               </span>
             </span>
           </>
@@ -568,7 +574,22 @@ export function Home({
               Watch Demo
             </button>
             {applications && applications.length > 0 && (
-              <button type="button" className="button-primary" onClick={onConnectApp} style={{ padding: '11px 18px' }}>
+              <button
+                type="button"
+                className="button-primary"
+                disabled={applications.length >= MAX_ACTIVE_PROJECTS}
+                title={
+                  applications.length >= MAX_ACTIVE_PROJECTS
+                    ? `Maximum of ${MAX_ACTIVE_PROJECTS} active projects reached — delete one before adding another.`
+                    : undefined
+                }
+                onClick={onConnectApp}
+                style={{
+                  padding: '11px 18px',
+                  opacity: applications.length >= MAX_ACTIVE_PROJECTS ? 0.5 : 1,
+                  cursor: applications.length >= MAX_ACTIVE_PROJECTS ? 'not-allowed' : 'pointer',
+                }}
+              >
                 + New Project
               </button>
             )}

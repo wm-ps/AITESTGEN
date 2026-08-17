@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, type JourneyRead, type ScenarioRead } from '../api'
 import { Stepper, type StepKey } from './Stepper'
 import { GenerationLoader } from './GenerationLoader'
+import { ServiceErrorNote } from './ServiceError'
 
 const POLL_INTERVAL_MS = 3000
 const SCENARIOS_PER_PAGE = 6
@@ -296,6 +297,7 @@ export function ReviewScenarios({
   // running" and "every Scenario was removed" both look like an empty list.
   const hadScenariosRef = useRef(false)
   if (scenarios.length > 0) hadScenariosRef.current = true
+  const [generationUnavailable, setGenerationUnavailable] = useState(false)
 
   // GenerationWorkflow runs one per Journey but each writes a variable
   // number of Scenarios (happy/negative/edge) — so a raw scenario count
@@ -322,6 +324,16 @@ export function ReviewScenarios({
       try {
         const rows = await api.listScenarios(applicationId)
         if (!cancelled) setScenarios(rows)
+      } catch {
+        // best-effort poll — a transient failure just skips this tick
+      }
+      // Scenario generation and Suite generation share one worker/task queue
+      // (GENERATION_TASK_QUEUE) — this is the same dead-worker check
+      // TestSuiteResults uses, catching a worker that crashes mid-run rather
+      // than being down at submit time (already guarded separately).
+      try {
+        const { available } = await api.getGenerationStatus(applicationId)
+        if (!cancelled) setGenerationUnavailable(!available)
       } catch {
         // best-effort poll — a transient failure just skips this tick
       }
@@ -513,6 +525,26 @@ export function ReviewScenarios({
           <p style={{ textAlign: 'center', padding: '80px 24px', color: 'var(--ink-muted)', fontSize: 14 }}>
             No scenarios remain — add journeys back to generate scenarios.
           </p>
+        ) : !isComplete && generationUnavailable ? (
+          <div
+            className="card-panel"
+            style={{
+              padding: 'var(--space-10) var(--space-5)',
+              marginTop: 'var(--space-5)',
+              textAlign: 'center',
+            }}
+          >
+            <ServiceErrorNote code="GENERATION_UNAVAILABLE" />
+            <p className="caption" style={{ margin: '10px 0 0', fontSize: 12 }}>
+              <button
+                type="button"
+                onClick={() => onStepClick?.('discover')}
+                style={{ font: 'inherit', color: 'var(--accent)', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
+              >
+                Go back and retry
+              </button>
+            </p>
+          </div>
         ) : !isComplete ? (
           // Gated on `isComplete` (every Journey covered), not `scenarios.length
           // > 0` — otherwise this flips to the interactive list the instant the

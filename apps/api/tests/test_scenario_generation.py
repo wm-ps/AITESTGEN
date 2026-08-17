@@ -170,6 +170,31 @@ def test_generate_scenarios_starts_one_workflow_per_candidate_journey() -> None:
         asyncio.run(_terminate(workflow_id))
 
 
+def test_generate_scenarios_reports_unavailable_when_generation_queue_has_no_worker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Starting a workflow succeeds even with zero workers polling the
+    queue — without this check the endpoint would return 202 and the
+    frontend would have nothing distinguishing "generating" from "nobody's
+    going to generate this, ever"."""
+    from api import main as api_main
+
+    async def _no_pollers(client: object, task_queue: str) -> bool:
+        return False
+
+    monkeypatch.setattr(api_main, "has_pollers", _no_pollers)
+
+    init_db()
+    client = _signed_in_client("Org Generation Worker Down")
+    application = _create_application(client, "No Generation Worker App")
+    _add_candidate_journey(application)
+
+    response = client.post(f"/applications/{application['id']}/generate-scenarios")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "GENERATION_UNAVAILABLE"
+
+
 def test_generate_scenarios_is_idempotent_for_journeys_with_existing_scenarios() -> None:
     init_db()
     client = _signed_in_client("Org Scenario Generation Idempotent")

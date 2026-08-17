@@ -70,6 +70,9 @@ function stubFetch(
       if (url.includes('/scenarios')) {
         return { ok: true, status: 200, json: async () => scenarios }
       }
+      if (url.includes('/generation-status')) {
+        return { ok: true, status: 200, json: async () => ({ available: true }) }
+      }
       return { ok: true, status: 200, json: async () => [] }
     }),
   )
@@ -201,6 +204,9 @@ describe('ReviewScenarios', () => {
         }
         if (url.includes('/scenarios')) {
           return { ok: true, status: 200, json: async () => [INCOMPLETE_SCENARIO] }
+        }
+        if (url.includes('/generation-status')) {
+          return { ok: true, status: 200, json: async () => ({ available: true }) }
         }
         return { ok: true, status: 200, json: async () => [] }
       }),

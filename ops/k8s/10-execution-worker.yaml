@@ -1,23 +1,25 @@
+# No Service — this is a Temporal worker, all outbound connections (to
+# temporal/postgres/vault/s3), nothing listens for inbound traffic.
+# Resource requests mirror discovery-worker: each ExecuteTestActivity runs a
+# real headless Chromium instance via `npx playwright test`.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: api
+  name: execution-worker
   namespace: aitestgen
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: api
+      app: execution-worker
   template:
     metadata:
       labels:
-        app: api
+        app: execution-worker
     spec:
       containers:
-        - name: api
+        - name: execution-worker
           image: REPLACE_IMAGE
-          ports:
-            - containerPort: 8000
           env:
             # $(VAR) below only expands against vars defined in this *env*
             # list (not envFrom), so POSTGRES_USER/HOST/PORT/DB are
@@ -52,50 +54,37 @@ spec:
             # this cluster. The password never gets written to the ConfigMap.
             - name: DATABASE_URL
               value: "postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
-            - name: SESSION_SECRET_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: aitestgen-secrets
-                  key: SESSION_SECRET_KEY
             - name: VAULT_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: aitestgen-secrets
                   key: VAULT_TOKEN
+            # Only needed if the cluster doesn't use EKS Pod Identity/IRSA for
+            # this ServiceAccount — boto3 falls back to these env vars when no
+            # role-based credentials are available. Prefer Pod Identity/IRSA
+            # (scoped to s3:GetObject/s3:PutObject on AWS_S3_BUCKET only) and
+            # drop these two entries + the matching aitestgen-secrets keys.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: EXECUTION_WORKER_MAX_CONCURRENT_ACTIVITIES
+              value: "6"
           envFrom:
             - configMapRef:
                 name: aitestgen-config
             - secretRef:
-                name: aitestgen-secrets      
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 5
-            periodSeconds: 5
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 8000
-            initialDelaySeconds: 15
-            periodSeconds: 10
+                name: aitestgen-secrets
           resources:
             requests:
-              cpu: "100m"
-              memory: "256Mi"
-            limits:
               cpu: "500m"
-              memory: "512Mi"
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: api
-  namespace: aitestgen
-spec:
-  type: ClusterIP
-  selector:
-    app: api
-  ports:
-    - port: 8000
-      targetPort: 8000
+              memory: "1Gi"
+            limits:
+              cpu: "4"
+              memory: "4Gi"

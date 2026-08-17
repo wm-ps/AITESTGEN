@@ -30,7 +30,11 @@ from execution_worker.db import engine, init_db
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
-from workflows import FinalizeTestRunActivityInput, PrepareTestRunActivityInput
+from workflows import (
+    ExecuteTestActivityInput,
+    FinalizeTestRunActivityInput,
+    PrepareTestRunActivityInput,
+)
 
 
 def _db_available() -> bool:
@@ -225,6 +229,66 @@ def test_finalize_aggregates_counts_and_marks_completed() -> None:
         assert test_run.passed_count == 1
         assert test_run.failed_count == 1
         assert test_run.completed_at is not None
+
+
+def test_persist_result_updates_live_counts_before_run_finishes() -> None:
+    """The polling frontend reads TestRun.passed_count/failed_count while a
+    run is still in progress — this must not sit at 0 until Finalize runs."""
+    init_db()
+    application = _seed_application()
+    asset_done = _seed_test_asset(application, safety_classification="SAFE")
+    asset_pending = _seed_test_asset(application, safety_classification="SAFE")
+
+    with Session(engine) as session:
+        test_run = TestRun(
+            application_id=application.id,
+            status="running",
+            environment_snapshot=application.environment,
+            target_base_url_snapshot=application.url,
+            total_count=2,
+        )
+        session.add(test_run)
+        session.flush()
+        done_result = TestResult(
+            test_run_id=test_run.id,
+            test_asset_id=asset_done.id,
+            scenario_id=asset_done.scenario_id,
+            status="pending",
+        )
+        session.add(done_result)
+        session.add(
+            TestResult(
+                test_run_id=test_run.id,
+                test_asset_id=asset_pending.id,
+                scenario_id=asset_pending.scenario_id,
+                status="pending",
+            )
+        )
+        session.commit()
+        session.refresh(test_run)
+        session.refresh(done_result)
+        test_run_external_id = test_run.external_id
+        test_run_id = test_run.id
+        done_result_pk = done_result.id
+
+    activities_module._persist_test_result_sync(
+        ExecuteTestActivityInput(
+            application_id=str(application.external_id),
+            test_run_id=str(test_run_external_id),
+            test_result_id=str(done_result.external_id),
+            test_asset_id=str(asset_done.external_id),
+        ),
+        activities_module._ExecutionContext(
+            application=application, test_result_pk=done_result_pk, spec_path="tests/x.spec.ts"
+        ),
+        {"status": "passed", "duration_ms": 100},
+    )
+
+    with Session(engine) as session:
+        test_run = session.exec(select(TestRun).where(TestRun.id == test_run_id)).one()
+        assert test_run.passed_count == 1
+        assert test_run.failed_count == 0
+        assert test_run.status == "running"  # only Finalize marks it completed
 
 
 def test_finalize_marks_leftover_pending_results_as_errored() -> None:

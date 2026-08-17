@@ -183,7 +183,14 @@ def test_journey_steps_returns_screenshot_url_on_final_step_only(monkeypatch) ->
     import api.main as main_module
 
     class _FakeObjectStore:
-        def presigned_get_url(self, key: str, expires_seconds: int = 900) -> str:
+        def presigned_get_url(
+            self,
+            key: str,
+            expires_seconds: int = 900,
+            *,
+            response_content_type: str | None = None,
+            filename: str | None = None,
+        ) -> str:
             return f"https://fake-store/{key}"
 
     monkeypatch.setattr(main_module, "ObjectStore", _FakeObjectStore)

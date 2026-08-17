@@ -58,6 +58,7 @@ from workflows import (
     DiscoveryActivityInput,
     DiscoveryActivityOutput,
     InferenceActivityInput,
+    MarkDiscoveryRunFailedActivityInput,
 )
 
 from discovery_worker import blocked_frontier
@@ -325,6 +326,13 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
             )
         ).one()
         discovery_settings = session.exec(select(DiscoverySettings)).one()
+
+        logger.info(
+            "DiscoveryActivity: discovery_run_id=%s starting for application_id=%s (resume=%s)",
+            input.discovery_run_id,
+            input.application_id,
+            input.resume,
+        )
 
         # Captured now, before any incremental commit below expires the ORM
         # object — rows are persisted as they're captured (`_persist`), not
@@ -988,7 +996,36 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
         session.add(discovery_run)
         session.commit()
 
+        logger.info(
+            "DiscoveryActivity: discovery_run_id=%s finished status=%s page_count=%d",
+            input.discovery_run_id,
+            discovery_run.status,
+            page_count,
+        )
         return DiscoveryActivityOutput(status=discovery_run.status, page_count=page_count)
+
+
+@activity.defn(name="MarkDiscoveryRunFailedActivity")
+async def mark_discovery_run_failed_activity(input: MarkDiscoveryRunFailedActivityInput) -> None:
+    with Session(engine) as session:
+        discovery_run = session.exec(
+            select(DiscoveryRun).where(
+                DiscoveryRun.external_id == uuid.UUID(input.discovery_run_id)
+            )
+        ).one()
+        # DiscoveryActivity already wrote status="complete" before this
+        # workflow ever reached the analysis phase (AC8/CR-2) — this
+        # overwrites that with the real terminal outcome once analysis
+        # itself has exhausted its retries.
+        discovery_run.status = "failed"
+        discovery_run.failure_reason = input.failure_reason
+        session.add(discovery_run)
+        session.commit()
+        logger.error(
+            "MarkDiscoveryRunFailedActivity: discovery_run_id=%s failed: %s",
+            input.discovery_run_id,
+            input.failure_reason,
+        )
 
 
 @activity.defn(name="ApplicationModelBuilderActivity")
@@ -1004,7 +1041,15 @@ async def application_model_builder_activity(
         application = session.get(Application, discovery_run.application_id)
         assert application is not None
 
+        logger.info(
+            "ApplicationModelBuilderActivity: discovery_run_id=%s starting", input.discovery_run_id
+        )
         component_count = build_application_model(session, application.id)
+        logger.info(
+            "ApplicationModelBuilderActivity: discovery_run_id=%s finished component_count=%d",
+            input.discovery_run_id,
+            component_count,
+        )
         return ApplicationModelBuilderActivityOutput(component_count=component_count)
 
 
@@ -1038,6 +1083,7 @@ async def inference_activity(input: InferenceActivityInput) -> list[str]:
         discovery_run.stage = "analyzing"
         session.add(discovery_run)
         session.commit()
+        logger.info("InferenceActivity: discovery_run_id=%s starting", input.discovery_run_id)
 
         # Canonical rows only (merged_into_id IS NULL) — never a superseded
         # row (AD-14).
@@ -1271,4 +1317,9 @@ async def inference_activity(input: InferenceActivityInput) -> list[str]:
         session.add(discovery_run)
         session.commit()
 
+        logger.info(
+            "InferenceActivity: discovery_run_id=%s finished with %d journeys",
+            input.discovery_run_id,
+            len(journey_external_ids),
+        )
         return journey_external_ids

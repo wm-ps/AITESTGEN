@@ -47,6 +47,7 @@ from temporalio import activity
 from workflows import (
     EnsureTestSuiteActivityInput,
     EnsureTestSuiteActivityResult,
+    FinalizeSuiteGenerationActivityInput,
     PlaywrightGenerationActivityInput,
     ScenarioGenerationActivityInput,
 )
@@ -112,7 +113,14 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
             )
         ).all()
         if existing:
+            logger.info(
+                "ScenarioGenerationActivity: journey_id=%s already has %d scenarios, skipping",
+                input.journey_id,
+                len(existing),
+            )
             return [str(s.external_id) for s in existing]
+
+        logger.info("ScenarioGenerationActivity: journey_id=%s starting", input.journey_id)
 
         steps = list(
             session.exec(
@@ -247,8 +255,19 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
             session.add(scenario)
             session.flush()
             scenario_external_ids.append(str(scenario.external_id))
+            logger.info(
+                "ScenarioGenerationActivity: journey_id=%s created scenario_id=%s name=%r",
+                input.journey_id,
+                scenario.external_id,
+                scenario.name,
+            )
 
         session.commit()
+        logger.info(
+            "ScenarioGenerationActivity: journey_id=%s generated %d scenarios",
+            input.journey_id,
+            len(scenario_external_ids),
+        )
         return scenario_external_ids
 
 
@@ -352,6 +371,12 @@ def _ensure_test_suite_sync(input: EnsureTestSuiteActivityInput) -> EnsureTestSu
             )
         ).all()
 
+        logger.info(
+            "EnsureTestSuiteActivity: journey_id=%s test_suite_id=%s (%d scenarios)",
+            input.journey_id,
+            test_suite.external_id,
+            len(scenarios),
+        )
         return EnsureTestSuiteActivityResult(
             test_suite_id=str(test_suite.external_id),
             scenario_ids=[str(s.external_id) for s in scenarios],
@@ -374,6 +399,10 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
     created, zero `TestAsset`s ever written)."""
     existing_id = await asyncio.to_thread(_existing_test_asset_id_sync, input.scenario_id)
     if existing_id is not None:
+        logger.info(
+            "PlaywrightGenerationActivity: scenario_id=%s already has a test asset, skipping",
+            input.scenario_id,
+        )
         return existing_id
 
     if await asyncio.to_thread(_test_case_limit_reached_sync, input.scenario_id):
@@ -383,6 +412,8 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
             input.scenario_id,
         )
         return ""
+
+    logger.info("PlaywrightGenerationActivity: scenario_id=%s starting", input.scenario_id)
 
     # Default test-data values, part of this same single flow (Story 4.2
     # AC 1) — never a second trigger. Reviewer-provided values always take
@@ -444,6 +475,11 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
     # anyway) lets Temporal's activity retry re-run generation.
     typecheck_errors = await typecheck_playwright_code(code.code)
     if typecheck_errors:
+        logger.error(
+            "PlaywrightGenerationActivity: scenario_id=%s failed typecheck: %s",
+            input.scenario_id,
+            "; ".join(typecheck_errors),
+        )
         raise ValueError(
             "Generated Playwright spec failed typecheck:\n" + "\n".join(typecheck_errors)
         )
@@ -453,7 +489,7 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
     # deterministically here rather than trusted from the prompt alone.
     tagged_code = spec_linter.apply_auth_tag(code.code, requires_auth)
 
-    return await asyncio.to_thread(
+    test_asset_id = await asyncio.to_thread(
         _persist_test_asset_sync,
         input.scenario_id,
         input.test_suite_id,
@@ -463,6 +499,42 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
         known_locators,
         primary_page_id,
     )
+    logger.info(
+        "PlaywrightGenerationActivity: scenario_id=%s finished test_asset_id=%s",
+        input.scenario_id,
+        test_asset_id,
+    )
+    return test_asset_id
+
+
+@activity.defn(name="FinalizeSuiteGenerationActivity")
+async def finalize_suite_generation_activity(input: FinalizeSuiteGenerationActivityInput) -> None:
+    await asyncio.to_thread(_finalize_suite_generation_sync, input)
+
+
+def _finalize_suite_generation_sync(input: FinalizeSuiteGenerationActivityInput) -> None:
+    with Session(engine) as session:
+        test_suite = session.exec(
+            select(TestSuite).where(TestSuite.external_id == uuid.UUID(input.test_suite_id))
+        ).one()
+        # A user may have already terminated this suite (or a prior Temporal
+        # attempt of this same activity already ran) before this write lands
+        # — 'terminated' is a stronger, user-made decision than the workflow's
+        # own 'complete'/'incomplete' verdict and must never be overwritten.
+        if test_suite.status == "terminated":
+            logger.info(
+                "FinalizeSuiteGenerationActivity: test_suite_id=%s already terminated, skipping",
+                input.test_suite_id,
+            )
+            return
+        test_suite.status = input.status
+        session.add(test_suite)
+        session.commit()
+        logger.info(
+            "FinalizeSuiteGenerationActivity: test_suite_id=%s finished status=%s",
+            input.test_suite_id,
+            input.status,
+        )
 
 
 def _existing_test_asset_id_sync(scenario_external_id: str) -> str | None:

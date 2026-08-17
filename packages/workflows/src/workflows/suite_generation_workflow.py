@@ -28,6 +28,7 @@ from workflows.generation_workflow import GENERATION_TASK_QUEUE
 
 ENSURE_TEST_SUITE_ACTIVITY_NAME = "EnsureTestSuiteActivity"
 PLAYWRIGHT_GENERATION_ACTIVITY_NAME = "PlaywrightGenerationActivity"
+FINALIZE_SUITE_GENERATION_ACTIVITY_NAME = "FinalizeSuiteGenerationActivity"
 # ponytail: fixed wave count/cooldown, not configurable — revisit if timeouts
 # still exhaust 3 waves at higher real concurrency than observed live.
 MAX_SCENARIO_WAVES = 3
@@ -83,6 +84,12 @@ class PlaywrightGenerationActivityInput:
     # named mistake instead of blindly repeating it. `None` (the default) for
     # every wave-1 input and every non-grounding failure.
     grounding_feedback: str | None = None
+
+
+@dataclass
+class FinalizeSuiteGenerationActivityInput:
+    test_suite_id: str
+    status: str
 
 
 @workflow.defn(name="SuiteGenerationWorkflow")
@@ -170,15 +177,32 @@ class SuiteGenerationWorkflow:
                 MAX_SCENARIO_WAVES,
                 pending,
             )
+
+        # Records the outcome the log line above didn't: `list_test_suites`'s
+        # own comment on this exact gap ("a TestSuite can exist with some
+        # Scenarios never getting a TestAsset... permanent, no way to
+        # resume") is what this status now surfaces to the user instead of
+        # silently looking identical to a fully-generated suite.
+        await workflow.execute_activity(
+            FINALIZE_SUITE_GENERATION_ACTIVITY_NAME,
+            FinalizeSuiteGenerationActivityInput(
+                test_suite_id=prep.test_suite_id,
+                status="incomplete" if pending else "complete",
+            ),
+            start_to_close_timeout=timedelta(minutes=1),
+            retry_policy=RetryPolicy(maximum_attempts=3),
+        )
         return test_asset_ids
 
 
 __all__ = [
     "ENSURE_TEST_SUITE_ACTIVITY_NAME",
+    "FINALIZE_SUITE_GENERATION_ACTIVITY_NAME",
     "GENERATION_TASK_QUEUE",
     "PLAYWRIGHT_GENERATION_ACTIVITY_NAME",
     "EnsureTestSuiteActivityInput",
     "EnsureTestSuiteActivityResult",
+    "FinalizeSuiteGenerationActivityInput",
     "PlaywrightGenerationActivityInput",
     "SuiteGenerationWorkflow",
 ]

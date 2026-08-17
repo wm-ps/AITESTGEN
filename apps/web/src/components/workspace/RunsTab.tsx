@@ -8,6 +8,7 @@ import {
 } from '../../api'
 import { StatTile } from '../TestSuiteResults'
 import { StatusPill } from '../StatusPill'
+import { ServiceErrorNote } from '../ServiceError'
 
 const POLL_INTERVAL_MS = 1500
 const RUNS_PER_PAGE = 10
@@ -315,7 +316,15 @@ function formatDateTime(iso: string): string {
   })
 }
 
-function RunDetail({ run, onBack }: { run: TestRunRead; onBack: () => void }) {
+function RunDetail({
+  run,
+  onBack,
+  executionUnavailable,
+}: {
+  run: TestRunRead
+  onBack: () => void
+  executionUnavailable: boolean
+}) {
   const isRunning = run.status === 'pending' || run.status === 'running'
 
   return (
@@ -366,7 +375,9 @@ function RunDetail({ run, onBack }: { run: TestRunRead; onBack: () => void }) {
         </div>
       )}
 
-      {isRunning && run.results == null && (
+      {isRunning && executionUnavailable && <ServiceErrorNote code="EXECUTION_UNAVAILABLE" />}
+
+      {isRunning && !executionUnavailable && run.results == null && (
         <p className="caption" style={{ fontSize: 12.5 }}>
           Running tests — this list fills in as each test finishes.
         </p>
@@ -479,6 +490,7 @@ export function RunsTab({
 }) {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [selectedRun, setSelectedRun] = useState<TestRunRead | null>(null)
+  const [executionUnavailable, setExecutionUnavailable] = useState(false)
   const [runs, setRuns] = useState<TestRunRead[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
@@ -525,21 +537,37 @@ export function RunsTab({
   useEffect(() => {
     if (!selectedRunId) {
       setSelectedRun(null)
+      setExecutionUnavailable(false)
       return
     }
     let cancelled = false
     let interval: ReturnType<typeof setInterval> | undefined
 
     async function poll() {
+      let status: string | undefined
       try {
         const detail = await api.getTestRun(applicationId, selectedRunId!)
         if (cancelled) return
         setSelectedRun(detail)
+        status = detail.status
         if ((detail.status === 'completed' || detail.status === 'blocked') && interval) {
           clearInterval(interval)
         }
       } catch {
         // best-effort poll — a transient failure just skips this tick
+      }
+      // `trigger_test_run` only checks for a live worker before starting —
+      // a worker that crashes right after leaves the run sitting at
+      // "running" with nothing to explain why (same gap generation-status/
+      // discovery-status close for their own workers). Only worth asking
+      // while the run could still be in flight.
+      if (status === 'pending' || status === 'running') {
+        try {
+          const { available } = await api.getExecutionStatus(applicationId)
+          if (!cancelled) setExecutionUnavailable(!available)
+        } catch {
+          // best-effort poll — a transient failure just skips this tick
+        }
       }
     }
 
@@ -553,7 +581,11 @@ export function RunsTab({
 
   if (selectedRunId) {
     return selectedRun ? (
-      <RunDetail run={selectedRun} onBack={() => setSelectedRunId(null)} />
+      <RunDetail
+        run={selectedRun}
+        onBack={() => setSelectedRunId(null)}
+        executionUnavailable={executionUnavailable}
+      />
     ) : (
       <p className="caption" style={{ fontSize: 12.5 }}>
         Loading run…

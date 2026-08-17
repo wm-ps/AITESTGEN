@@ -19,11 +19,13 @@ from workflows import GENERATION_TASK_QUEUE, GenerationWorkflow, SuiteGeneration
 
 from generation_worker.activities import (
     ensure_test_suite_activity,
+    finalize_suite_generation_activity,
     playwright_generation_activity,
     scenario_generation_activity,
 )
 
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+MAX_CONCURRENT_ACTIVITIES = int(os.environ.get("GENERATION_WORKER_MAX_CONCURRENT_ACTIVITIES", "5"))
 
 
 async def main() -> None:
@@ -37,7 +39,9 @@ async def main() -> None:
             scenario_generation_activity,
             ensure_test_suite_activity,
             playwright_generation_activity,
+            finalize_suite_generation_activity,
         ],
+        max_concurrent_activities=MAX_CONCURRENT_ACTIVITIES,
     )
     print(f"Generation worker polling task queue '{GENERATION_TASK_QUEUE}' at {TEMPORAL_ADDRESS}")
     await worker.run()

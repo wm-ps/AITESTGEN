@@ -20,9 +20,11 @@ from discovery_worker.activities import (
     application_model_builder_activity,
     discovery_activity,
     inference_activity,
+    mark_discovery_run_failed_activity,
 )
 
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
+MAX_CONCURRENT_ACTIVITIES = int(os.environ.get("DISCOVERY_WORKER_MAX_CONCURRENT_ACTIVITIES", "5"))
 
 
 async def main() -> None:
@@ -36,7 +38,13 @@ async def main() -> None:
         client,
         task_queue=DISCOVERY_TASK_QUEUE,
         workflows=[DiscoveryWorkflow],
-        activities=[discovery_activity, application_model_builder_activity, inference_activity],
+        activities=[
+            discovery_activity,
+            application_model_builder_activity,
+            inference_activity,
+            mark_discovery_run_failed_activity,
+        ],
+        max_concurrent_activities=MAX_CONCURRENT_ACTIVITIES,
     )
     print(f"Discovery worker polling task queue '{DISCOVERY_TASK_QUEUE}' at {TEMPORAL_ADDRESS}")
     await worker.run()
