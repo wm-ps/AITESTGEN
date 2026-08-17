@@ -74,6 +74,8 @@ spec:
                 secretKeyRef:
                   name: aitestgen-secrets
                   key: AWS_SECRET_ACCESS_KEY
+            - name: EXECUTION_WORKER_MAX_CONCURRENT_ACTIVITIES
+              value: "6"
           envFrom:
             - configMapRef:
                 name: aitestgen-config
@@ -81,8 +83,8 @@ spec:
                 name: aitestgen-secrets
           resources:
             requests:
-              cpu: "50m"
-              memory: "128Mi"
+              cpu: "500m"
+              memory: "1Gi"
             limits:
-              cpu: "1"
-              memory: "2Gi"
+              cpu: "4"
+              memory: "4Gi"

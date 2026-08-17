@@ -31,7 +31,7 @@ const SCENARIOS = [
 
 function stubFetch(
   overrides: {
-    suites?: typeof SUITES
+    suites?: ((typeof SUITES)[number] & { status?: string })[]
     scenarios?: unknown[]
     download?: { ok: boolean; status?: number }
   } = {},
@@ -61,6 +61,9 @@ function stubFetch(
       if (url.includes('/scenarios')) {
         return { ok: true, status: 200, json: async () => scenarios }
       }
+      if (url.includes('/generation-status')) {
+        return { ok: true, status: 200, json: async () => ({ available: true }) }
+      }
       return { ok: true, status: 200, json: async () => [] }
     }),
   )
@@ -73,7 +76,7 @@ afterEach(() => {
 describe('TestSuiteResults', () => {
   it('shows a spinner and live progress while generation is still in flight', async () => {
     stubFetch({ suites: [], scenarios: SCENARIOS })
-    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onGoToDashboard={() => {}} onRunAllTests={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByRole('status').textContent).toContain('Generating')
@@ -81,9 +84,28 @@ describe('TestSuiteResults', () => {
     expect(screen.getByRole('status').textContent).toContain('0/2')
   })
 
+  it('leaves the loader once a suite is permanently incomplete, instead of waiting forever for a test-case count that will never arrive', async () => {
+    // SuiteGenerationWorkflow gives up on a Scenario after its wave retries
+    // and writes the suite terminal ("incomplete") — that Scenario's
+    // TestAsset never lands, so a testCaseCount >= expectedTestCaseCount
+    // gate would spin on the loader forever even though nothing more is
+    // ever going to happen.
+    stubFetch({
+      suites: [{ ...SUITES[0], status: 'incomplete', test_cases: [SUITES[0].test_cases[0]] }],
+      scenarios: SCENARIOS,
+    })
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/Generated 1 test cases across 1 journeys/)).toBeTruthy()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /View Tests/ }))
+    expect(screen.getByText('Incomplete')).toBeTruthy()
+  })
+
   it('shows the completed summary and stats, with the file list and its scenarios collapsed by default', async () => {
     stubFetch()
-    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onGoToDashboard={() => {}} onRunAllTests={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByText(/Generated 2 test cases across 1 journeys/)).toBeTruthy()
@@ -106,7 +128,7 @@ describe('TestSuiteResults', () => {
 
   it('toggles test details visibility', async () => {
     stubFetch()
-    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onGoToDashboard={() => {}} onRunAllTests={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
 
     await waitFor(() => screen.getByText(/Generated 2 test cases across 1 journeys/))
 
@@ -119,24 +141,6 @@ describe('TestSuiteResults', () => {
     expect(screen.queryByText('checkout.spec.ts')).toBeNull()
   })
 
-  it('calls onGoToDashboard when the Go to Dashboard button is clicked', async () => {
-    stubFetch()
-    const onGoToDashboard = vi.fn()
-    render(
-      <TestSuiteResults
-        furthestCount={4}
-        applicationId="app-1"
-        onGoToDashboard={onGoToDashboard}
-        onRunAllTests={() => {}}
-      />,
-    )
-
-    const button = await screen.findByRole('button', { name: 'Go to Dashboard →' })
-    fireEvent.click(button)
-
-    expect(onGoToDashboard).toHaveBeenCalledOnce()
-  })
-
   it('calls onRunAllTests when the Run All Tests button is clicked', async () => {
     stubFetch()
     const onRunAllTests = vi.fn()
@@ -144,8 +148,8 @@ describe('TestSuiteResults', () => {
       <TestSuiteResults
         furthestCount={4}
         applicationId="app-1"
-        onGoToDashboard={() => {}}
         onRunAllTests={onRunAllTests}
+        onViewExecutions={() => {}}
       />,
     )
 
@@ -155,9 +159,27 @@ describe('TestSuiteResults', () => {
     expect(onRunAllTests).toHaveBeenCalledOnce()
   })
 
+  it('calls onViewExecutions when the View Executions button is clicked', async () => {
+    stubFetch()
+    const onViewExecutions = vi.fn()
+    render(
+      <TestSuiteResults
+        furthestCount={4}
+        applicationId="app-1"
+        onRunAllTests={() => {}}
+        onViewExecutions={onViewExecutions}
+      />,
+    )
+
+    const button = await screen.findByRole('button', { name: 'View Executions' })
+    fireEvent.click(button)
+
+    expect(onViewExecutions).toHaveBeenCalledOnce()
+  })
+
   it('clicking View Code opens a modal with that row\'s own code; a different row shows its own code', async () => {
     stubFetch()
-    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onGoToDashboard={() => {}} onRunAllTests={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
 
     await waitFor(() => screen.getByRole('button', { name: /View Tests/ }))
     fireEvent.click(screen.getByRole('button', { name: /View Tests/ }))
@@ -180,7 +202,7 @@ describe('TestSuiteResults', () => {
       createObjectURL: vi.fn(() => 'blob:mock-url'),
       revokeObjectURL: vi.fn(),
     })
-    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onGoToDashboard={() => {}} onRunAllTests={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
 
     const button = (await screen.findByRole('button', {
       name: /Download Test Suite/,
@@ -199,7 +221,7 @@ describe('TestSuiteResults', () => {
 
   it('re-enables the Download button after a failed export', async () => {
     stubFetch({ download: { ok: false, status: 500 } })
-    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onGoToDashboard={() => {}} onRunAllTests={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
 
     const button = await screen.findByRole('button', { name: /Download Test Suite/ })
     fireEvent.click(button)

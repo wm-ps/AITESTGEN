@@ -3,6 +3,7 @@ import { api, type TestCaseRead, type TestSuiteRead } from '../api'
 import { Stepper, type StepKey } from './Stepper'
 import { LoadingDots } from './LoadingDots'
 import { GenerationLoader } from './GenerationLoader'
+import { ServiceError } from './ServiceError'
 
 const POLL_INTERVAL_MS = 3000
 const SECONDS_PER_TEST_CASE = 45
@@ -245,25 +246,40 @@ export function CodeModal({ testCase, onClose }: { testCase: { name: string; cod
 
 export function TestSuiteResults({
   applicationId,
-  onGoToDashboard,
   onRunAllTests,
+  onViewExecutions,
   furthestCount,
   onStepClick,
   onPrevious,
 }: {
   applicationId: string
-  onGoToDashboard: () => void
   onRunAllTests: () => void
+  onViewExecutions: () => void
   furthestCount: number
   onStepClick?: (key: StepKey) => void
   onPrevious?: () => void
 }) {
   const [suites, setSuites] = useState<TestSuiteRead[]>([])
   const [expectedTestCaseCount, setExpectedTestCaseCount] = useState(0)
+  const [expectedJourneyCount, setExpectedJourneyCount] = useState(0)
   const [testsExpanded, setTestsExpanded] = useState(false)
   const [expandedSuiteIds, setExpandedSuiteIds] = useState<Set<string>>(new Set())
   const [activeCode, setActiveCode] = useState<TestCaseRead | null>(null)
   const [downloading, setDownloading] = useState(false)
+  const [generationUnavailable, setGenerationUnavailable] = useState(false)
+  const [terminatingSuiteId, setTerminatingSuiteId] = useState<string | null>(null)
+
+  async function handleTerminate(suiteId: string) {
+    setTerminatingSuiteId(suiteId)
+    try {
+      const updated = await api.terminateTestSuite(applicationId, suiteId)
+      setSuites((prev) => prev.map((s) => (s.id === suiteId ? updated : s)))
+    } catch {
+      // best-effort — a failed terminate just leaves the button re-enabled
+    } finally {
+      setTerminatingSuiteId(null)
+    }
+  }
 
   async function handleDownload() {
     setDownloading(true)
@@ -290,6 +306,7 @@ export function TestSuiteResults({
     api.listScenarios(applicationId).then((scenarios) => {
       if (cancelled) return
       setExpectedTestCaseCount(scenarios.length)
+      setExpectedJourneyCount(new Set(scenarios.map((s) => s.journey_id)).size)
     })
     return () => {
       cancelled = true
@@ -297,7 +314,17 @@ export function TestSuiteResults({
   }, [applicationId])
 
   const testCaseCount = suites.reduce((sum, s) => sum + s.test_cases.length, 0)
-  const isComplete = expectedTestCaseCount > 0 && testCaseCount >= expectedTestCaseCount
+  // Count parity alone (testCaseCount >= expectedTestCaseCount) never
+  // recovers once SuiteGenerationWorkflow gives up on a Scenario after its
+  // wave retries — that Scenario's TestAsset never arrives, so the raw
+  // count sits short forever and this screen would spin on the loader past
+  // the point the workflow actually finished. Every expected Journey having
+  // a suite that's left "generating" (its terminal write, complete/
+  // incomplete/terminated, already happened) is the real "done" signal.
+  const isComplete =
+    expectedJourneyCount > 0 &&
+    suites.length >= expectedJourneyCount &&
+    suites.every((s) => s.status !== 'generating')
 
   useEffect(() => {
     let cancelled = false
@@ -306,6 +333,12 @@ export function TestSuiteResults({
       try {
         const rows = await api.listTestSuites(applicationId)
         if (!cancelled) setSuites(rows)
+      } catch {
+        // best-effort poll — a transient failure just skips this tick
+      }
+      try {
+        const { available } = await api.getGenerationStatus(applicationId)
+        if (!cancelled) setGenerationUnavailable(!available)
       } catch {
         // best-effort poll — a transient failure just skips this tick
       }
@@ -320,6 +353,15 @@ export function TestSuiteResults({
     }
   }, [applicationId, isComplete])
   const estRuntimeMin = Math.max(1, Math.ceil((testCaseCount * SECONDS_PER_TEST_CASE) / 60))
+
+  if (!isComplete && generationUnavailable) {
+    return (
+      <>
+        <Stepper current="generate" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} />
+        <ServiceError code="GENERATION_UNAVAILABLE" onRetry={() => onStepClick?.('generate')} />
+      </>
+    )
+  }
 
   if (!isComplete) {
     return (
@@ -461,21 +503,20 @@ export function TestSuiteResults({
                 </button>
                 <button
                   type="button"
-                  onClick={onGoToDashboard}
+                  onClick={onViewExecutions}
                   style={{
-                    padding: '9px 22px',
-                    background: '#FFFFFF',
-                    color: 'var(--accent)',
-                    border: 'none',
+                    padding: '9px 20px',
+                    background: 'rgba(255,255,255,0.16)',
+                    color: '#FFFFFF',
+                    border: '1px solid rgba(255,255,255,0.5)',
                     borderRadius: 'var(--radius)',
                     fontSize: 13.5,
                     fontWeight: 700,
                     fontFamily: 'inherit',
                     cursor: 'pointer',
-                    boxShadow: '0 8px 16px -6px rgba(0,0,0,0.2)',
                   }}
                 >
-                  Go to Dashboard →
+                  View Executions
                 </button>
               </div>
             </div>
@@ -571,9 +612,69 @@ export function TestSuiteResults({
                         <span style={{ fontSize: 12, color: 'var(--ink-muted)', whiteSpace: 'nowrap', flexShrink: 0 }}>
                           {suite.test_cases.length} test{suite.test_cases.length === 1 ? '' : 's'}
                         </span>
+                        {suite.status === 'incomplete' && (
+                          <span
+                            style={{
+                              fontSize: 10.5,
+                              fontWeight: 600,
+                              padding: '2px 7px',
+                              borderRadius: 6,
+                              background: 'var(--warn-wash)',
+                              color: 'var(--warn-strong)',
+                              whiteSpace: 'nowrap',
+                              flexShrink: 0,
+                            }}
+                          >
+                            Incomplete
+                          </span>
+                        )}
+                        {suite.status === 'terminated' && (
+                          <span
+                            style={{
+                              fontSize: 10.5,
+                              fontWeight: 600,
+                              padding: '2px 7px',
+                              borderRadius: 6,
+                              background: 'var(--canvas-wash-alt)',
+                              color: 'var(--ink-muted)',
+                              whiteSpace: 'nowrap',
+                              flexShrink: 0,
+                            }}
+                          >
+                            Terminated
+                          </span>
+                        )}
                       </div>
                       <ChevronIcon size={14} color="var(--ink-faint)" open={suiteOpen} />
                     </button>
+
+                    {suite.status === 'incomplete' && (
+                      <div style={{ padding: '0 20px 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <p className="caption" style={{ margin: 0, fontSize: 12, color: 'var(--warn-strong)' }}>
+                          Some scenarios in this Journey couldn't be generated after several retries.
+                        </p>
+                        <button
+                          type="button"
+                          disabled={terminatingSuiteId === suite.id}
+                          onClick={() => handleTerminate(suite.id)}
+                          style={{
+                            padding: '4px 10px',
+                            background: 'var(--canvas)',
+                            border: '1px solid var(--border-strong)',
+                            borderRadius: 6,
+                            fontSize: 11.5,
+                            fontWeight: 600,
+                            color: 'var(--ink-secondary)',
+                            fontFamily: 'inherit',
+                            cursor: terminatingSuiteId === suite.id ? 'not-allowed' : 'pointer',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0,
+                          }}
+                        >
+                          {terminatingSuiteId === suite.id ? 'Terminating…' : 'Terminate'}
+                        </button>
+                      </div>
+                    )}
 
                     {suiteOpen && (
                       <div style={{ padding: '0 20px 14px', display: 'flex', flexDirection: 'column', gap: 2 }}>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type JourneyRead, type ScenarioRead } from '../api'
+import { ServiceErrorNote } from './ServiceError'
 import { Stepper, type StepKey } from './Stepper'
 
 const ENV_OPTIONS = [
@@ -39,6 +40,7 @@ export function GenerateSuite({
   const [journeys, setJourneys] = useState<JourneyRead[]>([])
   const [scenarios, setScenarios] = useState<ScenarioRead[]>([])
   const [generating, setGenerating] = useState(false)
+  const [generateError, setGenerateError] = useState(false)
   const [environment, setEnvironment] = useState<(typeof ENV_OPTIONS)[number][0]>('staging')
 
   useEffect(() => {
@@ -69,9 +71,12 @@ export function GenerateSuite({
 
   async function handleGenerate() {
     setGenerating(true)
+    setGenerateError(false)
     try {
       await api.generateSuite(applicationId)
       onGenerated()
+    } catch {
+      setGenerateError(true)
     } finally {
       setGenerating(false)
     }
@@ -181,6 +186,11 @@ export function GenerateSuite({
               >
                 {generating ? 'Generating…' : 'Generate Test Suite →'}
               </button>
+              {generateError && (
+                <div style={{ marginTop: 10 }}>
+                  <ServiceErrorNote code="GENERATION_UNAVAILABLE" />
+                </div>
+              )}
             </div>
 
             <div

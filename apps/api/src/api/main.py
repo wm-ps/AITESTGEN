@@ -47,6 +47,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from workflows import (
+    DISCOVERY_TASK_QUEUE,
     EXECUTION_TASK_QUEUE,
     GENERATION_TASK_QUEUE,
     ApplicationTestExecutionWorkflow,
@@ -67,7 +68,7 @@ from api.coverage_report import build_coverage_report
 from api.db import get_session
 from api.discovery import pause_discovery_run, resume_discovery_run, start_discovery_run
 from api.invites import InviteAcceptError, accept_invite, create_invite, org_name, send_invite_email
-from api.temporal_client import get_temporal_client
+from api.temporal_client import get_temporal_client, has_pollers
 from api.test_suite_export import (
     TestSuiteExportError,
     assemble_test_suite_project,
@@ -323,11 +324,16 @@ class HomeApplicationRead(ApplicationRead):
     # the count until every Journey is covered, same as ReviewScenarios.tsx.
     scenario_journeys_covered: int
     suite_count: int
-    # Dashboard "generating" vs "generated" pill: `suite_count` alone can't
-    # tell them apart — EnsureTestSuiteActivity creates the TestSuite row
-    # before its TestAssets exist. Mirrors TestSuiteResults.tsx's own
-    # `isComplete` check (test_case_count >= scenario_count).
     test_case_count: int
+    # Dashboard "generating" vs "generated" pill: `test_case_count <
+    # scenario_count` looked like the right gate (mirrors TestSuiteResults.tsx's
+    # count-based check) but a Scenario that's permanently skipped (over the
+    # max_test_cases_per_application cap) or failed all its wave retries
+    # never contributes a TestAsset — the count then never catches up and the
+    # pill reads "Generating test cases" forever after the workflow already
+    # finished. This is the same suite.status-based signal TestSuiteResults.tsx's
+    # `isComplete` was fixed to use: a suite still mid-run, not a count.
+    suites_generating_count: int
 
 
 def _coverage_counts(session: Session, discovery_run: DiscoveryRun) -> dict[str, int]:
@@ -368,6 +374,9 @@ _UNREACHABLE_DETAIL = (
     "Base URL did not respond — confirm it's deployed and accessible before connecting."
 )
 
+MAX_ACTIVE_PROJECTS = 4
+_PROJECT_LIMIT_DETAIL = f"Maximum of {MAX_ACTIVE_PROJECTS} active projects reached — delete one before adding another."
+
 
 async def _check_reachable(client: httpx.AsyncClient, url: str) -> None:
     """FR-31 (CR-3): gates Application creation on the Base URL actually
@@ -392,6 +401,17 @@ async def create_application(
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
 ) -> ApplicationRead:
+    active_count = len(
+        session.exec(
+            select(Application).where(
+                Application.organization_id == organization_id,
+                Application.deleted_at.is_(None),  # type: ignore[attr-defined]
+            )
+        ).all()
+    )
+    if active_count >= MAX_ACTIVE_PROJECTS:
+        raise HTTPException(status_code=409, detail=_PROJECT_LIMIT_DETAIL)
+
     # FR-31 (CR-3): fail fast before any write if the Base URL isn't reachable.
     async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
         await _check_reachable(client, payload.url)
@@ -540,6 +560,7 @@ def get_home(
     scenario_journeys_covered: dict[uuid.UUID, int] = {}
     suite_counts: dict[uuid.UUID, int] = {}
     test_case_counts: dict[uuid.UUID, int] = {}
+    suites_generating_counts: dict[uuid.UUID, int] = {}
     if journey_ids:
         for journey_id, count in session.exec(
             select(Scenario.journey_id, func.count())
@@ -566,6 +587,17 @@ def get_home(
             app_id = app_id_by_journey_id[journey_id]
             suite_counts[app_id] = suite_counts.get(app_id, 0) + count
         for journey_id, count in session.exec(
+            select(TestSuite.journey_id, func.count())
+            .where(
+                TestSuite.journey_id.in_(journey_ids),  # type: ignore[attr-defined]
+                TestSuite.current.is_(True),  # type: ignore[attr-defined]
+                TestSuite.status == "generating",
+            )
+            .group_by(TestSuite.journey_id)  # type: ignore[arg-type]
+        ).all():
+            app_id = app_id_by_journey_id[journey_id]
+            suites_generating_counts[app_id] = suites_generating_counts.get(app_id, 0) + count
+        for journey_id, count in session.exec(
             select(TestSuite.journey_id, func.count(TestAsset.id))  # type: ignore[arg-type]
             .join(TestAsset, TestAsset.test_suite_id == TestSuite.id)  # type: ignore[arg-type]
             .where(
@@ -591,6 +623,7 @@ def get_home(
                 scenario_journeys_covered=scenario_journeys_covered.get(application.id, 0),
                 suite_count=suite_counts.get(application.id, 0),
                 test_case_count=test_case_counts.get(application.id, 0),
+                suites_generating_count=suites_generating_counts.get(application.id, 0),
             )
         )
     return result
@@ -609,6 +642,43 @@ async def pause_discovery(
         raise HTTPException(status_code=409, detail="discovery run is not running")
     discovery_run = await pause_discovery_run(session, discovery_run)
     return _to_application_read(session, application, discovery_run)
+
+
+# `start_discovery_run` only checks `has_pollers` before starting (same
+# staleness-window gap `generation-status` closes for generation) — a worker
+# that crashes right after leaves `discovery_status="running"` with nothing
+# to explain why it's never going to move. Only meaningful while running;
+# any other status already has its own terminal reason.
+@app.get("/applications/{external_id}/discovery-status")
+async def discovery_status(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> dict[str, bool | int]:
+    application = _get_org_application(session, organization_id, external_id)
+    discovery_run = _latest_discovery_run(session, application.id)
+    if discovery_run is None or discovery_run.status != "running":
+        return {"available": True, "retry_count": 0}
+    client = await get_temporal_client()
+    available = await has_pollers(client, DISCOVERY_TASK_QUEUE)
+
+    # DISC-001 is the "Temporal restarted this run after a crash" diagnostic
+    # (activities.py's `is_temporal_retry` branch) — already written to the
+    # DB, previously only surfaced after the fact in the coverage report.
+    # Reusing that same row here is what lets the polling UI tell the user
+    # "recovered from a worker restart" live instead of silently retrying.
+    from domain import DiscoveryError
+
+    last_retry = session.exec(
+        select(DiscoveryError)
+        .where(
+            DiscoveryError.discovery_run_id == discovery_run.id,
+            DiscoveryError.error_code == "DISC-001",
+        )
+        .order_by(DiscoveryError.created_at.desc())  # type: ignore[attr-defined]
+        .limit(1)
+    ).first()
+    return {"available": available, "retry_count": last_retry.retry_count if last_retry else 0}
 
 
 @app.patch("/applications/{external_id}", response_model=ApplicationRead)
@@ -1238,6 +1308,12 @@ async def generate_scenarios(
     ).all()
 
     client = await get_temporal_client()
+    # Starting a workflow succeeds regardless of whether a worker is polling
+    # the queue — check up front so a dead generation worker pod surfaces as
+    # a real error instead of a silent no-op the frontend can't distinguish
+    # from "still generating".
+    if not await has_pollers(client, GENERATION_TASK_QUEUE):
+        raise HTTPException(status_code=503, detail="GENERATION_UNAVAILABLE")
     triggered = 0
     for journey in journeys:
         # Idempotent: skip a Journey that already has Scenarios for its
@@ -1368,6 +1444,7 @@ class TestSuiteRead(BaseModel):
     id: uuid.UUID
     name: str
     journey_name: str
+    status: str
     test_cases: list[TestCaseRead]
 
 
@@ -1386,6 +1463,8 @@ async def generate_suite(
     ).all()
 
     client = await get_temporal_client()
+    if not await has_pollers(client, GENERATION_TASK_QUEUE):
+        raise HTTPException(status_code=503, detail="GENERATION_UNAVAILABLE")
     triggered = 0
     for journey in journeys:
         current_scenarios = session.exec(
@@ -1405,12 +1484,18 @@ async def generate_suite(
         # Suite skipped the Journey forever, no way to resume. Re-running is
         # safe either way — EnsureTestSuiteActivity/PlaywrightGenerationActivity
         # are both idempotent per Journey/Scenario.
-        suite_ids = session.exec(
-            select(TestSuite.id).where(
+        suites = session.exec(
+            select(TestSuite).where(
                 TestSuite.journey_id == journey.id,
                 TestSuite.generation_run_id == journey.attempt,
             )
         ).all()
+        # A user explicitly closed this Journey's incomplete suite out
+        # (`terminate_test_suite`) — that decision must stick; re-clicking
+        # Generate Suite must not silently start retrying it again.
+        if any(ts.status == "terminated" for ts in suites):
+            continue
+        suite_ids = [ts.id for ts in suites]
         covered_scenario_ids = (
             set(
                 session.exec(
@@ -1437,6 +1522,22 @@ async def generate_suite(
             pass
 
     return {"suites_triggered": triggered}
+
+
+# `has_pollers` at submit time can't catch a worker that crashes right after
+# (its own docstring: a crashed poller stays "seen" for Temporal's staleness
+# window, a few minutes) — the Test Suite Results screen polls this
+# separately so it can stop spinning once that window clears and the worker
+# is confirmed gone, instead of waiting on a generation that will never move.
+@app.get("/applications/{external_id}/generation-status")
+async def generation_status(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> dict[str, bool]:
+    _get_org_application(session, organization_id, external_id)
+    client = await get_temporal_client()
+    return {"available": await has_pollers(client, GENERATION_TASK_QUEUE)}
 
 
 @app.get("/applications/{external_id}/test-suites", response_model=list[TestSuiteRead])
@@ -1504,10 +1605,62 @@ def list_test_suites(
                 id=test_suite.external_id,
                 name=test_suite.name,
                 journey_name=journey.name,
+                status=test_suite.status,
                 test_cases=test_cases,
             )
         )
     return result
+
+
+@app.post("/applications/{external_id}/test-suites/{suite_id}/terminate", response_model=TestSuiteRead)
+def terminate_test_suite(
+    external_id: uuid.UUID,
+    suite_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> TestSuiteRead:
+    """User-triggered alternative to re-clicking Generate Suite forever
+    (`generate_suite`'s own comment: a TestSuite left 'incomplete' is
+    otherwise silently re-triggerable, with no way to just call it done).
+    Only valid from 'incomplete' — a 'generating' suite is still legitimately
+    in flight, and a 'complete'/already-'terminated' one has nothing to
+    terminate."""
+    application = _get_org_application(session, organization_id, external_id)
+    test_suite = session.exec(
+        select(TestSuite).where(TestSuite.external_id == suite_id)
+    ).first()
+    if test_suite is None:
+        raise HTTPException(status_code=404, detail="test suite not found")
+    journey = session.get(Journey, test_suite.journey_id)
+    if journey is None or journey.application_id != application.id:
+        raise HTTPException(status_code=404, detail="test suite not found")
+    if test_suite.status != "incomplete":
+        raise HTTPException(
+            status_code=409, detail=f"cannot terminate a suite with status {test_suite.status!r}"
+        )
+
+    test_suite.status = "terminated"
+    session.add(test_suite)
+    session.commit()
+    session.refresh(test_suite)
+
+    test_cases = [
+        TestCaseRead(id=asset.external_id, name=scenario.name, type=scenario.type, code=asset.code)
+        for asset in session.exec(
+            select(TestAsset).where(
+                TestAsset.test_suite_id == test_suite.id,
+                TestAsset.current.is_(True),  # type: ignore[attr-defined]
+            )
+        ).all()
+        if (scenario := session.get(Scenario, asset.scenario_id)) is not None
+    ]
+    return TestSuiteRead(
+        id=test_suite.external_id,
+        name=test_suite.name,
+        journey_name=journey.name,
+        status=test_suite.status,
+        test_cases=test_cases,
+    )
 
 
 @app.get("/applications/{external_id}/test-suites/download")
@@ -1776,6 +1929,8 @@ async def trigger_test_run(
     application = _get_org_application(session, organization_id, external_id)
 
     client = await get_temporal_client()
+    if not await has_pollers(client, EXECUTION_TASK_QUEUE):
+        raise HTTPException(status_code=503, detail="EXECUTION_UNAVAILABLE")
     await client.start_workflow(
         ApplicationTestExecutionWorkflow.run,
         ExecutionWorkflowInput(
@@ -1788,6 +1943,22 @@ async def trigger_test_run(
         task_queue=EXECUTION_TASK_QUEUE,
     )
     return {"started": True}
+
+
+# `has_pollers` above is only checked before starting the workflow — a
+# worker that crashes right after leaves the TestRun sitting at "running"
+# with nothing to explain why (same staleness-window gap `generation-status`/
+# `discovery-status` close for their own workers). Polled separately so
+# RunsTab can stop spinning once the worker is confirmed gone.
+@app.get("/applications/{external_id}/execution-status")
+async def execution_status(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> dict[str, bool]:
+    _get_org_application(session, organization_id, external_id)
+    client = await get_temporal_client()
+    return {"available": await has_pollers(client, EXECUTION_TASK_QUEUE)}
 
 
 class TestRunPageRead(BaseModel):

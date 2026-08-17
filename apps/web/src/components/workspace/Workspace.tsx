@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../../api'
+import { ServiceErrorNote } from '../ServiceError'
 import { OverviewTab } from './OverviewTab'
 import { TestSuiteTab } from './TestSuiteTab'
 import { RunsTab } from './RunsTab'
@@ -50,10 +51,20 @@ const TABS: { key: WorkspaceTab; label: string; icon: () => React.JSX.Element }[
   { key: 'runs', label: 'Runs', icon: RunsIcon },
 ]
 
+function BackIcon() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M19 12H5M12 19l-7-7 7-7" />
+    </svg>
+  )
+}
+
 export function Workspace({
   applicationId,
   initialTab = 'overview',
   autoTriggerRun = false,
+  onBack,
+  onViewSetup,
 }: {
   applicationId: string
   initialTab?: WorkspaceTab
@@ -62,6 +73,10 @@ export function Workspace({
   // (if any) has somewhere to surface, mirroring what the old standalone
   // TestExecutionResults.tsx screen used to show.
   autoTriggerRun?: boolean
+  // Optional so tests/other entry points with nowhere sensible to go back
+  // to can omit either.
+  onBack?: () => void
+  onViewSetup?: () => void
 }) {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>(initialTab)
   // Set once, the moment "Run Suite"/"Run All Tests" switches to the Runs
@@ -69,6 +84,7 @@ export function Workspace({
   // re-armed just by switching tabs again.
   const [autoSelectLatest, setAutoSelectLatest] = useState(initialTab === 'runs')
   const [triggerError, setTriggerError] = useState<string | null>(null)
+  const [triggerErrorUnavailable, setTriggerErrorUnavailable] = useState(false)
   const [running, setRunning] = useState(false)
   // Snapshotted at mount — App.tsx only ever mounts this component fresh
   // right after a "Run All Tests" click, so the effect below should fire
@@ -79,12 +95,17 @@ export function Workspace({
   async function handleRunSuite() {
     setRunning(true)
     setTriggerError(null)
+    setTriggerErrorUnavailable(false)
     try {
       await api.triggerTestRun(applicationId)
       setAutoSelectLatest(true)
       setActiveTab('runs')
     } catch (err) {
-      setTriggerError(err instanceof ApiError ? err.message : 'Failed to start the test run')
+      if (err instanceof ApiError && err.message !== 'EXECUTION_UNAVAILABLE') {
+        setTriggerError(err.message)
+      } else {
+        setTriggerErrorUnavailable(true)
+      }
     } finally {
       setRunning(false)
     }
@@ -92,6 +113,12 @@ export function Workspace({
 
   useEffect(() => {
     if (!autoTriggerRunOnMountRef.current) return
+    // Cleared before firing, not after — StrictMode dev double-invokes this
+    // effect (mount, cleanup, mount again) to catch exactly this kind of
+    // non-idempotent effect; `handleRunSuite` has no dedupe of its own
+    // (triggerTestRun always starts a genuinely new run), so without this
+    // the second pass fired a real duplicate run.
+    autoTriggerRunOnMountRef.current = false
     handleRunSuite()
     // handleRunSuite is stable enough for a mount-only effect — see the ref
     // comment above; re-running it on identity changes isn't the intent.
@@ -105,6 +132,11 @@ export function Workspace({
           <p role="alert" style={{ color: 'var(--danger-strong)', fontSize: 13, marginBottom: 16 }}>
             {triggerError}
           </p>
+        )}
+        {triggerErrorUnavailable && (
+          <div style={{ marginBottom: 16 }}>
+            <ServiceErrorNote code="EXECUTION_UNAVAILABLE" />
+          </div>
         )}
 
         {/* 3-column grid, not space-between: the tab bar stays visually
@@ -120,7 +152,19 @@ export function Workspace({
             borderBottom: '1px solid var(--border)',
           }}
         >
-          <span aria-hidden="true" />
+          {onBack ? (
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={onBack}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, justifySelf: 'start' }}
+            >
+              <BackIcon />
+              Back
+            </button>
+          ) : (
+            <span aria-hidden="true" />
+          )}
           {/* Underline variant, not a segmented pill: icon + label per tab,
               active tab gets an accent underline + accent text — reads as
               primary navigation instead of a filter control (which is what
@@ -164,16 +208,28 @@ export function Workspace({
           {/* Persistent regardless of tab — an enterprise dashboard's primary
               action shouldn't hide inside one specific tab. Play icon so the
               button reads as "go" at a glance, not just another labeled box. */}
-          <button
-            type="button"
-            className="button-primary"
-            disabled={running}
-            onClick={handleRunSuite}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, justifySelf: 'end' }}
-          >
-            <PlayIcon />
-            {running ? 'Starting…' : 'Run Suite'}
-          </button>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, justifySelf: 'end' }}>
+            {onViewSetup && (
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={onViewSetup}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                View Setup
+              </button>
+            )}
+            <button
+              type="button"
+              className="button-primary"
+              disabled={running}
+              onClick={handleRunSuite}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+            >
+              <PlayIcon />
+              {running ? 'Starting…' : 'Run Suite'}
+            </button>
+          </div>
         </div>
 
         {activeTab === 'overview' && <OverviewTab applicationId={applicationId} />}

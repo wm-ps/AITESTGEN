@@ -17,6 +17,8 @@ export function useDiscoveryProgress(
   const [status, setStatus] = useState(initialStatus)
   const [stage, setStage] = useState(initialStage)
   const [failureReason, setFailureReason] = useState(initialFailureReason)
+  const [workerAvailable, setWorkerAvailable] = useState(true)
+  const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
     // `status` flips to "complete" as soon as the crawl finishes — well
@@ -37,6 +39,21 @@ export function useDiscoveryProgress(
       } catch {
         // best-effort poll — a transient failure just skips this tick
       }
+      // `start_discovery_run` only checks for a live worker before starting
+      // — a worker that crashes right after leaves status="running" with
+      // nothing to explain why it's stuck. Only worth asking while running;
+      // any other status already carries its own terminal reason.
+      if (status === 'running') {
+        try {
+          const { available, retry_count } = await api.getDiscoveryStatus(applicationId)
+          if (!cancelled) {
+            setWorkerAvailable(available)
+            setRetryCount(retry_count)
+          }
+        } catch {
+          // best-effort poll — a transient failure just skips this tick
+        }
+      }
     }
 
     poll()
@@ -47,5 +64,5 @@ export function useDiscoveryProgress(
     }
   }, [applicationId, hasJourneys, status])
 
-  return { status, stage, failureReason }
+  return { status, stage, failureReason, workerAvailable, retryCount }
 }

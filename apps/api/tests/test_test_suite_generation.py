@@ -176,6 +176,31 @@ def test_generate_suite_starts_one_workflow_per_candidate_journey_with_scenarios
         asyncio.run(_terminate(workflow_id))
 
 
+def test_generation_status_reports_unavailable_when_worker_is_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Test Suite Results screen polls this separately from the
+    generate-suite trigger, since a worker that crashes right after a
+    workflow starts leaves no error for the trigger call to surface — this
+    is what lets the frontend stop spinning once the worker is confirmed
+    gone instead of polling test-suites forever."""
+    from api import main as api_main
+
+    async def _no_pollers(client: object, task_queue: str) -> bool:
+        return False
+
+    monkeypatch.setattr(api_main, "has_pollers", _no_pollers)
+
+    init_db()
+    client = _signed_in_client("Org Generation Status Down")
+    application = _create_application(client, "No Generation Worker Status App")
+
+    response = client.get(f"/applications/{application['id']}/generation-status")
+
+    assert response.status_code == 200
+    assert response.json() == {"available": False}
+
+
 def test_generate_suite_is_idempotent_for_journeys_with_existing_test_suite() -> None:
     init_db()
     client = _signed_in_client("Org Suite Generation Idempotent")

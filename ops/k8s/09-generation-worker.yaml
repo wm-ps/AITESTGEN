@@ -23,6 +23,8 @@ spec:
                 secretKeyRef:
                   name: aitestgen-secrets
                   key: ANTHROPIC_API_KEY
+            - name: GENERATION_WORKER_MAX_CONCURRENT_ACTIVITIES
+              value: "20"
           envFrom:
             - configMapRef:
                 name: aitestgen-config
@@ -30,8 +32,8 @@ spec:
                 name: aitestgen-secrets      
           resources:
             requests:
-              cpu: "10m"
-              memory: "256Mi"
+              cpu: "250m"
+              memory: "512Mi"
             limits:
-              cpu: "500m"
-              memory: "1024Mi"
+              cpu: "2"
+              memory: "4Gi"

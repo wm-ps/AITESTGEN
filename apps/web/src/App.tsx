@@ -8,6 +8,7 @@ import { Home } from './components/Home'
 import { InviteTeammateModal } from './components/InviteTeammateModal'
 import { ReviewScenarios } from './components/ReviewScenarios'
 import { Settings } from './components/Settings'
+import { ServiceError } from './components/ServiceError'
 import { SignIn } from './components/SignIn'
 import type { StepKey } from './components/Stepper'
 import { TestSuiteResults } from './components/TestSuiteResults'
@@ -53,6 +54,10 @@ type View =
 
 function App() {
   const [user, setUser] = useState<UserRead | null | undefined>(undefined)
+  // A network-level failure (fetch never got a response — backend/pods down)
+  // isn't an ApiError, so it can't mean "not signed in". Route it to the
+  // generic error screen instead of silently bouncing to SignIn.
+  const [serviceDown, setServiceDown] = useState(false)
   const [view, setView] = useState<View>('home')
   const [previousView, setPreviousView] = useState<View>('home')
   const [application, setApplication] = useState<ApplicationRead | null>(null)
@@ -89,10 +94,10 @@ function App() {
       .me()
       .then(setUser)
       .catch((err) => {
-        if (err instanceof ApiError && err.status === 401) {
+        if (err instanceof ApiError) {
           setUser(null)
         } else {
-          setUser(null)
+          setServiceDown(true)
         }
       })
   }, [inviteToken])
@@ -105,6 +110,10 @@ function App() {
 
   if (inviteToken) {
     return <AcceptInvite token={inviteToken} onSignedIn={handleSignedIn} />
+  }
+
+  if (serviceDown) {
+    return <ServiceError code="API_UNAVAILABLE" onRetry={() => window.location.reload()} />
   }
 
   if (user === undefined) return null
@@ -253,12 +262,12 @@ function App() {
       {view === 'test-suite-results' && application && (
         <TestSuiteResults
           applicationId={application.id}
-          onGoToDashboard={() => {
-            setWorkspaceEntry({ initialTab: 'overview', autoTriggerRun: false })
-            setView('workspace')
-          }}
           onRunAllTests={() => {
             setWorkspaceEntry({ initialTab: 'runs', autoTriggerRun: true })
+            setView('workspace')
+          }}
+          onViewExecutions={() => {
+            setWorkspaceEntry({ initialTab: 'runs', autoTriggerRun: false })
             setView('workspace')
           }}
           furthestCount={furthestCount}
@@ -271,6 +280,8 @@ function App() {
           applicationId={application.id}
           initialTab={workspaceEntry.initialTab}
           autoTriggerRun={workspaceEntry.autoTriggerRun}
+          onBack={() => setView('home')}
+          onViewSetup={() => setView('test-suite-results')}
         />
       )}
       {view === 'settings' && <Settings onCancel={() => setView(previousView)} />}

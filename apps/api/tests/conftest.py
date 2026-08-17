@@ -49,6 +49,23 @@ def _reachable_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+async def _always_has_pollers(client: object, task_queue: str) -> bool:
+    return True
+
+
+@pytest.fixture(autouse=True)
+def _workers_always_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """This suite runs no real discovery/generation/execution worker (see
+    the module docstring — nothing consumes the queues these tests start
+    workflows on), so the real `has_pollers` would report every queue as
+    worker-down and turn every trigger test into a false *_UNAVAILABLE
+    failure. A test that wants to exercise the worker-down path itself
+    overrides this with its own `monkeypatch.setattr(..., "has_pollers", ...)`
+    after this fixture runs."""
+    monkeypatch.setattr(api_discovery, "has_pollers", _always_has_pollers)
+    monkeypatch.setattr(api_main, "has_pollers", _always_has_pollers)
+
+
 @pytest.fixture(autouse=True)
 def _terminate_discovery_workflows_started_by_test(monkeypatch: pytest.MonkeyPatch) -> None:
     started_external_ids: list[str] = []
