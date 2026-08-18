@@ -7,7 +7,10 @@ from generation_worker.spec_linter import (
     extract_locator_usages,
     lint_locator_provenance,
     lint_required_fields,
+    lint_scenario_data_intent,
+    lint_shared_state_contradiction,
     lint_sibling_consistency,
+    lint_tautological_assertion,
     lint_uses_shared_auth_helper,
 )
 
@@ -63,21 +66,35 @@ def test_lint_required_fields_ignores_optional_fields() -> None:
     assert lint_required_fields(code, {"username": True, "promo_code": False}) == []
 
 
-def test_lint_uses_shared_auth_helper_flags_missing_helper_when_required() -> None:
-    warnings = lint_uses_shared_auth_helper("test('x', async ({ page }) => {})", True)
-    assert len(warnings) == 1
+def test_lint_uses_shared_auth_helper_passes_when_not_called_and_required() -> None:
+    # requires_auth=True means storageState already authenticates this spec
+    # before its body runs — the correct spec never touches fillCredentials.
+    assert lint_uses_shared_auth_helper("test('x', async ({ page }) => {})", True) == []
 
 
-def test_lint_uses_shared_auth_helper_passes_when_not_required() -> None:
+def test_lint_uses_shared_auth_helper_passes_when_not_required_and_not_called() -> None:
     assert lint_uses_shared_auth_helper("test('x', async ({ page }) => {})", False) == []
 
 
-def test_lint_uses_shared_auth_helper_passes_when_helper_used() -> None:
+def test_lint_uses_shared_auth_helper_passes_when_helper_used_and_not_required() -> None:
+    # A spec that IS itself testing the login form (requires_auth=False,
+    # since its primary page is the login page) may legitimately call the
+    # helper.
     code = (
-        "import { fillCredentials } from '../support/auth'\n"
+        "import { fillCredentials } from '../../support/auth'\n"
         "test('x', async ({ page }) => { await fillCredentials(page); })\n"
     )
-    assert lint_uses_shared_auth_helper(code, True) == []
+    assert lint_uses_shared_auth_helper(code, False) == []
+
+
+def test_lint_uses_shared_auth_helper_flags_redundant_helper_when_already_authenticated() -> None:
+    code = (
+        "import { fillCredentials } from '../../support/auth'\n"
+        "test('x', async ({ page }) => { await fillCredentials(page); })\n"
+    )
+    warnings = lint_uses_shared_auth_helper(code, True)
+    assert len(warnings) == 1
+    assert "fillCredentials" in warnings[0]
 
 
 def test_lint_sibling_consistency_flags_a_missing_locator() -> None:
@@ -126,3 +143,102 @@ def test_apply_auth_tag_overrides_an_existing_tag() -> None:
 def test_apply_auth_tag_is_a_noop_when_no_test_call_found() -> None:
     code = "// no test call here\n"
     assert apply_auth_tag(code, True) == code
+
+
+def test_apply_auth_tag_strips_an_llm_baked_in_tag_from_the_name() -> None:
+    code = "test('Session expires while opening accounts @auth', async ({ page }) => {})\n"
+    tagged = apply_auth_tag(code, False)
+    assert "{ tag: '@public' }" in tagged
+    assert "@auth" not in tagged
+    assert "test('Session expires while opening accounts', { tag: '@public' }, async" in tagged
+
+
+def test_lint_scenario_data_intent_flags_unicode_scenario_with_ascii_only_data() -> None:
+    warnings = lint_scenario_data_intent(
+        "Sign in with a Unicode password",
+        ["Enter username", "Enter password", "Submit"],
+        [
+            {"name": "username", "value": "bob"},
+            {"name": "password", "value": "Password123"},
+        ],
+    )
+    assert len(warnings) == 1
+    assert "Unicode" in warnings[0]
+
+
+def test_lint_scenario_data_intent_passes_when_unicode_actually_present() -> None:
+    warnings = lint_scenario_data_intent(
+        "Sign in with a Unicode password",
+        ["Enter username", "Enter password"],
+        [
+            {"name": "username", "value": "bob"},
+            {"name": "password", "value": "Pässwörd☺123"},
+        ],
+    )
+    assert warnings == []
+
+
+def test_lint_scenario_data_intent_ignores_scenarios_with_no_fields() -> None:
+    # A read-only scenario whose name happens to mention "date" but has no
+    # test_data to validate must not be flagged.
+    assert lint_scenario_data_intent("Verify transaction date is displayed", [], []) == []
+
+
+def test_lint_scenario_data_intent_flags_numeric_scenario_with_placeholder_value() -> None:
+    warnings = lint_scenario_data_intent(
+        "Enter a numeric quantity",
+        ["Enter quantity"],
+        [{"name": "quantity", "value": "Test value"}],
+    )
+    assert len(warnings) == 1
+    assert "numeric" in warnings[0]
+
+
+def test_lint_scenario_data_intent_passes_for_unrelated_scenario() -> None:
+    warnings = lint_scenario_data_intent(
+        "Update profile name",
+        ["Enter name", "Save"],
+        [{"name": "name", "value": "Test value"}],
+    )
+    assert warnings == []
+
+
+def test_lint_tautological_assertion_flags_not_toBe_fallback() -> None:
+    code = (
+        "if (before !== after) {\n"
+        "  expect(before).not.toBe(after);\n"
+        "}\n"
+    )
+    warnings = lint_tautological_assertion(code)
+    assert len(warnings) == 1
+    assert "tautological" in warnings[0]
+
+
+def test_lint_tautological_assertion_flags_toBe_mirror() -> None:
+    code = "if (a === b) { expect(a).toBe(b); }\n"
+    warnings = lint_tautological_assertion(code)
+    assert len(warnings) == 1
+
+
+def test_lint_tautological_assertion_passes_for_real_assertions() -> None:
+    code = "await expect(page.locator('#balance')).toHaveText('$100.00');\n"
+    assert lint_tautological_assertion(code) == []
+
+
+def test_lint_shared_state_contradiction_flags_differing_counts_same_locator() -> None:
+    code = "await expect(page.locator('.deposit-row')).toHaveCount(1);\n"
+    sibling_code = "await expect(page.locator('.deposit-row')).toHaveCount(0);\n"
+    warnings = lint_shared_state_contradiction(code, sibling_code)
+    assert len(warnings) == 1
+    assert "'.deposit-row'" in warnings[0]
+
+
+def test_lint_shared_state_contradiction_passes_when_counts_agree() -> None:
+    code = "await expect(page.locator('.deposit-row')).toHaveCount(1);\n"
+    assert lint_shared_state_contradiction(code, code) == []
+
+
+def test_lint_shared_state_contradiction_ignores_unrelated_locators() -> None:
+    code = "await expect(page.locator('.deposit-row')).toHaveCount(1);\n"
+    sibling_code = "await expect(page.locator('.withdrawal-row')).toHaveCount(0);\n"
+    assert lint_shared_state_contradiction(code, sibling_code) == []

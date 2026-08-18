@@ -67,15 +67,37 @@ logger = logging.getLogger(__name__)
 _EMAIL_FIELD_RE = re.compile(r"user|email|login", re.IGNORECASE)
 _PASSWORD_FIELD_RE = re.compile(r"pass(word)?", re.IGNORECASE)
 _CARD_FIELD_RE = re.compile(r"card", re.IGNORECASE)
+# Same convention discovery_worker/crawler.py's `_generic_value` already uses
+# for its own (different, exploratory-crawl) purpose: a field's declared
+# HTML `type` isn't a reliable signal on its own (many real quantity boxes
+# are `type="text"`), so it's only consulted here once the name-pattern
+# checks above find nothing more specific — same precedence crawler.py
+# itself uses.
+_TYPE_CANDIDATES = {
+    "number": ("1", "2", "3"),
+    "tel": ("555-0100", "555-0101", "555-0102"),
+    "date": ("2026-01-01", "2026-01-02", "2026-01-03"),
+    "email": ("test@example.com", "test2@example.com", "test3@example.com"),
+}
+# Mirrors crawler.py's own `_QUANTITY_FIELD_RE` exactly (a quantity/amount
+# box is routinely `type="text"` on real sites, so `input_type` alone
+# already misses it) — same field-type-awareness gap, same fix.
+_QUANTITY_FIELD_RE = re.compile(r"qty|quantity|count|amount|number", re.IGNORECASE)
 
 
-def _default_test_data_value(field_name: str, used_values: set[str]) -> str:
+def _default_test_data_value(
+    field_name: str, used_values: set[str], input_type: str = "text"
+) -> str:
     if _PASSWORD_FIELD_RE.search(field_name):
         candidates = ("Password1$", "Password2$", "Password3$")
     elif _CARD_FIELD_RE.search(field_name):
         candidates = ("4111111111111111", "5555555555554444", "4000000000000002")
     elif _EMAIL_FIELD_RE.search(field_name):
         candidates = ("test@example.com", "test2@example.com", "test3@example.com")
+    elif input_type in _TYPE_CANDIDATES:
+        candidates = _TYPE_CANDIDATES[input_type]
+    elif _QUANTITY_FIELD_RE.search(field_name):
+        candidates = ("1", "2", "3")
     else:
         candidates = ("Test value", "Test value 2", "Test value 3")
     # Checklist rule 6: a scenario whose whole point is "X and Y differ"
@@ -83,6 +105,107 @@ def _default_test_data_value(field_name: str, used_values: set[str]) -> str:
     # reusing the same pattern-matched placeholder for every same-shaped
     # field (e.g. "password" and "confirmPassword" both -> "Password1$")
     # silently destroys that scenario.
+    return next((c for c in candidates if c not in used_values), candidates[-1])
+
+
+# Scenario-intent-driven defaults (Story: generation pipeline hardening,
+# scenario-data-intent gap) — checked BEFORE `_default_test_data_value`
+# above. That function only ever looks at a field's own name/type, so a
+# Scenario whose own name/steps name a specific data property (a numeric
+# boundary, Unicode/international content, markup characters, a password
+# length/character-set boundary) gets the same generic "Test value"/
+# "Password1$" a completely unrelated Scenario for the same field would —
+# satisfying the field's shape while missing the property the Scenario's
+# own title claims to test (e.g. "Sign in with a Unicode password" backed
+# by a plain ASCII default). Returns `None` (falls through to the generic
+# default above, unchanged) when nothing in `intent_text` names a property
+# this specific field is a plausible target for.
+_PASSWORD_UNICODE_INTENT_RE = re.compile(r"unicode|non-ascii|non ascii", re.IGNORECASE)
+# Lookahead-based "both words present, any order/distance" — a real
+# scenario name rarely puts "maximum" directly next to "length" (e.g.
+# "Maximum supported profile name length", "Password at the maximum
+# permitted length"), so a literal-adjacency pattern misses most of them.
+_PASSWORD_MAX_LEN_INTENT_RE = re.compile(
+    r"(?=.*\b(?:maximum|max)\b)(?=.*\blength\b)", re.IGNORECASE | re.DOTALL
+)
+_PASSWORD_MIN_LEN_INTENT_RE = re.compile(
+    r"(?=.*\b(?:minimum|min)\b)(?=.*\blength\b)", re.IGNORECASE | re.DOTALL
+)
+_BELOW_MIN_INTENT_RE = re.compile(
+    r"below the minimum|below minimum|under the minimum|less than the minimum", re.IGNORECASE
+)
+_ABOVE_MAX_INTENT_RE = re.compile(
+    r"above the maximum|above maximum|exceed(?:s|ing)? the maximum|over the maximum",
+    re.IGNORECASE,
+)
+_AT_MIN_INTENT_RE = re.compile(r"\bminimum\b|\bsmallest\b", re.IGNORECASE)
+_AT_MAX_INTENT_RE = re.compile(r"\bmaximum\b|\blargest\b", re.IGNORECASE)
+_DECIMAL_INTENT_RE = re.compile(r"decimal precision|\bdecimal\b", re.IGNORECASE)
+_EMOJI_INTENT_RE = re.compile(r"\bemoji\b", re.IGNORECASE)
+_UNICODE_INTENT_RE = re.compile(
+    r"unicode|multilingual|international character|non-ascii|non ascii", re.IGNORECASE
+)
+_NAME_LIKE_FIELD_RE = re.compile(r"name", re.IGNORECASE)
+_MARKUP_INTENT_RE = re.compile(r"markup|special character", re.IGNORECASE)
+_MAX_LEN_INTENT_RE = re.compile(
+    r"(?=.*\b(?:maximum|max)\b)(?=.*\blength\b)", re.IGNORECASE | re.DOTALL
+)
+_MIN_LEN_INTENT_RE = re.compile(
+    r"(?=.*\b(?:minimum|min)\b)(?=.*\blength\b)", re.IGNORECASE | re.DOTALL
+)
+
+
+def _scenario_intent_default_value(
+    intent_text: str, field_name: str, used_values: set[str]
+) -> str | None:
+    if _PASSWORD_FIELD_RE.search(field_name):
+        if _PASSWORD_UNICODE_INTENT_RE.search(intent_text):
+            candidates = ("Pässwörd123$", "Pässwörd456$")
+        elif _PASSWORD_MAX_LEN_INTENT_RE.search(intent_text):
+            # No maxlength constraint is ever captured by Discovery today
+            # (only `required`/`html5_message` — see ValidationRule) — this
+            # is a best-effort long value, not a verified app-specific
+            # boundary. Closing that gap for real needs a crawler change,
+            # out of scope here.
+            candidates = ("P4ssw0rd$" + "x" * 119, "P4ssw0rd$" + "y" * 119)
+        elif _PASSWORD_MIN_LEN_INTENT_RE.search(intent_text):
+            candidates = ("Pw1$", "Pw2$")
+        else:
+            return None
+        return next((c for c in candidates if c not in used_values), candidates[-1])
+
+    if _CARD_FIELD_RE.search(field_name) or _EMAIL_FIELD_RE.search(field_name):
+        return None  # the categories below are never about these fields
+
+    if _BELOW_MIN_INTENT_RE.search(intent_text):
+        candidates = ("0.00", "-0.01")
+    elif _ABOVE_MAX_INTENT_RE.search(intent_text):
+        candidates = ("1000000.00", "1000000.01")
+    elif _DECIMAL_INTENT_RE.search(intent_text):
+        candidates = ("10000.50", "5.25")
+    # Length-boundary checks before the bare minimum/maximum ones below —
+    # "maximum ... length" always also contains the word "maximum", which
+    # would otherwise swallow it as a numeric-amount boundary instead.
+    elif _MAX_LEN_INTENT_RE.search(intent_text):
+        candidates = ("x" * 128, "y" * 128)
+    elif _MIN_LEN_INTENT_RE.search(intent_text):
+        candidates = ("a", "b")
+    elif _AT_MIN_INTENT_RE.search(intent_text):
+        candidates = ("0.01", "0.02")
+    elif _AT_MAX_INTENT_RE.search(intent_text):
+        candidates = ("999999.99", "999999.98")
+    elif _EMOJI_INTENT_RE.search(intent_text):
+        candidates = ("🚀😊", "😊🚀")
+    elif _UNICODE_INTENT_RE.search(intent_text):
+        candidates = (
+            ("José García", "François Müller")
+            if _NAME_LIKE_FIELD_RE.search(field_name)
+            else ("こんにちは 你好 Pässwörd", "Müller-Örström 你好")
+        )
+    elif _MARKUP_INTENT_RE.search(intent_text):
+        candidates = ("<test>&\"'</test>", "<div>&\"'</div>")
+    else:
+        return None
     return next((c for c in candidates if c not in used_values), candidates[-1])
 
 
@@ -660,12 +783,35 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
             select(Scenario).where(Scenario.external_id == uuid.UUID(scenario_external_id))
         ).one()
 
+        known_pages, known_locators, primary_page_id = _resolve_known_application_model_sync(
+            session, scenario.journey_id
+        )
+
+        required_fields: dict[str, bool] = {}
+        field_input_types: dict[str, str] = {}
+        requires_auth = False
+        if primary_page_id is not None:
+            required_fields = spec_linter.required_fields_for_page(session, primary_page_id)
+            field_input_types = spec_linter.field_input_types_for_page(session, primary_page_id)
+            journey = session.get(Journey, scenario.journey_id)
+            application = session.get(Application, journey.application_id) if journey else None
+            primary_page = session.get(Page, primary_page_id)
+            if application is not None:
+                requires_auth = spec_linter.resolve_requires_auth(
+                    session, application, primary_page, scenario
+                )
+
+        intent_text = f"{scenario.name} {' '.join(scenario.steps)}"
         updated_fields = [dict(field) for field in scenario.test_data]
         changed = False
         used_values = {field["value"] for field in updated_fields if field.get("value")}
         for field in updated_fields:
             if not field.get("value"):
-                value = _default_test_data_value(field["name"], used_values)
+                value = _scenario_intent_default_value(
+                    intent_text, field["name"], used_values
+                ) or _default_test_data_value(
+                    field["name"], used_values, field_input_types.get(field["name"], "text")
+                )
                 field["value"] = value
                 used_values.add(value)
                 changed = True
@@ -674,22 +820,6 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
             session.add(scenario)
             session.commit()
             session.refresh(scenario)
-
-        known_pages, known_locators, primary_page_id = _resolve_known_application_model_sync(
-            session, scenario.journey_id
-        )
-
-        required_fields: dict[str, bool] = {}
-        requires_auth = False
-        if primary_page_id is not None:
-            required_fields = spec_linter.required_fields_for_page(session, primary_page_id)
-            journey = session.get(Journey, scenario.journey_id)
-            application = session.get(Application, journey.application_id) if journey else None
-            primary_page = session.get(Page, primary_page_id)
-            if application is not None:
-                requires_auth = spec_linter.resolve_requires_auth(
-                    session, application, primary_page
-                )
 
         # Detach so the caller can read its attributes (name/type/steps/
         # test_data/expected_result — everything generate_playwright needs)
@@ -741,8 +871,16 @@ def _persist_test_asset_sync(
         warnings += spec_linter.lint_required_fields(code, required_fields)
         warnings += spec_linter.lint_locator_provenance(code, known_locators)
         warnings += spec_linter.lint_uses_shared_auth_helper(code, requires_auth)
+        warnings += spec_linter.lint_scenario_data_intent(
+            scenario.name, scenario.steps, scenario.test_data
+        )
+        warnings += spec_linter.lint_password_boundary_ignored(
+            scenario.name, scenario.steps, scenario.test_data, code
+        )
+        warnings += spec_linter.lint_tautological_assertion(code)
         if sibling is not None:
             warnings += spec_linter.lint_sibling_consistency(code, sibling.code)
+            warnings += spec_linter.lint_shared_state_contradiction(code, sibling.code)
 
         test_asset = TestAsset(
             scenario_id=scenario.id,

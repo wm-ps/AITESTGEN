@@ -397,6 +397,40 @@ async def test_generate_playwright_strips_markdown_code_fences(
     assert "```" not in result.code
 
 
+async def test_generate_playwright_forbids_fillcredentials_when_requires_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[FIXED]` requires_auth=True used to instruct the model to call
+    `fillCredentials(page)` itself as a login "precondition" — directly
+    contradicting the exported project's real architecture, where an
+    `@auth`-tagged spec already starts authenticated via `storageState`
+    (set up once by `tests/auth.setup.ts`). Combined with this same prompt's
+    own "visit the base URL first" rule, every such spec called
+    `fillCredentials` on the public marketing page instead of the real login
+    page, timing out hunting for a login field that was never there."""
+    captured = _monkeypatch_post(monkeypatch, "test('x', async ({ page }) => {})")
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(scenario, requires_auth=True)
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "do NOT call `fillCredentials`" in content
+    assert "do NOT visit the application's base URL" in content
+
+
+async def test_generate_playwright_allows_base_url_visit_when_no_auth_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(monkeypatch, "test('x', async ({ page }) => {})")
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(scenario, requires_auth=False)
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "first visit the application's base URL" in content
+    assert "do NOT visit the application's base URL" not in content
+
+
 async def test_generate_playwright_includes_known_pages_in_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

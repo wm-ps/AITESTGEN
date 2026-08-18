@@ -215,6 +215,29 @@ class TestAssembleTestSuiteProject:
         assert "SecretsClient" not in combined
         assert "resolve(" not in combined
 
+    def test_standard_login_setup_verifies_login_actually_succeeded(self) -> None:
+        """`[FIXED]` `auth.setup.ts` used to write `storageState` unconditionally
+        right after calling `fillCredentials` — a wrong/missing credential (e.g.
+        the placeholder default in support/config.ts) submits without throwing,
+        silently producing a storageState that was never actually authenticated.
+        Every downstream `@auth` test then failed for an unrelated, harder-to-
+        diagnose reason instead of one clear failure at setup time."""
+        zf = self._basic_zip(auth_method="standard_login")
+        setup_script = zf.read("tests/auth.setup.ts").decode()
+
+        # fillCredentials() completing without an exception must not be
+        # trusted on its own — there must be a real post-login check before
+        # storageState is saved, and it must throw (fail the setup project,
+        # which every `@auth` test depends on) when that check fails.
+        assert "fillCredentials(page)" in setup_script
+        assert "storageState" in setup_script
+        fill_index = setup_script.index("fillCredentials(page)")
+        storage_index = setup_script.index("storageState")
+        assert fill_index < storage_index, "must verify login before saving storageState"
+        verification_section = setup_script[fill_index:storage_index]
+        assert "throw new Error" in verification_section
+        assert 'input[type="password"]' in verification_section
+
     def test_standard_login_falls_back_to_generic_selectors_without_evidence(self) -> None:
         zf = self._basic_zip(auth_method="standard_login", login_evidence=None)
         auth_helper = zf.read("support/auth.ts").decode()

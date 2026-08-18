@@ -14,6 +14,8 @@ from domain import (
     Component,
     ComponentLocator,
     DiscoveryRun,
+    Form,
+    FormField,
     Journey,
     JourneyStep,
     Organization,
@@ -22,6 +24,7 @@ from domain import (
     TestAsset,
     TestSuite,
 )
+from generation_worker import spec_linter
 from generation_worker.db import engine, init_db
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -163,12 +166,31 @@ def _seed_component_with_locators(
         return component
 
 
-def _seed_scenario(journey: Journey, test_data: list[dict] | None = None) -> Scenario:
+def _seed_login_form(journey: Journey, login_page: Page) -> None:
+    """Discovery's own signal `resolve_requires_auth`'s heuristic keys off:
+    a captured Form with a password-type FormField on some Page."""
+    with Session(engine) as session:
+        form = Form(
+            application_id=journey.application_id,
+            discovery_run_id=journey.discovery_run_id,
+            page_id=login_page.id,
+            action_url="https://app.example.com/login",
+            method="POST",
+        )
+        session.add(form)
+        session.flush()
+        session.add(FormField(form_id=form.id, name="password", input_type="password"))
+        session.commit()
+
+
+def _seed_scenario(
+    journey: Journey, test_data: list[dict] | None = None, name: str = "Guest checkout"
+) -> Scenario:
     with Session(engine) as session:
         scenario = Scenario(
             journey_id=journey.id,
             type="happy",
-            name="Guest checkout",
+            name=name,
             steps=["Add item to cart", "Submit payment"],
             expected_result="Order confirmation is shown",
             test_data=test_data
@@ -656,3 +678,41 @@ def test_playwright_generation_activity_passes_empty_known_data_when_journey_has
 
     assert fake_provider.known_pages_calls == [[]]
     assert fake_provider.known_locators_calls == [[]]
+
+
+def test_resolve_requires_auth_true_for_ordinary_scenario_on_authenticated_page() -> None:
+    init_db()
+    journey = _seed_journey()
+    login_page = _seed_page(journey, url="https://app.example.com/login")
+    _seed_login_form(journey, login_page)
+    dashboard_page = _seed_page(journey, url="https://app.example.com/dashboard")
+    scenario = _seed_scenario(journey, name="Review account deposits")
+
+    with Session(engine) as session:
+        application = session.get(Application, journey.application_id)
+        assert (
+            spec_linter.resolve_requires_auth(session, application, dashboard_page, scenario)
+            is True
+        )
+
+
+def test_resolve_requires_auth_false_when_scenario_targets_expired_session() -> None:
+    """Problem 4 — a scenario about arriving WITHOUT a valid session (session
+    expiry, post-logout access, unauthenticated access) must not be tagged
+    as requiring the pre-applied `authenticated` storageState, even though
+    its primary page is otherwise an authenticated one."""
+    init_db()
+    journey = _seed_journey()
+    login_page = _seed_page(journey, url="https://app.example.com/login")
+    _seed_login_form(journey, login_page)
+    dashboard_page = _seed_page(journey, url="https://app.example.com/dashboard")
+    scenario = _seed_scenario(
+        journey, name="Session expires during deposits navigation"
+    )
+
+    with Session(engine) as session:
+        application = session.get(Application, journey.application_id)
+        assert (
+            spec_linter.resolve_requires_auth(session, application, dashboard_page, scenario)
+            is False
+        )

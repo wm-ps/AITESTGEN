@@ -19,7 +19,7 @@ import re
 import uuid
 from dataclasses import dataclass
 
-from domain import Application, Form, FormField, Page
+from domain import Application, Form, FormField, Page, Scenario
 from sqlmodel import Session, select
 
 
@@ -115,17 +115,31 @@ def lint_required_fields(code: str, required_fields: dict[str, bool]) -> list[st
 
 
 def lint_uses_shared_auth_helper(code: str, requires_auth: bool) -> list[str]:
-    """Feature 1 backstop — the prompt tells the LLM to call the shared
-    `fillCredentials` helper instead of writing raw login fill-steps whenever
-    a Scenario needs an authenticated session as a precondition; this is the
-    deterministic check for whether it actually did."""
+    """Feature 1 backstop — the prompt tells the LLM never to call the shared
+    `fillCredentials` helper (or write raw login fill-steps) in a spec whose
+    target page already requires an authenticated session, since the
+    exported project's `authenticated` Playwright project already supplies
+    one via `storageState` (set up once by `tests/auth.setup.ts`) before this
+    spec's body ever runs; this is the deterministic check for whether it
+    actually complied.
+
+    `[FIXED]` inverted from its original sense — that version flagged a
+    `requires_auth=True` spec for *not* calling `fillCredentials`, rewarding
+    exactly the bug this now catches: every such spec ended up calling
+    `fillCredentials(page)` right after `page.goto(<base_url>)` (the prompt's
+    own separate "visit the base URL first" rule), timing out hunting for a
+    login field that only exists on the real login page, not the base URL a
+    fresh, already-authenticated session never needs to visit first at all."""
     if not requires_auth:
         return []
-    if "fillCredentials" in code and "support/auth" in code:
+    if "fillCredentials" not in code and "support/auth" not in code:
         return []
     return [
-        "scenario requires an authenticated session but the generated spec does not "
-        "import/call the shared fillCredentials helper from '../support/auth'"
+        "scenario's target page already requires an authenticated session (supplied by "
+        "storageState via tests/auth.setup.ts) but the generated spec still imports/calls "
+        "the shared fillCredentials helper — this re-authenticates redundantly and, since "
+        "the login form only exists on the dedicated login page, times out if the spec's "
+        "own navigation ever lands elsewhere first"
     ]
 
 
@@ -159,18 +173,30 @@ def lint_sibling_consistency(code: str, sibling_code: str) -> list[str]:
 _TEST_CALL_RE = re.compile(r"(test(?:\.describe)?)\(\s*(['\"])(.*?)\2\s*,\s*(?:\{[^}]*?\}\s*,\s*)?")
 
 
+_INLINE_TAG_RE = re.compile(r"\s*@(?:auth|public)\b")
+
+
 def apply_auth_tag(code: str, requires_auth: bool) -> str:
     """Feature 4 — deterministically rewrite the first `test(...)`/
     `test.describe(...)` call to carry `{ tag: '@auth' }`/`{ tag: '@public' }`,
     overriding whatever (if anything) the LLM wrote — ground truth beats an
     LLM guess here the same way it does for locators. The exported project's
     Playwright config (`test_suite_export.py`) filters projects on this tag,
-    so it must always be correct, never merely "usually right"."""
+    so it must always be correct, never merely "usually right".
+
+    `[FIXED]` The LLM sometimes bakes its own guess for the tag literally
+    into the test's name string itself (e.g. `test('Session expires while
+    opening accounts @auth', async (...`) instead of a proper `{ tag: ... }`
+    second argument. Left alone, this function's rewrite only added the
+    correct tag metadata alongside it, leaving a name that visibly disagreed
+    with the (correct) tag actually applied — stripped here so the name
+    can't contradict it."""
     tag = "@auth" if requires_auth else "@public"
     match = _TEST_CALL_RE.search(code)
     if match is None:
         return code
     call, quote, name = match.group(1), match.group(2), match.group(3)
+    name = _INLINE_TAG_RE.sub("", name).strip()
     replacement = f"{call}({quote}{name}{quote}, {{ tag: '{tag}' }}, "
     return code[: match.start()] + replacement + code[match.end() :]
 
@@ -198,18 +224,43 @@ def _find_login_page_url(session: Session, application_id: uuid.UUID) -> str | N
     return None
 
 
+_NEGATIVE_AUTH_INTENT_RE = re.compile(
+    r"session\s*(?:has\s*|is\s*)?expir|log(?:ged)?\s*out|sign(?:ed)?\s*out|"
+    r"unauthenticat|not\s+logged\s*in|without\s+(?:being\s+)?logged\s*in|"
+    r"invalid\s+session|no\s+session|(?:lacks?|without|missing)\s+(?:a\s+)?(?:valid\s+)?session",
+    re.IGNORECASE,
+)
+
+
 def resolve_requires_auth(
-    session: Session, application: Application, primary_page: Page | None
+    session: Session,
+    application: Application,
+    primary_page: Page | None,
+    scenario: Scenario | None = None,
 ) -> bool:
     """Feature 4's app-level heuristic (per plan sign-off — no true per-page
     "reached without session" capture exists in Discovery today, and adding
     it would mean crawler changes out of scope here): a login page was
     actually captured for this Application AND this Scenario's primary page
-    isn't that login page itself."""
+    isn't that login page itself.
+
+    `[FIXED]` The page-level heuristic alone mistags a Scenario whose whole
+    point is arriving WITHOUT a valid session (session-expired, post-logout
+    access, unauthenticated access) — its primary page is legitimately an
+    authenticated one, so the page-only check says `True`, which wrongly
+    hands it the `authenticated` Playwright project's pre-applied
+    `storageState` (defeating the scenario) and mistags it `@auth`. When
+    `scenario` is given and its name/steps name that intent, this overrides
+    to `False` — the same ground-truth-over-guess precedence this
+    function's callers already give it over the LLM."""
     login_url = _find_login_page_url(session, application.id)
     if login_url is None:
         return False
     if primary_page is not None and primary_page.url == login_url:
+        return False
+    if scenario is not None and _NEGATIVE_AUTH_INTENT_RE.search(
+        scenario.name + " " + " ".join(scenario.steps)
+    ):
         return False
     return True
 
@@ -224,3 +275,180 @@ def required_fields_for_page(session: Session, page_id: uuid.UUID) -> dict[str, 
         select(FormField).where(FormField.form_id.in_([f.id for f in forms]))  # type: ignore[attr-defined]
     ).all()
     return {field.name: field.required for field in fields if field.name}
+
+
+def field_input_types_for_page(session: Session, page_id: uuid.UUID) -> dict[str, str]:
+    """Mirrors `required_fields_for_page`'s query exactly, returning each
+    field's captured HTML `input_type` by name instead of its `required`
+    flag. Lets `_default_test_data_value`'s generation-time fallback stay
+    type-aware the same way Discovery's own crawler (`_generic_value` in
+    `discovery_worker/crawler.py`) already is, instead of guessing purely
+    from the field's name."""
+    forms = session.exec(select(Form).where(Form.page_id == page_id)).all()
+    if not forms:
+        return {}
+    fields = session.exec(
+        select(FormField).where(FormField.form_id.in_([f.id for f in forms]))  # type: ignore[attr-defined]
+    ).all()
+    return {field.name: field.input_type for field in fields if field.name}
+
+
+_UNICODE_INTENT_RE = re.compile(
+    r"unicode|non-ascii|non ascii|emoji|accented|internationali[sz]|multilingual",
+    re.IGNORECASE,
+)
+_NUMERIC_INTENT_RE = re.compile(
+    r"\bnumeric\b|\bnumber\b|\bquantity\b|\bboundary\b|\bdecimal\b|\binteger\b", re.IGNORECASE
+)
+_DATE_INTENT_RE = re.compile(r"\bdate\b|\bdated\b", re.IGNORECASE)
+# Deliberately its own category, not folded into `_UNICODE_INTENT_RE` above:
+# "special character"/"markup" scenarios are satisfied by plain-ASCII
+# markup (`<test>&"'`), so validating them against `_NON_ASCII_RE` would
+# false-positive on a correctly-generated, pure-ASCII markup value.
+_MARKUP_INTENT_RE = re.compile(r"markup|special character", re.IGNORECASE)
+_NON_ASCII_RE = re.compile(r"[^\x00-\x7F]")
+_HAS_DIGIT_RE = re.compile(r"\d")
+_DATE_LIKE_RE = re.compile(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4}")
+_HAS_MARKUP_CHAR_RE = re.compile(r"[<>&]")
+
+_SCENARIO_DATA_INTENT_CHECKS = (
+    (_UNICODE_INTENT_RE, _NON_ASCII_RE, "non-ASCII/Unicode data"),
+    (_NUMERIC_INTENT_RE, _HAS_DIGIT_RE, "a numeric value"),
+    (_DATE_INTENT_RE, _DATE_LIKE_RE, "a date-like value"),
+    (_MARKUP_INTENT_RE, _HAS_MARKUP_CHAR_RE, "markup-like special characters (e.g. <, >, &)"),
+)
+
+
+def lint_scenario_data_intent(
+    scenario_name: str, scenario_steps: list[str], test_data: list[dict]
+) -> list[str]:
+    """Features 1+3 — once a Scenario's own name/steps explicitly call for a
+    specific data property (Unicode, a numeric value, a date), the resolved
+    `test_data` values actually used for this test (the prompt tells the
+    LLM to use these exact values verbatim, see `_describe_test_data` in
+    `ai_provider/hosted.py`) must exhibit that property. Otherwise a still-
+    blank field's deterministic fallback (or an unrelated reviewer-entered
+    value) silently substituted a generic placeholder that doesn't actually
+    exercise what the Scenario claims to test at all (e.g. "Sign in with a
+    Unicode password" backed by a plain ASCII "Password123").
+
+    Only flags when this Scenario actually has `test_data` fields to check —
+    a read-only/navigation Scenario whose name happens to mention "date"
+    (e.g. "Verify transaction date is displayed") has no fields to validate
+    and is correctly left alone."""
+    values = [str(f.get("value") or "") for f in test_data if f.get("value")]
+    if not values:
+        return []
+    intent_text = f"{scenario_name} {' '.join(scenario_steps)}"
+    return [
+        f"scenario name/steps indicate this test needs {label}, but none of the resolved "
+        "test_data values contain one — the generated test doesn't actually exercise what "
+        "the scenario claims to test"
+        for intent_re, data_re, label in _SCENARIO_DATA_INTENT_CHECKS
+        if intent_re.search(intent_text) and not any(data_re.search(v) for v in values)
+    ]
+
+
+_PASSWORD_FIELD_RE = re.compile(r"pass(word)?", re.IGNORECASE)
+_PASSWORD_BOUNDARY_INTENT_RE = re.compile(
+    r"password.*(?:unicode|non-ascii|non ascii|maximum[- ]length|minimum[- ]length)|"
+    r"(?:unicode|non-ascii|non ascii|maximum[- ]length|minimum[- ]length).*password",
+    re.IGNORECASE,
+)
+_BARE_FILL_CREDENTIALS_RE = re.compile(r"fillCredentials\(\s*page\s*\)")
+
+
+def lint_password_boundary_ignored(
+    scenario_name: str, scenario_steps: list[str], test_data: list[dict], code: str
+) -> list[str]:
+    """A Scenario about a password boundary/character-set property (Unicode,
+    a length boundary) needs its specific `test_data` password value passed
+    explicitly to `fillCredentials(page, username, password)` — the bare
+    `fillCredentials(page)` call always submits the shared CREDENTIALS
+    registry's default password (see `support/config.ts`), silently
+    ignoring whatever specific value this Scenario resolved. Only flags
+    when this Scenario's own test_data actually holds a password value —
+    if a reviewer never provided one and no default applied, there's
+    nothing for the spec to have ignored."""
+    intent_text = f"{scenario_name} {' '.join(scenario_steps)}"
+    if not _PASSWORD_BOUNDARY_INTENT_RE.search(intent_text):
+        return []
+    has_password_value = any(
+        _PASSWORD_FIELD_RE.search(f.get("name") or "") and f.get("value")
+        for f in test_data
+    )
+    if not has_password_value:
+        return []
+    if _BARE_FILL_CREDENTIALS_RE.search(code):
+        return [
+            "scenario name/steps describe a password boundary/character-set property, but "
+            "the generated spec calls fillCredentials(page) with no explicit password "
+            "argument — this always submits the shared default password instead of this "
+            "scenario's specific one, so the boundary/property is never actually exercised"
+        ]
+    return []
+
+
+_TAUTOLOGY_NOT_RE = re.compile(
+    r"if\s*\(\s*([\w.\[\]'\"]+)\s*!==\s*([\w.\[\]'\"]+)\s*\)\s*\{\s*"
+    r"(?:await\s+)?expect\(\s*\1\s*\)\.not\.toBe\(\s*\2\s*\)"
+)
+_TAUTOLOGY_EQ_RE = re.compile(
+    r"if\s*\(\s*([\w.\[\]'\"]+)\s*===\s*([\w.\[\]'\"]+)\s*\)\s*\{\s*"
+    r"(?:await\s+)?expect\(\s*\1\s*\)\.toBe\(\s*\2\s*\)"
+)
+
+
+def lint_tautological_assertion(code: str) -> list[str]:
+    """Feature 6 — flags a generated spec's `if (x !== y) { expect(x).not.toBe(y) }`
+    fallback (or its `===`/`.toBe` mirror): the `expect(...)` only ever runs
+    inside the branch where the comparison is already known true, so it can
+    never fail and verifies nothing. This is the generator's own tell that
+    it couldn't derive a meaningful assertion — flagged for human review
+    rather than silently shipped as if it were a real check."""
+    if _TAUTOLOGY_NOT_RE.search(code) or _TAUTOLOGY_EQ_RE.search(code):
+        return [
+            "generated spec contains a tautological assertion (an `if (x !== y) { "
+            "expect(x).not.toBe(y) }` pattern, or its `===`/`.toBe` mirror) that can never "
+            "fail — this indicates the generator could not derive a meaningful assertion for "
+            "this scenario; treat it as unverifiable and review/replace it by hand"
+        ]
+    return []
+
+
+_COUNT_ASSERTION_RE = re.compile(
+    r"(?:getByRole\(\s*['\"]\w+['\"](?:\s*,\s*\{[^}]*?name:\s*['\"](?P<role_name>[^'\"]+)"
+    r"['\"][^}]*\})?\)|getByText\(\s*['\"](?P<text_name>[^'\"]+)['\"]\)|"
+    r"locator\(\s*['\"](?P<sel>[^'\"]+)['\"]\))"
+    r"[^;]{0,120}?\.toHaveCount\(\s*(?P<count>\d+)\s*[,)]",
+    re.DOTALL,
+)
+
+
+def _count_assertions(code: str) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for m in _COUNT_ASSERTION_RE.finditer(code):
+        key = (m.group("role_name") or m.group("text_name") or m.group("sel") or "").strip().lower()
+        if key:
+            result[key] = int(m.group("count"))
+    return result
+
+
+def lint_shared_state_contradiction(code: str, sibling_code: str) -> list[str]:
+    """Feature 5 — flags an obvious contradiction between this spec and its
+    most recent sibling TestAsset for the same primary Page (Feature 7's
+    existing sibling lookup, reused as-is): both assert `toHaveCount(N)` on
+    the exact same locator, but with a different N. Since both specs run
+    against the same account/seeded state, two different expected counts
+    for the identical resource can't both be right — this doesn't decide
+    which one is wrong, only that they disagree, same as
+    `lint_sibling_consistency`'s existing precision level."""
+    this_counts = _count_assertions(code)
+    sibling_counts = _count_assertions(sibling_code)
+    return [
+        f"this spec asserts toHaveCount({count}) on {key!r} but the sibling spec for the "
+        f"same page asserts toHaveCount({sibling_counts[key]}) on the same locator — verify "
+        "these aren't contradictory assumptions about the same shared account/state"
+        for key, count in this_counts.items()
+        if key in sibling_counts and sibling_counts[key] != count
+    ]

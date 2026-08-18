@@ -29,3 +29,37 @@ def test_unrelated_field_names_are_unaffected() -> None:
     used: set[str] = set()
     assert _default_test_data_value("comment", used) == "Test value"
     assert _default_test_data_value("email", used) == "test@example.com"
+
+
+def test_number_input_type_gets_a_numeric_default_even_with_an_unmatched_name() -> None:
+    used: set[str] = set()
+    assert _default_test_data_value("age", used, "number") == "1"
+
+
+def test_date_input_type_gets_a_date_like_default() -> None:
+    used: set[str] = set()
+    assert _default_test_data_value("dob", used, "date") == "2026-01-01"
+
+
+def test_tel_input_type_gets_a_phone_like_default() -> None:
+    used: set[str] = set()
+    assert _default_test_data_value("contact", used, "tel") == "555-0100"
+
+
+def test_name_pattern_still_takes_precedence_over_input_type() -> None:
+    used: set[str] = set()
+    assert _default_test_data_value("password", used, "number") == "Password1$"
+
+
+def test_second_number_field_gets_a_distinct_numeric_value() -> None:
+    used: set[str] = set()
+    first = _default_test_data_value("age", used, "number")
+    used.add(first)
+    second = _default_test_data_value("weight", used, "number")
+    assert second != first
+    assert second == "2"
+
+
+def test_unrecognized_input_type_falls_back_to_generic_placeholder() -> None:
+    used: set[str] = set()
+    assert _default_test_data_value("notes", used, "textarea") == "Test value"

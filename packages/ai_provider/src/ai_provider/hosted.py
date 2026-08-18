@@ -239,23 +239,34 @@ input — a human-readable string like "Jan 5, 2026" is silently rejected by the
 leaves the field empty. Reformat the given literal to match that specific input's required \
 format; never reuse one generic string across fields of different native input types.
 
-Credential rule — never write raw fill/click steps against username/password fields just to \
-establish a session as a precondition for reaching this Scenario's actual target; import and \
-call the shared helper instead (the generated file lives two directories below the exported \
-project's root, at tests/<suite>/<name>.spec.ts, so the shared support/ folder at the project \
-root is reached via '../../support/...', not '../support/...'):
+Credential rule — this exported project centralizes login in `tests/auth.setup.ts`, which logs \
+in once and saves the resulting session as Playwright `storageState`; every `@auth`-tagged test \
+(the generated file lives two directories below the exported project's root, at \
+tests/<suite>/<name>.spec.ts) already starts with that session applied, before this test's body \
+even runs. {auth_precondition_note}
+Only write login fill/click steps at all when the Scenario is itself testing the login form's \
+own behavior (e.g. asserting a login error, or a genuine login-success assertion that is the \
+Scenario's whole point) — never merely to reach some other page as a precondition. Even then:
+- Navigate to the real login page URL first (see Known pages above for it) — never the \
+application's base URL, and never assume `/` is where the login form lives.
+- Prefer the shared helper for the actual submit, so the login flow itself is defined in one \
+place, not duplicated per spec (support/ is reached via '../../support/...' from this file, not \
+'../support/...'):
 import {{ fillCredentials }} from '../../support/auth';
 // ...
 await fillCredentials(page);
-Only write explicit fill/click steps against a login form when the Scenario is itself testing \
-that form's own behavior (e.g. asserting a login error, or a genuine login-success assertion \
-that is the Scenario's whole point) — and even then, source the literal values from the shared \
-credential registry instead of hardcoding a string or reading `process.env` yourself:
+- If the assertion itself needs the literal credential values (e.g. constructing an \
+intentionally wrong password), source them from the shared registry instead of hardcoding a \
+string or reading `process.env` yourself:
 import {{ CREDENTIALS }} from '../../support/config';
 // ...
 const username = CREDENTIALS.username;
 const password = CREDENTIALS.password;
-{auth_precondition_note}
+- If this Scenario's Test data above gives an explicit password value (e.g. testing a length \
+or Unicode/character-set boundary the Scenario's own name describes), pass it explicitly as \
+`fillCredentials`'s third argument instead of calling `fillCredentials(page)` bare — the bare \
+call always submits the shared registry's default password, never this Scenario's specific one:
+await fillCredentials(page, CREDENTIALS.username, '<the exact password value from Test data above>');
 
 Data-uniqueness rule — for a step that creates a new account/record (sign-up, registration, \
 "create new X"), never reuse the given test-data literal exactly if doing so risks colliding \
@@ -326,13 +337,7 @@ a server error or broken markup if a deep link is the very first thing opened in
 browser context with no prior cookies. Follow these rules for every test, not just login \
 Scenarios:
 
-1. Before navigating anywhere else, first visit the application's base URL ({base_url}) with \
-`{{ timeout: ASSERTION_TIMEOUT_MS }}` and wait for it to finish loading with `await \
-page.waitForLoadState('networkidle', {{ timeout: ASSERTION_TIMEOUT_MS }})`. This establishes the \
-session/cookies a real user's browser would already have. Only after that initial visit \
-should the test navigate on to whatever page the Scenario's steps actually need (via \
-`page.goto`, or by clicking a discovered link/button). Never `page.goto()` straight to a \
-deep URL as the first action of the test.
+1. {initial_navigation_rule}
 
 2. After every `page.goto(...)` call, capture the returned response and verify it \
 succeeded before doing anything else with the page:
@@ -516,6 +521,14 @@ the end of the SAME test, after the Expected result has been asserted — put th
 what it was before this test mutated it. Only skip the restore if the Scenario's own steps \
 already end in a state that undoes the change (e.g. the flow itself deletes what it created), \
 or if the Scenario's own point IS the mutation's permanence (e.g. "account is deleted").
+
+No-fabricated-assertion rule — never fall back to a tautological check like \
+`if (x !== y) {{ expect(x).not.toBe(y) }}` (or its `===`/`.toBe` mirror) when you cannot \
+derive a real assertion for this Scenario's Expected result — that pattern can only ever run \
+inside the branch where the comparison is already known true, so it never actually verifies \
+anything. If none of the rules above give you a genuine, meaningful assertion to write, assert \
+on the most concrete observable signal the Test steps/Expected result actually describe instead \
+of inventing one.
 
 Output ONLY the TypeScript code, no markdown fences, no prose, no explanation."""
 
@@ -798,20 +811,51 @@ class HostedAIProvider:
     ) -> TestAssetCode:
         step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
         base_url = getattr(scenario, "base_url", None) or ""
+        # `[FIXED]` requires_auth used to tell the model to call
+        # `fillCredentials(page)` itself as a "precondition" — directly
+        # contradicting the exported project's actual architecture
+        # (`test_suite_assembler`'s `tests/auth.setup.ts` + `playwright.config.ts`
+        # `authenticated` project + `storageState`), where an `@auth`-tagged
+        # test already starts authenticated before its body runs. Observed
+        # live: every `requires_auth=True` spec generated under the old
+        # wording called `fillCredentials(page)` right after this same
+        # prompt's own "visit base_url first" rule landed it on the public
+        # marketing page — `fillCredentials` then timed out hunting for a
+        # login field that only exists on the real login page, not `/`.
         auth_precondition_note = (
-            "This Scenario's target page requires an authenticated session to reach — call "
-            "`fillCredentials(page)` as part of establishing that session before proceeding "
-            "with the Test steps below."
+            "This Scenario's target page requires that authenticated session — do NOT call "
+            "`fillCredentials`, do NOT navigate to any login page, and do not write any "
+            "login-related code at all. Proceed straight to the Test steps below as an "
+            "already-logged-in user would."
             if requires_auth
-            else "This Scenario's target page does not require authentication — do not call "
-            "`fillCredentials` unless a Test step is itself the login flow."
+            else "This Scenario's target page does not require authentication."
+        )
+        initial_navigation_rule = (
+            "This test already has that authenticated session applied — do NOT visit the "
+            "application's base URL or any login page first. Navigate directly to the "
+            "Scenario's actual target page as the very first action (via `page.goto(...)` to "
+            "its known URL — see Known pages above — or by clicking a discovered link/button), "
+            "exactly the way an already-logged-in user's browser would."
+            if requires_auth
+            else (
+                f"Before navigating anywhere else, first visit the application's base URL "
+                f"({base_url}) with `{{ timeout: ASSERTION_TIMEOUT_MS }}` and wait for it to "
+                "finish loading with `await page.waitForLoadState('networkidle', "
+                "{ timeout: ASSERTION_TIMEOUT_MS })`. This establishes the session/cookies a "
+                "real user's browser would already have. Only after that initial visit should "
+                "the test navigate on to whatever page the Scenario's steps actually need (via "
+                "`page.goto`, or by clicking a discovered link/button). Never `page.goto()` "
+                "straight to a deep URL as the first action of the test."
+            )
         )
         content = await _chat_completion(
             [
                 {
                     "role": "system",
                     "content": _PLAYWRIGHT_PROMPT_SYSTEM.format(
-                        base_url=base_url, auth_precondition_note=auth_precondition_note
+                        base_url=base_url,
+                        auth_precondition_note=auth_precondition_note,
+                        initial_navigation_rule=initial_navigation_rule,
                     ),
                 },
                 {
