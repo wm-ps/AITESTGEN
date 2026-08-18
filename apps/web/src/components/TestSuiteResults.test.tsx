@@ -109,7 +109,7 @@ describe('TestSuiteResults', () => {
 
   it('retries only the failed suite when Retry Failed Test Cases is clicked, and the loader reappears', async () => {
     let suites = [{ ...SUITES[0], status: 'incomplete', test_cases: [SUITES[0].test_cases[0]] }]
-    const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
+    const fetchMock = vi.fn(async (url: string, _opts?: RequestInit) => {
       if (url.includes('/generate-suite')) {
         suites = [{ ...SUITES[0], status: 'generating', test_cases: [SUITES[0].test_cases[0]] }]
         return { ok: true, status: 202, json: async () => ({ suites_triggered: 1 }) }
