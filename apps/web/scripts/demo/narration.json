@@ -1,0 +1,57 @@
+[
+  {
+    "screen": "intro",
+    "caption": "Testing every release by hand? There's a smarter way.",
+    "narration": "Testing every release by hand, and still missing things? There's a smarter way to catch what matters, before your users do."
+  },
+  {
+    "screen": "introducing",
+    "caption": "Introducing wave Q A.",
+    "narration": "Introducing wave Q A, the platform that finds, tests, and tracks it all for you."
+  },
+  {
+    "screen": "home",
+    "caption": "Every project. One dashboard. Zero clutter.",
+    "narration": "Every project you're testing, right here in one clean dashboard."
+  },
+  {
+    "screen": "connect-app",
+    "caption": "Tell us where your app lives. We'll take it from there.",
+    "narration": "Connect your app in seconds. Just tell us where it lives, and how to log in. That's the whole setup."
+  },
+  {
+    "screen": "discover",
+    "caption": "It explores your app like a real user would.",
+    "narration": "wave Q A explores your app like a real user would, discovering every journey, automatically."
+  },
+  {
+    "screen": "review-scenarios",
+    "caption": "Every scenario, mapped out and ready to go.",
+    "narration": "Every test scenario comes ready made, expected results included, so you can review and fine tune in minutes, not hours."
+  },
+  {
+    "screen": "generate-suite",
+    "caption": "One click turns journeys into real, running tests.",
+    "narration": "One click, and every journey becomes a real, ready to run test."
+  },
+  {
+    "screen": "test-suite-results",
+    "caption": "Download it. Or just run it, right here.",
+    "narration": "Download your tests, or run them right here, the moment you're ready."
+  },
+  {
+    "screen": "health",
+    "caption": "Track your app's health, all in one place.",
+    "narration": "Run your tests anytime, and watch your app's health over time, right inside wave Q A."
+  },
+  {
+    "screen": "issues",
+    "caption": "Pass or fail, you'll always know why.",
+    "narration": "Know the moment something breaks, and exactly why. wave Q A is your one stop solution for Q A."
+  },
+  {
+    "screen": "closing",
+    "caption": "",
+    "narration": "Start testing smarter, with wave Q A."
+  }
+]

@@ -156,12 +156,21 @@ def test_generate_suite_starts_one_workflow_per_candidate_journey_with_scenarios
     application = _create_application(client, "Suite Generation App")
     journey_with_scenarios = _add_candidate_journey(application, "Checkout")
     _add_scenario(journey_with_scenarios)
-    # A Journey with zero Scenarios never gets a TestSuite (Task 3).
+    # A Journey with zero Scenarios never gets a workflow triggered (nothing
+    # to generate), but it must still get a terminal "incomplete" TestSuite
+    # row of its own — otherwise the results screen's expected-journey count
+    # includes it while `list_test_suites` can never return a matching row,
+    # and the frontend spins on the loader forever.
     _add_candidate_journey(application, "Sign up")
 
     response = client.post(f"/applications/{application['id']}/generate-suite")
     assert response.status_code == 202
     assert response.json() == {"suites_triggered": 1}
+
+    suites = client.get(f"/applications/{application['id']}/test-suites").json()
+    sign_up_suite = next(s for s in suites if s["journey_name"] == "Sign up")
+    assert sign_up_suite["status"] == "incomplete"
+    assert sign_up_suite["test_cases"] == []
 
     workflow_id = f"suite-{journey_with_scenarios.external_id}-{journey_with_scenarios.attempt}"
 
@@ -174,6 +183,24 @@ def test_generate_suite_starts_one_workflow_per_candidate_journey_with_scenarios
         assert asyncio.run(_describe()) == GENERATION_TASK_QUEUE
     finally:
         asyncio.run(_terminate(workflow_id))
+
+
+def test_generate_suite_does_not_recreate_the_zero_scenario_suite_on_a_second_call() -> None:
+    init_db()
+    client = _signed_in_client("Org Suite Generation Zero Scenario Idempotent")
+    application = _create_application(client, "Zero Scenario Idempotent App")
+    _add_candidate_journey(application, "Sign up")
+
+    first = client.post(f"/applications/{application['id']}/generate-suite")
+    assert first.json() == {"suites_triggered": 0}
+    first_suites = client.get(f"/applications/{application['id']}/test-suites").json()
+    assert len(first_suites) == 1
+
+    second = client.post(f"/applications/{application['id']}/generate-suite")
+    assert second.json() == {"suites_triggered": 0}
+    second_suites = client.get(f"/applications/{application['id']}/test-suites").json()
+    assert len(second_suites) == 1
+    assert second_suites[0]["id"] == first_suites[0]["id"]
 
 
 def test_generation_status_reports_unavailable_when_worker_is_gone(
@@ -237,6 +264,59 @@ def test_generate_suite_resumes_a_journey_with_a_scenario_missing_its_test_asset
         assert response.json() == {"suites_triggered": 1}
     finally:
         asyncio.run(_terminate(workflow_id))
+
+
+def test_generate_suite_flips_an_incomplete_suite_back_to_generating_on_retry() -> None:
+    # So the results screen's existing loader/polling reappears for this
+    # retry instead of the stale "incomplete" status leaving the screen
+    # looking finished while a new attempt is actually running underneath.
+    init_db()
+    client = _signed_in_client("Org Suite Generation Retry")
+    application = _create_application(client, "Retry Suite App")
+    journey = _add_candidate_journey(application)
+    covered_scenario = _add_scenario(journey, "Guest checkout")
+    _add_scenario(journey, "Checkout with a saved card")  # never got a TestAsset
+    _add_test_suite_with_asset(journey, covered_scenario)
+    with Session(engine) as session:
+        suite = session.exec(
+            select(TestSuite).where(TestSuite.journey_id == journey.id)
+        ).one()
+        suite.status = "incomplete"
+        session.add(suite)
+        session.commit()
+    workflow_id = f"suite-{journey.external_id}-{journey.attempt}"
+
+    try:
+        response = client.post(f"/applications/{application['id']}/generate-suite")
+        assert response.json() == {"suites_triggered": 1}
+
+        suites = client.get(f"/applications/{application['id']}/test-suites").json()
+        assert suites[0]["status"] == "generating"
+    finally:
+        asyncio.run(_terminate(workflow_id))
+
+
+def test_generate_suite_leaves_a_terminated_suite_alone_on_retry() -> None:
+    init_db()
+    client = _signed_in_client("Org Suite Generation Terminated Retry")
+    application = _create_application(client, "Terminated Retry Suite App")
+    journey = _add_candidate_journey(application)
+    covered_scenario = _add_scenario(journey, "Guest checkout")
+    _add_scenario(journey, "Checkout with a saved card")
+    _add_test_suite_with_asset(journey, covered_scenario)
+    with Session(engine) as session:
+        suite = session.exec(
+            select(TestSuite).where(TestSuite.journey_id == journey.id)
+        ).one()
+        suite.status = "terminated"
+        session.add(suite)
+        session.commit()
+
+    response = client.post(f"/applications/{application['id']}/generate-suite")
+    assert response.json() == {"suites_triggered": 0}
+
+    suites = client.get(f"/applications/{application['id']}/test-suites").json()
+    assert suites[0]["status"] == "terminated"
 
 
 def test_generate_suite_starting_twice_only_triggers_once() -> None:

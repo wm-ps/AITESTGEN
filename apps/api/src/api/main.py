@@ -1529,6 +1529,30 @@ async def generate_suite(
             )
         ).all()
         if not current_scenarios:
+            # Scenario generation itself can permanently fail a Journey
+            # (GenerationWorkflow has no per-scenario fault isolation, unlike
+            # SuiteGenerationWorkflow) — it stays "candidate" with 0 current
+            # Scenarios forever. Without a same-shape terminal TestSuite row
+            # here, that Journey counts toward the frontend's expected-journey
+            # total but never contributes a suite row, so the results screen's
+            # `isComplete` check can never pass and the loader spins forever.
+            existing = session.exec(
+                select(TestSuite).where(
+                    TestSuite.journey_id == journey.id,
+                    TestSuite.generation_run_id == journey.attempt,
+                )
+            ).first()
+            if existing is None:
+                session.add(
+                    TestSuite(
+                        journey_id=journey.id,
+                        name=f"{journey.name} Test Suite",
+                        generation_run_id=journey.attempt,
+                        current=True,
+                        status="incomplete",
+                    )
+                )
+                session.commit()
             continue
         # Idempotent, but scoped to "every current Scenario already has a
         # TestAsset" rather than "a TestSuite row exists" — SuiteGeneration-
@@ -1565,6 +1589,15 @@ async def generate_suite(
         )
         if all(s.id in covered_scenario_ids for s in current_scenarios):
             continue
+        # Flip back to "generating" so the frontend's existing loader/
+        # polling reappears for this retry instead of the screen staying on
+        # the (stale) terminal status until this new attempt also finishes.
+        for ts in suites:
+            if ts.status != "terminated":
+                ts.status = "generating"
+                session.add(ts)
+        if suites:
+            session.commit()
         try:
             await client.start_workflow(
                 SuiteGenerationWorkflow.run,

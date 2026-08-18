@@ -696,34 +696,18 @@ export function Home({
             <p className="caption" style={{ margin: '0 0 var(--space-7)' }}>
               Connect App → Discover Journeys → Review Scenarios → Generate Suite, in a few minutes.
             </p>
-            <div
+            <video
+              controls
+              autoPlay
+              src="/demo/app-demo.mp4"
               style={{
-                background: 'var(--ink)',
-                borderRadius: 'var(--radius-lg)',
+                width: '100%',
                 aspectRatio: '16 / 9',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
+                borderRadius: 'var(--radius-lg)',
                 marginBottom: 'var(--space-7)',
+                background: 'var(--ink)',
               }}
-            >
-              <span
-                aria-hidden="true"
-                style={{
-                  width: 56,
-                  height: 56,
-                  borderRadius: 'var(--radius-full)',
-                  background: 'rgba(255,255,255,0.12)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: '#FFFFFF',
-                  fontSize: 20,
-                }}
-              >
-                ▶
-              </span>
-            </div>
+            />
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
               <button type="button" className="button-secondary" onClick={() => setShowDemo(false)}>
                 Close

@@ -275,6 +275,20 @@ export function TestSuiteResults({
   const [downloading, setDownloading] = useState(false)
   const [generationUnavailable, setGenerationUnavailable] = useState(false)
   const [terminatingSuiteId, setTerminatingSuiteId] = useState<string | null>(null)
+  const [retrying, setRetrying] = useState(false)
+
+  async function handleRetryFailed() {
+    setRetrying(true)
+    try {
+      await api.generateSuite(applicationId)
+      const rows = await api.listTestSuites(applicationId)
+      setSuites(rows)
+    } catch {
+      // best-effort — a failed retry just leaves the button re-enabled
+    } finally {
+      setRetrying(false)
+    }
+  }
 
   async function handleTerminate(suiteId: string) {
     setTerminatingSuiteId(suiteId)
@@ -332,6 +346,7 @@ export function TestSuiteResults({
   }, [applicationId])
 
   const testCaseCount = suites.reduce((sum, s) => sum + s.test_cases.length, 0)
+  const hasIncomplete = suites.some((s) => s.status === 'incomplete')
   const suitesTotalPages = Math.max(1, Math.ceil(suites.length / SUITES_PER_PAGE))
   const pagedSuites = suites.slice(suitesPage * SUITES_PER_PAGE, suitesPage * SUITES_PER_PAGE + SUITES_PER_PAGE)
   function setTestCasePage(suiteId: string, page: number) {
@@ -541,6 +556,27 @@ export function TestSuiteResults({
                 >
                   View Executions
                 </button>
+                {hasIncomplete && (
+                  <button
+                    type="button"
+                    disabled={retrying}
+                    onClick={handleRetryFailed}
+                    style={{
+                      padding: '9px 20px',
+                      background: 'rgba(255,255,255,0.16)',
+                      color: '#FFFFFF',
+                      border: '1px solid rgba(255,255,255,0.5)',
+                      borderRadius: 'var(--radius)',
+                      fontSize: 13.5,
+                      fontWeight: 700,
+                      fontFamily: 'inherit',
+                      cursor: retrying ? 'not-allowed' : 'pointer',
+                      opacity: retrying ? 0.75 : 1,
+                    }}
+                  >
+                    {retrying ? <LoadingDots label="Retrying" /> : 'Retry Failed Test Cases'}
+                  </button>
+                )}
               </div>
             </div>
           </div>

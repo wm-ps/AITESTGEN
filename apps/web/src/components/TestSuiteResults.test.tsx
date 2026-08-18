@@ -107,6 +107,45 @@ describe('TestSuiteResults', () => {
     expect(screen.getByText('Incomplete')).toBeTruthy()
   })
 
+  it('retries only the failed suite when Retry Failed Test Cases is clicked, and the loader reappears', async () => {
+    let suites = [{ ...SUITES[0], status: 'incomplete', test_cases: [SUITES[0].test_cases[0]] }]
+    const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
+      if (url.includes('/generate-suite')) {
+        suites = [{ ...SUITES[0], status: 'generating', test_cases: [SUITES[0].test_cases[0]] }]
+        return { ok: true, status: 202, json: async () => ({ suites_triggered: 1 }) }
+      }
+      if (url.includes('/test-suites')) {
+        return { ok: true, status: 200, json: async () => suites }
+      }
+      if (url.includes('/scenarios')) {
+        return { ok: true, status: 200, json: async () => SCENARIOS }
+      }
+      if (url.includes('/journeys')) {
+        return { ok: true, status: 200, json: async () => [{ id: 'journey-1' }] }
+      }
+      if (url.includes('/generation-status')) {
+        return { ok: true, status: 200, json: async () => ({ available: true }) }
+      }
+      return { ok: true, status: 200, json: async () => [] }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    render(<TestSuiteResults furthestCount={4} applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
+
+    const retryButton = await screen.findByRole('button', { name: /Retry Failed Test Cases/ })
+    fireEvent.click(retryButton)
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/generate-suite'),
+        expect.objectContaining({ method: 'POST' }),
+      )
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('status').textContent).toContain('Generating')
+    })
+  })
+
   it('shows the completed summary and stats, with the file list and its scenarios collapsed by default', async () => {
     stubFetch()
     render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
