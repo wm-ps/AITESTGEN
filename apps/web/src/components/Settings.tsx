@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ApiError, api, type InteractionLevel, type SettingsRead } from '../api'
+import { ApiError, api, type InteractionLevel, type RetentionPeriod, type SettingsRead } from '../api'
 import { LoadingDots } from './LoadingDots'
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
@@ -178,6 +178,22 @@ export function Settings({ onCancel }: { onCancel: () => void }) {
                 })
               }
             />
+          </label>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
+          <label className="field">
+            <FieldLabel>Delete project after</FieldLabel>
+            <select
+              value={settings.delete_project_after}
+              onChange={(e) =>
+                setSettings({ ...settings, delete_project_after: e.target.value as RetentionPeriod })
+              }
+            >
+              <option value="1_day">1 day</option>
+              <option value="1_week">1 week</option>
+              <option value="1_month">1 month</option>
+            </select>
           </label>
         </div>
 

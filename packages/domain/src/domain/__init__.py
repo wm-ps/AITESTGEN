@@ -31,7 +31,7 @@ from domain.component_locator import ComponentLocator
 from domain.diagnostic_record import DiagnosticRecord
 from domain.discovery_error import DiscoveryError, ErrorCode
 from domain.discovery_run import DiscoveryRun
-from domain.discovery_settings import DiscoverySettings, InteractionLevel
+from domain.discovery_settings import DiscoverySettings, InteractionLevel, RetentionPeriod
 from domain.execution_policy import ExecutionPolicy
 from domain.exploration_step import ExplorationStep
 from domain.form import Form
@@ -43,6 +43,7 @@ from domain.key_normalization import aggregation_key
 from domain.organization import Organization
 from domain.page import Page
 from domain.page_transition import PageTransition
+from domain.password_reset import PasswordReset
 from domain.platform_user import PlatformUser
 from domain.scenario import Scenario, ScenarioType
 from domain.synthetic_data_entry import SyntheticDataEntry
@@ -73,6 +74,7 @@ __all__ = [
     "DiscoveryRun",
     "DiscoverySettings",
     "InteractionLevel",
+    "RetentionPeriod",
     "ExecutionPolicy",
     "ExplorationStep",
     "Form",
@@ -84,6 +86,7 @@ __all__ = [
     "Organization",
     "Page",
     "PageTransition",
+    "PasswordReset",
     "PlatformUser",
     "Scenario",
     "ScenarioType",

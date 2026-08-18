@@ -41,7 +41,7 @@ def _admin_client(org_name: str) -> TestClient:
 def _invite_link_token(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     captured: list[str] = []
 
-    def _fake_send(to_email: str, org_name: str, token: str) -> None:
+    def _fake_send(to_email: str, token: str) -> None:
         captured.append(token)
 
     monkeypatch.setattr("api.main.send_invite_email", _fake_send)

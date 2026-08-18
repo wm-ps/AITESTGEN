@@ -28,6 +28,7 @@ from domain import (
     JourneyStep,
     Page,
     PlatformUser,
+    RetentionPeriod,
     Scenario,
     TestAsset,
     TestDataEntry,
@@ -51,6 +52,7 @@ from workflows import (
     EXECUTION_TASK_QUEUE,
     GENERATION_TASK_QUEUE,
     ApplicationTestExecutionWorkflow,
+    CleanupWorkflow,
     ExecutionWorkflowInput,
     GenerationWorkflow,
     SuiteGenerationWorkflow,
@@ -67,7 +69,13 @@ from api.auth import (
 from api.coverage_report import build_coverage_report
 from api.db import get_session
 from api.discovery import pause_discovery_run, resume_discovery_run, start_discovery_run
-from api.invites import InviteAcceptError, accept_invite, create_invite, org_name, send_invite_email
+from api.invites import InviteAcceptError, accept_invite, create_invite, send_invite_email
+from api.password_reset import (
+    PasswordResetError,
+    get_reset_target,
+    request_password_reset,
+    reset_password,
+)
 from api.temporal_client import get_temporal_client, has_pollers
 from api.test_suite_export import (
     TestSuiteExportError,
@@ -182,7 +190,7 @@ def send_invite(
         raise HTTPException(status_code=409, detail="a user with this email already exists")
 
     invite, token = create_invite(session, organization_id, admin.id, payload.email, payload.role)
-    send_invite_email(payload.email, org_name(session, organization_id), token)
+    send_invite_email(payload.email, token)
     return InviteRead(
         id=invite.external_id, email=invite.email, role=invite.role, expires_at=invite.expires_at
     )
@@ -239,6 +247,51 @@ def accept_invite_route(
     except InviteAcceptError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     issue_session_cookie(response, user.id)
+    return _to_user_read(user)
+
+
+# --- Forgot password ---
+# Public (no session required) — a user enters their email, and if it
+# belongs to an account gets a one-time reset link. The response never
+# differs based on whether the email exists (no account-enumeration via
+# this endpoint), same non-distinguishing rationale as Invite's accept flow.
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+@app.post("/auth/forgot-password", status_code=202)
+def forgot_password(payload: ForgotPasswordRequest, session: SessionDep) -> dict[str, str]:
+    request_password_reset(session, payload.email)
+    return {"status": "ok"}
+
+
+class ResetPasswordTarget(BaseModel):
+    name: str
+    email: str
+
+
+@app.get("/auth/reset-password", response_model=ResetPasswordTarget)
+def reset_password_target(token: str, session: SessionDep) -> ResetPasswordTarget:
+    try:
+        user = get_reset_target(session, token)
+    except PasswordResetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ResetPasswordTarget(name=user.name, email=user.email)
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    password: str = Field(min_length=8)
+
+
+@app.post("/auth/reset-password", response_model=UserRead)
+def reset_password_route(payload: ResetPasswordRequest, session: SessionDep) -> UserRead:
+    try:
+        user = reset_password(session, payload.token, payload.password)
+    except PasswordResetError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _to_user_read(user)
 
 
@@ -1962,6 +2015,25 @@ async def trigger_test_run(
     return {"started": True}
 
 
+@app.post("/admin/cleanup/run", status_code=202)
+async def trigger_cleanup(admin: CurrentAdminDep) -> dict[str, bool]:
+    """Manual purge trigger — same CleanupWorkflow the daily 06:00 IST
+    Schedule (`api/scripts/create_cleanup_schedule.py`) runs, folded onto
+    execution-worker's task queue (no dedicated maintenance worker/deployment;
+    see that worker's registered workflows). Unique per-call id (not the
+    Schedule's fixed `cleanup-deleted-applications` id) so a manual run never
+    collides with a same-day scheduled run."""
+    client = await get_temporal_client()
+    if not await has_pollers(client, EXECUTION_TASK_QUEUE):
+        raise HTTPException(status_code=503, detail="EXECUTION_UNAVAILABLE")
+    await client.start_workflow(
+        CleanupWorkflow.run,
+        id=f"cleanup-manual-{uuid.uuid4()}",
+        task_queue=EXECUTION_TASK_QUEUE,
+    )
+    return {"started": True}
+
+
 # `has_pollers` above is only checked before starting the workflow — a
 # worker that crashes right after leaves the TestRun sitting at "running"
 # with nothing to explain why (same staleness-window gap `generation-status`/
@@ -2436,6 +2508,7 @@ class SettingsRead(BaseModel):
     max_journeys: int | None
     max_scenarios_per_journey: int | None
     max_test_cases_per_application: int | None
+    delete_project_after: RetentionPeriod
 
 
 class SettingsUpdate(BaseModel):
@@ -2443,6 +2516,7 @@ class SettingsUpdate(BaseModel):
     max_discovery_duration_minutes: int | None = None
     navigation_timeout_seconds: float | None = None
     interaction_level: InteractionLevel | None = None
+    delete_project_after: RetentionPeriod | None = None
     # Sentinel, not None: None already means "leave unchanged" for every
     # other field here, but these three need "leave unchanged" AND "clear to
     # unlimited" to be distinguishable.
@@ -2460,6 +2534,7 @@ def _to_settings_read(settings: DiscoverySettings) -> SettingsRead:
         max_journeys=settings.max_journeys,
         max_scenarios_per_journey=settings.max_scenarios_per_journey,
         max_test_cases_per_application=settings.max_test_cases_per_application,
+        delete_project_after=settings.delete_project_after,  # type: ignore[arg-type]
     )
 
 
@@ -2484,6 +2559,8 @@ def update_settings(
         settings.navigation_timeout_seconds = payload.navigation_timeout_seconds
     if payload.interaction_level is not None:
         settings.interaction_level = payload.interaction_level
+    if payload.delete_project_after is not None:
+        settings.delete_project_after = payload.delete_project_after
     if payload.max_journeys != "__unset__":
         settings.max_journeys = payload.max_journeys
     if payload.max_scenarios_per_journey != "__unset__":

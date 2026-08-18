@@ -6,6 +6,7 @@ import { DiscoverJourneys } from './components/DiscoverJourneys'
 import { GenerateSuite } from './components/GenerateSuite'
 import { Home } from './components/Home'
 import { InviteTeammateModal } from './components/InviteTeammateModal'
+import { ResetPassword } from './components/ResetPassword'
 import { ReviewScenarios } from './components/ReviewScenarios'
 import { Settings } from './components/Settings'
 import { ServiceError } from './components/ServiceError'
@@ -42,6 +43,14 @@ function getInviteTokenFromUrl(): string | null {
     : null
 }
 
+// Reset-password links point at /reset-password?token=... — same
+// before-the-signed-in-check handling as accept-invite above.
+function getResetTokenFromUrl(): string | null {
+  return window.location.pathname === '/reset-password'
+    ? new URLSearchParams(window.location.search).get('token')
+    : null
+}
+
 type View =
   | 'home'
   | 'connect-app'
@@ -68,6 +77,7 @@ function App() {
   const [furthestCount, setFurthestCount] = useState(0)
   const [inviteModalOpen, setInviteModalOpen] = useState(false)
   const [inviteToken, setInviteToken] = useState(getInviteTokenFromUrl)
+  const [resetToken, setResetToken] = useState(getResetTokenFromUrl)
   // Covers logout and resume-application — both involve an API round trip
   // before the screen changes, and users were reading the pause as a hang.
   const [globalLoading, setGlobalLoading] = useState<string | null>(null)
@@ -89,7 +99,7 @@ function App() {
   }>({ initialTab: 'overview', autoTriggerRun: false })
 
   useEffect(() => {
-    if (inviteToken) return
+    if (inviteToken || resetToken) return
     api
       .me()
       .then(setUser)
@@ -100,7 +110,7 @@ function App() {
           setServiceDown(true)
         }
       })
-  }, [inviteToken])
+  }, [inviteToken, resetToken])
 
   function handleSignedIn(signedInUser: UserRead) {
     window.history.replaceState({}, '', '/')
@@ -108,8 +118,20 @@ function App() {
     setInviteToken(null)
   }
 
+  // Unlike accept-invite, resetting a password never signs the user in —
+  // they land back on the sign-in screen to enter their new credentials.
+  function handleResetDone() {
+    window.history.replaceState({}, '', '/')
+    setResetToken(null)
+    setUser(null)
+  }
+
   if (inviteToken) {
     return <AcceptInvite token={inviteToken} onSignedIn={handleSignedIn} />
+  }
+
+  if (resetToken) {
+    return <ResetPassword token={resetToken} onDone={handleResetDone} />
   }
 
   if (serviceDown) {

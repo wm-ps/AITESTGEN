@@ -5,6 +5,7 @@ import { LoadingDots } from './LoadingDots'
 import { GenerationLoader } from './GenerationLoader'
 import { ServiceError } from './ServiceError'
 import { Pagination } from './Pagination'
+import { useEscapeToClose } from '../hooks/useEscapeToClose'
 
 const POLL_INTERVAL_MS = 3000
 const SECONDS_PER_TEST_CASE = 45
@@ -173,6 +174,7 @@ const TYPE_BADGE: Record<string, { label: string; background: string; color: str
 // Application Workspace's Test Suite tab (which only has a lazily-fetched
 // code string, not a whole TestCaseRead) can reuse this modal too.
 export function CodeModal({ testCase, onClose }: { testCase: { name: string; code: string }; onClose: () => void }) {
+  useEscapeToClose(onClose)
   return (
     <div
       role="dialog"

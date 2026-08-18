@@ -8,6 +8,9 @@ export type LoginRequest = components['schemas']['LoginRequest']
 export type InviteCreate = { email: string; role: 'admin' | 'member' }
 export type InviteRead = { id: string; email: string; role: 'admin' | 'member'; expires_at: string }
 export type AcceptInviteRequest = { token: string; name: string; password: string }
+export type ForgotPasswordRequest = { email: string }
+export type ResetPasswordTarget = { name: string; email: string }
+export type ResetPasswordRequest = { token: string; password: string }
 export type ApplicationCreate = components['schemas']['ApplicationCreate']
 export type ApplicationRead = components['schemas']['ApplicationRead']
 // Not in api-types.gen.ts yet (backend schema is new, regenerate via
@@ -31,6 +34,7 @@ export type TestSuiteRead = components['schemas']['TestSuiteRead'] & { status: T
 // Not in api-types.gen.ts yet (backend schema is new, regenerate via
 // `npm run generate:api-types` once the API is running) — added by hand.
 export type InteractionLevel = 'passive' | 'normal' | 'aggressive'
+export type RetentionPeriod = '1_day' | '1_week' | '1_month'
 export type SettingsRead = {
   max_pages: number
   max_discovery_duration_minutes: number
@@ -39,6 +43,7 @@ export type SettingsRead = {
   max_journeys: number | null
   max_scenarios_per_journey: number | null
   max_test_cases_per_application: number | null
+  delete_project_after: RetentionPeriod
 }
 export type SettingsUpdate = Partial<SettingsRead>
 // Not in api-types.gen.ts yet (backend schema is new, regenerate via
@@ -176,6 +181,12 @@ export const api = {
     request<undefined>(`/invites/${inviteId}`, { method: 'DELETE' }),
   acceptInvite: (payload: AcceptInviteRequest) =>
     request<UserRead>('/invites/accept', { method: 'POST', body: JSON.stringify(payload) }),
+  forgotPassword: (payload: ForgotPasswordRequest) =>
+    request<{ status: string }>('/auth/forgot-password', { method: 'POST', body: JSON.stringify(payload) }),
+  getResetPasswordTarget: (token: string) =>
+    request<ResetPasswordTarget>(`/auth/reset-password?token=${encodeURIComponent(token)}`),
+  resetPassword: (payload: ResetPasswordRequest) =>
+    request<UserRead>('/auth/reset-password', { method: 'POST', body: JSON.stringify(payload) }),
   createApplication: (payload: ApplicationCreate) =>
     request<ApplicationRead>('/applications', { method: 'POST', body: JSON.stringify(payload) }),
   listApplications: () => request<ApplicationRead[]>('/applications'),

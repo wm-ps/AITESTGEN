@@ -1,8 +1,10 @@
 import { useState } from 'react'
 import { ApiError, api } from '../api'
 import { LoadingDots } from './LoadingDots'
+import { useEscapeToClose } from '../hooks/useEscapeToClose'
 
 export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
+  useEscapeToClose(onClose)
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<'admin' | 'member'>('member')
   const [error, setError] = useState<string | null>(null)

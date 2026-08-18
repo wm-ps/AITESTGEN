@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api, type UserRead } from '../api'
+import { ForgotPassword } from './ForgotPassword'
 import { LoadingDots } from './LoadingDots'
 import { PasswordInput } from './PasswordInput'
 import { WaveQaBrand } from './Brand'
@@ -187,6 +188,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [activeStep, setActiveStep] = useState(0)
+  const [showForgotPassword, setShowForgotPassword] = useState(false)
 
   useEffect(() => {
     const timer = setInterval(() => setActiveStep((i) => (i + 1) % WIZARD_STEPS.length), 2600)
@@ -205,6 +207,10 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
     } finally {
       setSubmitting(false)
     }
+  }
+
+  if (showForgotPassword) {
+    return <ForgotPassword onBackToSignIn={() => setShowForgotPassword(false)} />
   }
 
   return (
@@ -456,9 +462,20 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
                 </label>
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <a href="#" style={{ fontSize: 13.5, color: 'var(--accent)', textDecoration: 'none' }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowForgotPassword(true)}
+                    style={{
+                      fontSize: 13.5,
+                      color: 'var(--accent)',
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      cursor: 'pointer',
+                    }}
+                  >
                     Forgot password?
-                  </a>
+                  </button>
                 </div>
 
                 {error && (

@@ -51,3 +51,13 @@ class VaultSecretsClient:
             raise_on_deleted_version=True,
         )
         return result["data"]["data"]["value"].encode()
+
+    def delete(self, ref: SecretRef) -> None:
+        """Permanently destroys every version of the secret (not a soft
+        delete) — used only by the deleted-project purge job. `hvac` treats
+        deleting an already-gone path as a no-op, not an error, so a retried
+        purge activity stays safe to call this again."""
+        self._client.secrets.kv.v2.delete_metadata_and_all_versions(
+            path=ref.path,
+            mount_point=VAULT_MOUNT_POINT,
+        )

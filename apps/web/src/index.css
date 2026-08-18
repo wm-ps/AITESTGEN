@@ -70,6 +70,12 @@ textarea:focus-visible,
   cursor: pointer;
 }
 
+.button-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
 .button-secondary {
   background: var(--canvas);
   color: var(--ink-secondary);

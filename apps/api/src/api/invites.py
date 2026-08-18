@@ -15,9 +15,11 @@ import smtplib
 import uuid
 from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
+from email.utils import formataddr
 from hashlib import sha256
+from pathlib import Path
 
-from domain import Invite, Organization, PlatformUser
+from domain import Invite, PlatformUser
 from sqlmodel import Session, select
 
 from api.auth import hash_password
@@ -31,18 +33,49 @@ SMTP_HOST = os.environ.get("SMTP_HOST")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
-SMTP_FROM = os.environ.get("SMTP_FROM", "no-reply@aitestgen.local")
+SMTP_FROM = os.environ.get("SMTP_FROM", "no-reply@waveqa.local")
+SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME", "WaveQA")
 
 
 def _hash_token(token: str) -> str:
     return sha256(token.encode()).hexdigest()
 
 
+# Reuses the exact web app brand (apps/web/src/components/Brand.tsx
+# WaveQaBrand: wm-logo + "wave" + magnifying-glass mark + "A"), pre-rasterized
+# to PNGs and sent as CID-attached inline images — not data: URIs or inline
+# <svg>, both of which Gmail and legacy desktop Outlook strip, which is why
+# neither logo nor wordmark were rendering before. CID `add_related` is the
+# one embedding method every major client (Gmail included) displays.
+_LOGO_CID = "wm-logo-mark"
+_LOGO_PNG = (Path(__file__).parent / "assets" / "wm-logo.png").read_bytes()
+_MARK_CID = "waveqa-mark"
+_MARK_PNG = (Path(__file__).parent / "assets" / "waveqa-mark.png").read_bytes()
+
+# Same markup shape as WaveQaBrand: wm-logo image, then "wave" (ink-secondary)
+# + magnifying-glass mark (accent) + "A" (accent, medium weight).
+_EMAIL_HEADER = f"""\
+          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
+            <td style="width:28px;height:29px;"><img src="cid:{_LOGO_CID}" width="28" height="29" alt="WaveMaker" style="display:block;border:0;"></td>
+            <td style="padding-left:10px;vertical-align:middle;font-size:20px;letter-spacing:-0.03em;">
+              <span style="font-weight:400;color:#334155;">wave</span><img src="cid:{_MARK_CID}" width="19" height="19" alt="QA" style="vertical-align:middle;margin:0 -1px 0 2px;border:0;"><span style="font-weight:500;color:#0f766e;">A</span>
+            </td>
+          </tr></table>"""
+
+
+def _attach_logo(message: EmailMessage) -> None:
+    """Call after add_alternative(html) — hangs the CID images off the html
+    subpart so `cid:{_LOGO_CID}`/`cid:{_MARK_CID}` in _EMAIL_HEADER resolve."""
+    html_part = message.get_payload()[1]
+    html_part.add_related(_LOGO_PNG, "image", "png", cid=f"<{_LOGO_CID}>")
+    html_part.add_related(_MARK_PNG, "image", "png", cid=f"<{_MARK_CID}>")
+
+
 def _invite_link(token: str) -> str:
     return f"{FRONTEND_BASE_URL}/accept-invite?token={token}"
 
 
-def _invite_html(org_name: str, link: str) -> str:
+def _invite_html(link: str) -> str:
     return f"""\
 <!DOCTYPE html>
 <html>
@@ -50,15 +83,11 @@ def _invite_html(org_name: str, link: str) -> str:
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f4f5f6;padding:32px 0;">
     <tr><td align="center">
       <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
-        <tr><td style="background:linear-gradient(135deg,#0f766e 0%,#0c5c56 100%);padding:28px 32px;">
-          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-            <td style="width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,0.15);text-align:center;vertical-align:middle;font-weight:700;color:#ffffff;font-size:15px;">AT</td>
-            <td style="padding-left:10px;color:#ffffff;font-size:18px;font-weight:600;">AITestGen</td>
-          </tr></table>
+        <tr><td style="background:#ffffff;border-bottom:1px solid #e8eaec;padding:24px 32px;">
+{_EMAIL_HEADER}
         </td></tr>
         <tr><td style="padding:32px;">
-          <p style="margin:0 0 16px;font-size:16px;color:#1a1a1a;">You've been invited to join</p>
-          <p style="margin:0 0 24px;font-size:22px;font-weight:700;color:#0f766e;">{org_name}</p>
+          <p style="margin:0 0 16px;font-size:16px;color:#1a1a1a;">You've been invited to join WaveQA</p>
           <p style="margin:0 0 28px;font-size:14px;color:#555555;line-height:1.5;">Click below to accept your invite and set up your account. This link expires in 72 hours.</p>
           <table role="presentation" cellpadding="0" cellspacing="0"><tr>
             <td style="border-radius:8px;background:#0f766e;">
@@ -74,24 +103,25 @@ def _invite_html(org_name: str, link: str) -> str:
 </html>"""
 
 
-def send_invite_email(to_email: str, org_name: str, token: str) -> None:
+def send_invite_email(to_email: str, token: str) -> None:
     link = _invite_link(token)
     if not SMTP_HOST:
         # ponytail: dev fallback, no SMTP configured — log the link instead
         # of failing. Add real SMTP env vars (SMTP_HOST/USER/PASSWORD) to send.
-        logger.info("invite link for %s (%s): %s", to_email, org_name, link)
+        logger.info("invite link for %s: %s", to_email, link)
         return
 
     message = EmailMessage()
-    message["Subject"] = f"You're invited to join {org_name} on AITestGen"
-    message["From"] = SMTP_FROM
+    message["Subject"] = "You're invited to join WaveQA"
+    message["From"] = formataddr((SMTP_FROM_NAME, SMTP_FROM))
     message["To"] = to_email
     message.set_content(
-        f"You've been invited to join {org_name} on AITestGen.\n\n"
+        f"You've been invited to join WaveQA.\n\n"
         f"Accept your invite: {link}\n\n"
         f"This link expires in 72 hours."
     )
-    message.add_alternative(_invite_html(org_name, link), subtype="html")
+    message.add_alternative(_invite_html(link), subtype="html")
+    _attach_logo(message)
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
         smtp.starttls()
         if SMTP_USER and SMTP_PASSWORD:
@@ -143,9 +173,3 @@ def accept_invite(session: Session, token: str, name: str, password: str) -> Pla
     session.commit()
     session.refresh(user)
     return user
-
-
-def org_name(session: Session, organization_id: uuid.UUID) -> str:
-    org = session.get(Organization, organization_id)
-    assert org is not None
-    return org.name

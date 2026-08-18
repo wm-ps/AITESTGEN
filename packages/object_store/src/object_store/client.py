@@ -57,6 +57,21 @@ class ObjectStore:
     def get(self, key: str) -> bytes:
         return self._s3_client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
 
+    def delete_prefix(self, prefix: str) -> int:
+        """Permanently deletes every object under `prefix` (e.g.
+        `discovery-runs/{id}/`) — used only by the deleted-project purge job.
+        Paginates since a single `discovery_run`/`test_run` can hold more
+        than the 1000-key limit of one `delete_objects` call."""
+        deleted = 0
+        paginator = self._s3_client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+            keys = [{"Key": obj["Key"]} for obj in page.get("Contents", [])]
+            if not keys:
+                continue
+            self._s3_client.delete_objects(Bucket=self._bucket, Delete={"Objects": keys})
+            deleted += len(keys)
+        return deleted
+
     def presigned_get_url(
         self,
         key: str,

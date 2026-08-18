@@ -10,6 +10,7 @@ import { StatTile } from '../TestSuiteResults'
 import { StatusPill } from '../StatusPill'
 import { ServiceErrorNote } from '../ServiceError'
 import { Pagination } from '../Pagination'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 
 const POLL_INTERVAL_MS = 1500
 const RUNS_PER_PAGE = 5
@@ -71,6 +72,7 @@ function runSignalColor(run: TestRunRead): string {
 }
 
 export function ArtifactsModal({ testResult, onClose }: { testResult: TestResultRead; onClose: () => void }) {
+  useEscapeToClose(onClose)
   const [artifacts, setArtifacts] = useState<TestResultArtifactRead[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -241,7 +243,7 @@ function ResultListHeader() {
   )
 }
 
-function TestResultRow({ result }: { result: TestResultRead }) {
+function TestResultRow({ result, isCurrentlyRunning }: { result: TestResultRead; isCurrentlyRunning?: boolean }) {
   const [artifactsFor, setArtifactsFor] = useState<TestResultRead | null>(null)
   const canShowArtifacts = NON_PASSED_STATUSES.has(result.status)
 
@@ -278,7 +280,11 @@ function TestResultRow({ result }: { result: TestResultRead }) {
           {result.duration_ms != null ? `${(result.duration_ms / 1000).toFixed(1)}s` : ''}
         </span>
         <span style={{ minWidth: STATUS_COL_WIDTH }}>
-          <StatusPill status={result.status} />
+          {/* No distinct "running" status exists on a TestResult row (it
+              only ever moves pending -> a terminal status) — the one test
+              actually executing right now is inferred as the first still-
+              pending row once finished ones are sorted to the top. */}
+          <StatusPill status={result.status} label={isCurrentlyRunning ? 'Running' : undefined} pulsing={isCurrentlyRunning} />
         </span>
         {canShowArtifacts && (
           <button type="button" className="button-secondary" onClick={() => setArtifactsFor(result)}>
@@ -320,8 +326,18 @@ function RunDetail({
   const isRunning = run.status === 'pending' || run.status === 'running'
   const [resultsPage, setResultsPage] = useState(0)
   const results = run.results ?? []
-  const resultsTotalPages = Math.max(1, Math.ceil(results.length / RESULTS_PER_PAGE))
-  const pagedResults = results.slice(resultsPage * RESULTS_PER_PAGE, resultsPage * RESULTS_PER_PAGE + RESULTS_PER_PAGE)
+  // Finished (passed/failed/etc.) first, still-pending ones last — each
+  // group keeps its original request order (stable sort on one boolean).
+  const orderedResults = [...results].sort(
+    (a, b) => (a.status === 'pending' ? 1 : 0) - (b.status === 'pending' ? 1 : 0),
+  )
+  const runningResultId =
+    run.status === 'running' ? orderedResults.find((r) => r.status === 'pending')?.id : undefined
+  const resultsTotalPages = Math.max(1, Math.ceil(orderedResults.length / RESULTS_PER_PAGE))
+  const pagedResults = orderedResults.slice(
+    resultsPage * RESULTS_PER_PAGE,
+    resultsPage * RESULTS_PER_PAGE + RESULTS_PER_PAGE,
+  )
 
   return (
     <div>
@@ -384,7 +400,7 @@ function RunDetail({
           <ResultListHeader />
           {pagedResults.map((result) => (
             <div key={result.id} style={{ borderBottom: '1px solid var(--border-hairline)' }}>
-              <TestResultRow result={result} />
+              <TestResultRow result={result} isCurrentlyRunning={result.id === runningResultId} />
             </div>
           ))}
           <Pagination
@@ -510,7 +526,14 @@ export function RunsTab({
   useEffect(() => {
     if (selectedRunId) return
     let cancelled = false
-    let interval: ReturnType<typeof setInterval> | undefined
+    // `POST .../test-runs` returns before its TestRun row even exists
+    // (`PrepareTestRunActivity` creates it asynchronously), so the very
+    // first fetch below can still show the *previous* (often already
+    // finished) run on top. Whatever id shows up on that first fetch
+    // becomes the baseline; auto-select then waits for a *different* id
+    // instead of jumping straight to that stale leftover.
+    let baselineId: string | undefined
+    let baselineCaptured = false
 
     async function load() {
       try {
@@ -518,7 +541,15 @@ export function RunsTab({
         if (cancelled) return
         setRuns(body.items)
         setTotal(body.total)
-        if (autoSelectPendingRef.current && page === 0 && body.items.length > 0) {
+        if (!baselineCaptured) {
+          baselineCaptured = true
+          baselineId = body.items[0]?.id
+        } else if (
+          autoSelectPendingRef.current &&
+          page === 0 &&
+          body.items.length > 0 &&
+          body.items[0].id !== baselineId
+        ) {
           autoSelectPendingRef.current = false
           setSelectedRunId(body.items[0].id)
           onAutoSelectConsumedRef.current?.()
@@ -529,12 +560,13 @@ export function RunsTab({
     }
 
     load()
-    if (autoSelectPendingRef.current) {
-      interval = setInterval(load, POLL_INTERVAL_MS)
-    }
+    // Always-on, not conditional on there being an active run — simplest
+    // way to guarantee the table reflects a run started/finished by
+    // anything (this tab, another tab, a reload) without extra bookkeeping.
+    const interval = setInterval(load, POLL_INTERVAL_MS)
     return () => {
       cancelled = true
-      if (interval) clearInterval(interval)
+      clearInterval(interval)
     }
   }, [applicationId, page, selectedRunId])
 

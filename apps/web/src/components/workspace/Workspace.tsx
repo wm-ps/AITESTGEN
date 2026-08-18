@@ -45,6 +45,9 @@ function PlayIcon() {
   )
 }
 
+const RUN_IS_ACTIVE = (status: string) => status === 'pending' || status === 'running'
+const RUN_POLL_MS = 2000
+
 const TABS: { key: WorkspaceTab; label: string; icon: () => React.JSX.Element }[] = [
   { key: 'overview', label: 'Overview', icon: OverviewIcon },
   { key: 'suite', label: 'Test Suite', icon: SuiteIcon },
@@ -74,18 +77,58 @@ export function Workspace({
   const [triggerError, setTriggerError] = useState<string | null>(null)
   const [triggerErrorUnavailable, setTriggerErrorUnavailable] = useState(false)
   const [running, setRunning] = useState(false)
+  const [runToast, setRunToast] = useState<string | null>(null)
   // Snapshotted at mount — App.tsx only ever mounts this component fresh
   // right after a "Run All Tests" click, so the effect below should fire
   // (or not) based on that one moment, not re-run if the prop identity
   // were ever to change later.
   const autoTriggerRunOnMountRef = useRef(autoTriggerRun)
+  // `POST .../test-runs` returns before `PrepareTestRunActivity` has even
+  // created the TestRun row (see the API's own comment on that endpoint), so
+  // the poll below can briefly see no active run right after triggering.
+  // This holds the button disabled through that gap; the poll itself is the
+  // only thing that ever turns it back off.
+  const suppressReenableUntilRef = useRef(0)
+
+  useEffect(() => {
+    if (!runToast) return
+    const timeout = setTimeout(() => setRunToast(null), 4000)
+    return () => clearTimeout(timeout)
+  }, [runToast])
+
+  // Single source of truth for "is any run active right now" — runs
+  // continuously while this Application's workspace is open, so the button
+  // reflects reality regardless of who/what started the run (this click, a
+  // reload mid-run, another tab), not just runs this instance itself fired.
+  useEffect(() => {
+    let cancelled = false
+    async function poll() {
+      try {
+        const page = await api.listTestRuns(applicationId, 1, 1)
+        if (cancelled) return
+        const latest = page.items[0]
+        const active = !!latest && RUN_IS_ACTIVE(latest.status)
+        setRunning(active || Date.now() < suppressReenableUntilRef.current)
+      } catch {
+        // best-effort poll — a transient failure just skips this tick
+      }
+    }
+    poll()
+    const interval = setInterval(poll, RUN_POLL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [applicationId])
 
   async function handleRunSuite() {
     setRunning(true)
     setTriggerError(null)
     setTriggerErrorUnavailable(false)
+    setRunToast('Run will initiate in a few seconds, please wait…')
     try {
       await api.triggerTestRun(applicationId)
+      suppressReenableUntilRef.current = Date.now() + 5000
       setAutoSelectLatest(true)
       setActiveTab('runs')
     } catch (err) {
@@ -94,7 +137,6 @@ export function Workspace({
       } else {
         setTriggerErrorUnavailable(true)
       }
-    } finally {
       setRunning(false)
     }
   }
@@ -203,7 +245,7 @@ export function Workspace({
               style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
             >
               <PlayIcon />
-              {running ? 'Starting…' : 'Run Suite'}
+              {running ? 'Running…' : 'Run Suite'}
             </button>
           </div>
         </div>
@@ -218,6 +260,26 @@ export function Workspace({
           />
         )}
       </div>
+
+      {runToast && (
+        <div
+          role="status"
+          style={{
+            position: 'fixed',
+            right: 'var(--space-9)',
+            bottom: 'var(--space-9)',
+            background: 'var(--ink)',
+            color: '#FFFFFF',
+            padding: '12px 18px',
+            borderRadius: 'var(--radius)',
+            fontSize: 13.5,
+            boxShadow: '0 12px 28px rgba(15,23,42,0.25)',
+            zIndex: 100,
+          }}
+        >
+          {runToast}
+        </div>
+      )}
     </main>
   )
 }

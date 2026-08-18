@@ -11,6 +11,7 @@ from sqlalchemy import CheckConstraint
 from sqlmodel import Field, SQLModel
 
 InteractionLevel = Literal["passive", "normal", "aggressive"]
+RetentionPeriod = Literal["1_day", "1_week", "1_month"]
 
 
 class DiscoverySettings(SQLModel, table=True):
@@ -30,3 +31,8 @@ class DiscoverySettings(SQLModel, table=True):
     max_journeys: int | None = Field(default=None)
     max_scenarios_per_journey: int | None = Field(default=None)
     max_test_cases_per_application: int | None = Field(default=None)
+    # str, not the RetentionPeriod Literal — same SQLModel/Literal limitation
+    # as interaction_level above. How long a soft-deleted Application
+    # (deleted_at set) survives before the daily cleanup job purges it and
+    # all its dependent rows for good.
+    delete_project_after: str = Field(default="1_month")

@@ -124,6 +124,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/forgot-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Forgot Password */
+        post: operations["forgot_password_auth_forgot_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/reset-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reset Password Target */
+        get: operations["reset_password_target_auth_reset_password_get"];
+        put?: never;
+        /** Reset Password Route */
+        post: operations["reset_password_route_auth_reset_password_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications": {
         parameters: {
             query?: never;
@@ -601,6 +636,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/cleanup/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger Cleanup
+         * @description Manual purge trigger — same CleanupWorkflow the daily 06:00 IST
+         *     Schedule (`api/scripts/create_cleanup_schedule.py`) runs, folded onto
+         *     execution-worker's task queue (no dedicated maintenance worker/deployment;
+         *     see that worker's registered workflows). Unique per-call id (not the
+         *     Schedule's fixed `cleanup-deleted-applications` id) so a manual run never
+         *     collides with a same-day scheduled run.
+         */
+        post: operations["trigger_cleanup_admin_cleanup_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications/{external_id}/execution-status": {
         parameters: {
             query?: never;
@@ -876,6 +936,11 @@ export interface components {
             /** Video Capture Enabled */
             video_capture_enabled?: boolean | null;
         };
+        /** ForgotPasswordRequest */
+        ForgotPasswordRequest: {
+            /** Email */
+            email: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1047,6 +1112,20 @@ export interface components {
             /** Last Discovery Started At */
             last_discovery_started_at: string | null;
         };
+        /** ResetPasswordRequest */
+        ResetPasswordRequest: {
+            /** Token */
+            token: string;
+            /** Password */
+            password: string;
+        };
+        /** ResetPasswordTarget */
+        ResetPasswordTarget: {
+            /** Name */
+            name: string;
+            /** Email */
+            email: string;
+        };
         /** RunTrendPointRead */
         RunTrendPointRead: {
             /**
@@ -1129,6 +1208,11 @@ export interface components {
             max_scenarios_per_journey: number | null;
             /** Max Test Cases Per Application */
             max_test_cases_per_application: number | null;
+            /**
+             * Delete Project After
+             * @enum {string}
+             */
+            delete_project_after: "1_day" | "1_week" | "1_month";
         };
         /** SettingsUpdate */
         SettingsUpdate: {
@@ -1140,6 +1224,8 @@ export interface components {
             navigation_timeout_seconds?: number | null;
             /** Interaction Level */
             interaction_level?: ("passive" | "normal" | "aggressive") | null;
+            /** Delete Project After */
+            delete_project_after?: ("1_day" | "1_week" | "1_month") | null;
             /**
              * Max Journeys
              * @default __unset__
@@ -1611,6 +1697,105 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AcceptInviteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    forgot_password_auth_forgot_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ForgotPasswordRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_password_target_auth_reset_password_get: {
+        parameters: {
+            query: {
+                token: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResetPasswordTarget"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_password_route_auth_reset_password_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResetPasswordRequest"];
             };
         };
         responses: {
@@ -2729,6 +2914,39 @@ export interface operations {
             path: {
                 external_id: string;
             };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trigger_cleanup_admin_cleanup_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
             cookie?: {
                 session?: string | null;
             };
