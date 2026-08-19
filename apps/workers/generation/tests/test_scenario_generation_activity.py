@@ -103,7 +103,7 @@ def test_scenario_generation_activity_creates_scenarios_with_blank_test_data(
             steps=["Add item to cart", "Submit payment"],
             expected_result="Order confirmation is shown",
             test_data=[
-                TestDataFieldCandidate(name="username", mandatory=True),
+                TestDataFieldCandidate(name="shipping_address", mandatory=True),
                 TestDataFieldCandidate(name="promo_code", mandatory=False),
             ],
         ),
@@ -143,13 +143,71 @@ def test_scenario_generation_activity_creates_scenarios_with_blank_test_data(
         assert happy.steps == ["Add item to cart", "Submit payment"]
         assert happy.expected_result == "Order confirmation is shown"
         assert happy.test_data == [
-            {"name": "username", "mandatory": True, "value": None},
+            {"name": "shipping_address", "mandatory": True, "value": None},
             {"name": "promo_code", "mandatory": False, "value": None},
         ]
         assert happy.test_data_complete() is False
 
         negative = next(s for s in scenarios if s.type == "negative")
         assert negative.name == "Checkout with expired card"
+
+
+def test_scenario_generation_activity_strips_existing_credential_test_data(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Credential-handling fix: even if the AI invents a test_data field for
+    the account's own existing username/password, it must never be persisted
+    — that value only ever comes from the user-provided credential source at
+    Playwright-generation/runtime, never from generated test_data. A
+    "new"/"confirm" password field (a change-password form's actual subject
+    under test) is unrelated and must survive untouched."""
+    init_db()
+    journey = _seed_journey()
+
+    candidates = [
+        ScenarioCandidate(
+            name="Sign in with valid password",
+            type="happy",
+            steps=["Enter username", "Enter password", "Submit"],
+            expected_result="Signed in",
+            test_data=[
+                TestDataFieldCandidate(name="username", mandatory=True),
+                TestDataFieldCandidate(name="password", mandatory=True),
+            ],
+        ),
+        ScenarioCandidate(
+            name="Change password successfully",
+            type="happy",
+            steps=["Enter current password", "Enter new password", "Confirm new password"],
+            expected_result="Password changed",
+            test_data=[
+                TestDataFieldCandidate(name="current password", mandatory=True),
+                TestDataFieldCandidate(name="new password", mandatory=True),
+                TestDataFieldCandidate(name="confirm new password", mandatory=True),
+            ],
+        ),
+    ]
+    monkeypatch.setattr(
+        activities_module, "HostedAIProvider", lambda: _FakeAIProvider(candidates)
+    )
+
+    asyncio.run(
+        activities_module.scenario_generation_activity(
+            ScenarioGenerationActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+
+    with Session(engine) as session:
+        scenarios_by_name = {
+            s.name: s
+            for s in session.exec(select(Scenario).where(Scenario.journey_id == journey.id)).all()
+        }
+
+    assert scenarios_by_name["Sign in with valid password"].test_data == []
+    change_password_fields = {
+        f["name"] for f in scenarios_by_name["Change password successfully"].test_data
+    }
+    assert change_password_fields == {"new password", "confirm new password"}
 
 
 def test_scenario_generation_activity_is_idempotent_on_retry(

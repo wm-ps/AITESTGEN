@@ -360,6 +360,34 @@ async def test_generate_scenarios_raises_when_every_type_fails(
         )
 
 
+async def test_generate_scenarios_prompt_excludes_the_account_own_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Credential-handling fix: the scenario prompt used to cite "login
+    credentials" as an example of legitimate test_data, which is exactly what
+    led the model to invent "username"/"password" fields for a plain sign-in
+    Scenario — later hardcoded as a literal by the Playwright generator. The
+    prompt must no longer offer that example, and must explicitly say the
+    account's own existing credential is never test_data."""
+    captured_calls: list[dict] = []
+
+    async def fake_post(self, url, *, headers=None, json=None):
+        captured_calls.append(json)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": _scenario_body("Sign in")}}]},
+            request=httpx.Request("POST", "https://fake-proxy.example.com/chat/completions"),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    await HostedAIProvider().generate_scenarios(_fake_journey(), [_fake_page("https://a.example.com")])
+
+    content = "".join(m["content"] for m in captured_calls[0]["messages"])
+    assert "login credentials" not in content
+    assert "never include a field for the account's own existing login" in content
+
+
 async def test_generate_playwright_returns_code(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _monkeypatch_post(
         monkeypatch,
@@ -416,6 +444,23 @@ async def test_generate_playwright_forbids_fillcredentials_when_requires_auth(
     content = "".join(m["content"] for m in captured["json"]["messages"])
     assert "do NOT call `fillCredentials`" in content
     assert "do NOT visit the application's base URL" in content
+
+
+async def test_generate_playwright_prompt_forbids_literal_fill_on_credential_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Credential-handling fix: real generated output was observed calling
+    `.fill('Password1$')` on the login page's own password field AND then
+    also calling `fillCredentials(page)` right after — a redundant, wrong
+    double-fill. The prompt must explicitly forbid a literal `.fill(...)` on
+    the username field or the account's own current/existing password field."""
+    captured = _monkeypatch_post(monkeypatch, "test('x', async ({ page }) => {})")
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(scenario)
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "Never call `.fill(...)` with a literal string on the username field" in content
 
 
 async def test_generate_playwright_allows_base_url_visit_when_no_auth_required(
@@ -516,6 +561,26 @@ async def test_generate_playwright_renders_label_strategy_as_getbylabel(
     content = "".join(m["content"] for m in captured["json"]["messages"])
     assert 'Login / input:Username field -> getByLabel("Username")' in content
     assert 'label="Username"' not in content
+
+
+async def test_generate_playwright_prompt_requires_exact_true_on_getbylabel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Locator-accuracy fix — Playwright's `getByLabel`/`getByText` default to
+    substring matching, so a shorter known label that's a substring of a
+    longer one (e.g. "New password" vs. "Confirm new password") resolves to
+    both and strict-mode-violates unless the prompt tells the LLM to pass
+    `{ exact: true }`."""
+    captured = _monkeypatch_post(
+        monkeypatch, "test('guest checkout', async ({ page }) => {})"
+    )
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(scenario)
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "{ exact: true }" in content
+    assert "strict-mode violation" in content
 
 
 async def test_generate_playwright_degrades_gracefully_with_no_known_locators(

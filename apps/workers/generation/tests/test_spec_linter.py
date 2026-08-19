@@ -6,6 +6,7 @@ from generation_worker.spec_linter import (
     apply_auth_tag,
     extract_locator_usages,
     lint_locator_provenance,
+    lint_password_boundary_ignored,
     lint_required_fields,
     lint_scenario_data_intent,
     lint_shared_state_contradiction,
@@ -242,3 +243,74 @@ def test_lint_shared_state_contradiction_ignores_unrelated_locators() -> None:
     code = "await expect(page.locator('.deposit-row')).toHaveCount(1);\n"
     sibling_code = "await expect(page.locator('.withdrawal-row')).toHaveCount(0);\n"
     assert lint_shared_state_contradiction(code, sibling_code) == []
+
+
+def test_lint_scenario_data_intent_flags_markup_scenario_with_plain_text() -> None:
+    warnings = lint_scenario_data_intent(
+        "Subject with markup-like characters",
+        ["Enter subject"],
+        [{"name": "subject", "value": "Test value"}],
+    )
+    assert len(warnings) == 1
+    assert "markup" in warnings[0]
+
+
+def test_lint_scenario_data_intent_passes_markup_scenario_with_markup_chars() -> None:
+    warnings = lint_scenario_data_intent(
+        "Subject with markup-like characters",
+        ["Enter subject"],
+        [{"name": "subject", "value": "<test>&\"'</test>"}],
+    )
+    assert warnings == []
+
+
+def test_lint_scenario_data_intent_does_not_falsely_flag_ascii_markup_as_missing_unicode() -> None:
+    # "special character" used to also trigger the unicode check, which
+    # would false-positive on a correct, pure-ASCII markup value.
+    warnings = lint_scenario_data_intent(
+        "Special character handling",
+        [],
+        [{"name": "comment", "value": "<div>&\"'</div>"}],
+    )
+    assert warnings == []
+
+
+def test_lint_password_boundary_ignored_flags_bare_fill_credentials() -> None:
+    warnings = lint_password_boundary_ignored(
+        "Sign in with a Unicode password",
+        ["Enter credentials"],
+        [{"name": "password", "value": "Pässwörd123$"}],
+        "await fillCredentials(page);",
+    )
+    assert len(warnings) == 1
+    assert "fillCredentials(page)" in warnings[0]
+
+
+def test_lint_password_boundary_ignored_passes_when_value_is_passed_explicitly() -> None:
+    warnings = lint_password_boundary_ignored(
+        "Sign in with a Unicode password",
+        ["Enter credentials"],
+        [{"name": "password", "value": "Pässwörd123$"}],
+        "await fillCredentials(page, CREDENTIALS.username, 'Pässwörd123$');",
+    )
+    assert warnings == []
+
+
+def test_lint_password_boundary_ignored_ignores_unrelated_scenarios() -> None:
+    warnings = lint_password_boundary_ignored(
+        "Sign in with valid credentials",
+        ["Enter credentials"],
+        [{"name": "password", "value": "Password1$"}],
+        "await fillCredentials(page);",
+    )
+    assert warnings == []
+
+
+def test_lint_password_boundary_ignored_skips_when_no_password_value_present() -> None:
+    warnings = lint_password_boundary_ignored(
+        "Maximum-length password",
+        [],
+        [{"name": "password", "value": None}],
+        "await fillCredentials(page);",
+    )
+    assert warnings == []

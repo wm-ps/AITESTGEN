@@ -523,7 +523,16 @@ def locators_page(request: Request) -> Response:
     """Story 2.21 — one button per capture tier: a real `data-testid`, a
     button whose only class is a CSS-in-JS-style hash but has a real ARIA
     role+name (must rank the role above the hash), and a bare `div` with an
-    `onclick` and nothing else distinguishing (falls through to a CSS path)."""
+    `onclick` and nothing else distinguishing (falls through to a CSS path).
+
+    `[ADDED]` locator-accuracy fix — an unlabeled `<input>` pre-filled with a
+    value (reproducing a real target's own pre-set example/default, or a
+    value discovery itself typed in before ever capturing this element) but
+    carrying a real `name` attribute: must never surface its current
+    `.value` as an "aria" name candidate, and must surface `[name="..."]` as
+    a durable candidate instead of falling through straight to the fragile
+    absolute path. A second, placeholder-only input (no value, no label):
+    its placeholder is a legitimate but explicitly fragile "aria" candidate."""
     if not _authenticated(request):
         return RedirectResponse(url="/login")
     return HTMLResponse(
@@ -533,6 +542,8 @@ def locators_page(request: Request) -> Response:
         <button data-testid="save-button" onclick="void(0)">Save</button>
         <button class="css-1x2y3z" onclick="void(0)">Confirm order</button>
         <div id="bare-div" onclick="void(0)"></div>
+        <input name="principal" value="500000">
+        <input name="promoCode" placeholder="e.g. SAVE10">
         </body></html>
         """
     )

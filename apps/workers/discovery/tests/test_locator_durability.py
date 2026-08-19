@@ -53,6 +53,31 @@ def test_non_fragile_values_not_flagged(value: str) -> None:
     assert _is_fragile_locator_value(value) is False
 
 
+# --- locator-accuracy fix: a filled-in value must never pass as a name ---
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        'role=textbox[name="500000"]',
+        'role=textbox[name="9.5"]',
+        'role=textbox[name="60"]',
+        'text="$1,234.56"',
+        'role=textbox[name="12%"]',
+    ],
+)
+def test_quoted_numeric_name_or_text_is_fragile(value: str) -> None:
+    """A quoted `name=`/`text=` value that's purely a number (with optional
+    currency/percent/thousands punctuation) is data a field happened to
+    carry at capture time — a loan principal, a rate, a term — never a
+    stable label, regardless of which capture path produced it."""
+    assert _is_fragile_locator_value(value) is True
+
+
+def test_quoted_alphabetic_name_is_not_flagged_by_the_numeric_check() -> None:
+    assert _is_fragile_locator_value('role=textbox[name="Principal Amount"]') is False
+
+
 # --- pure unit tests: candidate building/ranking -------------------------
 
 
@@ -211,6 +236,8 @@ async def _capture_candidates_on_locators_page(target_app_url: str) -> dict[str,
                 page.get_by_role("button", name="Confirm order", exact=True)
             ),
             "bare": await _capture_locator_candidates(page.locator("#bare-div")),
+            "principal": await _capture_locator_candidates(page.locator('input[name="principal"]')),
+            "promoCode": await _capture_locator_candidates(page.locator('input[name="promoCode"]')),
         }
         await context.close()
         await browser.close()
@@ -240,6 +267,41 @@ async def test_real_bare_element_falls_through_to_scoped_css(target_app_url: str
     assert candidates["bare"], candidates
     assert candidates["bare"][0]["strategy"] == "css_scoped"
     assert not any(c["strategy"] in ("testid", "aria", "text", "label") for c in candidates["bare"])
+
+
+@pytest.mark.asyncio
+async def test_real_prefilled_unlabeled_input_never_captures_its_value_as_a_name(
+    target_app_url: str,
+) -> None:
+    """Locator-accuracy fix — `/locators`' `principal` input is pre-filled
+    with "500000" and has no label/aria-label/id; before the fix this
+    produced a non-fragile `role=textbox[name="500000"]` "aria" candidate
+    (the field's current value masquerading as its accessible name). Now:
+    no "aria" candidate at all (nothing legitimate to build one from), and
+    its own `name` attribute surfaces as a durable, non-fragile candidate
+    instead of falling straight through to the fragile absolute path."""
+    candidates = await _capture_candidates_on_locators_page(target_app_url)
+    principal = candidates["principal"]
+    assert not any(c["strategy"] == "aria" for c in principal), principal
+    name_attr_candidate = next(c for c in principal if c["value"] == '[name="principal"]')
+    assert name_attr_candidate["fragile"] is False
+    assert not any("500000" in c["value"] for c in principal), principal
+
+
+@pytest.mark.asyncio
+async def test_real_placeholder_only_input_captures_a_fragile_aria_candidate(
+    target_app_url: str,
+) -> None:
+    """`/locators`' `promoCode` input has a placeholder and no value/label —
+    a real ARIA accessible name once no label exists, but explicitly
+    fragile (placeholder text can echo dynamic/example content)."""
+    candidates = await _capture_candidates_on_locators_page(target_app_url)
+    promo = candidates["promoCode"]
+    aria_candidate = next(
+        (c for c in promo if c["strategy"] == "aria" and "SAVE10" in c["value"]), None
+    )
+    assert aria_candidate is not None, promo
+    assert aria_candidate["fragile"] is True
 
 
 @pytest.mark.asyncio

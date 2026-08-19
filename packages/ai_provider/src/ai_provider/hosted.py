@@ -161,10 +161,16 @@ Scenario needs:
 - "type": one of "happy", "negative", "edge"
 - "steps": an ordered list of plain-language test steps a QA engineer would follow
 - "expected_result": what should happen if the Scenario passes
-- "test_data": a list of {{"name": "<field name, e.g. \\"username\\">", "mandatory": <bool>}} \
-— the input values a human tester must supply to run this Scenario (e.g. login credentials, \
-a card number, an expected confirmation value). Do NOT include a value — only the field name \
-and whether it's required; a reviewer supplies the actual value later.
+- "test_data": a list of {{"name": "<field name, e.g. \\"card number\\">", "mandatory": <bool>}} \
+— the input values a human tester must supply to run this Scenario (e.g. a card number, an \
+expected confirmation value, a new/candidate value a form under test is checking). Do NOT \
+include a value — only the field name and whether it's required; a reviewer supplies the \
+actual value later. Exception: never include a field for the account's own existing login \
+username/password (whether this Scenario's own subject or just a precondition to reach it) \
+— that value always comes from the credentials the user already configured for this run, \
+never from a Scenario's test_data. A field that is itself a NEW/candidate value under test \
+(e.g. "new password", "confirm password" on a change-password form) is not covered by this \
+exception and should still be listed normally.
 
 Respond with ONLY a JSON object of this shape, no prose: \
 {{"scenarios": [{{"name": "...", "type": "happy", "steps": ["...", "..."], \
@@ -221,6 +227,14 @@ stable entity-name fragment and match it with `getByRole(...)` using a partial/r
 e.g. `page.getByRole('link', {{ name: /Health Plan/ }})`. This applies to any card, list item, \
 or dashboard tile whose accessible name mixes an icon/title/dynamic-value/chevron this way — \
 not just this one example.
+
+Exception — when calling `getByLabel(...)`/`getByText(...)` with a plain string (no regex), \
+always pass `{{ exact: true }}` as well, unless the step genuinely needs a partial/substring \
+match. Playwright's default is substring matching, so a shorter known label that is itself a \
+substring of a longer one on the same page (e.g. "New password" vs. "Confirm new password", \
+"Amount" vs. "Loan Amount") resolves to BOTH elements and fails with a strict-mode violation \
+instead of the one you meant. `page.getByLabel("New password", {{ exact: true }})` — never a \
+bare `page.getByLabel("New password")` — is what actually isolates the field you want.
 {known_locators_listing}"""
 
 _PLAYWRIGHT_PROMPT_SYSTEM = """You are converting one integration test Scenario into a single, \
@@ -267,6 +281,13 @@ or Unicode/character-set boundary the Scenario's own name describes), pass it ex
 `fillCredentials`'s third argument instead of calling `fillCredentials(page)` bare — the bare \
 call always submits the shared registry's default password, never this Scenario's specific one:
 await fillCredentials(page, CREDENTIALS.username, '<the exact password value from Test data above>');
+- Never call `.fill(...)` with a literal string on the username field, or on a password field \
+representing the account's OWN existing/current password (the login page's password field, or \
+a change-password form's "current password" field) — always source that value from CREDENTIALS \
+as above, even in a test that also calls `fillCredentials()` elsewhere; never fill it twice with \
+two different sources. A change-password form's "new password"/"confirm password" fields are \
+different — those ARE the candidate value this Scenario is testing, so fill them with the exact \
+literal from Test data, not CREDENTIALS.
 
 Data-uniqueness rule — for a step that creates a new account/record (sign-up, registration, \
 "create new X"), never reuse the given test-data literal exactly if doing so risks colliding \

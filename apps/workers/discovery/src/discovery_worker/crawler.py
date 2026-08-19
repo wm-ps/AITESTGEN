@@ -1272,6 +1272,17 @@ _HEX_OR_UUID_FRAGMENT_RE = re.compile(
 _POSITIONAL_ONLY_PATH_RE = re.compile(
     r"^(css=)?(\w+:nth-child\(\d+\)\s*(>|\s)\s*)*\w+:nth-child\(\d+\)$"
 )
+# Defense in depth alongside the `_LOCATOR_INFO_SCRIPT` name-computation fix
+# above: a `name=`/`text=` quoted value that's purely a number (optionally
+# with currency/percent/thousands punctuation) is data — a real loan
+# principal, interest rate, or term — never a stable label, whichever field
+# happened to carry it at capture time (the site's own pre-filled example
+# value, or a synthetic fill). Catches this shape wherever else it might
+# surface (e.g. a confirmation page's own rendered text), not just the one
+# call site the fix above closes.
+_QUOTED_NUMERIC_VALUE_RE = re.compile(
+    r'(?:name|text)="[\s$€£¥₹]*[\d,]+(?:\.\d+)?\s*%?"'
+)
 
 
 def _looks_like_generated_token(token: str) -> bool:
@@ -1289,6 +1300,7 @@ def _is_fragile_locator_value(value: str) -> bool:
         _FRAMEWORK_GENERATED_ID_RE.search(value)
         or _HEX_OR_UUID_FRAGMENT_RE.search(value)
         or _POSITIONAL_ONLY_PATH_RE.match(value)
+        or _QUOTED_NUMERIC_VALUE_RE.search(value)
     )
 
 
@@ -1325,6 +1337,8 @@ _LOCATOR_INFO_SCRIPT = r"""
   const implicitRoles = {
     BUTTON: 'button', A: 'link', INPUT: 'textbox', SELECT: 'combobox', TEXTAREA: 'textbox',
   };
+  const isFormControl = el.tagName === 'INPUT' || el.tagName === 'SELECT'
+    || el.tagName === 'TEXTAREA';
   let label = null;
   if (el.id) {
     const lab = document.querySelector('label[for="' + el.id + '"]');
@@ -1336,11 +1350,24 @@ _LOCATOR_INFO_SCRIPT = r"""
   return {
     testid: testid,
     role: el.getAttribute('role') || implicitRoles[el.tagName] || null,
-    name: (el.getAttribute('aria-label') || el.innerText || el.value || '').trim().slice(0, 80),
+    // A form control's accessible name never legitimately falls back to its
+    // current `.value` (whatever happens to be typed in at capture time,
+    // e.g. discovery's own synthetic fill) or `innerText` (inputs/selects/
+    // textareas never render meaningful innerText anyway) — only a real
+    // static `aria-label` counts here; `label` (below) and `placeholderAttr`
+    // are this script's other, separately-ranked signals for an unlabeled
+    // control. A non-form element's accessible name still legitimately
+    // falls back to its own innerText (a button/link's visible text really
+    // is its accessible name).
+    name: (
+      el.getAttribute('aria-label') || (isFormControl ? '' : el.innerText) || ''
+    ).trim().slice(0, 80),
     label: label,
     text: (el.innerText || '').trim().slice(0, 80),
     tag: el.tagName.toLowerCase(),
     idAttr: el.id || null,
+    nameAttr: el.getAttribute('name') || null,
+    placeholderAttr: isFormControl ? (el.getAttribute('placeholder') || null) : null,
     firstClass: (el.className || '').trim().split(/\s+/)[0] || null,
     scoped: scopedPath(el),
     absolute: absolutePath(el),
@@ -1355,7 +1382,7 @@ _NO_TEXT_TAGS = {"input", "select", "textarea"}
 def _build_locator_candidates(info: dict, frame_path: str | None) -> list[dict]:
     candidates: list[dict] = []
 
-    def add(strategy: str, value: str | None) -> None:
+    def add(strategy: str, value: str | None, *, force_fragile: bool = False) -> None:
         if not value:
             return
         # "label" isn't a real Playwright selector engine — its value is
@@ -1368,7 +1395,7 @@ def _build_locator_candidates(info: dict, frame_path: str | None) -> list[dict]:
             {
                 "strategy": strategy,
                 "value": full_value,
-                "fragile": _is_fragile_locator_value(value),
+                "fragile": force_fragile or _is_fragile_locator_value(value),
             }
         )
 
@@ -1382,6 +1409,30 @@ def _build_locator_candidates(info: dict, frame_path: str | None) -> list[dict]:
         add("label", info["label"])
     if info.get("idAttr"):
         add("css_scoped", f"#{info['idAttr']}")
+    # A form control's own HTML `name` attribute — distinct from its ARIA
+    # accessible name (`info["name"]` above) — is durable in practice (real
+    # sites rarely rename a submitted field) and, for the very common
+    # unlabeled-input case, is often the ONLY human-meaningful signal this
+    # element has at all; without it, such a field had nothing better than
+    # the fragile absolute path to fall back to.
+    if info.get("nameAttr"):
+        add("css_scoped", f'[name="{info["nameAttr"]}"]')
+    # A placeholder genuinely IS a control's real ARIA accessible name once
+    # no label/aria-label exists (confirmed by both fields together being
+    # empty here) — but unlike a static label, it can echo dynamic/example
+    # content (a currency hint, a rotating example), so it's captured as its
+    # own explicitly-fragile "aria" candidate: usable, ranked below every
+    # non-fragile alternative, never the sole reason a field gets no
+    # candidate at all. `ponytail:` no attempt to tell a static hint
+    # ("Enter your email") apart from a dynamic example ("e.g. 500000") —
+    # both get the same fragile treatment; upgrade only if a real target's
+    # own placeholder churn proves this too conservative.
+    if not info.get("label") and not info.get("name") and info.get("placeholderAttr"):
+        add(
+            "aria",
+            f'role={info.get("role")}[name="{info["placeholderAttr"]}"]',
+            force_fragile=True,
+        )
     if info.get("firstClass"):
         add("css_scoped", f"css=.{info['firstClass']}")
     if info.get("scoped"):

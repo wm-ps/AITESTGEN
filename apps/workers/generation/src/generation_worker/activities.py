@@ -155,24 +155,61 @@ _MIN_LEN_INTENT_RE = re.compile(
 )
 
 
+_CURRENT_PASSWORD_FIELD_RE = re.compile(r"current|old|existing", re.IGNORECASE)
+
+# Deterministic backstop (credential-handling fix): the AI occasionally
+# invents a test_data field for a login form's own username/password even
+# though the system prompt tells it not to (see hosted.py's
+# `_SCENARIO_PROMPT_SYSTEM`). Rather than trust the prompt alone, strip any
+# field naming the account's OWN existing credential before persisting —
+# that value must only ever come from the user-provided credential source
+# (CREDENTIALS/fillCredentials), never an AI-generated placeholder. A
+# "new"/"confirm"-qualified field (a change-password form's actual new
+# value under test) is a legitimate candidate and is left alone. Deliberately
+# does not touch bare "email"/"login" fields beyond this pattern — too many
+# non-auth fields use those names.
+_USERNAME_FIELD_RE = re.compile(r"\busername\b", re.IGNORECASE)
+_NEW_OR_CONFIRM_QUALIFIER_RE = re.compile(r"\bnew\b|\bconfirm", re.IGNORECASE)
+
+
+def _is_existing_credential_field(field_name: str) -> bool:
+    if _NEW_OR_CONFIRM_QUALIFIER_RE.search(field_name):
+        return False
+    return bool(_USERNAME_FIELD_RE.search(field_name) or _PASSWORD_FIELD_RE.search(field_name))
+
+
 def _scenario_intent_default_value(
     intent_text: str, field_name: str, used_values: set[str]
 ) -> str | None:
     if _PASSWORD_FIELD_RE.search(field_name):
+        # The account's actual current password (a change-password form's
+        # "current password" field) isn't the boundary/property under test
+        # — it must stay the standard default so the form's own current-
+        # password check succeeds; only the new/confirm fields get the
+        # scenario-specific value below.
+        if _CURRENT_PASSWORD_FIELD_RE.search(field_name):
+            return None
         if _PASSWORD_UNICODE_INTENT_RE.search(intent_text):
-            candidates = ("Pässwörd123$", "Pässwörd456$")
+            value = "Pässwörd123$"
         elif _PASSWORD_MAX_LEN_INTENT_RE.search(intent_text):
             # No maxlength constraint is ever captured by Discovery today
             # (only `required`/`html5_message` — see ValidationRule) — this
             # is a best-effort long value, not a verified app-specific
             # boundary. Closing that gap for real needs a crawler change,
             # out of scope here.
-            candidates = ("P4ssw0rd$" + "x" * 119, "P4ssw0rd$" + "y" * 119)
+            value = "P4ssw0rd$" + "x" * 119
         elif _PASSWORD_MIN_LEN_INTENT_RE.search(intent_text):
-            candidates = ("Pw1$", "Pw2$")
+            value = "Pw1$"
         else:
             return None
-        return next((c for c in candidates if c not in used_values), candidates[-1])
+        # Deliberately NOT distinctness-checked against `used_values` (unlike
+        # every other category here) — a "new password"/"confirm password"
+        # pair for the SAME boundary must match exactly, or the form's own
+        # confirmation check fails and the boundary is never reached at all.
+        # A genuine mismatch scenario (e.g. "mismatched confirmation") never
+        # matches the intent categories above, so it still falls through to
+        # `_default_test_data_value`'s existing distinct-by-design behavior.
+        return value
 
     if _CARD_FIELD_RE.search(field_name) or _EMAIL_FIELD_RE.search(field_name):
         return None  # the categories below are never about these fields
@@ -356,6 +393,7 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
                 test_data=[
                     {"name": f.name, "mandatory": f.mandatory, "value": None}
                     for f in candidate.test_data
+                    if not _is_existing_credential_field(f.name)
                 ],
                 generation_run_id=journey.attempt,
                 current=True,
