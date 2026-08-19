@@ -92,6 +92,35 @@ textarea:focus-visible,
   background: var(--canvas-wash);
 }
 
+.pagination-page-btn {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 var(--space-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--canvas);
+  color: var(--ink-secondary);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.pagination-page-btn:hover:not(.pagination-page-btn--active) {
+  background: var(--canvas-wash);
+}
+
+.pagination-page-btn--active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  cursor: default;
+  box-shadow: var(--shadow-button-primary);
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -143,6 +172,45 @@ textarea:focus-visible,
   background: var(--accent-wash);
 }
 
+.data-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.data-table th,
+.data-table td {
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.data-table thead tr {
+  background: var(--canvas-wash-alt);
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.data-table tbody tr {
+  border-bottom: 1px solid var(--border-hairline);
+}
+
+.data-table tbody tr:last-child {
+  border-bottom: none;
+}
+
+.data-table tbody tr.clickable {
+  cursor: pointer;
+}
+
+.data-table tbody tr.clickable:hover {
+  background: var(--canvas-wash);
+}
+
+.data-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
 .card-clickable {
   transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
@@ -178,21 +246,6 @@ textarea:focus-visible,
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 
-/* status-pill's in-progress pulse dot (Story 2.1, DESIGN.md#Components) */
-@keyframes status-pill-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.35;
-  }
-}
-
-.status-pill-pulse-dot {
-  animation: status-pill-pulse 1.4s ease-in-out infinite;
-}
-
 .avatar-button {
   transition: background-color 0.15s ease;
 }
@@ -219,6 +272,15 @@ textarea:focus-visible,
 
 .button-primary:hover:not(:disabled) {
   opacity: 0.9;
+}
+
+.stat-tile-hover {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.stat-tile-hover:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 16px -6px rgba(15, 23, 42, 0.18);
 }
 
 @keyframes aitg-materialize {

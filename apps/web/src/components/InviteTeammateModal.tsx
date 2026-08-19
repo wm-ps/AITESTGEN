@@ -70,6 +70,7 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
                     type="email"
                     required
                     autoFocus
+                    placeholder="teammate@company.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     style={{ padding: '10px 12px', fontSize: 14 }}

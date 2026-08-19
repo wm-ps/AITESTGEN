@@ -376,6 +376,17 @@ class HomeApplicationRead(ApplicationRead):
     # Scenarios) — this is `journey_count`'s counterpart so the card can hide
     # the count until every Journey is covered, same as ReviewScenarios.tsx.
     scenario_journeys_covered: int
+    # Home card "Running"/"Last run"/pass-rate signals — the most recent
+    # TestRun for this application, if one has ever been started. `None`
+    # fields mean no run yet, not a zero-value run.
+    last_test_run_status: str | None
+    last_test_run_created_at: datetime | None
+    last_test_run_pass_rate: float | None
+    # Home row's Executions/Trend columns — total run count (all-time) and
+    # the last 8 runs' pass rates, oldest first (same convention as
+    # `get_overview`'s `reversed(recent_runs)` trend).
+    test_run_count: int
+    recent_pass_rates: list[float | None]
     suite_count: int
     test_case_count: int
     # Dashboard "generating" vs "generated" pill: `test_case_count <
@@ -588,6 +599,18 @@ def get_home(
     ).all():
         latest_run_by_app.setdefault(run.application_id, run)
 
+    # Every TestRun per app (org has at most MAX_ACTIVE_PROJECTS applications,
+    # so this stays cheap) — newest first, backs "Running"/"Last run"/
+    # pass-rate, the Executions count, and the Trend sparkline all from one
+    # query.
+    test_runs_by_app: dict[uuid.UUID, list[TestRun]] = {}
+    for test_run in session.exec(
+        select(TestRun)
+        .where(TestRun.application_id.in_(app_ids))  # type: ignore[attr-defined]
+        .order_by(TestRun.created_at.desc())  # type: ignore[arg-type]
+    ).all():
+        test_runs_by_app.setdefault(test_run.application_id, []).append(test_run)
+
     journey_counts = dict(
         session.exec(
             select(Journey.application_id, func.count())
@@ -668,6 +691,8 @@ def get_home(
         discovery_run = latest_run_by_app.get(application.id)
         assert discovery_run is not None
         base = _to_application_read(session, application, discovery_run)
+        runs = test_runs_by_app.get(application.id, [])
+        last_test_run = runs[0] if runs else None
         result.append(
             HomeApplicationRead(
                 **base.model_dump(),
@@ -677,6 +702,18 @@ def get_home(
                 suite_count=suite_counts.get(application.id, 0),
                 test_case_count=test_case_counts.get(application.id, 0),
                 suites_generating_count=suites_generating_counts.get(application.id, 0),
+                last_test_run_status=last_test_run.status if last_test_run else None,
+                last_test_run_created_at=last_test_run.created_at if last_test_run else None,
+                last_test_run_pass_rate=(
+                    last_test_run.passed_count / last_test_run.total_count
+                    if last_test_run and last_test_run.total_count
+                    else None
+                ),
+                test_run_count=len(runs),
+                recent_pass_rates=[
+                    (r.passed_count / r.total_count) if r.total_count else None
+                    for r in reversed(runs[:8])
+                ],
             )
         )
     return result

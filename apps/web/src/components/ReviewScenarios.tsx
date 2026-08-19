@@ -524,7 +524,7 @@ export function ReviewScenarios({
       <Stepper current="review" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
       <main
         style={{
-          maxWidth: 'var(--content-max)',
+          maxWidth: 'var(--content-max-wide)',
           margin: '0 auto',
           padding: `var(--content-top) var(--content-x)`,
         }}
@@ -846,6 +846,7 @@ export function ReviewScenarios({
                             </span>
                             <input
                               defaultValue={field.value ?? ''}
+                              placeholder={`Enter ${field.name}`}
                               onBlur={(e) =>
                                 handleTestDataChange(selectedScenario.id, field.name, e.target.value)
                               }

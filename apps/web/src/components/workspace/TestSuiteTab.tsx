@@ -26,24 +26,32 @@ function ChevronIcon({ open }: { open: boolean }) {
   )
 }
 
-// Duration/Status get a fixed `minWidth` in both the header and every row
-// (below) — without it, a header label like "Duration" is wider or narrower
-// than the actual "12.3s" it sits over, so the column boundary drifts row to
-// row instead of lining up under the header.
-const DURATION_COL_WIDTH = 56
-const STATUS_COL_WIDTH = 78
+// First column (Test Case name) gets 45% of the row; the rest — Last Run,
+// Duration, Status — split the remaining width evenly. Same template on the
+// header and every row keeps the columns lined up.
+const ASSET_GRID_TEMPLATE = '45% 1fr 1fr 1fr'
+
+type AssetSortKey = 'name' | 'lastRun' | 'duration' | 'status'
 
 function ColumnHeaderLabel({
   children,
   align,
-  minWidth,
+  sortKey,
+  activeKey,
+  dir,
+  onSort,
 }: {
   children: string
   align?: 'right'
-  minWidth?: number
+  sortKey?: AssetSortKey
+  activeKey?: AssetSortKey | null
+  dir?: 'asc' | 'desc'
+  onSort?: (key: AssetSortKey) => void
 }) {
+  const isActive = sortKey != null && sortKey === activeKey
   return (
     <span
+      onClick={sortKey && onSort ? () => onSort(sortKey) : undefined}
       style={{
         fontSize: 11,
         fontWeight: 700,
@@ -52,39 +60,83 @@ function ColumnHeaderLabel({
         letterSpacing: '0.05em',
         whiteSpace: 'nowrap',
         textAlign: align,
-        minWidth,
-        display: minWidth ? 'inline-block' : undefined,
+        cursor: sortKey ? 'pointer' : undefined,
+        userSelect: sortKey ? 'none' : undefined,
       }}
     >
       {children}
+      {isActive ? (dir === 'asc' ? ' ▲' : ' ▼') : ''}
     </span>
   )
 }
 
-// Column headers so a "Test Case" name and its "Duration"/"Status" line up
-// with the same columns a Test Run's results list uses (RunsTab.tsx) —
-// correlating a failing test case here with its run result elsewhere relies
-// on both lists reading the same way.
-function AssetListHeader() {
+function formatLastRun(iso: string | null): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
+function assetSortValue(asset: TestAssetStatusRead, key: AssetSortKey): string | number {
+  switch (key) {
+    case 'name':
+      return asset.name.toLowerCase()
+    case 'lastRun':
+      return asset.last_run_at ?? ''
+    case 'duration':
+      return asset.duration_ms ?? -1
+    case 'status':
+      return asset.status
+  }
+}
+
+// Sorts only the currently-loaded page — the list API has no `sort` param,
+// and re-sorting across pages would mean fetching every page up front.
+function sortAssets(assets: TestAssetStatusRead[], key: AssetSortKey, dir: 'asc' | 'desc'): TestAssetStatusRead[] {
+  const sorted = [...assets].sort((a, b) => {
+    const av = assetSortValue(a, key)
+    const bv = assetSortValue(b, key)
+    if (av < bv) return -1
+    if (av > bv) return 1
+    return 0
+  })
+  return dir === 'asc' ? sorted : sorted.reverse()
+}
+
+function AssetListHeader({
+  sortKey,
+  sortDir,
+  onSort,
+}: {
+  sortKey: AssetSortKey | null
+  sortDir: 'asc' | 'desc'
+  onSort: (key: AssetSortKey) => void
+}) {
   return (
     <div
       style={{
-        display: 'flex',
-        justifyContent: 'space-between',
+        display: 'grid',
+        gridTemplateColumns: ASSET_GRID_TEMPLATE,
         alignItems: 'center',
-        gap: 12,
-        padding: '8px 16px 8px 40px',
+        gap: 20,
+        padding: '8px 16px',
         background: 'var(--canvas-wash-alt)',
         borderBottom: '1px solid var(--border-hairline)',
       }}
     >
-      <ColumnHeaderLabel>Test Case</ColumnHeaderLabel>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <ColumnHeaderLabel align="right" minWidth={DURATION_COL_WIDTH}>
-          Duration
+      {/* 24px = chevron (14) + its gap (10) in each row below, so the label lines up over the row's text, not its icon. */}
+      <div style={{ paddingLeft: 24, minWidth: 0 }}>
+        <ColumnHeaderLabel sortKey="name" activeKey={sortKey} dir={sortDir} onSort={onSort}>
+          Test Case
         </ColumnHeaderLabel>
-        <ColumnHeaderLabel minWidth={STATUS_COL_WIDTH}>Status</ColumnHeaderLabel>
       </div>
+      <ColumnHeaderLabel sortKey="lastRun" activeKey={sortKey} dir={sortDir} onSort={onSort}>
+        Last Run
+      </ColumnHeaderLabel>
+      <ColumnHeaderLabel sortKey="duration" activeKey={sortKey} dir={sortDir} onSort={onSort}>
+        Duration
+      </ColumnHeaderLabel>
+      <ColumnHeaderLabel sortKey="status" activeKey={sortKey} dir={sortDir} onSort={onSort}>
+        Status
+      </ColumnHeaderLabel>
     </div>
   )
 }
@@ -131,10 +183,10 @@ function AssetRow({ asset }: { asset: TestAssetStatusRead }) {
         type="button"
         onClick={() => setExpanded((o) => !o)}
         style={{
-          display: 'flex',
-          justifyContent: 'space-between',
+          display: 'grid',
+          gridTemplateColumns: ASSET_GRID_TEMPLATE,
           alignItems: 'center',
-          gap: 12,
+          gap: 20,
           width: '100%',
           padding: '12px 16px',
           background: 'none',
@@ -158,17 +210,15 @@ function AssetRow({ asset }: { asset: TestAssetStatusRead }) {
             {asset.name}
           </span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
-          <span
-            className="caption"
-            style={{ fontSize: 11.5, whiteSpace: 'nowrap', minWidth: DURATION_COL_WIDTH, textAlign: 'right' }}
-          >
-            {asset.duration_ms != null ? `${(asset.duration_ms / 1000).toFixed(1)}s` : ''}
-          </span>
-          <span style={{ minWidth: STATUS_COL_WIDTH }}>
-            <StatusPill status={asset.status} />
-          </span>
-        </div>
+        <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>
+          {formatLastRun(asset.last_run_at)}
+        </span>
+        <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>
+          {asset.duration_ms != null ? `${(asset.duration_ms / 1000).toFixed(1)}s` : '—'}
+        </span>
+        <span>
+          <StatusPill status={asset.status} />
+        </span>
       </button>
 
       {expanded && (
@@ -228,7 +278,18 @@ export function TestSuiteTab({ applicationId }: { applicationId: string }) {
   const [assets, setAssets] = useState<TestAssetStatusRead[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
+  const [sortKey, setSortKey] = useState<AssetSortKey | null>(null)
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const totalPages = Math.max(1, Math.ceil(total / ASSETS_PER_PAGE))
+  const sortedAssets = sortKey ? sortAssets(assets, sortKey, sortDir) : assets
+  function handleSort(key: AssetSortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(key)
+      setSortDir('asc')
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -251,15 +312,18 @@ export function TestSuiteTab({ applicationId }: { applicationId: string }) {
         </p>
       ) : (
         <div className="card-panel" style={{ overflow: 'hidden' }}>
-          <AssetListHeader />
-          {assets.map((asset) => (
+          <AssetListHeader sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+          {sortedAssets.map((asset) => (
             <AssetRow key={asset.id} asset={asset} />
           ))}
           <Pagination
             page={page}
             totalPages={totalPages}
+            totalItems={total}
+            pageSize={ASSETS_PER_PAGE}
             onPrev={() => setPage((p) => p - 1)}
             onNext={() => setPage((p) => p + 1)}
+            onPage={setPage}
           />
         </div>
       )}

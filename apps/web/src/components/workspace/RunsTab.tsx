@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ApiError,
   api,
@@ -15,6 +15,15 @@ import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 const POLL_INTERVAL_MS = 1500
 const RUNS_PER_PAGE = 5
 const RESULTS_PER_PAGE = 5
+
+// Same arrow-left glyph as TopBar's own back button, not a text "←" glyph.
+function BackIcon() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M19 12H5M12 19l-7-7 7-7" />
+    </svg>
+  )
+}
 
 function ClipboardCheckIcon() {
   return (
@@ -206,25 +215,99 @@ const columnHeaderLabelStyle: React.CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-// A fixed `minWidth` on Duration/Status/Pass Rate/Results, matched between
-// each header below and its row (TestResultRow/RunListRow) — otherwise a
-// header label is wider or narrower than the value under it and the column
-// boundary drifts row to row instead of lining up under the header.
-const DURATION_COL_WIDTH = 56
-const STATUS_COL_WIDTH = 78
-const PASS_RATE_COL_WIDTH = 60
-const RESULTS_COL_WIDTH = 90
+// Same CSS Grid technique as TestSuiteTab.tsx's `ASSET_GRID_TEMPLATE` for
+// the same "Test Case / Duration / Status" shape — one shared template on
+// both the header and every row, not flex + matched `minWidth`s (the
+// previous approach here). That approach broke the moment a row's
+// right-hand group had a different number of children than another row's:
+// the "Artifacts" button only renders for non-passed rows, so a passed
+// row's Duration/Status sat at a different position than a failed row's,
+// which sat different again from the header. A dedicated Actions column
+// (present, just empty, on every row) fixes Duration/Status in place
+// regardless of whether Artifacts renders — and lines this list up with
+// the Test Suite tab's, since it's the same shape.
+const RESULT_GRID_TEMPLATE = '1fr 70px 130px 100px'
+// Runs table columns (RunListHeader/RunListRow) use percentages, not px —
+// `table-layout: fixed` + `width: 100%` on `.data-table` means these scale
+// with the table instead of leaving it stuck at a fixed pixel sum. Date &
+// Time gets the biggest share (30%); the rest split what's left, and Status
+// stays unwidthed so it alone absorbs any remainder.
+const DATE_COL_WIDTH = '30%'
+const TRIGGERED_BY_COL_WIDTH = '16%'
+const PASS_RATE_COL_WIDTH = '10%'
+const PASSED_COL_WIDTH = '12%'
+const FAILED_COL_WIDTH = '12%'
+const RUN_DURATION_COL_WIDTH = '10%'
 
 // Same "Test Case" / "Duration" / "Status" columns as the Test Suite tab's
 // asset list (TestSuiteTab.tsx) — a failing test case reads the same way in
 // both places, so correlating one against the other doesn't require
 // re-learning the layout.
-function ResultListHeader() {
+type ResultSortKey = 'name' | 'duration' | 'status'
+
+function resultSortValue(result: TestResultRead, key: ResultSortKey): string | number {
+  switch (key) {
+    case 'name':
+      return result.scenario_name.toLowerCase()
+    case 'duration':
+      return result.duration_ms ?? -1
+    case 'status':
+      return result.status
+  }
+}
+
+function sortResults(results: TestResultRead[], key: ResultSortKey, dir: 'asc' | 'desc'): TestResultRead[] {
+  const sorted = [...results].sort((a, b) => {
+    const av = resultSortValue(a, key)
+    const bv = resultSortValue(b, key)
+    if (av < bv) return -1
+    if (av > bv) return 1
+    return 0
+  })
+  return dir === 'asc' ? sorted : sorted.reverse()
+}
+
+function SortableColumnLabel({
+  label,
+  sortKey,
+  activeKey,
+  dir,
+  onSort,
+  align,
+}: {
+  label: string
+  sortKey: ResultSortKey
+  activeKey: ResultSortKey | null
+  dir: 'asc' | 'desc'
+  onSort: (key: ResultSortKey) => void
+  align?: 'right'
+}) {
+  const isActive = sortKey === activeKey
+  return (
+    <span
+      onClick={() => onSort(sortKey)}
+      style={{ ...columnHeaderLabelStyle, textAlign: align, cursor: 'pointer', userSelect: 'none' }}
+    >
+      {label}
+      {isActive ? (dir === 'asc' ? ' ▲' : ' ▼') : ''}
+    </span>
+  )
+}
+
+function ResultListHeader({
+  sortKey,
+  sortDir,
+  onSort,
+}: {
+  sortKey: ResultSortKey | null
+  sortDir: 'asc' | 'desc'
+  onSort: (key: ResultSortKey) => void
+}) {
   return (
     <div
       style={{
-        display: 'flex',
-        justifyContent: 'space-between',
+        display: 'grid',
+        gridTemplateColumns: RESULT_GRID_TEMPLATE,
         alignItems: 'center',
         gap: 12,
         padding: '8px 16px',
@@ -232,13 +315,17 @@ function ResultListHeader() {
         borderBottom: '1px solid var(--border-hairline)',
       }}
     >
-      <span style={columnHeaderLabelStyle}>Test Case</span>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ ...columnHeaderLabelStyle, minWidth: DURATION_COL_WIDTH, textAlign: 'right' }}>
-          Duration
-        </span>
-        <span style={{ ...columnHeaderLabelStyle, minWidth: STATUS_COL_WIDTH }}>Status</span>
-      </div>
+      <SortableColumnLabel label="Test Case" sortKey="name" activeKey={sortKey} dir={sortDir} onSort={onSort} />
+      <SortableColumnLabel
+        label="Duration"
+        sortKey="duration"
+        activeKey={sortKey}
+        dir={sortDir}
+        onSort={onSort}
+        align="right"
+      />
+      <SortableColumnLabel label="Status" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={onSort} />
+      <span aria-hidden="true" />
     </div>
   )
 }
@@ -250,9 +337,9 @@ function TestResultRow({ result, isCurrentlyRunning }: { result: TestResultRead;
   return (
     <div
       style={{
-        display: 'flex',
+        display: 'grid',
+        gridTemplateColumns: RESULT_GRID_TEMPLATE,
         alignItems: 'center',
-        justifyContent: 'space-between',
         gap: 12,
         padding: '10px 16px',
       }}
@@ -272,26 +359,23 @@ function TestResultRow({ result, isCurrentlyRunning }: { result: TestResultRead;
           </div>
         )}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-        <span
-          className="caption"
-          style={{ fontSize: 11.5, whiteSpace: 'nowrap', minWidth: DURATION_COL_WIDTH, textAlign: 'right' }}
-        >
-          {result.duration_ms != null ? `${(result.duration_ms / 1000).toFixed(1)}s` : ''}
-        </span>
-        <span style={{ minWidth: STATUS_COL_WIDTH }}>
-          {/* No distinct "running" status exists on a TestResult row (it
-              only ever moves pending -> a terminal status) — the one test
-              actually executing right now is inferred as the first still-
-              pending row once finished ones are sorted to the top. */}
-          <StatusPill status={result.status} label={isCurrentlyRunning ? 'Running' : undefined} pulsing={isCurrentlyRunning} />
-        </span>
+      <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap', textAlign: 'right' }}>
+        {result.duration_ms != null ? `${(result.duration_ms / 1000).toFixed(1)}s` : ''}
+      </span>
+      {/* No distinct "running" status exists on a TestResult row (it only
+          ever moves pending -> a terminal status) — the one test actually
+          executing right now is inferred as the first still-pending row
+          once finished ones are sorted to the top. */}
+      <span>
+        <StatusPill status={result.status} label={isCurrentlyRunning ? 'Running' : undefined} pulsing={isCurrentlyRunning} />
+      </span>
+      <span style={{ textAlign: 'right' }}>
         {canShowArtifacts && (
           <button type="button" className="button-secondary" onClick={() => setArtifactsFor(result)}>
             Artifacts
           </button>
         )}
-      </div>
+      </span>
       {artifactsFor && <ArtifactsModal testResult={artifactsFor} onClose={() => setArtifactsFor(null)} />}
     </div>
   )
@@ -314,6 +398,33 @@ function formatDateTime(iso: string): string {
   })
 }
 
+// Runs table's Date & Time column: one line, but with the timezone
+// abbreviation appended — a bare "6:42 AM" is ambiguous once a run and
+// its viewer aren't in the same zone.
+function formatDateTimeWithZone(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  })
+}
+
+// `TestRunRead` has no `duration_ms` of its own (unlike a TestResult) —
+// derived from `started_at`/`completed_at` instead, both already on the row.
+function runDurationMs(run: TestRunRead): number | null {
+  if (!run.started_at || !run.completed_at) return null
+  return new Date(run.completed_at).getTime() - new Date(run.started_at).getTime()
+}
+
+function formatDuration(ms: number | null): string {
+  if (ms == null) return '—'
+  const totalSeconds = Math.round(ms / 1000)
+  if (totalSeconds < 60) return `${totalSeconds}s`
+  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`
+}
+
 function RunDetail({
   run,
   onBack,
@@ -325,19 +436,29 @@ function RunDetail({
 }) {
   const isRunning = run.status === 'pending' || run.status === 'running'
   const [resultsPage, setResultsPage] = useState(0)
+  const [resultSortKey, setResultSortKey] = useState<ResultSortKey | null>(null)
+  const [resultSortDir, setResultSortDir] = useState<'asc' | 'desc'>('asc')
   const results = run.results ?? []
+  const runningResultId = run.status === 'running' ? results.find((r) => r.status === 'pending')?.id : undefined
   // Finished (passed/failed/etc.) first, still-pending ones last — each
   // group keeps its original request order (stable sort on one boolean).
-  const orderedResults = [...results].sort(
-    (a, b) => (a.status === 'pending' ? 1 : 0) - (b.status === 'pending' ? 1 : 0),
-  )
-  const runningResultId =
-    run.status === 'running' ? orderedResults.find((r) => r.status === 'pending')?.id : undefined
+  // Only the default order, used until the viewer picks a column to sort by.
+  const orderedResults = resultSortKey
+    ? sortResults(results, resultSortKey, resultSortDir)
+    : [...results].sort((a, b) => (a.status === 'pending' ? 1 : 0) - (b.status === 'pending' ? 1 : 0))
   const resultsTotalPages = Math.max(1, Math.ceil(orderedResults.length / RESULTS_PER_PAGE))
   const pagedResults = orderedResults.slice(
     resultsPage * RESULTS_PER_PAGE,
     resultsPage * RESULTS_PER_PAGE + RESULTS_PER_PAGE,
   )
+  function handleResultSort(key: ResultSortKey) {
+    if (key === resultSortKey) {
+      setResultSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setResultSortKey(key)
+      setResultSortDir('asc')
+    }
+  }
 
   return (
     <div>
@@ -345,19 +466,12 @@ function RunDetail({
         <div>
           <button
             type="button"
+            className="button-secondary"
             onClick={onBack}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--accent)',
-              fontSize: 12.5,
-              fontWeight: 600,
-              cursor: 'pointer',
-              padding: 0,
-              marginBottom: 8,
-            }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 8 }}
           >
-            ← All Runs
+            <BackIcon />
+            All Runs
           </button>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <StatusPill status={run.status} label={testRunStatusLabel(run.status)} />
@@ -397,7 +511,7 @@ function RunDetail({
 
       {run.results && results.length > 0 && (
         <div className="card-panel" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <ResultListHeader />
+          <ResultListHeader sortKey={resultSortKey} sortDir={resultSortDir} onSort={handleResultSort} />
           {pagedResults.map((result) => (
             <div key={result.id} style={{ borderBottom: '1px solid var(--border-hairline)' }}>
               <TestResultRow result={result} isCurrentlyRunning={result.id === runningResultId} />
@@ -406,8 +520,11 @@ function RunDetail({
           <Pagination
             page={resultsPage}
             totalPages={resultsTotalPages}
+            totalItems={orderedResults.length}
+            pageSize={RESULTS_PER_PAGE}
             onPrev={() => setResultsPage((p) => p - 1)}
             onNext={() => setResultsPage((p) => p + 1)}
+            onPage={setResultsPage}
           />
         </div>
       )}
@@ -415,79 +532,172 @@ function RunDetail({
   )
 }
 
-// Mirrors RunListRow's own column order (date/trigger, then pass rate,
-// results, status) so the header lines up with what each row shows.
-function RunListHeader() {
+// Backend only ever produces "Manual run" / "Manual run by {name}" (see
+// `_to_test_run_read` in api/main.py).
+function parseTrigger(trigger: string): { by: string } {
+  const match = trigger.match(/^Manual run by (.+)$/)
+  return { by: match ? match[1] : '—' }
+}
+
+type SortKey = 'date' | 'triggeredBy' | 'passRate' | 'passed' | 'failed' | 'duration' | 'status'
+
+function sortValue(run: TestRunRead, key: SortKey): string | number {
+  switch (key) {
+    case 'date':
+      return run.created_at
+    case 'triggeredBy':
+      return parseTrigger(run.trigger).by.toLowerCase()
+    case 'passRate':
+      return run.pass_rate ?? -1
+    case 'passed':
+      return run.passed_count
+    case 'failed':
+      return run.failed_count
+    case 'duration':
+      return runDurationMs(run) ?? -1
+    case 'status':
+      return run.status
+  }
+}
+
+// Sorts only the currently-loaded page — the list API has no `sort` param,
+// and re-sorting across pages would mean fetching every page up front.
+function sortRuns(runs: TestRunRead[], key: SortKey, dir: 'asc' | 'desc'): TestRunRead[] {
+  const sorted = [...runs].sort((a, b) => {
+    const av = sortValue(a, key)
+    const bv = sortValue(b, key)
+    if (av < bv) return -1
+    if (av > bv) return 1
+    return 0
+  })
+  return dir === 'asc' ? sorted : sorted.reverse()
+}
+
+function SortableTh({
+  label,
+  sortKey,
+  activeKey,
+  dir,
+  onSort,
+  width,
+  align,
+}: {
+  label: string
+  sortKey: SortKey
+  activeKey: SortKey
+  dir: 'asc' | 'desc'
+  onSort: (key: SortKey) => void
+  // Omitted only for the last column — under `table-layout: fixed`, every
+  // other column holds exactly the width it's given (px or %), and the one
+  // column left without a width absorbs whatever space remains instead of
+  // the browser stretching all of them proportionally to fill the row.
+  width?: number | string
+  align?: 'left' | 'right'
+}) {
+  const isActive = sortKey === activeKey
   return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        gap: 12,
-        padding: '8px 16px',
-        background: 'var(--canvas-wash-alt)',
-        borderBottom: '1px solid var(--border-hairline)',
-      }}
+    <th
+      className="sortable"
+      onClick={() => onSort(sortKey)}
+      style={{ ...columnHeaderLabelStyle, width, textAlign: align ?? 'left' }}
     >
-      <span style={columnHeaderLabelStyle}>Run</span>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-        <span style={{ ...columnHeaderLabelStyle, minWidth: PASS_RATE_COL_WIDTH, textAlign: 'right' }}>
-          Pass Rate
-        </span>
-        <span style={{ ...columnHeaderLabelStyle, minWidth: RESULTS_COL_WIDTH, textAlign: 'right' }}>
-          Results
-        </span>
-        <span style={{ ...columnHeaderLabelStyle, minWidth: STATUS_COL_WIDTH }}>Status</span>
-      </div>
-    </div>
+      {label}
+      {isActive ? (dir === 'asc' ? ' ▲' : ' ▼') : ''}
+    </th>
+  )
+}
+
+function RunListHeader({
+  sortKey,
+  sortDir,
+  onSort,
+}: {
+  sortKey: SortKey
+  sortDir: 'asc' | 'desc'
+  onSort: (key: SortKey) => void
+}) {
+  return (
+    <thead>
+      <tr>
+        <SortableTh label="Date & Time" sortKey="date" activeKey={sortKey} dir={sortDir} onSort={onSort} width={DATE_COL_WIDTH} />
+        <SortableTh
+          label="Triggered By"
+          sortKey="triggeredBy"
+          activeKey={sortKey}
+          dir={sortDir}
+          onSort={onSort}
+          width={TRIGGERED_BY_COL_WIDTH}
+        />
+        <SortableTh
+          label="Pass Rate"
+          sortKey="passRate"
+          activeKey={sortKey}
+          dir={sortDir}
+          onSort={onSort}
+          width={PASS_RATE_COL_WIDTH}
+          align="right"
+        />
+        <SortableTh
+          label="Passed"
+          sortKey="passed"
+          activeKey={sortKey}
+          dir={sortDir}
+          onSort={onSort}
+          width={PASSED_COL_WIDTH}
+          align="right"
+        />
+        <SortableTh
+          label="Failed"
+          sortKey="failed"
+          activeKey={sortKey}
+          dir={sortDir}
+          onSort={onSort}
+          width={FAILED_COL_WIDTH}
+          align="right"
+        />
+        <SortableTh
+          label="Duration"
+          sortKey="duration"
+          activeKey={sortKey}
+          dir={sortDir}
+          onSort={onSort}
+          width={RUN_DURATION_COL_WIDTH}
+          align="right"
+        />
+        <SortableTh label="Status" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={onSort} />
+      </tr>
+    </thead>
   )
 }
 
 function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
+  const { by } = parseTrigger(run.trigger)
   return (
-    <div
+    <tr
       role="button"
       tabIndex={0}
-      className="list-row"
+      className="clickable"
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') onOpen()
       }}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 12,
-        padding: '12px 16px',
-        cursor: 'pointer',
-        borderLeft: `3px solid ${runSignalColor(run)}`,
-      }}
     >
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{formatDateTime(run.created_at)}</div>
-        <div className="caption" style={{ fontSize: 11.5, marginTop: 2 }}>
-          {run.trigger}
-        </div>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexShrink: 0 }}>
-        <span
-          className="caption"
-          style={{ fontSize: 12, whiteSpace: 'nowrap', minWidth: PASS_RATE_COL_WIDTH, textAlign: 'right' }}
-        >
-          {run.pass_rate != null ? `${Math.round(run.pass_rate * 100)}% pass` : '—'}
-        </span>
-        <span
-          className="caption"
-          style={{ fontSize: 12, whiteSpace: 'nowrap', minWidth: RESULTS_COL_WIDTH, textAlign: 'right' }}
-        >
-          {run.passed_count}/{run.total_count} results
-        </span>
-        <span style={{ minWidth: STATUS_COL_WIDTH }}>
-          <StatusPill status={run.status} label={testRunStatusLabel(run.status)} />
-        </span>
-      </div>
-    </div>
+      <td style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', borderLeft: `3px solid ${runSignalColor(run)}` }}>
+        {formatDateTimeWithZone(run.created_at)}
+      </td>
+      <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>{by}</td>
+      <td className="caption" style={{ fontSize: 12, textAlign: 'right' }}>
+        {run.pass_rate != null ? `${Math.round(run.pass_rate * 100)}%` : '—'}
+      </td>
+      <td style={{ fontSize: 12, textAlign: 'right', color: 'var(--good)' }}>{run.passed_count} passed</td>
+      <td style={{ fontSize: 12, textAlign: 'right', color: 'var(--danger)' }}>{run.failed_count} failed</td>
+      <td className="caption" style={{ fontSize: 12, textAlign: 'right' }}>
+        {formatDuration(runDurationMs(run))}
+      </td>
+      <td>
+        <StatusPill status={run.status} label={testRunStatusLabel(run.status)} />
+      </td>
+    </tr>
   )
 }
 
@@ -514,6 +724,17 @@ export function RunsTab({
   const [runs, setRuns] = useState<TestRunRead[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
+  const [sortKey, setSortKey] = useState<SortKey>('date')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const sortedRuns = useMemo(() => sortRuns(runs, sortKey, sortDir), [runs, sortKey, sortDir])
+  function handleSort(key: SortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(key)
+      setSortDir('asc')
+    }
+  }
   const autoSelectPendingRef = useRef(!!autoSelectLatest)
   const totalPages = Math.max(1, Math.ceil(total / RUNS_PER_PAGE))
   // "Latest ref" pattern — `onAutoSelectConsumed` is a fresh arrow function
@@ -640,17 +861,24 @@ export function RunsTab({
           className="card-panel"
           style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
         >
-          <RunListHeader />
-          {runs.map((run) => (
-            <div key={run.id} style={{ borderBottom: '1px solid var(--border-hairline)' }}>
-              <RunListRow run={run} onOpen={() => setSelectedRunId(run.id)} />
-            </div>
-          ))}
+          <div style={{ overflowX: 'auto' }}>
+            <table className="data-table">
+              <RunListHeader sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
+              <tbody>
+                {sortedRuns.map((run) => (
+                  <RunListRow key={run.id} run={run} onOpen={() => setSelectedRunId(run.id)} />
+                ))}
+              </tbody>
+            </table>
+          </div>
           <Pagination
             page={page}
             totalPages={totalPages}
+            totalItems={total}
+            pageSize={RUNS_PER_PAGE}
             onPrev={() => setPage((p) => p - 1)}
             onNext={() => setPage((p) => p + 1)}
+            onPage={setPage}
           />
         </div>
       )}

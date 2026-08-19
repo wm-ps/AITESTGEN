@@ -251,15 +251,13 @@ export function CodeModal({ testCase, onClose }: { testCase: { name: string; cod
 
 export function TestSuiteResults({
   applicationId,
-  onRunAllTests,
-  onViewExecutions,
+  onRunTests,
   furthestCount,
   onStepClick,
   onPrevious,
 }: {
   applicationId: string
-  onRunAllTests: () => void
-  onViewExecutions: () => void
+  onRunTests: () => void
   furthestCount: number
   onStepClick?: (key: StepKey) => void
   onPrevious?: () => void
@@ -413,18 +411,6 @@ export function TestSuiteResults({
                 {testCaseCount}/{expectedTestCaseCount || '…'} test cases so far
               </p>
             }
-            footer={
-              <p className="caption" style={{ margin: '6px 0 0', fontSize: 12, opacity: 0.7 }}>
-                Stuck?{' '}
-                <button
-                  type="button"
-                  onClick={() => onStepClick?.('generate')}
-                  style={{ font: 'inherit', color: 'var(--accent)', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
-                >
-                  Resume generation
-                </button>
-              </p>
-            }
           />
         </main>
       </>
@@ -435,7 +421,7 @@ export function TestSuiteResults({
     <>
       <Stepper current="generate" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} />
       <main style={{ display: 'flex', justifyContent: 'center', padding: '28px 24px' }}>
-        <div style={{ maxWidth: 'clamp(760px, 68vw, 1080px)', width: '100%' }}>
+        <div style={{ maxWidth: 'clamp(760px, 92vw, var(--content-max-wide))', width: '100%' }}>
           <div
             style={{
               position: 'relative',
@@ -524,7 +510,7 @@ export function TestSuiteResults({
                 </button>
                 <button
                   type="button"
-                  onClick={onRunAllTests}
+                  onClick={onRunTests}
                   style={{
                     padding: '9px 20px',
                     background: 'rgba(255,255,255,0.16)',
@@ -537,24 +523,7 @@ export function TestSuiteResults({
                     cursor: 'pointer',
                   }}
                 >
-                  Run All Tests
-                </button>
-                <button
-                  type="button"
-                  onClick={onViewExecutions}
-                  style={{
-                    padding: '9px 20px',
-                    background: 'rgba(255,255,255,0.16)',
-                    color: '#FFFFFF',
-                    border: '1px solid rgba(255,255,255,0.5)',
-                    borderRadius: 'var(--radius)',
-                    fontSize: 13.5,
-                    fontWeight: 700,
-                    fontFamily: 'inherit',
-                    cursor: 'pointer',
-                  }}
-                >
-                  View Executions
+                  Run Tests
                 </button>
                 {hasIncomplete && (
                   <button
@@ -810,8 +779,11 @@ export function TestSuiteResults({
                         <Pagination
                           page={testCasePage}
                           totalPages={testCasesTotalPages}
+                          totalItems={suite.test_cases.length}
+                          pageSize={TEST_CASES_PER_PAGE}
                           onPrev={() => setTestCasePage(suite.id, testCasePage - 1)}
                           onNext={() => setTestCasePage(suite.id, testCasePage + 1)}
+                          onPage={(p) => setTestCasePage(suite.id, p)}
                         />
                       </div>
                     )}
@@ -822,8 +794,11 @@ export function TestSuiteResults({
               <Pagination
                 page={suitesPage}
                 totalPages={suitesTotalPages}
+                totalItems={suites.length}
+                pageSize={SUITES_PER_PAGE}
                 onPrev={() => setSuitesPage((p) => p - 1)}
                 onNext={() => setSuitesPage((p) => p + 1)}
+                onPage={setSuitesPage}
               />
             )}
           </div>

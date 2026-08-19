@@ -7,13 +7,19 @@
 // discovery_completed/journeys_generated/scenarios_generated share
 // running's accent color (still "in motion"); suite_generated is the only
 // non-running state that gets green (true finish line).
-const COLORS: Record<string, { background: string; foreground: string }> = {
+const STATUS_COLORS: Record<string, { background: string; foreground: string }> = {
   running: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   discovery_completed: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   journeys_generated: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   scenarios_generated: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   generating_tests: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   suite_generated: { background: 'var(--good-wash)', foreground: 'var(--good-strong)' },
+  // Home card overrides (Story: Home card redesign) — `suite_generated`
+  // once Workspace is actually enterable, and an in-progress "Run All
+  // Tests" TestRun, which is a different axis from discovery/generation
+  // and must not be confused with `running` (discovery) above.
+  ready_to_execute: { background: 'var(--good-wash)', foreground: 'var(--good-strong)' },
+  test_run_running: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   complete: { background: 'var(--good-wash)', foreground: 'var(--good-strong)' },
   failed: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },
   paused: { background: 'var(--warn-wash)', foreground: 'var(--warn-strong)' },
@@ -36,6 +42,8 @@ const LABELS: Record<string, string> = {
   scenarios_generated: 'Scenarios generated',
   generating_tests: 'Generating test cases',
   suite_generated: 'Test suite generated',
+  ready_to_execute: 'Ready to run',
+  test_run_running: 'Running',
   completed: 'Completed',
   // "Skipped", not "Blocked" — `blocked_count`/status="blocked" are vestigial
   // now that ExecutionPolicy gating was removed (see the `ponytail:` note in
@@ -53,6 +61,7 @@ export function StatusPill({
   status,
   pulsing,
   label: labelOverride,
+  variant = 'pill',
 }: {
   status: string
   pulsing?: boolean
@@ -62,36 +71,58 @@ export function StatusPill({
   // copy for a running TestRun) — callers outside the discovery domain pass
   // an explicit override rather than this component guessing from context.
   label?: string
+  // 'inline' drops the tinted pill chrome for a dashboard-list-row look
+  // (colored dot + plain text, e.g. Vercel/Linear deployment status) —
+  // same color data, no background/padding/shadow.
+  variant?: 'pill' | 'inline'
 }) {
   const label = labelOverride ?? LABELS[status] ?? status.charAt(0).toUpperCase() + status.slice(1)
-  const colors = COLORS[status] ?? COLORS.running
+  const colors = STATUS_COLORS[status] ?? STATUS_COLORS.running
   const showPulse = pulsing ?? status === 'running'
+  const inline = variant === 'inline'
   return (
     <span
-      className="status-pill"
+      className={inline ? undefined : 'status-pill'}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
         gap: 6,
-        background: colors.background,
-        color: colors.foreground,
+        background: inline ? 'none' : colors.background,
+        color: inline ? 'var(--ink-secondary)' : colors.foreground,
+        fontSize: inline ? 12.5 : undefined,
+        fontWeight: inline ? 600 : undefined,
       }}
     >
       {/* A leading dot always shows, not only while pulsing — reads as a
           proper status indicator (like a build/CI chip) instead of plain
-          tinted text, and the pulse becomes "in motion" rather than the
-          only thing that made this a status at all. */}
-      <span
-        className={showPulse ? 'status-pill-pulse-dot' : undefined}
-        aria-hidden="true"
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: 'var(--radius-full)',
-          background: colors.foreground,
-          flexShrink: 0,
-        }}
-      />
+          tinted text. While in motion it becomes a spinning ring instead of
+          a solid dot — reads as "actively working" rather than a blink. */}
+      {showPulse ? (
+        <span
+          aria-hidden="true"
+          style={{
+            width: 9,
+            height: 9,
+            borderRadius: 'var(--radius-full)',
+            border: '1.5px solid color-mix(in srgb, currentColor 25%, transparent)',
+            borderTopColor: 'currentColor',
+            color: colors.foreground,
+            flexShrink: 0,
+            animation: 'aitg-spin 0.7s linear infinite',
+          }}
+        />
+      ) : (
+        <span
+          aria-hidden="true"
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: 'var(--radius-full)',
+            background: colors.foreground,
+            flexShrink: 0,
+          }}
+        />
+      )}
       {label}
     </span>
   )

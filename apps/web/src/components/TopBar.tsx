@@ -11,10 +11,20 @@ const ENV_DOT_COLOR: Record<string, string> = {
   production: 'var(--good-strong)',
 }
 
-function BackIcon() {
+function WorkspaceIcon() {
   return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M19 12H5M12 19l-7-7 7-7" />
+    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x={3} y={4} width={18} height={16} rx={2} />
+      <path d="M3 9h18M9 9v11" />
+    </svg>
+  )
+}
+
+function DiscoveryIcon() {
+  return (
+    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx={11} cy={11} r={6.5} />
+      <path d="M20 20l-3.8-3.8" />
     </svg>
   )
 }
@@ -32,17 +42,19 @@ export function TopBar({
   applicationBadge,
   onLogout,
   onGoHome,
-  onBack,
   onInviteTeammate,
   onOpenSettings,
+  onOpenWorkspace,
+  onViewDiscovery,
 }: {
   user: UserRead
   applicationBadge?: { name: string; environment: string }
   onLogout: () => void
   onGoHome?: () => void
-  onBack?: () => void
   onInviteTeammate?: () => void
   onOpenSettings?: () => void
+  onOpenWorkspace?: () => void
+  onViewDiscovery?: () => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -61,29 +73,6 @@ export function TopBar({
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)' }}>
-        {onBack && (
-          <button
-            type="button"
-            onClick={onBack}
-            aria-label="Back"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 28,
-              height: 28,
-              borderRadius: 6,
-              border: 'none',
-              background: 'none',
-              color: 'var(--ink-muted)',
-              padding: 0,
-              cursor: 'pointer',
-              flexShrink: 0,
-            }}
-          >
-            <BackIcon />
-          </button>
-        )}
         <button
           type="button"
           onClick={onGoHome}
@@ -141,7 +130,30 @@ export function TopBar({
         )}
       </div>
 
-      <div style={{ position: 'relative' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)' }}>
+        {onViewDiscovery && (
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={onViewDiscovery}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <DiscoveryIcon />
+            View Discovery
+          </button>
+        )}
+        {onOpenWorkspace && (
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={onOpenWorkspace}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+          >
+            <WorkspaceIcon />
+            Workspace
+          </button>
+        )}
+        <div style={{ position: 'relative' }}>
         <button
           type="button"
           aria-haspopup="menu"
@@ -263,6 +275,7 @@ export function TopBar({
             </div>
           </>
         )}
+        </div>
       </div>
     </header>
   )

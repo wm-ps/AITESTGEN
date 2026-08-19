@@ -11,7 +11,7 @@ import pytest
 from api.db import engine, init_db
 from api.main import app
 from api.scripts.seed_dev_data import seed
-from domain import DiscoveryRun, Journey, Scenario, TestSuite
+from domain import Application, DiscoveryRun, Journey, Scenario, TestRun, TestSuite
 from fastapi.testclient import TestClient
 from hvac.exceptions import VaultError
 from secrets_client.vault_client import VAULT_ADDR, VAULT_TOKEN
@@ -126,6 +126,40 @@ def _add_test_suite(journey: Journey, status: str = "generating") -> None:
             )
         )
         session.commit()
+
+
+def _add_test_run(application: dict, passed_count: int, total_count: int) -> None:
+    with Session(engine) as session:
+        app_row = session.exec(
+            select(Application).where(Application.external_id == uuid.UUID(application["id"]))
+        ).one()
+        session.add(
+            TestRun(
+                application_id=app_row.id,
+                status="completed",
+                environment_snapshot=application["environment"],
+                target_base_url_snapshot=application["url"],
+                total_count=total_count,
+                passed_count=passed_count,
+            )
+        )
+        session.commit()
+
+
+def test_get_home_reports_execution_count_and_pass_rate_trend() -> None:
+    init_db()
+    client = _signed_in_client("Org Home Executions")
+    application = _create_application(client, "Executions App")
+
+    _add_test_run(application, passed_count=2, total_count=4)
+    _add_test_run(application, passed_count=3, total_count=4)
+
+    response = client.get("/home")
+    assert response.status_code == 200
+    body = response.json()[0]
+    assert body["test_run_count"] == 2
+    assert body["recent_pass_rates"] == [0.5, 0.75]
+    assert body["last_test_run_pass_rate"] == 0.75
 
 
 def test_get_home_returns_counts_scoped_to_org() -> None:

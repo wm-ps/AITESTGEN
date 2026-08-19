@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { api, type ApplicationRead, type HomeApplicationRead, type UserRead } from '../api'
 import { StatusPill } from './StatusPill'
 import { Pagination } from './Pagination'
+import { Toast } from './Toast'
 
 const POLL_INTERVAL_MS = 15000
 const APPS_PER_PAGE = 5
@@ -45,6 +46,239 @@ function MoreIcon({ size }: { size: number }) {
       <circle cx="12" cy="12" r="1.8" />
       <circle cx="12" cy="19" r="1.8" />
     </svg>
+  )
+}
+
+function BranchIcon({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="6" cy="5" r="2.2" />
+      <circle cx="6" cy="19" r="2.2" />
+      <circle cx="18" cy="12" r="2.2" />
+      <path d="M6 7.2V16.8" />
+      <path d="M6 9.5C6 12 8 12 10.5 12H15.8" />
+    </svg>
+  )
+}
+
+function DocumentIcon({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6.5 3.5h8l3 3v13a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z" />
+      <path d="M14 3.5V7h3.5" />
+      <path d="M8.5 12h7M8.5 15.3h7" />
+    </svg>
+  )
+}
+
+function RunsIcon({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M10.3 8.7 15 12l-4.7 3.3V8.7Z" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/)
+  return parts
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase() ?? '')
+    .join('')
+}
+
+function relativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime()
+  const minutes = Math.round(diffMs / 60000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes} min ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.round(hours / 24)
+  return `${days}d ago`
+}
+
+// Same 90%/70% pass-rate cutoffs Workspace Overview's `_health_tier` uses
+// (apps/api/src/api/main.py) — one health-tier vocabulary across the app.
+function passRateColor(passRate: number): string {
+  if (passRate >= 0.9) return 'var(--good-strong)'
+  if (passRate >= 0.7) return 'var(--warn-strong)'
+  return 'var(--danger-strong)'
+}
+
+function PassRateRing({ passRate }: { passRate: number | null }) {
+  const size = 40
+  const stroke = 4
+  const r = (size - stroke) / 2
+  const circumference = 2 * Math.PI * r
+  const pct = passRate == null ? 0 : Math.min(1, Math.max(0, passRate))
+  const color = passRate == null ? 'var(--border-strong)' : passRateColor(pct)
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <span style={{ position: 'relative', display: 'inline-flex', width: size, height: size, flexShrink: 0 }}>
+        <svg width={size} height={size} overflow="visible" style={{ position: 'absolute', top: 0, left: 0, transform: 'rotate(-90deg)' }}>
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--border-strong)" strokeWidth={stroke} />
+          {passRate != null && (
+            <circle
+              cx={size / 2}
+              cy={size / 2}
+              r={r}
+              fill="none"
+              stroke={color}
+              strokeWidth={stroke}
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={circumference * (1 - pct)}
+            />
+          )}
+        </svg>
+        <span style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color }}>
+          {passRate == null ? '—' : `${Math.round(pct * 100)}%`}
+        </span>
+      </span>
+      <span className="caption" style={{ fontSize: 12 }}>
+        {passRate == null ? 'No runs yet' : 'Pass rate'}
+      </span>
+    </div>
+  )
+}
+
+// The card's left accent bar is bold enough to read as a real health
+// signal — unlike `StatusPill`'s dot/text, which can afford `--accent`
+// (a teal that reads as "green enough") for every ordinary in-progress
+// stage. Reusing that same accent for a thick bar made routine "still
+// generating" cards look done/healthy. Only genuine states (ready, a run
+// actively executing, failed, paused) get a color; every other stage gets
+// a neutral bar.
+function accentBarColor(status: string): string {
+  switch (status) {
+    case 'ready_to_execute':
+      return 'var(--good-strong)'
+    case 'test_run_running':
+      return 'var(--accent)'
+    case 'failed':
+      return 'var(--danger-strong)'
+    case 'paused':
+      return 'var(--warn-strong)'
+    default:
+      return 'var(--border-strong)'
+  }
+}
+
+// The SaaS-standard mini bar/column sparkline (Stripe/Vercel/GitHub-style
+// run history): each bar is one run, bar height is that run's pass rate,
+// bar color is its health tier — sequence AND magnitude read at a glance,
+// no axis needed since heights compare directly against each other.
+/* Trend column hidden for now — commented out with its call site in
+ * ApplicationCard rather than deleted, since the column is coming back.
+function MiniBarChart({ values }: { values: (number | null)[] }) {
+  // A single bar has nothing to compare against — it's not a trend, just
+  // one number redrawn as a shape (and a low pass rate renders as a bar
+  // too short to see, which reads as blank/broken rather than "one run").
+  if (values.length < 2) {
+    return (
+      <span className="caption" style={{ fontSize: 12 }}>
+        {values.length === 0 ? 'No runs yet' : 'First run — no trend yet'}
+      </span>
+    )
+  }
+  // Combo chart: bars still give each run's own magnitude/tier, a
+  // connecting line across their tops adds the rising/falling shape a
+  // reader would otherwise have to infer bar-by-bar.
+  const w = 100
+  const h = 28
+  const n = values.length
+  const barWidth = (w / n) * 0.55
+  const points = values.map((v, i) => {
+    const val = v ?? 0
+    const cx = (i + 0.5) * (w / n)
+    const barHeight = Math.max(2, val * h)
+    return { cx, y: h - val * h, barX: cx - barWidth / 2, barHeight, color: v != null ? passRateColor(v) : 'var(--border-strong)' }
+  })
+  return (
+    <div>
+      <svg width={110} height={h} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" overflow="visible">
+        <title>Recent runs, oldest to newest — bars are each run, line is the trend</title>
+        {points.map((p, i) => (
+          <rect key={i} x={p.barX} y={h - p.barHeight} width={barWidth} height={p.barHeight} rx={1} fill={p.color} opacity={0.45} />
+        ))}
+        <polyline
+          points={points.map((p) => `${p.cx},${p.y}`).join(' ')}
+          fill="none"
+          stroke="var(--ink-secondary)"
+          strokeWidth={1.6}
+          vectorEffect="non-scaling-stroke"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        {points.map((p, i) => (
+          <circle key={i} cx={p.cx} cy={p.y} r={2} fill={p.color} />
+        ))}
+      </svg>
+      <div className="caption" style={{ fontSize: 12, marginTop: 4 }}>
+        Recent runs
+      </div>
+    </div>
+  )
+}
+*/
+
+// Coverage % (scenario_journeys_covered / journey_count) is available on
+// hover as a tooltip rather than a ring — a circular progress ring around a
+// square-cornered badge read as visually broken, and this card's stat chips
+// below already state the raw journey/scenario numbers directly.
+function InitialsAvatar({ name, coveragePct, hasJourneys }: { name: string; coveragePct: number; hasJourneys: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      title={hasJourneys ? `${Math.round(coveragePct * 100)}% of journeys covered by scenarios` : undefined}
+      style={{
+        display: 'inline-flex',
+        alignSelf: 'stretch',
+        width: '100%',
+        height: '100%',
+        borderRadius: 10,
+        background: 'var(--accent-wash)',
+        color: 'var(--accent)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontWeight: 700,
+        fontSize: 15,
+        flexShrink: 0,
+      }}
+    >
+      {initials(name)}
+    </span>
+  )
+}
+
+// Value and label sit on one line, glued together as a single phrase ("12
+// Journeys") — a stacked bold-number-over-label layout read as its own
+// clickable badge, which it isn't.
+function StatChip({
+  value,
+  label,
+  valueColor,
+  icon,
+}: {
+  value: string | number
+  label: string
+  valueColor?: string
+  icon: ReactNode
+}) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      <span aria-hidden="true" style={{ display: 'inline-flex', color: valueColor ?? 'var(--ink-muted)' }}>
+        {icon}
+      </span>
+      <span>
+        <span style={{ fontWeight: 700, color: valueColor }}>{value}</span>{' '}
+        <span className="caption" style={{ fontSize: 12 }}>
+          {label}
+        </span>
+      </span>
+    </span>
   )
 }
 
@@ -91,11 +325,35 @@ function ApplicationCard({
             ? 'scenarios_generated'
             : application.journey_count > 0
               ? 'journeys_generated'
-              : discoveryStatus === 'complete'
+              // `discovery_status` flips to "complete" as soon as the crawl
+              // finishes — before the LLM inference call that produces
+              // Journeys has run. `discovery_stage` reaching "analyzed" is
+              // the real signal that analysis (and its journey count) is in,
+              // so this card doesn't say "completed" while it's still
+              // waiting on that call.
+              : discoveryStatus === 'complete' && application.discovery_stage === 'analyzed'
                 ? 'discovery_completed'
                 : 'running'
 
   const isRunning = discoveryStatus === 'running'
+  const hasJourneys = application.journey_count > 0
+  const coveragePct = hasJourneys ? application.scenario_journeys_covered / application.journey_count : 0
+
+  // A "Run All Tests" TestRun in progress outranks every discovery/
+  // generation stage above — it's a different axis (execution, not
+  // pipeline position) and the card must say so regardless of `stage`.
+  const testRunRunning = application.last_test_run_status === 'running'
+  const readyToExecute = stage === 'suite_generated' && !testRunRunning
+  const displayStatus = testRunRunning ? 'test_run_running' : readyToExecute ? 'ready_to_execute' : stage
+  const passRate = application.last_test_run_pass_rate
+  // ponytail: no "last touched" column on Application, so once a TestRun
+  // exists it's the freshest signal we show; before that we fall back to
+  // the connect timestamp (`created_at`), which is honestly older than
+  // "updated" implies. A real `updated_at` column (bumped on
+  // discovery/generation activity) would fix this if it matters later.
+  const activityLabel = application.last_test_run_created_at
+    ? `Last run ${relativeTime(application.last_test_run_created_at)}`
+    : `Updated ${relativeTime(application.created_at)}`
 
   const kebabButtonStyle: CSSProperties = {
     display: 'inline-flex',
@@ -187,45 +445,25 @@ function ApplicationCard({
       className="card-panel home-app-card"
       style={{
         textAlign: 'left',
-        borderColor: 'var(--border-hairline)',
-        padding: '20px 22px',
+        border: '1px solid var(--border-hairline)',
+        borderLeftWidth: 4,
+        borderLeftColor: accentBarColor(displayStatus),
+        padding: '16px 22px',
         cursor: 'pointer',
-        display: 'flex',
-        flexDirection: 'column',
-        maxWidth: 360,
+        display: 'grid',
+        // Trend column commented out below (for now) — its 150px + gap
+        // folds into the identity column instead of sitting empty.
+        gridTemplateColumns: '52px minmax(220px, 500px) 120px 150px 160px 120px 24px',
+        alignItems: 'center',
+        columnGap: 'var(--space-6)',
         width: '100%',
+        maxWidth: 1400,
       }}
     >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          justifyContent: 'space-between',
-          gap: 'var(--space-5)',
-          marginBottom: 'var(--space-7)',
-        }}
-      >
-        <span
-          aria-hidden="true"
-          style={{
-            display: 'inline-flex',
-            width: 42,
-            height: 42,
-            borderRadius: 10,
-            background: 'var(--accent-wash)',
-            color: 'var(--accent)',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-          }}
-        >
-          <FolderIcon size={19} />
-        </span>
-        <StatusPill status={stage} pulsing={isRunning || suiteGenerating} />
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 'var(--space-4)', marginBottom: 'var(--space-5)' }}>
+      <InitialsAvatar name={application.name} coveragePct={coveragePct} hasJourneys={hasJourneys} />
+      <div style={{ minWidth: 0 }}>
         {editing ? (
-          <>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
             <input
               autoFocus
               value={nameDraft}
@@ -276,7 +514,7 @@ function ApplicationCard({
             >
               ✕
             </button>
-          </>
+          </div>
         ) : (
           <div
             style={{
@@ -286,102 +524,106 @@ function ApplicationCard({
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               minWidth: 0,
-              maxWidth: 'calc(100% - 28px)',
             }}
           >
             {application.name}
           </div>
         )}
-        {isAdmin && !editing && (
-          <div style={{ position: 'relative', flexShrink: 0 }}>
-            <button
-              type="button"
-              title="More options"
-              onClick={(e) => {
-                e.stopPropagation()
-                setMenuOpen((v) => !v)
-              }}
-              style={kebabButtonStyle}
-            >
-              <MoreIcon size={16} />
-            </button>
-            {menuOpen && (
-              <>
-                <div
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)', marginTop: 6 }}>
+          <StatusPill status={displayStatus} pulsing={testRunRunning || isRunning || suiteGenerating} />
+          <span aria-hidden="true" style={{ width: 2, height: 16, background: 'var(--border-strong)', borderRadius: 1 }} />
+          <span className="caption" style={{ fontSize: 12 }}>
+            {activityLabel}
+          </span>
+        </div>
+      </div>
+      <span style={{ opacity: hasJourneys ? 1 : 0.45 }}>
+        <StatChip value={application.journey_count} label="Journeys" icon={<BranchIcon size={19} />} />
+      </span>
+      <span style={{ opacity: testCasesComplete ? 1 : 0.45 }}>
+        <StatChip
+          value={testCasesComplete ? application.test_case_count : '–'}
+          label="Test cases"
+          icon={<DocumentIcon size={19} />}
+        />
+      </span>
+      <span style={{ opacity: passRate == null ? 0.45 : 1 }}>
+        <PassRateRing passRate={passRate} />
+      </span>
+      <span style={{ opacity: testCasesComplete ? 1 : 0.45 }}>
+        <StatChip value={application.test_run_count} label="Executions" icon={<RunsIcon size={19} />} />
+      </span>
+      {/* Trend column hidden for now — <MiniBarChart values={application.recent_pass_rates} /> */}
+      {isAdmin && !editing && (
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          <button
+            type="button"
+            title="More options"
+            onClick={(e) => {
+              e.stopPropagation()
+              setMenuOpen((v) => !v)
+            }}
+            style={kebabButtonStyle}
+          >
+            <MoreIcon size={19} />
+          </button>
+          {menuOpen && (
+            <>
+              <div
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setMenuOpen(false)
+                }}
+                style={{ position: 'fixed', inset: 0, zIndex: 9 }}
+              />
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="card-panel"
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  right: 0,
+                  marginTop: 4,
+                  minWidth: 140,
+                  padding: 4,
+                  zIndex: 10,
+                  boxShadow: 'var(--shadow-dropdown-lg)',
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false)
+                    setNameDraft(application.name)
+                    setEditing(true)
+                  }}
+                  style={menuItemStyle}
+                >
+                  Rename
+                </button>
+                <button
+                  type="button"
+                  disabled={isRunning}
+                  title={isRunning ? 'Discovery is still running' : undefined}
                   onClick={(e) => {
                     e.stopPropagation()
                     setMenuOpen(false)
+                    setConfirmingDelete(true)
                   }}
-                  style={{ position: 'fixed', inset: 0, zIndex: 9 }}
-                />
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  className="card-panel"
                   style={{
-                    position: 'absolute',
-                    top: '100%',
-                    right: 0,
-                    marginTop: 4,
-                    minWidth: 140,
-                    padding: 4,
-                    zIndex: 10,
-                    boxShadow: 'var(--shadow-dropdown-lg)',
+                    ...menuItemStyle,
+                    color: 'var(--danger)',
+                    opacity: isRunning ? 0.4 : 1,
+                    cursor: isRunning ? 'not-allowed' : 'pointer',
                   }}
                 >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false)
-                      setNameDraft(application.name)
-                      setEditing(true)
-                    }}
-                    style={menuItemStyle}
-                  >
-                    Rename
-                  </button>
-                  <button
-                    type="button"
-                    disabled={isRunning}
-                    title={isRunning ? 'Discovery is still running' : undefined}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setMenuOpen(false)
-                      setConfirmingDelete(true)
-                    }}
-                    style={{
-                      ...menuItemStyle,
-                      color: 'var(--danger)',
-                      opacity: isRunning ? 0.4 : 1,
-                      cursor: isRunning ? 'not-allowed' : 'pointer',
-                    }}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'baseline', gap: 'var(--space-4)' }}>
-        <span>
-          <span style={{ fontSize: 15, fontWeight: 700 }}>{application.journey_count}</span>{' '}
-          <span className="caption" style={{ fontSize: 12 }}>
-            journeys
-          </span>
-        </span>
-        {testCasesComplete && (
-          <>
-            <span aria-hidden="true" style={{ width: 1, height: 12, background: 'var(--border)' }} />
-            <span>
-              <span style={{ fontSize: 15, fontWeight: 700 }}>{application.test_case_count}</span>{' '}
-              <span className="caption" style={{ fontSize: 12 }}>
-                test cases
-              </span>
-            </span>
-          </>
-        )}
-      </div>
+                  Delete
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
       {confirmingDelete && createPortal(
         <div
           role="dialog"
@@ -487,7 +729,9 @@ export function Home({
   const isAdmin = user.role === 'admin'
   const [showDemo, setShowDemo] = useState(false)
   const [applications, setApplications] = useState<HomeApplicationRead[] | null>(null)
-  const [snackbar, setSnackbar] = useState<string | null>(null)
+  const [snackbar, setSnackbar] = useState<{ message: string; kind: 'error' | 'info' } | null>(
+    null,
+  )
   const [page, setPage] = useState(0)
 
   useEffect(() => {
@@ -510,7 +754,13 @@ export function Home({
     return () => clearInterval(interval)
   }, [])
 
-  const applicationList = Array.isArray(applications) ? applications : []
+  // Newest activity first — a project just connected and one that just ran
+  // tests both count as "recent," so sort by whichever timestamp is later.
+  const applicationList = (Array.isArray(applications) ? applications : []).toSorted((a, b) => {
+    const activityTime = (app: HomeApplicationRead) =>
+      Math.max(new Date(app.created_at).getTime(), app.last_test_run_created_at ? new Date(app.last_test_run_created_at).getTime() : 0)
+    return activityTime(b) - activityTime(a)
+  })
   const totalPages = Math.max(1, Math.ceil(applicationList.length / APPS_PER_PAGE))
   const pageClamped = Math.min(page, totalPages - 1)
   const pagedApplications = applicationList.slice(
@@ -599,9 +849,8 @@ export function Home({
                 minHeight: 0,
                 overflowY: 'auto',
                 display: 'flex',
-                flexWrap: 'wrap',
-                alignContent: 'flex-start',
-                gap: 'var(--space-6)',
+                flexDirection: 'column',
+                gap: 'var(--space-5)',
                 animation: 'aitg-fade-up 0.4s ease-out 0.1s both',
               }}
             >
@@ -611,17 +860,25 @@ export function Home({
                   application={application}
                   isAdmin={isAdmin}
                   onResume={() => onResumeApplication(application)}
-                  onBlocked={() => setSnackbar('Please wait while the discovery process completes.')}
+                  onBlocked={() =>
+                    setSnackbar({
+                      message: 'Please wait while the discovery process completes.',
+                      kind: 'info',
+                    })
+                  }
                   onChanged={refreshApplications}
-                  onError={setSnackbar}
+                  onError={(message) => setSnackbar({ message, kind: 'error' })}
                 />
               ))}
             </div>
             <Pagination
               page={pageClamped}
               totalPages={totalPages}
+              totalItems={applicationList.length}
+              pageSize={APPS_PER_PAGE}
               onPrev={() => setPage(pageClamped - 1)}
               onNext={() => setPage(pageClamped + 1)}
+              onPage={setPage}
             />
           </>
         ) : (
@@ -718,61 +975,11 @@ export function Home({
       )}
 
       {snackbar && (
-        <div
-          role="status"
-          style={{
-            position: 'fixed',
-            right: 'var(--space-9)',
-            bottom: 'var(--space-9)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--space-4)',
-            background: 'var(--ink)',
-            color: '#FFFFFF',
-            padding: '12px 18px',
-            borderRadius: 'var(--radius)',
-            fontSize: 13.5,
-            boxShadow: '0 12px 28px rgba(15,23,42,0.25)',
-            zIndex: 60,
-          }}
-        >
-          <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-            <span
-              aria-hidden="true"
-              style={{
-                width: 5,
-                height: 5,
-                borderRadius: 'var(--radius-full)',
-                background: '#FFFFFF',
-                animation: 'aitg-dot-bounce 1s ease-in-out infinite',
-                animationDelay: '0s',
-              }}
-            />
-            <span
-              aria-hidden="true"
-              style={{
-                width: 5,
-                height: 5,
-                borderRadius: 'var(--radius-full)',
-                background: '#FFFFFF',
-                animation: 'aitg-dot-bounce 1s ease-in-out infinite',
-                animationDelay: '0.15s',
-              }}
-            />
-            <span
-              aria-hidden="true"
-              style={{
-                width: 5,
-                height: 5,
-                borderRadius: 'var(--radius-full)',
-                background: '#FFFFFF',
-                animation: 'aitg-dot-bounce 1s ease-in-out infinite',
-                animationDelay: '0.3s',
-              }}
-            />
-          </div>
-          {snackbar}
-        </div>
+        <Toast
+          message={snackbar.message}
+          kind={snackbar.kind}
+          onDismiss={() => setSnackbar(null)}
+        />
       )}
     </main>
   )

@@ -3,17 +3,19 @@ import { describe, expect, it } from 'vitest'
 import { StatusPill } from './StatusPill'
 
 describe('StatusPill', () => {
-  it('shows Discovery in Progress with a pulsing dot in signal color', () => {
+  it('shows Discovery in Progress with a spinning ring in signal color', () => {
     render(<StatusPill status="running" />)
     const pill = screen.getByText('Discovery in Progress')
     expect((pill as HTMLElement).style.color).toBe('var(--accent)')
-    expect(document.querySelector('.status-pill-pulse-dot')).toBeTruthy()
+    const dot = document.querySelector('[aria-hidden="true"]') as HTMLElement
+    expect(dot.style.animation).toContain('aitg-spin')
   })
 
-  it('shows Complete in good/green color with no pulsing dot', () => {
+  it('shows Complete in good/green color with a static dot, not spinning', () => {
     render(<StatusPill status="complete" />)
     const pill = screen.getByText('Complete')
     expect((pill as HTMLElement).style.color).toBe('var(--good-strong)')
-    expect(document.querySelector('.status-pill-pulse-dot')).toBeNull()
+    const dot = document.querySelector('[aria-hidden="true"]') as HTMLElement
+    expect(dot.style.animation).toBe('')
   })
 })

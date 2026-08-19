@@ -25,7 +25,14 @@ from api.db import get_session
 SESSION_SECRET_KEY = os.environ.get("SESSION_SECRET_KEY", "dev-only-insecure-secret-key")
 COOKIE_NAME = "session"
 COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "false").lower() == "true"
-COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+# 1 hour of inactivity logs the user out (security requirement — a session
+# used to live 7 fixed days regardless of activity). `current_user` re-issues
+# this cookie with a fresh timestamp on every authenticated request, so it's
+# a sliding idle window, not an absolute one: any real usage — including a
+# browser tab left open polling a long-running discovery/generation/
+# execution job — keeps sliding it forward. Only true silence (tab closed or
+# genuinely idle) past this many seconds expires it.
+COOKIE_MAX_AGE = 60 * 60
 
 _serializer = URLSafeTimedSerializer(SESSION_SECRET_KEY, salt="platform-session")
 
@@ -58,6 +65,7 @@ def clear_session_cookie(response: Response) -> None:
 
 def current_user(
     session: SessionDep,
+    response: Response,
     session_cookie: Annotated[str | None, Cookie(alias=COOKIE_NAME)] = None,
 ) -> PlatformUser:
     if session_cookie is None:
@@ -69,6 +77,10 @@ def current_user(
     user = session.get(PlatformUser, user_id)
     if user is None:
         raise HTTPException(status_code=401, detail="invalid session")
+    # Slide the idle window forward on every authenticated request (see
+    # COOKIE_MAX_AGE's docstring) — every route depending on CurrentUserDep
+    # gets this for free, one choke point.
+    issue_session_cookie(response, user.id)
     return user
 
 

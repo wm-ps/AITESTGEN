@@ -22,6 +22,11 @@ export type HomeApplicationRead = ApplicationRead & {
   suite_count: number
   test_case_count: number
   suites_generating_count: number
+  last_test_run_status: 'pending' | 'running' | 'completed' | 'blocked' | null
+  last_test_run_created_at: string | null
+  last_test_run_pass_rate: number | null
+  test_run_count: number
+  recent_pass_rates: (number | null)[]
 }
 export type JourneyRead = components['schemas']['JourneyRead']
 export type JourneyStepRead = components['schemas']['JourneyStepRead']
@@ -163,6 +168,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
   if (!response.ok) {
     const body = await response.json().catch(() => null)
+    // A 401 here always means the session cookie itself was rejected (bad
+    // signature or the 1-hour idle window expired) — /auth/login's own 401
+    // is a wrong-password rejection, not a session expiry, so it's excluded.
+    if (response.status === 401 && path !== '/auth/login') {
+      window.dispatchEvent(new CustomEvent('auth:expired'))
+    }
     throw new ApiError(body?.detail ?? response.statusText, response.status)
   }
   if (response.status === 204) return undefined as T

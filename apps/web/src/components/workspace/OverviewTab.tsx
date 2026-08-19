@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, type HealthTier, type OverviewRead } from '../../api'
-import { StatTile } from '../TestSuiteResults'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -10,55 +9,109 @@ const HEALTH_COLORS: Record<HealthTier, { background: string; foreground: string
   critical: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },
 }
 
-function tierForPassRate(passRate: number | null): HealthTier {
-  if (passRate == null) return 'needs_attention'
-  if (passRate >= 0.9) return 'healthy'
-  if (passRate >= 0.7) return 'needs_attention'
-  return 'critical'
+// Same gradient-badge formula GenerateSuite/TestSuiteResults already use for
+// their hero icon/banner (`135deg, <color> 0%, <color> 65%, rgba(0,0,0,0.22)
+// 100%`), just keyed by health tier instead of always `--accent` — the
+// health icon and the Pass rate tile are this tab's two "headline" moments,
+// so they get the system's own strongest treatment instead of a flat tint.
+const HEALTH_GRADIENT: Record<HealthTier, string> = {
+  healthy: 'linear-gradient(135deg, var(--good-strong) 0%, var(--good-strong) 65%, rgba(0,0,0,0.22) 100%)',
+  needs_attention: 'linear-gradient(135deg, var(--warn-strong) 0%, var(--warn-strong) 65%, rgba(0,0,0,0.22) 100%)',
+  critical: 'linear-gradient(135deg, var(--danger-strong) 0%, var(--danger-strong) 65%, rgba(0,0,0,0.22) 100%)',
 }
 
-function ClipboardCheckIcon() {
+function LayersIcon() {
   return (
     <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
-      <rect x={9} y={3} width={6} height={4} rx={1} />
-      <path d="M9 12l2 2 4-4" />
+      <path d="M12 3 3 7.5 12 12l9-4.5z" />
+      <path d="M3 12l9 4.5 9-4.5" />
+      <path d="M3 16.5l9 4.5 9-4.5" />
     </svg>
   )
 }
 
-function CheckIcon() {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M5 13l4 4L19 7" />
-    </svg>
-  )
-}
-
-function XIcon() {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M6 6l12 12M18 6L6 18" />
-    </svg>
-  )
-}
-
-function DashIcon() {
+function CheckCircleIcon() {
   return (
     <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <circle cx={12} cy={12} r={9} />
-      <path d="M9 12h6" />
+      <path d="M8.5 12.5l2.3 2.3L15.5 9.5" />
     </svg>
   )
 }
 
-function PercentIcon() {
+function XCircleIcon() {
   return (
     <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M19 5 5 19" />
-      <circle cx={7} cy={7} r={2} />
-      <circle cx={17} cy={17} r={2} />
+      <circle cx={12} cy={12} r={9} />
+      <path d="M9.5 9.5l5 5M14.5 9.5l-5 5" />
     </svg>
+  )
+}
+
+function ClockPauseIcon() {
+  return (
+    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx={12} cy={12} r={9} />
+      <path d="M12 7.5v5l3 1.7" />
+    </svg>
+  )
+}
+
+// `StatTile`'s `muted` tone fills with `--canvas-wash-alt`, a pale green
+// (#eef5f3) — fine as a subtle accent elsewhere, but four of them in a row
+// read as a wall of green tiles. This mirrors StatTile's own layout (icon
+// chip + value/label) with strictly neutral gray instead, kept local to this
+// tab rather than changing the shared tone (other screens still want it).
+function NeutralStatTile({
+  icon,
+  value,
+  label,
+  delay = 0,
+}: {
+  icon: ReactNode
+  value: string | number
+  label: string
+  delay?: number
+}) {
+  return (
+    <div
+      className="stat-tile-hover"
+      style={{
+        background: 'var(--canvas)',
+        // `--border-hairline` (near-white) against this tile's own white
+        // background and the white card-panel behind it left these
+        // borderless-looking — bumped to `--border` (still subtle, matches
+        // every other bordered panel in the app) so the tile reads as a
+        // distinct card instead of blending into its container.
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-lg)',
+        boxSizing: 'border-box',
+        padding: '12px 15px',
+        boxShadow: '0 1px 3px rgba(15,23,42,0.07)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        animation: `aitg-fade-up 0.35s ease-out ${delay}s both`,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em',
+            color: 'var(--ink-muted)',
+          }}
+        >
+          {label}
+        </span>
+        <span aria-hidden="true" style={{ color: 'var(--ink-muted)', display: 'flex' }}>
+          {icon}
+        </span>
+      </div>
+      <div style={{ fontSize: 23, fontWeight: 800, color: 'var(--ink)', lineHeight: 1 }}>{value}</div>
+    </div>
   )
 }
 
@@ -177,30 +230,25 @@ function TrendChart({ trend }: { trend: OverviewRead['trend'] }) {
   const latestPct = latest.pass_rate != null ? Math.round(latest.pass_rate * 100) : null
   const deltaPct =
     latestPct != null && previous?.pass_rate != null ? latestPct - Math.round(previous.pass_rate * 100) : null
-  const latestColors = HEALTH_COLORS[tierForPassRate(latest.pass_rate)]
 
   return (
-    <div style={{ display: 'flex', gap: 24, alignItems: 'stretch', height: '100%', width: '100%' }}>
-      <div style={{ flexShrink: 0, minWidth: 90, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-        <div style={{ fontSize: 30, fontWeight: 700, color: latestColors.foreground, lineHeight: 1 }}>
-          {latestPct != null ? `${latestPct}%` : '—'}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%' }}>
+      {/* No repeat of the raw percentage here — the "Pass rate" stat tile
+          above already headlines that number. This chart's own job is the
+          trend itself, so only the run-over-run delta (info the tile
+          doesn't carry) gets called out. */}
+      {deltaPct != null && deltaPct !== 0 && (
+        <div
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            marginBottom: 10,
+            color: deltaPct > 0 ? 'var(--good-strong)' : 'var(--danger-strong)',
+          }}
+        >
+          {deltaPct > 0 ? '▲' : '▼'} {Math.abs(deltaPct)} pt{Math.abs(deltaPct) === 1 ? '' : 's'} vs previous run
         </div>
-        <div className="caption" style={{ fontSize: 11.5, marginTop: 4 }}>
-          latest pass rate
-        </div>
-        {deltaPct != null && deltaPct !== 0 && (
-          <div
-            style={{
-              fontSize: 12,
-              fontWeight: 600,
-              marginTop: 6,
-              color: deltaPct > 0 ? 'var(--good-strong)' : 'var(--danger-strong)',
-            }}
-          >
-            {deltaPct > 0 ? '▲' : '▼'} {Math.abs(deltaPct)} pt{Math.abs(deltaPct) === 1 ? '' : 's'} vs previous run
-          </div>
-        )}
-      </div>
+      )}
 
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', gap: 8, flex: 1, minHeight: 0 }}>
@@ -210,9 +258,9 @@ function TrendChart({ trend }: { trend: OverviewRead['trend'] }) {
           <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100%', flexShrink: 0 }}>
             {Y_GRIDLINES.slice()
               .reverse()
-              .map((v) => (
+              .map((v, i) => (
                 <span key={v} className="caption" style={{ fontSize: 10, lineHeight: 1, transform: 'translateY(-50%)' }}>
-                  {v}%
+                  {i === 0 ? `${v}%` : v}
                 </span>
               ))}
           </div>
@@ -378,81 +426,94 @@ export function OverviewTab({ applicationId }: { applicationId: string }) {
   const healthColors = HEALTH_COLORS[overview.health.tier]
 
   return (
-    <div>
+    <div className="card-panel" style={{ padding: 24 }}>
       <SectionLabel>Application health</SectionLabel>
       <div
-        className="card-panel"
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 16,
+          gap: 18,
           padding: '18px 20px',
-          marginBottom: 20,
+          marginBottom: 24,
+          borderRadius: 'var(--radius-lg)',
           background: healthColors.background,
+          animation: 'aitg-fade-up 0.4s ease-out both',
         }}
       >
         <span
           aria-hidden="true"
           style={{
             display: 'inline-flex',
-            width: 44,
-            height: 44,
+            width: 52,
+            height: 52,
             borderRadius: 'var(--radius-full)',
-            background: 'var(--canvas)',
-            color: healthColors.foreground,
+            background: HEALTH_GRADIENT[overview.health.tier],
+            color: '#FFFFFF',
             alignItems: 'center',
             justifyContent: 'center',
             flexShrink: 0,
-            boxShadow: '0 2px 6px rgba(15,23,42,0.1)',
+            boxShadow: '0 8px 18px -6px rgba(15,23,42,0.35), inset 0 1px 0 rgba(255,255,255,0.35)',
           }}
         >
           {overview.health.tier === 'healthy' ? <HeartPulseIcon /> : <AlertIcon />}
         </span>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 700, color: healthColors.foreground, marginBottom: 2 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: healthColors.foreground, marginBottom: 3, letterSpacing: '-0.01em' }}>
             {overview.health.tier === 'healthy'
               ? 'Healthy'
               : overview.health.tier === 'needs_attention'
                 ? 'Needs Attention'
                 : 'Critical'}
           </div>
-          <div style={{ fontSize: 13, color: 'var(--ink-secondary)' }}>{overview.health.headline}</div>
+          <div style={{ fontSize: 14, color: 'var(--ink-secondary)' }}>{overview.health.headline}</div>
         </div>
       </div>
 
       {/* Test results leads — the numbers that matter most get top billing,
           ahead of Activity/trend context below. */}
       <SectionLabel>Test results</SectionLabel>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 20 }}>
-        <StatTile icon={<ClipboardCheckIcon />} value={overview.total_tests} label="Total tests" tone="muted" />
-        <StatTile icon={<CheckIcon />} value={overview.passed} label="Passed" tone="good" />
-        <StatTile icon={<XIcon />} value={overview.failed} label="Failed" tone="danger" />
-        <StatTile icon={<DashIcon />} value={overview.not_run} label="Not run" tone="muted" />
-        <StatTile
-          icon={<PercentIcon />}
-          value={overview.pass_rate != null ? `${Math.round(overview.pass_rate * 100)}%` : '—'}
-          label="Pass rate"
-          tone={tierForPassRate(overview.pass_rate) === 'healthy' ? 'good' : tierForPassRate(overview.pass_rate) === 'critical' ? 'danger' : 'warn'}
-        />
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, 1fr)',
+          gap: 12,
+          marginBottom: 20,
+        }}
+      >
+        <NeutralStatTile icon={<LayersIcon />} value={overview.total_tests} label="Total tests" delay={0.05} />
+        <NeutralStatTile icon={<CheckCircleIcon />} value={overview.passed} label="Passed" delay={0.1} />
+        <NeutralStatTile icon={<XCircleIcon />} value={overview.failed} label="Failed" delay={0.15} />
+        <NeutralStatTile icon={<ClockPauseIcon />} value={overview.not_run} label="Not run" delay={0.2} />
       </div>
 
-      {/* Activity (one card, not two) and the trend chart side by side. No
-          `alignItems` override on the grid — default `stretch` gives both
-          columns the row's full height, and each column's own card-panel
-          fills it via `flex: 1`, so the shorter Activity card matches the
-          chart card's height instead of sitting next to empty space. */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: 20 }}>
+      {/* Activity (one card, not two) and the trend chart side by side. Both
+          sit inside this tab's single outer card-panel now, so they're
+          plain tinted panels (no border/shadow of their own) rather than
+          a second layer of white-on-white card. No `alignItems` override on
+          the grid — default `stretch` gives both columns the row's full
+          height, and each column's own panel fills it via `flex: 1`, so the
+          shorter Activity panel matches the chart panel's height instead of
+          sitting next to empty space. */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '1fr 1.5fr',
+          gap: 20,
+          animation: 'aitg-fade-up 0.4s ease-out 0.1s both',
+        }}
+      >
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <SectionLabel>Activity</SectionLabel>
           <div
-            className="card-panel"
             style={{
-              padding: '16px 20px',
+              padding: '18px 20px',
               flex: 1,
               display: 'flex',
               flexDirection: 'column',
               justifyContent: 'center',
               gap: 16,
+              borderRadius: 'var(--radius-lg)',
+              border: '1px solid var(--border-hairline)',
             }}
           >
             <div style={{ display: 'flex', gap: 12 }}>
@@ -463,8 +524,8 @@ export function OverviewTab({ applicationId }: { applicationId: string }) {
                   width: 32,
                   height: 32,
                   borderRadius: 9,
-                  background: 'var(--accent-wash-soft)',
-                  color: 'var(--accent)',
+                  background: 'var(--border-hairline)',
+                  color: 'var(--ink-secondary)',
                   alignItems: 'center',
                   justifyContent: 'center',
                   flexShrink: 0,
@@ -473,7 +534,7 @@ export function OverviewTab({ applicationId }: { applicationId: string }) {
                 <RunHistoryIcon />
               </span>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink)', marginBottom: 6 }}>Latest run</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)', marginBottom: 6 }}>Latest run</div>
                 {overview.latest_run ? (
                   <>
                     <div className="caption" style={{ fontSize: 12, marginBottom: 4 }}>
@@ -502,8 +563,8 @@ export function OverviewTab({ applicationId }: { applicationId: string }) {
                   width: 32,
                   height: 32,
                   borderRadius: 9,
-                  background: 'var(--accent-wash-soft)',
-                  color: 'var(--accent)',
+                  background: 'var(--border-hairline)',
+                  color: 'var(--ink-secondary)',
                   alignItems: 'center',
                   justifyContent: 'center',
                   flexShrink: 0,
@@ -512,7 +573,7 @@ export function OverviewTab({ applicationId }: { applicationId: string }) {
                 <DiscoveryIcon />
               </span>
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink)', marginBottom: 6 }}>Last discovery</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)', marginBottom: 6 }}>Last discovery</div>
                 <p className="caption" style={{ fontSize: 12.5, margin: 0 }}>
                   {overview.last_discovery_started_at ? formatDateTime(overview.last_discovery_started_at) : 'Never run'}
                 </p>
@@ -523,7 +584,15 @@ export function OverviewTab({ applicationId }: { applicationId: string }) {
 
         <div style={{ display: 'flex', flexDirection: 'column' }}>
           <SectionLabel>Pass rate trend</SectionLabel>
-          <div className="card-panel" style={{ padding: '18px 20px', flex: 1, display: 'flex' }}>
+          <div
+            style={{
+              padding: '18px 20px',
+              flex: 1,
+              display: 'flex',
+              borderRadius: 'var(--radius-lg)',
+              border: '1px solid var(--border-hairline)',
+            }}
+          >
             <TrendChart trend={overview.trend} />
           </div>
         </div>

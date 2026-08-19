@@ -3,7 +3,6 @@ import { ApiError, api, type ApplicationRead, type UserRead } from './api'
 import { AcceptInvite } from './components/AcceptInvite'
 import { ConnectAppForm } from './components/ConnectAppForm'
 import { DiscoverJourneys } from './components/DiscoverJourneys'
-import { GenerateSuite } from './components/GenerateSuite'
 import { Home } from './components/Home'
 import { InviteTeammateModal } from './components/InviteTeammateModal'
 import { ResetPassword } from './components/ResetPassword'
@@ -13,6 +12,7 @@ import { ServiceError } from './components/ServiceError'
 import { SignIn } from './components/SignIn'
 import type { StepKey } from './components/Stepper'
 import { TestSuiteResults } from './components/TestSuiteResults'
+import { Toast } from './components/Toast'
 import { TopBar } from './components/TopBar'
 import { Workspace } from './components/workspace/Workspace'
 
@@ -20,19 +20,16 @@ const VIEW_FOR_STEP: Record<StepKey, View> = {
   'connect-app': 'connect-app',
   discover: 'discover',
   review: 'review-scenarios',
-  generate: 'generate-suite',
+  // No 'generate-suite' config screen anymore — the "Generate Test Suite"
+  // click on Review Scenarios kicks off generation directly, so this step
+  // goes straight to its results.
+  generate: 'test-suite-results',
 }
 
 // Previous/Next walk this same order — 'test-suite-results' has no Stepper
 // circle of its own (it renders the Stepper with furthestCount 4, all done),
 // but it's still a stop along the Previous/Next line.
-const VIEW_ORDER: View[] = [
-  'connect-app',
-  'discover',
-  'review-scenarios',
-  'generate-suite',
-  'test-suite-results',
-]
+const VIEW_ORDER: View[] = ['connect-app', 'discover', 'review-scenarios', 'test-suite-results']
 
 // Invite links point at /accept-invite?token=... — handled before the
 // signed-in check below since accepting an invite never requires an
@@ -56,7 +53,6 @@ type View =
   | 'connect-app'
   | 'discover'
   | 'review-scenarios'
-  | 'generate-suite'
   | 'test-suite-results'
   | 'workspace'
   | 'settings'
@@ -88,6 +84,19 @@ function App() {
     const timeout = setTimeout(() => setErrorToast(null), 3000)
     return () => clearTimeout(timeout)
   }, [errorToast])
+
+  // Fired by api.ts's request() on any 401 that isn't a login attempt —
+  // catches an idle-timeout logout (COOKIE_MAX_AGE, apps/api/src/api/auth.py)
+  // hit mid-session by a background poll, not just the mount-time check
+  // below, so a stale tab bounces to Sign In instead of erroring silently.
+  useEffect(() => {
+    function handleExpired() {
+      setUser(null)
+      setErrorToast('Your session expired from inactivity. Please sign in again.')
+    }
+    window.addEventListener('auth:expired', handleExpired)
+    return () => window.removeEventListener('auth:expired', handleExpired)
+  }, [])
 
   // Read once by Workspace on mount (it fully remounts each time `view`
   // toggles away from 'workspace' and back) — lets "Run All Tests" land
@@ -181,7 +190,15 @@ function App() {
       const suiteComplete = suites.length > 0 && testCaseCount >= scenarios.length
       setFurthestCount(suites.length > 0 ? 4 : scenarios.length > 0 ? 2 : 1)
       setWorkspaceEntry({ initialTab: 'overview', autoTriggerRun: false })
-      setView(suiteComplete ? 'workspace' : suites.length > 0 ? 'test-suite-results' : 'discover')
+      setView(
+        suiteComplete
+          ? 'workspace'
+          : suites.length > 0
+            ? 'test-suite-results'
+            : scenarios.length > 0
+              ? 'review-scenarios'
+              : 'discover',
+      )
     } catch {
       setApplication(null)
       setErrorToast('Failed to load project. Please try again.')
@@ -200,19 +217,6 @@ function App() {
   // place (its own clickable check) — no need to re-guard here.
   const onStepClick = (key: StepKey) => setView(VIEW_FOR_STEP[key])
 
-  // Every non-home view gets a back icon in the header instead of its own
-  // inner back button — wizard steps walk backward through VIEW_ORDER
-  // (same as Previous), Workspace/Settings go to whichever screen actually
-  // preceded them.
-  const onBack =
-    view === 'home'
-      ? undefined
-      : view === 'workspace'
-        ? () => setView('home')
-        : view === 'settings'
-          ? () => setView(previousView)
-          : (onPrevious ?? (() => setView('home')))
-
   return (
     <>
       <TopBar
@@ -222,12 +226,20 @@ function App() {
         }
         onLogout={handleLogout}
         onGoHome={() => setView('home')}
-        onBack={onBack}
         onInviteTeammate={() => setInviteModalOpen(true)}
         onOpenSettings={() => {
           setPreviousView(view)
           setView('settings')
         }}
+        onOpenWorkspace={
+          application && view !== 'home' && furthestCount >= 4 && view !== 'workspace'
+            ? () => {
+                setWorkspaceEntry({ initialTab: 'overview', autoTriggerRun: false })
+                setView('workspace')
+              }
+            : undefined
+        }
+        onViewDiscovery={application && view === 'workspace' ? () => setView('discover') : undefined}
       />
       {inviteModalOpen && <InviteTeammateModal onClose={() => setInviteModalOpen(false)} />}
       {view === 'home' && (
@@ -272,22 +284,18 @@ function App() {
       {view === 'review-scenarios' && application && (
         <ReviewScenarios
           applicationId={application.id}
-          onContinueToGenerate={() => {
-            setFurthestCount((c) => Math.max(c, 3))
-            setView('generate-suite')
-          }}
-          furthestCount={furthestCount}
-          onStepClick={onStepClick}
-          onPrevious={onPrevious}
-          onNext={onNext}
-        />
-      )}
-      {view === 'generate-suite' && application && (
-        <GenerateSuite
-          applicationId={application.id}
-          onGenerated={() => {
-            setFurthestCount(4)
-            setView('test-suite-results')
+          onContinueToGenerate={async () => {
+            if (globalLoading) return
+            setGlobalLoading('Generating test suite')
+            try {
+              await api.generateSuite(application.id)
+              setFurthestCount(4)
+              setView('test-suite-results')
+            } catch {
+              setErrorToast('Failed to start test suite generation. Please try again.')
+            } finally {
+              setGlobalLoading(null)
+            }
           }}
           furthestCount={furthestCount}
           onStepClick={onStepClick}
@@ -298,12 +306,8 @@ function App() {
       {view === 'test-suite-results' && application && (
         <TestSuiteResults
           applicationId={application.id}
-          onRunAllTests={() => {
+          onRunTests={() => {
             setWorkspaceEntry({ initialTab: 'runs', autoTriggerRun: true })
-            setView('workspace')
-          }}
-          onViewExecutions={() => {
-            setWorkspaceEntry({ initialTab: 'runs', autoTriggerRun: false })
             setView('workspace')
           }}
           furthestCount={furthestCount}
@@ -316,7 +320,6 @@ function App() {
           applicationId={application.id}
           initialTab={workspaceEntry.initialTab}
           autoTriggerRun={workspaceEntry.autoTriggerRun}
-          onViewSetup={() => setView('test-suite-results')}
         />
       )}
       {view === 'settings' && <Settings onCancel={() => setView(previousView)} />}
@@ -354,23 +357,7 @@ function App() {
       )}
 
       {errorToast && (
-        <div
-          role="status"
-          style={{
-            position: 'fixed',
-            right: 'var(--space-9)',
-            bottom: 'var(--space-9)',
-            background: 'var(--ink)',
-            color: '#FFFFFF',
-            padding: '12px 18px',
-            borderRadius: 'var(--radius)',
-            fontSize: 13.5,
-            boxShadow: '0 12px 28px rgba(15,23,42,0.25)',
-            zIndex: 100,
-          }}
-        >
-          {errorToast}
-        </div>
+        <Toast message={errorToast} kind="error" onDismiss={() => setErrorToast(null)} />
       )}
     </>
   )

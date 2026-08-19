@@ -27,7 +27,7 @@ function ConnectedAppSummary({ application }: { application: ApplicationRead }) 
     ['Authentication method', application.auth_method === 'standard_login' ? 'Username & Password' : application.auth_method],
   ]
   return (
-    <main style={{ maxWidth: 'clamp(720px, 68vw, 1080px)', margin: '0 auto', padding: '32px 24px' }}>
+    <main style={{ maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))', margin: '0 auto', padding: '32px 24px' }}>
       <h1 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 12px', textAlign: 'center' }}>
         Connected application
       </h1>
@@ -116,7 +116,7 @@ export function ConnectAppForm({
   return (
     <>
       <Stepper current="connect-app" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
-      <main style={{ maxWidth: 'clamp(720px, 68vw, 1080px)', margin: '0 auto', padding: '32px 24px' }}>
+      <main style={{ maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))', margin: '0 auto', padding: '32px 24px' }}>
         <h1 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 12px', textAlign: 'center' }}>
           Connect to your live application
         </h1>
@@ -136,7 +136,7 @@ export function ConnectAppForm({
           <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 'var(--space-7)' }}>
             <label className="field">
               <FieldLabel>Application name</FieldLabel>
-              <input required value={name} onChange={(e) => setName(e.target.value)} />
+              <input required placeholder="e.g. Staging Checkout" value={name} onChange={(e) => setName(e.target.value)} />
             </label>
 
             <label className="field">
@@ -203,13 +203,20 @@ export function ConnectAppForm({
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
               <label className="field">
                 <FieldLabel>Username</FieldLabel>
-                <input required autoComplete="off" value={username} onChange={(e) => setUsername(e.target.value)} />
+                <input
+                  required
+                  autoComplete="off"
+                  placeholder="Login username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                />
               </label>
               <label className="field">
                 <FieldLabel>Password</FieldLabel>
                 <PasswordInput
                   required
                   autoComplete="off"
+                  placeholder="Login password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                 />
@@ -218,7 +225,13 @@ export function ConnectAppForm({
           ) : authMethod === 'api_key' ? (
             <label className="field">
               <FieldLabel>API Key</FieldLabel>
-              <input required autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+              <input
+                required
+                autoComplete="off"
+                placeholder="Paste API key"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+              />
             </label>
           ) : null}
 

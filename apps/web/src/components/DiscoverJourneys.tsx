@@ -5,6 +5,7 @@ import { ServiceErrorNote } from './ServiceError'
 import { ImportProgress } from './ImportProgress'
 import { Stepper, type StepKey } from './Stepper'
 import { StatusPill } from './StatusPill'
+import { Pagination } from './Pagination'
 
 const POLL_INTERVAL_MS = 3000
 const JOURNEYS_PER_PAGE = 5
@@ -219,6 +220,12 @@ export function DiscoverJourneys({
 
   useEffect(() => setStatusOverride(null), [liveStatus])
   const status = statusOverride ?? liveStatus
+  // `status` flips to "complete" as soon as the crawl finishes — well before
+  // InferenceActivity's LLM call has run and Journeys exist (`stage` reaches
+  // "analyzed" only once it has). Showing "Complete" here that early reads as
+  // done when Journeys are still being inferred, so the pill stays on
+  // "running" until analysis has actually finished too.
+  const pillStatus = status === 'complete' && liveStage !== 'analyzed' ? 'running' : status
 
   const sessionExpired = status === 'failed' && liveFailureReason === 'session_expired'
   const discoveryWorkerDown =
@@ -363,7 +370,7 @@ export function DiscoverJourneys({
       <Stepper current="discover" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
       <main
         style={{
-          maxWidth: 'var(--content-max)',
+          maxWidth: 'var(--content-max-wide)',
           margin: '0 auto',
           padding: `var(--content-top) var(--content-x)`,
         }}
@@ -382,7 +389,7 @@ export function DiscoverJourneys({
               <h1 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
                 Discover Journeys
               </h1>
-              <StatusPill status={status} />
+              <StatusPill status={pillStatus} />
             </div>
             <div className="caption" style={{ fontSize: 13, marginTop: 3 }}>
               {journeys.length} Journey{journeys.length === 1 ? '' : 's'} Discovered
@@ -550,36 +557,13 @@ export function DiscoverJourneys({
                 )}
               </ul>
               {showPagination && (
-                <div
-                  style={{
-                    flexShrink: 0,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 'var(--space-3)',
-                    padding: 'var(--space-4) var(--space-5) var(--space-6)',
-                    borderTop: '1px solid var(--border-hairline)',
-                  }}
-                >
-                  <button
-                    type="button"
-                    className="button-secondary"
-                    disabled={pageClamped <= 0}
-                    onClick={() => setPage(pageClamped - 1)}
-                  >
-                    Prev
-                  </button>
-                  <span className="caption" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-                    Page {pageClamped + 1} of {totalPages}
-                  </span>
-                  <button
-                    type="button"
-                    className="button-secondary"
-                    disabled={pageClamped >= totalPages - 1}
-                    onClick={() => setPage(pageClamped + 1)}
-                  >
-                    Next
-                  </button>
+                <div style={{ flexShrink: 0, borderTop: '1px solid var(--border-hairline)' }}>
+                  <Pagination
+                    page={pageClamped}
+                    totalPages={totalPages}
+                    onPrev={() => setPage(pageClamped - 1)}
+                    onNext={() => setPage(pageClamped + 1)}
+                  />
                 </div>
               )}
             </div>
@@ -633,7 +617,7 @@ export function DiscoverJourneys({
                               <div aria-hidden="true" style={{ width: 2, flex: 1, background: 'var(--border)' }} />
                             )}
                           </div>
-                          <div style={{ paddingBottom: index < stages.length - 1 ? 'var(--space-5)' : 0 }}>
+                          <div style={{ paddingBottom: index < stages.length - 1 ? 'var(--space-9)' : 0 }}>
                             <div style={{ fontSize: 14, fontWeight: 600 }}>{stage}</div>
                           </div>
                         </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../../api'
 import { ServiceErrorNote } from '../ServiceError'
+import { Toast } from '../Toast'
 import { OverviewTab } from './OverviewTab'
 import { TestSuiteTab } from './TestSuiteTab'
 import { RunsTab } from './RunsTab'
@@ -21,9 +22,9 @@ function OverviewIcon() {
 function SuiteIcon() {
   return (
     <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M6 3h9l4 4v14H6z" />
-      <path d="M15 3v4h4" />
-      <path d="M9 12h6M9 16h6" />
+      <path d="M12 3 3 7.5 12 12l9-4.5z" />
+      <path d="M3 12l9 4.5 9-4.5" />
+      <path d="M3 16.5l9 4.5 9-4.5" />
     </svg>
   )
 }
@@ -50,7 +51,7 @@ const RUN_POLL_MS = 2000
 
 const TABS: { key: WorkspaceTab; label: string; icon: () => React.JSX.Element }[] = [
   { key: 'overview', label: 'Overview', icon: OverviewIcon },
-  { key: 'suite', label: 'Test Suite', icon: SuiteIcon },
+  { key: 'suite', label: 'Suite', icon: SuiteIcon },
   { key: 'runs', label: 'Runs', icon: RunsIcon },
 ]
 
@@ -58,7 +59,6 @@ export function Workspace({
   applicationId,
   initialTab = 'overview',
   autoTriggerRun = false,
-  onViewSetup,
 }: {
   applicationId: string
   initialTab?: WorkspaceTab
@@ -67,7 +67,6 @@ export function Workspace({
   // (if any) has somewhere to surface, mirroring what the old standalone
   // TestExecutionResults.tsx screen used to show.
   autoTriggerRun?: boolean
-  onViewSetup?: () => void
 }) {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>(initialTab)
   // Set once, the moment "Run Suite"/"Run All Tests" switches to the Runs
@@ -156,8 +155,71 @@ export function Workspace({
   }, [])
 
   return (
-    <main style={{ display: 'flex', justifyContent: 'center', padding: '28px 24px' }}>
-      <div style={{ maxWidth: 'clamp(760px, 68vw, 1080px)', width: '100%' }}>
+    <main style={{ display: 'flex', height: 'calc(100vh - 64px)' }}>
+      {/* Full-height rail flush against the viewport edge, not a floating
+          icon row inline with the content column — icon + label stacked
+          per item reads as the dashboard's fixed navigation spine. */}
+      <nav
+        aria-label="Workspace sections"
+        style={{
+          width: 76,
+          flexShrink: 0,
+          boxSizing: 'border-box',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 6,
+          padding: '20px 8px',
+          background: 'var(--canvas)',
+          borderRight: '1px solid var(--border)',
+        }}
+      >
+        {TABS.map((tab) => {
+          const active = activeTab === tab.key
+          const Icon = tab.icon
+          return (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setActiveTab(tab.key)}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 4,
+                width: 60,
+                padding: '10px 4px',
+                borderRadius: 'var(--radius)',
+                border: 'none',
+                background: active ? 'var(--accent-wash)' : 'transparent',
+                color: active ? 'var(--accent)' : 'var(--ink-muted)',
+                fontSize: 11,
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+              }}
+            >
+              <Icon />
+              {tab.label}
+            </button>
+          )
+        })}
+      </nav>
+
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          overflowY: 'auto',
+          boxSizing: 'border-box',
+          padding: '28px 32px',
+          background:
+            'radial-gradient(900px 500px at 85% -10%, var(--accent-wash-soft) 0%, transparent 55%), linear-gradient(180deg, #FBFCFE 0%, #F6F9FB 100%)',
+        }}
+      >
         {triggerError && (
           <p role="alert" style={{ color: 'var(--danger-strong)', fontSize: 13, marginBottom: 16 }}>
             {triggerError}
@@ -169,74 +231,8 @@ export function Workspace({
           </div>
         )}
 
-        {/* 3-column grid, not space-between: the tab bar stays visually
-            centered on the page regardless of the button's width, instead of
-            drifting off-center whenever the "Starting…" label changes it. */}
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr auto 1fr',
-            alignItems: 'center',
-            marginBottom: 20,
-            gap: 12,
-            borderBottom: '1px solid var(--border)',
-          }}
-        >
-          <span aria-hidden="true" />
-          {/* Underline variant, not a segmented pill: icon + label per tab,
-              active tab gets an accent underline + accent text — reads as
-              primary navigation instead of a filter control (which is what
-              the pill style borrowed from ReviewScenarios' readiness filter
-              actually reads as). */}
-          <div role="tablist" style={{ display: 'inline-flex', gap: 4, justifySelf: 'center' }}>
-            {TABS.map((tab) => {
-              const active = activeTab === tab.key
-              const Icon = tab.icon
-              return (
-                <button
-                  key={tab.key}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => setActiveTab(tab.key)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 7,
-                    padding: '9px 16px 8px',
-                    borderRadius: 0,
-                    border: 'none',
-                    borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
-                    background: 'transparent',
-                    color: active ? 'var(--accent)' : 'var(--ink-muted)',
-                    fontSize: 13,
-                    fontWeight: 600,
-                    fontFamily: 'inherit',
-                    cursor: 'pointer',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  <Icon />
-                  {tab.label}
-                </button>
-              )
-            })}
-          </div>
-
-          {/* Persistent regardless of tab — an enterprise dashboard's primary
-              action shouldn't hide inside one specific tab. Play icon so the
-              button reads as "go" at a glance, not just another labeled box. */}
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, justifySelf: 'end' }}>
-            {onViewSetup && (
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={onViewSetup}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
-              >
-                View Setup
-              </button>
-            )}
+        {activeTab === 'runs' && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 20 }}>
             <button
               type="button"
               className="button-primary"
@@ -248,7 +244,7 @@ export function Workspace({
               {running ? 'Running…' : 'Run Suite'}
             </button>
           </div>
-        </div>
+        )}
 
         {activeTab === 'overview' && <OverviewTab applicationId={applicationId} />}
         {activeTab === 'suite' && <TestSuiteTab applicationId={applicationId} />}
@@ -261,25 +257,7 @@ export function Workspace({
         )}
       </div>
 
-      {runToast && (
-        <div
-          role="status"
-          style={{
-            position: 'fixed',
-            right: 'var(--space-9)',
-            bottom: 'var(--space-9)',
-            background: 'var(--ink)',
-            color: '#FFFFFF',
-            padding: '12px 18px',
-            borderRadius: 'var(--radius)',
-            fontSize: 13.5,
-            boxShadow: '0 12px 28px rgba(15,23,42,0.25)',
-            zIndex: 100,
-          }}
-        >
-          {runToast}
-        </div>
-      )}
+      {runToast && <Toast message={runToast} kind="info" onDismiss={() => setRunToast(null)} />}
     </main>
   )
 }

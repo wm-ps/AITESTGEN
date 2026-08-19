@@ -42,14 +42,14 @@ export function Settings({ onCancel }: { onCancel: () => void }) {
 
   if (loading || !settings) {
     return (
-      <main style={{ maxWidth: 'clamp(720px, 68vw, 1080px)', margin: '0 auto', padding: '32px 24px' }} role="status">
+      <main style={{ maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))', margin: '0 auto', padding: '32px 24px' }} role="status">
         {error ?? <LoadingDots label="Loading settings" />}
       </main>
     )
   }
 
   return (
-    <main style={{ maxWidth: 'clamp(720px, 68vw, 1080px)', margin: '0 auto', padding: '32px 24px' }}>
+    <main style={{ maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))', margin: '0 auto', padding: '32px 24px' }}>
       <h1 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 12px', textAlign: 'center' }}>
         Discovery settings
       </h1>

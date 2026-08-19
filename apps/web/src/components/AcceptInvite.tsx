@@ -66,6 +66,7 @@ export function AcceptInvite({
                 type="text"
                 required
                 autoComplete="name"
+                placeholder="Full name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 style={{ padding: '11px 14px', fontSize: 14.5 }}

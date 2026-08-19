@@ -1,9 +1,7 @@
 # AITestGen — Application Intelligence Platform
 
-Monorepo scaffolded to the architecture spine's fixed module boundaries
-(see `_bmad-output/planning-artifacts/architecture/`). Story 1.1 wired the
-core stack end-to-end; Stories 1.2 (sign-in, Organization scoping) and 1.3
-(Application onboarding) add the first real product features.
+Monorepo for the AITestGen platform — automated discovery, test-scenario
+generation, and Playwright execution against onboarded applications.
 
 > 📘 **New to this codebase? Read the [Developer Guide](docs/DEVELOPER_GUIDE.md)** —
 > it explains what each module does, where it deploys, the core architecture rules,
@@ -16,8 +14,9 @@ apps/
   web/          React 19 + Vite + TypeScript SPA (API types generated from apps/api's OpenAPI spec — AD-6)
   api/          FastAPI service (auth, CRUD, curation; starts/queries workflows)
   workers/
-    discovery/   Runs the no-op DiscoveryWorkflow shell today; DiscoveryActivity (Playwright) + InferenceActivity land in Epic 2
-    generation/  GenerationWorkflow worker; Scenario/Playwright generation  [built in Epic 4]
+    discovery/   DiscoveryWorkflow worker — Playwright crawler + AI inference activities
+    generation/  GenerationWorkflow worker — Scenario/Playwright test-asset generation
+    execution/   ApplicationTestExecutionWorkflow worker — runs generated tests via Playwright
 packages/
   domain/           SQLModel entities shared by api + workers (Organization, PlatformUser, Application, DiscoveryRun)
   workflows/        Temporal workflows — orchestration only, no I/O (AD-2)
@@ -123,7 +122,7 @@ snapshots) is AWS S3 in production (Story 2.8) — there is no in-cluster
 | `vault` | ClusterIP | 8200 | Dev-mode KV store for onboarded Applications' target-app credentials. Internal only. |
 | `s3` (AWS) | External (not deployed in-cluster) | n/a | Object storage for discovery evidence (screenshots/DOM snapshots) — production bucket, region set via the `aitestgen-config` ConfigMap, accessed via IRSA or the `aitestgen-secrets` access-key pair. |
 | `discovery-worker` | — (no Service) | n/a | Temporal worker — outbound only. Runs the Playwright crawler + AI inference activities. |
-| `generation-worker` | — (no Service) | n/a | Temporal worker — outbound only. Scenario/test-asset generation (Epic 4, not yet implemented). |
+| `generation-worker` | — (no Service) | n/a | Temporal worker — outbound only. Scenario/test-asset generation. |
 | `execution-worker` | — (no Service) | n/a | Temporal worker — outbound only. Runs `ApplicationTestExecutionWorkflow` ("Run All Tests") — Playwright execution per TestAsset, on its own `execution-task-queue`. |
 
 ## Tests & checks (mirrors CI)
