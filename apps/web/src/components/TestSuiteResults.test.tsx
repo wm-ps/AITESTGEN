@@ -80,7 +80,7 @@ afterEach(() => {
 describe('TestSuiteResults', () => {
   it('shows a spinner and live progress while generation is still in flight', async () => {
     stubFetch({ suites: [], scenarios: SCENARIOS })
-    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunTests={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByRole('status').textContent).toContain('Generating')
@@ -98,7 +98,7 @@ describe('TestSuiteResults', () => {
       suites: [{ ...SUITES[0], status: 'incomplete', test_cases: [SUITES[0].test_cases[0]] }],
       scenarios: SCENARIOS,
     })
-    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunTests={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByText(/Generated 1 test cases across 1 journeys/)).toBeTruthy()
@@ -130,7 +130,7 @@ describe('TestSuiteResults', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    render(<TestSuiteResults furthestCount={4} applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
+    render(<TestSuiteResults furthestCount={4} applicationId="app-1" onRunTests={() => {}} />)
 
     const retryButton = await screen.findByRole('button', { name: /Retry Failed Test Cases/ })
     fireEvent.click(retryButton)
@@ -148,7 +148,7 @@ describe('TestSuiteResults', () => {
 
   it('shows the completed summary and stats, with the file list and its scenarios collapsed by default', async () => {
     stubFetch()
-    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunTests={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByText(/Generated 2 test cases across 1 journeys/)).toBeTruthy()
@@ -171,7 +171,7 @@ describe('TestSuiteResults', () => {
 
   it('toggles test details visibility', async () => {
     stubFetch()
-    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunTests={() => {}} />)
 
     await waitFor(() => screen.getByText(/Generated 2 test cases across 1 journeys/))
 
@@ -184,45 +184,20 @@ describe('TestSuiteResults', () => {
     expect(screen.queryByText('checkout.spec.ts')).toBeNull()
   })
 
-  it('calls onRunAllTests when the Run All Tests button is clicked', async () => {
+  it('calls onRunTests when the Run Tests button is clicked', async () => {
     stubFetch()
-    const onRunAllTests = vi.fn()
-    render(
-      <TestSuiteResults
-        furthestCount={4}
-        applicationId="app-1"
-        onRunAllTests={onRunAllTests}
-        onViewExecutions={() => {}}
-      />,
-    )
+    const onRunTests = vi.fn()
+    render(<TestSuiteResults furthestCount={4} applicationId="app-1" onRunTests={onRunTests} />)
 
-    const button = await screen.findByRole('button', { name: 'Run All Tests' })
+    const button = await screen.findByRole('button', { name: 'Run Tests' })
     fireEvent.click(button)
 
-    expect(onRunAllTests).toHaveBeenCalledOnce()
-  })
-
-  it('calls onViewExecutions when the View Executions button is clicked', async () => {
-    stubFetch()
-    const onViewExecutions = vi.fn()
-    render(
-      <TestSuiteResults
-        furthestCount={4}
-        applicationId="app-1"
-        onRunAllTests={() => {}}
-        onViewExecutions={onViewExecutions}
-      />,
-    )
-
-    const button = await screen.findByRole('button', { name: 'View Executions' })
-    fireEvent.click(button)
-
-    expect(onViewExecutions).toHaveBeenCalledOnce()
+    expect(onRunTests).toHaveBeenCalledOnce()
   })
 
   it('clicking View Code opens a modal with that row\'s own code; a different row shows its own code', async () => {
     stubFetch()
-    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunTests={() => {}} />)
 
     await waitFor(() => screen.getByRole('button', { name: /View Tests/ }))
     fireEvent.click(screen.getByRole('button', { name: /View Tests/ }))
@@ -245,7 +220,7 @@ describe('TestSuiteResults', () => {
       createObjectURL: vi.fn(() => 'blob:mock-url'),
       revokeObjectURL: vi.fn(),
     })
-    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunTests={() => {}} />)
 
     const button = (await screen.findByRole('button', {
       name: /Download Test Suite/,
@@ -264,7 +239,7 @@ describe('TestSuiteResults', () => {
 
   it('re-enables the Download button after a failed export', async () => {
     stubFetch({ download: { ok: false, status: 500 } })
-    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunAllTests={() => {}} onViewExecutions={() => {}} />)
+    render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunTests={() => {}} />)
 
     const button = await screen.findByRole('button', { name: /Download Test Suite/ })
     fireEvent.click(button)
