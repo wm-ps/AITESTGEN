@@ -20,7 +20,7 @@ export function VantageWordmark({ fontSize = 27 }: { fontSize?: number }) {
 
 export function VantageBrand({
   wordmarkSize = 27,
-  markSize = 28,
+  markSize = 44,
 }: {
   wordmarkSize?: number
   markSize?: number

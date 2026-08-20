@@ -23,7 +23,7 @@ describe('App', () => {
       expect(screen.getByRole('heading', { name: 'Sign in' })).toBeTruthy()
     })
     expect(document.title).toBe('Vantage')
-    expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.svg')
+    expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.png')
   })
 
   it('renders Home with the top bar and avatar menu when signed in, with the default tab title/favicon', async () => {
@@ -39,7 +39,7 @@ describe('App', () => {
     expect(screen.getByText('Welcome, Ada')).toBeTruthy()
     expect(screen.getByText('+ Create New Project')).toBeTruthy()
     expect(document.title).toBe('Vantage')
-    expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.svg')
+    expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.png')
 
     fireEvent.click(screen.getByRole('button', { name: 'AL' }))
 
@@ -96,7 +96,7 @@ describe('App', () => {
 
     // Tab title/favicon are static platform branding — unaffected by the Application.
     expect(document.title).toBe('Vantage')
-    expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.svg')
+    expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.png')
   })
 
   it('shows the persistent Application card on Home and resumes at Discover Journeys on click', async () => {

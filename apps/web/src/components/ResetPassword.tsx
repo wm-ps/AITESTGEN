@@ -61,7 +61,7 @@ export function ResetPassword({
         style={{ width: '100%', maxWidth: 420, padding: '28px 34px', boxSizing: 'border-box' }}
       >
         <div style={{ marginBottom: 18 }}>
-          <VantageBrand wordmarkSize={19} markSize={18} />
+          <VantageBrand wordmarkSize={30} markSize={40} />
         </div>
 
         {loadError ? (

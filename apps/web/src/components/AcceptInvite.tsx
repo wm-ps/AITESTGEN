@@ -47,7 +47,7 @@ export function AcceptInvite({
         style={{ width: '100%', maxWidth: 420, padding: '28px 34px', boxSizing: 'border-box' }}
       >
         <div style={{ marginBottom: 18 }}>
-          <VantageBrand wordmarkSize={19} markSize={18} />
+          <VantageBrand wordmarkSize={30} markSize={40} />
         </div>
         <h2 style={{ fontSize: 19, fontWeight: 600, color: 'var(--ink)', margin: '0 0 4px' }}>
           Set up your account

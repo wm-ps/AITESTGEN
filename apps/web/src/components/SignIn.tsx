@@ -315,7 +315,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
             animation: 'aitg-materialize 0.6s ease-out both',
           }}
         >
-          <VantageBrand wordmarkSize={27} markSize={26} />
+          <VantageBrand wordmarkSize={40} markSize={56} />
         </div>
 
         <h1
