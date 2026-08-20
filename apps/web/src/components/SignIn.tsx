@@ -182,6 +182,14 @@ function StepPreview({ kind }: { kind: (typeof WIZARD_STEPS)[number]['kind'] }) 
   )
 }
 
+// ponytail: dev-only convenience, gated on import.meta.env.DEV so it's inert
+// in production builds — clicking the logo fills the seeded dev user's
+// credentials (see seed_dev_data.py / dev-start scripts) but still leaves
+// the user to submit the form themselves, so the real sign-in flow is
+// untouched. Not wired to any env-configurable user because it only ever
+// targets the one fixed local-dev seed account.
+const DEV_CREDENTIALS = { email: 'dev@example.com', password: 'devpassword123' }
+
 export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -189,6 +197,12 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
   const [submitting, setSubmitting] = useState(false)
   const [activeStep, setActiveStep] = useState(0)
   const [showForgotPassword, setShowForgotPassword] = useState(false)
+
+  function handleLogoClick() {
+    if (!import.meta.env.DEV) return
+    setEmail(DEV_CREDENTIALS.email)
+    setPassword(DEV_CREDENTIALS.password)
+  }
 
   useEffect(() => {
     const timer = setInterval(() => setActiveStep((i) => (i + 1) % WIZARD_STEPS.length), 2600)
@@ -287,6 +301,8 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
         </div>
 
         <div
+          onClick={import.meta.env.DEV ? handleLogoClick : undefined}
+          title={import.meta.env.DEV ? 'Fill dev sign-in credentials' : undefined}
           style={{
             position: 'relative',
             display: 'flex',
@@ -294,6 +310,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
             gap: 10,
             marginBottom: 6,
             flexShrink: 0,
+            cursor: import.meta.env.DEV ? 'pointer' : undefined,
             animation: 'aitg-materialize 0.6s ease-out both',
           }}
         >
