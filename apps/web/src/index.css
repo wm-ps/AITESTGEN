@@ -321,21 +321,6 @@ textarea:focus-visible,
   }
 }
 
-@keyframes aitg-path-travel {
-  0% {
-    transform: translate(11px, 5px);
-  }
-  33% {
-    transform: translate(4px, 21px);
-  }
-  66% {
-    transform: translate(19px, 21px);
-  }
-  100% {
-    transform: translate(11px, 5px);
-  }
-}
-
 @keyframes aitg-crossfade-a {
   0%,
   45% {

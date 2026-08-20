@@ -8,5 +8,5 @@ beforeEach(() => {
   // Order matters: replacing head's innerHTML after setting title would wipe
   // out the <title> element the setter just created.
   document.head.innerHTML = '<link rel="icon" type="image/svg+xml" href="/favicon.svg" />'
-  document.title = 'waveQA'
+  document.title = 'Vantage'
 })

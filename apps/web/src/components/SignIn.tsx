@@ -3,7 +3,7 @@ import { ApiError, api, type UserRead } from '../api'
 import { ForgotPassword } from './ForgotPassword'
 import { LoadingDots } from './LoadingDots'
 import { PasswordInput } from './PasswordInput'
-import { WaveQaBrand } from './Brand'
+import { VantageBrand } from './Brand'
 
 const WIZARD_STEPS = [
   { label: 'Scan', desc: 'Crawls every screen and workflow in your application.', kind: 'scan' },
@@ -315,7 +315,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
             animation: 'aitg-materialize 0.6s ease-out both',
           }}
         >
-          <WaveQaBrand wordmarkSize={27} wmHeight={28} tagline />
+          <VantageBrand wordmarkSize={27} markSize={26} />
         </div>
 
         <h1
@@ -512,7 +512,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
               className="decorative"
               style={{ textAlign: 'center', fontSize: 12, margin: '20px 0 0', animation: 'aitg-materialize 0.6s ease-out 0.36s both' }}
             >
-              © 2026 waveQA. All Rights Reserved
+              © 2026 Vantage. All Rights Reserved
             </p>
           </form>
         </div>

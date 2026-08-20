@@ -75,7 +75,7 @@ def send_reset_email(to_email: str, name: str, token: str) -> None:
         return
 
     message = EmailMessage()
-    message["Subject"] = "Reset your WaveQA password"
+    message["Subject"] = "Reset your Vantage password"
     message["From"] = formataddr((SMTP_FROM_NAME, SMTP_FROM))
     message["To"] = to_email
     message.set_content(

@@ -999,6 +999,16 @@ export interface components {
             scenario_count: number;
             /** Scenario Journeys Covered */
             scenario_journeys_covered: number;
+            /** Last Test Run Status */
+            last_test_run_status: string | null;
+            /** Last Test Run Created At */
+            last_test_run_created_at: string | null;
+            /** Last Test Run Pass Rate */
+            last_test_run_pass_rate: number | null;
+            /** Test Run Count */
+            test_run_count: number;
+            /** Recent Pass Rates */
+            recent_pass_rates: (number | null)[];
             /** Suite Count */
             suite_count: number;
             /** Test Case Count */

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { UserRead } from '../api'
-import { WaveQaBrand } from './Brand'
+import { VantageBrand } from './Brand'
 
 const ENV_LABELS: Record<string, string> = { staging: 'Staging', qa: 'QA', production: 'Production' }
 // Distinct dot color per environment — production reads as the "real"
@@ -89,7 +89,7 @@ export function TopBar({
             color: 'inherit',
           }}
         >
-          <WaveQaBrand wordmarkSize={22} wmHeight={24} />
+          <VantageBrand wordmarkSize={22} markSize={22} />
         </button>
         {applicationBadge && (
           <>

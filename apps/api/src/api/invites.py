@@ -33,8 +33,8 @@ SMTP_HOST = os.environ.get("SMTP_HOST")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER = os.environ.get("SMTP_USER")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
-SMTP_FROM = os.environ.get("SMTP_FROM", "no-reply@waveqa.local")
-SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME", "WaveQA")
+SMTP_FROM = os.environ.get("SMTP_FROM", "no-reply@vantage.local")
+SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME", "Vantage")
 
 
 def _hash_token(token: str) -> str:
@@ -42,33 +42,28 @@ def _hash_token(token: str) -> str:
 
 
 # Reuses the exact web app brand (apps/web/src/components/Brand.tsx
-# WaveQaBrand: wm-logo + "wave" + magnifying-glass mark + "A"), pre-rasterized
-# to PNGs and sent as CID-attached inline images — not data: URIs or inline
-# <svg>, both of which Gmail and legacy desktop Outlook strip, which is why
-# neither logo nor wordmark were rendering before. CID `add_related` is the
-# one embedding method every major client (Gmail included) displays.
-_LOGO_CID = "wm-logo-mark"
-_LOGO_PNG = (Path(__file__).parent / "assets" / "wm-logo.png").read_bytes()
-_MARK_CID = "waveqa-mark"
-_MARK_PNG = (Path(__file__).parent / "assets" / "waveqa-mark.png").read_bytes()
+# VantageMark), pre-rasterized to a PNG and sent as a CID-attached inline
+# image — not a data: URI or inline <svg>, both of which Gmail and legacy
+# desktop Outlook strip. CID `add_related` is the one embedding method every
+# major client (Gmail included) displays. The "Vantage" wordmark next to it
+# is plain HTML text, not an image — text renders natively, no CID needed.
+_LOGO_CID = "vantage-mark"
+_LOGO_PNG = (Path(__file__).parent / "assets" / "vantage-mark.png").read_bytes()
 
-# Same markup shape as WaveQaBrand: wm-logo image, then "wave" (ink-secondary)
-# + magnifying-glass mark (accent) + "A" (accent, medium weight).
 _EMAIL_HEADER = f"""\
           <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-            <td style="width:28px;height:29px;"><img src="cid:{_LOGO_CID}" width="28" height="29" alt="WaveMaker" style="display:block;border:0;"></td>
-            <td style="padding-left:10px;vertical-align:middle;font-size:20px;letter-spacing:-0.03em;">
-              <span style="font-weight:400;color:#334155;">wave</span><img src="cid:{_MARK_CID}" width="19" height="19" alt="QA" style="vertical-align:middle;margin:0 -1px 0 2px;border:0;"><span style="font-weight:500;color:#0f766e;">A</span>
+            <td style="width:28px;height:28px;"><img src="cid:{_LOGO_CID}" width="28" height="28" alt="Vantage" style="display:block;border:0;"></td>
+            <td style="padding-left:10px;vertical-align:middle;font-size:21px;letter-spacing:-0.03em;font-weight:700;color:#0f766e;">
+              Vantage
             </td>
           </tr></table>"""
 
 
 def _attach_logo(message: EmailMessage) -> None:
-    """Call after add_alternative(html) — hangs the CID images off the html
-    subpart so `cid:{_LOGO_CID}`/`cid:{_MARK_CID}` in _EMAIL_HEADER resolve."""
+    """Call after add_alternative(html) — hangs the CID image off the html
+    subpart so `cid:{_LOGO_CID}` in _EMAIL_HEADER resolves."""
     html_part = message.get_payload()[1]
     html_part.add_related(_LOGO_PNG, "image", "png", cid=f"<{_LOGO_CID}>")
-    html_part.add_related(_MARK_PNG, "image", "png", cid=f"<{_MARK_CID}>")
 
 
 def _invite_link(token: str) -> str:
@@ -87,7 +82,7 @@ def _invite_html(link: str) -> str:
 {_EMAIL_HEADER}
         </td></tr>
         <tr><td style="padding:32px;">
-          <p style="margin:0 0 16px;font-size:16px;color:#1a1a1a;">You've been invited to join WaveQA</p>
+          <p style="margin:0 0 16px;font-size:16px;color:#1a1a1a;">You've been invited to join Vantage</p>
           <p style="margin:0 0 28px;font-size:14px;color:#555555;line-height:1.5;">Click below to accept your invite and set up your account. This link expires in 72 hours.</p>
           <table role="presentation" cellpadding="0" cellspacing="0"><tr>
             <td style="border-radius:8px;background:#0f766e;">
@@ -112,11 +107,11 @@ def send_invite_email(to_email: str, token: str) -> None:
         return
 
     message = EmailMessage()
-    message["Subject"] = "You're invited to join WaveQA"
+    message["Subject"] = "You're invited to join Vantage"
     message["From"] = formataddr((SMTP_FROM_NAME, SMTP_FROM))
     message["To"] = to_email
     message.set_content(
-        f"You've been invited to join WaveQA.\n\n"
+        f"You've been invited to join Vantage.\n\n"
         f"Accept your invite: {link}\n\n"
         f"This link expires in 72 hours."
     )

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api } from '../api'
-import { WaveQaBrand } from './Brand'
+import { VantageBrand } from './Brand'
 import { LoadingDots } from './LoadingDots'
 import { PasswordInput } from './PasswordInput'
 
@@ -61,7 +61,7 @@ export function ResetPassword({
         style={{ width: '100%', maxWidth: 420, padding: '28px 34px', boxSizing: 'border-box' }}
       >
         <div style={{ marginBottom: 18 }}>
-          <WaveQaBrand wordmarkSize={19} wmHeight={20} />
+          <VantageBrand wordmarkSize={19} markSize={18} />
         </div>
 
         {loadError ? (

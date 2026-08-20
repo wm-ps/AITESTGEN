@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ApiError, api, type UserRead } from '../api'
-import { WaveQaBrand } from './Brand'
+import { VantageBrand } from './Brand'
 import { LoadingDots } from './LoadingDots'
 import { PasswordInput } from './PasswordInput'
 
@@ -47,13 +47,13 @@ export function AcceptInvite({
         style={{ width: '100%', maxWidth: 420, padding: '28px 34px', boxSizing: 'border-box' }}
       >
         <div style={{ marginBottom: 18 }}>
-          <WaveQaBrand wordmarkSize={19} wmHeight={20} />
+          <VantageBrand wordmarkSize={19} markSize={18} />
         </div>
         <h2 style={{ fontSize: 19, fontWeight: 600, color: 'var(--ink)', margin: '0 0 4px' }}>
           Set up your account
         </h2>
         <p style={{ fontSize: 13.5, color: 'var(--ink-muted)', margin: '0 0 22px' }}>
-          You've been invited to join a workspace on waveQA.
+          You've been invited to join a workspace on Vantage.
         </p>
 
         <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
