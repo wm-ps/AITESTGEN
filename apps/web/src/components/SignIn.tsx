@@ -182,12 +182,13 @@ function StepPreview({ kind }: { kind: (typeof WIZARD_STEPS)[number]['kind'] }) 
   )
 }
 
-// ponytail: dev-only convenience, gated on import.meta.env.DEV so it's inert
-// in production builds — clicking the logo fills the seeded dev user's
-// credentials (see seed_dev_data.py / dev-start scripts) but still leaves
-// the user to submit the form themselves, so the real sign-in flow is
-// untouched. Not wired to any env-configurable user because it only ever
-// targets the one fixed local-dev seed account.
+// ponytail: hardcoded on per explicit request — enabled in every build,
+// prod included. Clicking the logo fills the seeded dev user's credentials
+// (see seed_dev_data.py / dev-start scripts) but still leaves the user to
+// submit the form themselves, so the real sign-in flow is untouched. If
+// this ever needs to be off in prod, reintroduce a VITE_ENABLE_DEV_LOGIN
+// build-time env check instead of this constant.
+const DEV_LOGIN_ENABLED = true
 const DEV_CREDENTIALS = { email: 'dev@example.com', password: 'devpassword123' }
 
 export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void }) {
@@ -199,7 +200,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
   const [showForgotPassword, setShowForgotPassword] = useState(false)
 
   function handleLogoClick() {
-    if (!import.meta.env.DEV) return
+    if (!DEV_LOGIN_ENABLED) return
     setEmail(DEV_CREDENTIALS.email)
     setPassword(DEV_CREDENTIALS.password)
   }
@@ -301,8 +302,8 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
         </div>
 
         <div
-          onClick={import.meta.env.DEV ? handleLogoClick : undefined}
-          title={import.meta.env.DEV ? 'Fill dev sign-in credentials' : undefined}
+          onClick={DEV_LOGIN_ENABLED ? handleLogoClick : undefined}
+          title={DEV_LOGIN_ENABLED ? 'Fill dev sign-in credentials' : undefined}
           style={{
             position: 'relative',
             display: 'flex',
@@ -310,7 +311,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
             gap: 10,
             marginBottom: 6,
             flexShrink: 0,
-            cursor: import.meta.env.DEV ? 'pointer' : undefined,
+            cursor: DEV_LOGIN_ENABLED ? 'pointer' : undefined,
             animation: 'aitg-materialize 0.6s ease-out both',
           }}
         >
