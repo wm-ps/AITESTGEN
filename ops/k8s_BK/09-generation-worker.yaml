@@ -1,0 +1,39 @@
+# No Service — Temporal worker, outbound only.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: generation-worker
+  namespace: aitestgen
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: generation-worker
+  template:
+    metadata:
+      labels:
+        app: generation-worker
+    spec:
+      containers:
+        - name: generation-worker
+          image: REPLACE_IMAGE
+          env:
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: ANTHROPIC_API_KEY
+            - name: GENERATION_WORKER_MAX_CONCURRENT_ACTIVITIES
+              value: "20"
+          envFrom:
+            - configMapRef:
+                name: aitestgen-config
+            - secretRef:
+                name: aitestgen-secrets      
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "2"
+              memory: "6Gi"

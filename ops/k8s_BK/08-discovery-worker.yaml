@@ -1,0 +1,95 @@
+# No Service — this is a Temporal worker, all outbound connections (to
+# temporal/postgres/vault/s3), nothing listens for inbound traffic.
+# Resource requests are higher than the other services: each crawl runs a
+# real headless Chromium instance (Story 2.2).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: discovery-worker
+  namespace: aitestgen
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: discovery-worker
+  template:
+    metadata:
+      labels:
+        app: discovery-worker
+    spec:
+      containers:
+        - name: discovery-worker
+          image: REPLACE_IMAGE
+          env:
+            # $(VAR) below only expands against vars defined in this *env*
+            # list (not envFrom), so POSTGRES_USER/HOST/PORT/DB are
+            # re-declared here from the ConfigMap even though envFrom also
+            # brings them in.
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: aitestgen-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: aitestgen-config
+                  key: POSTGRES_HOST
+            - name: POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: aitestgen-config
+                  key: POSTGRES_PORT
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: aitestgen-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: POSTGRES_PASSWORD
+            # Postgres is externally hosted (e.g. RDS) — not a Service in
+            # this cluster. The password never gets written to the ConfigMap.
+            - name: DATABASE_URL
+              value: "postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: VAULT_TOKEN
+            # Only needed if the cluster doesn't use EKS Pod Identity/IRSA for
+            # this ServiceAccount — boto3 falls back to these env vars when no
+            # role-based credentials are available. Prefer Pod Identity/IRSA
+            # (scoped to s3:GetObject/s3:PutObject on AWS_S3_BUCKET only) and
+            # drop these two entries + the matching aitestgen-secrets keys.
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: ANTHROPIC_API_KEY
+            - name: DISCOVERY_WORKER_MAX_CONCURRENT_ACTIVITIES
+              value: "6"
+          envFrom:
+            - configMapRef:
+                name: aitestgen-config
+            - secretRef:
+                name: aitestgen-secrets      
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "4"
+              memory: "4Gi"

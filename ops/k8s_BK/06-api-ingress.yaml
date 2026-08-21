@@ -18,7 +18,7 @@ spec:
   ingressClassName: alb
 
   rules:
-    - host: vantage-api.omnewave.com
+    - host: aitestgen-api.onwavemaker.com
       http:
         paths:
           - path: /
@@ -31,4 +31,4 @@ spec:
 
   tls:
     - hosts:
-        - vantage-api.omnewave.com
+        - aitestgen-api.onwavemaker.com
