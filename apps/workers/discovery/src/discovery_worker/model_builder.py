@@ -355,7 +355,15 @@ def derive_components_and_assertions(
         canonical_form_id = form_resolution.get(field_row.form_id, field_row.form_id)
         if canonical_form_id not in canonical_form_ids:
             continue
-        form_field_groups.setdefault((canonical_form_id, field_row.name), []).append(field_row)
+        # `field_row.name` is `None` for any control with no HTML `name`
+        # attribute — grouping straight on it would collapse every nameless
+        # field in the same form into one shared Component/locator, silently
+        # losing all but one of them. `captured_selector` (each field's own
+        # pre-fill selector) still tells genuinely different nameless fields
+        # apart while still merging re-captures of the same one across runs.
+        form_field_groups.setdefault(
+            (canonical_form_id, field_row.name or field_row.captured_selector), []
+        ).append(field_row)
 
     forms_by_id = {form.id: form for form in forms}
     for (canonical_form_id, field_name), group_fields in form_field_groups.items():

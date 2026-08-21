@@ -59,6 +59,12 @@ async def typecheck_playwright_code(code: str) -> list[str]:
                 "export async function fillCredentials("
                 "page: Page, username?: string, password?: string): Promise<void> {}\n"
             )
+        with open(os.path.join(support_dir, "interactions.ts"), "w", encoding="utf-8") as f:
+            f.write(
+                "import type { Locator } from '@playwright/test'\n"
+                "export async function ensureVisible("
+                "locator: Locator, timeout?: number): Promise<Locator> { return locator }\n"
+            )
         proc = await asyncio.create_subprocess_exec(
             "node",
             _TSC_JS,

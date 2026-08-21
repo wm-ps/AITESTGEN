@@ -5,6 +5,7 @@ via `test_playwright_generation_activity.py`)."""
 from generation_worker.spec_linter import (
     apply_auth_tag,
     extract_locator_usages,
+    lint_asserted_data_not_entered,
     lint_locator_provenance,
     lint_password_boundary_ignored,
     lint_required_fields,
@@ -12,6 +13,7 @@ from generation_worker.spec_linter import (
     lint_shared_state_contradiction,
     lint_sibling_consistency,
     lint_tautological_assertion,
+    lint_ungrounded_error_container_assertion,
     lint_uses_shared_auth_helper,
 )
 
@@ -204,6 +206,21 @@ def test_lint_scenario_data_intent_passes_for_unrelated_scenario() -> None:
     assert warnings == []
 
 
+def test_lint_scenario_data_intent_does_not_treat_boundary_length_as_numeric() -> None:
+    # "boundary-length" is a string-length property, not a numeric one —
+    # a bare "boundary" trigger previously false-positived on this even
+    # though no field here needs to be numeric at all.
+    warnings = lint_scenario_data_intent(
+        "Profile containing boundary-length and Unicode details",
+        [],
+        [
+            {"name": "maximum-length profile values", "value": "x" * 128},
+            {"name": "Unicode profile values", "value": "こんにちは 你好"},
+        ],
+    )
+    assert not any("numeric" in w for w in warnings)
+
+
 def test_lint_tautological_assertion_flags_not_toBe_fallback() -> None:
     code = (
         "if (before !== after) {\n"
@@ -314,3 +331,90 @@ def test_lint_password_boundary_ignored_skips_when_no_password_value_present() -
         "await fillCredentials(page);",
     )
     assert warnings == []
+
+
+def test_lint_asserted_data_not_entered_flags_a_never_filled_card_number() -> None:
+    code = (
+        "test('Review card details', async ({ page }) => {\n"
+        "  await expect(page.getByText('4111111111111111')).toBeVisible();\n"
+        "});\n"
+    )
+    warnings = lint_asserted_data_not_entered(
+        code, [{"name": "cardNumber", "value": "4111111111111111", "mandatory": True}]
+    )
+    assert len(warnings) == 1
+    assert "4111111111111111" in warnings[0]
+
+
+def test_lint_asserted_data_not_entered_passes_when_value_was_filled_first() -> None:
+    code = (
+        "test('Update nickname', async ({ page }) => {\n"
+        "  await page.locator('#nickname').fill('MyTravelCard');\n"
+        "  await expect(page.getByText('MyTravelCard')).toBeVisible();\n"
+        "});\n"
+    )
+    warnings = lint_asserted_data_not_entered(
+        code, [{"name": "nickname", "value": "MyTravelCard", "mandatory": True}]
+    )
+    assert warnings == []
+
+
+def test_lint_asserted_data_not_entered_ignores_values_never_asserted() -> None:
+    code = "test('Fill form', async ({ page }) => {\n  await page.locator('#x').fill('abc123');\n});\n"
+    warnings = lint_asserted_data_not_entered(
+        code, [{"name": "field", "value": "abc123", "mandatory": True}]
+    )
+    assert warnings == []
+
+
+def test_lint_asserted_data_not_entered_ignores_scenarios_with_no_test_data() -> None:
+    code = "await expect(page.getByText('4111111111111111')).toBeVisible();\n"
+    assert lint_asserted_data_not_entered(code, []) == []
+
+
+def test_lint_ungrounded_error_container_assertion_flags_hard_toBeVisible() -> None:
+    code = (
+        "const errorOrNotification = page.locator(\n"
+        "  '[role=\"alert\"]:visible, .error:visible, [aria-live]:visible',\n"
+        ").first();\n"
+        "await expect(errorOrNotification).toBeVisible({ timeout: ASSERTION_TIMEOUT_MS });\n"
+    )
+    warnings = lint_ungrounded_error_container_assertion(code)
+    assert len(warnings) == 1
+    assert "errorOrNotification" in warnings[0]
+
+
+def test_lint_ungrounded_error_container_assertion_flags_joined_array_variant() -> None:
+    code = (
+        "const errorState = page\n"
+        "  .locator(\n"
+        "    [\n"
+        "      '[role=\"alert\"]',\n"
+        "      '[aria-live=\"assertive\"]',\n"
+        "    ].join(', '),\n"
+        "  )\n"
+        "  .locator(':visible')\n"
+        "  .first();\n"
+        "await expect(errorState).toBeVisible({ timeout: ASSERTION_TIMEOUT_MS });\n"
+    )
+    warnings = lint_ungrounded_error_container_assertion(code)
+    assert len(warnings) == 1
+    assert "errorState" in warnings[0]
+
+
+def test_lint_ungrounded_error_container_assertion_passes_for_soft_check() -> None:
+    code = (
+        "const errorContainer = page.locator('[role=\"alert\"], .error, [aria-live]').first();\n"
+        "if (await errorContainer.count() === 0) {\n"
+        "  console.warn('No generic error container found.');\n"
+        "}\n"
+    )
+    assert lint_ungrounded_error_container_assertion(code) == []
+
+
+def test_lint_ungrounded_error_container_assertion_ignores_unrelated_locators() -> None:
+    code = (
+        "const saveButton = page.locator('button[type=\"submit\"]');\n"
+        "await expect(saveButton).toBeVisible({ timeout: ASSERTION_TIMEOUT_MS });\n"
+    )
+    assert lint_ungrounded_error_container_assertion(code) == []

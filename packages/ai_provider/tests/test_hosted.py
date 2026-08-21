@@ -425,6 +425,37 @@ async def test_generate_playwright_strips_markdown_code_fences(
     assert "```" not in result.code
 
 
+async def test_generate_playwright_prompt_uses_a_distinct_navigation_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Navigation-reliability fix: a full page load legitimately takes longer
+    than a single locator action, so `page.goto(...)` and the
+    `waitForLoadState(...)` call right after it must get their own, longer
+    `NAVIGATION_TIMEOUT_MS` budget — never the same `ASSERTION_TIMEOUT_MS`
+    used for locator actions/assertions elsewhere."""
+    captured = _monkeypatch_post(monkeypatch, "test('x', async ({ page }) => {})")
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(scenario)
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "const NAVIGATION_TIMEOUT_MS = 30000;" in content
+    assert "await page.goto(url, { timeout: NAVIGATION_TIMEOUT_MS });" in content
+
+
+async def test_generate_playwright_prompt_requires_dom_render_wait_after_every_navigation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(monkeypatch, "test('x', async ({ page }) => {})")
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(scenario)
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "not just the first one in the test" in content
+    assert "waitForLoadState('domcontentloaded', { timeout: NAVIGATION_TIMEOUT_MS });" in content
+
+
 async def test_generate_playwright_forbids_fillcredentials_when_requires_auth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

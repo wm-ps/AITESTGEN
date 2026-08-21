@@ -75,120 +75,103 @@ def test_quantity_named_field_gets_a_numeric_default_even_with_text_input_type()
 
 
 def test_scenario_intent_below_minimum_amount() -> None:
-    used: set[str] = set()
-    assert _scenario_intent_default_value("Transfer amount below the minimum", "Amount", used) == "0.00"
+    assert _scenario_intent_default_value("Transfer amount below the minimum", "Amount") == "0.00"
 
 
 def test_scenario_intent_at_minimum_amount() -> None:
-    used: set[str] = set()
     assert (
-        _scenario_intent_default_value("Transfer the minimum permitted amount", "Amount", used)
+        _scenario_intent_default_value("Transfer the minimum permitted amount", "Amount")
         == "0.01"
     )
 
 
 def test_scenario_intent_at_maximum_amount() -> None:
-    used: set[str] = set()
     assert (
-        _scenario_intent_default_value("Policy at the maximum cover boundary", "coverage", used)
+        _scenario_intent_default_value("Policy at the maximum cover boundary", "coverage")
         == "999999.99"
     )
 
 
 def test_scenario_intent_decimal_precision() -> None:
-    used: set[str] = set()
     assert (
         _scenario_intent_default_value(
-            "Loan application with supported decimal precision", "principal", used
+            "Loan application with supported decimal precision", "principal"
         )
         == "10000.50"
     )
 
 
 def test_scenario_intent_unicode_name_field() -> None:
-    used: set[str] = set()
     assert (
-        _scenario_intent_default_value("Multilingual legal name", "legalName", used)
+        _scenario_intent_default_value("Multilingual legal name", "legalName")
         == "José García"
     )
 
 
 def test_scenario_intent_emoji_subject() -> None:
-    used: set[str] = set()
-    assert _scenario_intent_default_value("Emoji subject", "subject", used) == "🚀😊"
+    assert _scenario_intent_default_value("Emoji subject", "subject") == "🚀😊"
 
 
 def test_scenario_intent_markup_special_characters() -> None:
-    used: set[str] = set()
     assert (
-        _scenario_intent_default_value("Subject with markup-like characters", "subject", used)
+        _scenario_intent_default_value("Subject with markup-like characters", "subject")
         == "<test>&\"'</test>"
     )
 
 
 def test_scenario_intent_password_unicode() -> None:
-    used: set[str] = set()
     assert (
-        _scenario_intent_default_value("Sign in with a Unicode password", "password", used)
+        _scenario_intent_default_value("Sign in with a Unicode password", "password")
         == "Pässwörd123$"
     )
 
 
 def test_scenario_intent_password_maximum_length_regardless_of_word_order() -> None:
-    used: set[str] = set()
     value = _scenario_intent_default_value(
-        "Password at the maximum permitted length", "password", used
+        "Password at the maximum permitted length", "password"
     )
     assert value is not None and len(value) > 100
 
 
 def test_scenario_intent_password_minimum_length() -> None:
-    used: set[str] = set()
-    value = _scenario_intent_default_value("Minimum-length password", "password", used)
+    value = _scenario_intent_default_value("Minimum-length password", "password")
     assert value == "Pw1$"
 
 
 def test_scenario_intent_generic_length_boundary_does_not_leak_into_numeric_check() -> None:
-    used: set[str] = set()
     value = _scenario_intent_default_value(
-        "Maximum supported profile name length", "profileName", used
+        "Maximum supported profile name length", "profileName"
     )
     assert value is not None and len(value) > 100
 
 
 def test_scenario_intent_returns_none_for_unrelated_scenario() -> None:
-    used: set[str] = set()
-    assert _scenario_intent_default_value("Update profile name", "name", used) is None
+    assert _scenario_intent_default_value("Update profile name", "name") is None
 
 
 def test_scenario_intent_does_not_apply_numeric_categories_to_password_fields() -> None:
     # "maximum" alone (no password-specific category matched) must not leak
     # the generic numeric-boundary value onto a password field.
-    used: set[str] = set()
-    assert _scenario_intent_default_value("Account with a maximum balance", "password", used) is None
+    assert _scenario_intent_default_value("Account with a maximum balance", "password") is None
 
 
 def test_scenario_intent_skips_card_and_email_fields() -> None:
-    used: set[str] = set()
-    assert _scenario_intent_default_value("Unicode legal name", "email", used) is None
-    assert _scenario_intent_default_value("Unicode legal name", "cardNumber", used) is None
+    assert _scenario_intent_default_value("Unicode legal name", "email") is None
+    assert _scenario_intent_default_value("Unicode legal name", "cardNumber") is None
 
 
 def test_scenario_intent_change_password_boundary_keeps_current_password_standard() -> None:
     scenario_name = "Password at the configured maximum length"
-    used: set[str] = set()
-    current = _scenario_intent_default_value(scenario_name, "current password", used)
+    current = _scenario_intent_default_value(scenario_name, "current password")
     assert current is None  # falls through to the standard default, unaffected
 
 
 def test_scenario_intent_change_password_boundary_new_and_confirm_match_exactly() -> None:
     scenario_name = "Password at the configured maximum length"
-    used: set[str] = set()
     new_value = _scenario_intent_default_value(
-        scenario_name, "new password at maximum allowed length", used
+        scenario_name, "new password at maximum allowed length"
     )
-    used.add(new_value)
-    confirm_value = _scenario_intent_default_value(scenario_name, "confirm new password", used)
+    confirm_value = _scenario_intent_default_value(scenario_name, "confirm new password")
     assert new_value == confirm_value
     assert len(new_value) > 100
 
@@ -196,11 +179,21 @@ def test_scenario_intent_change_password_boundary_new_and_confirm_match_exactly(
 def test_scenario_intent_genuine_mismatch_scenario_is_unaffected() -> None:
     # No length/unicode keyword in the name -> falls through to the
     # existing, intentionally-distinct default behavior (Checklist rule 6).
-    used: set[str] = set()
     assert (
-        _scenario_intent_default_value("Change password with mismatched confirmation", "password", used)
+        _scenario_intent_default_value("Change password with mismatched confirmation", "password")
         is None
     )
+
+
+def test_scenario_intent_field_name_disambiguates_a_multi_property_scenario() -> None:
+    # A Scenario can cover two distinct properties across two different
+    # fields at once — each field's OWN name must win over whichever
+    # category happens to be checked first against the whole scenario.
+    scenario_name = "Profile containing boundary-length and Unicode details"
+    length_value = _scenario_intent_default_value(scenario_name, "maximum-length profile values")
+    unicode_value = _scenario_intent_default_value(scenario_name, "Unicode profile values")
+    assert length_value is not None and len(length_value) > 100
+    assert unicode_value == "こんにちは 你好 Pässwörd"
 
 
 def test_is_existing_credential_field_flags_bare_password() -> None:

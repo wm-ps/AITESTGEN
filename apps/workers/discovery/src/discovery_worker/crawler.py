@@ -1245,11 +1245,24 @@ async def _capture_selector(locator: Locator, fallback_text: str | None = None) 
 # path Story 2.5's `ComponentLocator` derivation extends to consume.
 _LOCATOR_TIER_ORDER = {
     "testid": 0,
-    "aria": 1,
-    "text": 2,
-    "label": 3,
-    "css_scoped": 4,
-    "css_absolute": 5,
+    # A real, non-generated CSS attribute (id/name/class — `css_scoped`)
+    # ranks above name/text-derived strategies: a button/link's own visible
+    # text becomes its "aria" accessible name AND its "text" candidate, so
+    # any other element sharing that same common label (a generic verb like
+    # "Logout"/"Submit"/"Close" reused across a header, a mobile-nav clone,
+    # a modal, etc.) matches it too. A real class/id doesn't have that
+    # collision risk nearly as often. (A CSS-in-JS-style generated class is
+    # still caught and ranked below via `_is_fragile_locator_value` — this
+    # reordering only ever promotes a class/id that already passed that
+    # check.) Only `_resolve_known_application_model_sync`
+    # (generation_worker/activities.py) ever surfaces to the AI, so
+    # whichever candidate ranks here IS the only one it ever sees.
+    "css_scoped": 1,
+    "css_value": 2,
+    "aria": 3,
+    "text": 4,
+    "label": 5,
+    "css_absolute": 6,
 }
 
 # Story 2.21 AC 2: machine-generated identifiers, syntactically valid CSS but
@@ -1368,6 +1381,13 @@ _LOCATOR_INFO_SCRIPT = r"""
     idAttr: el.id || null,
     nameAttr: el.getAttribute('name') || null,
     placeholderAttr: isFormControl ? (el.getAttribute('placeholder') || null) : null,
+    // A form control's pre-set `.value` (the page's own static default, or
+    // whatever discovery itself already typed in before this capture runs)
+    // is never used as the "name" above — but for a control with no
+    // testid/id/name/label/placeholder at all, it's still the only concrete,
+    // verifiable signal left; captured separately so it can only ever become
+    // its own explicitly-fragile candidate, never masquerade as a name.
+    valueAttr: (isFormControl && el.value) ? String(el.value).trim().slice(0, 80) : null,
     firstClass: (el.className || '').trim().split(/\s+/)[0] || null,
     scoped: scopedPath(el),
     absolute: absolutePath(el),
@@ -1433,6 +1453,13 @@ def _build_locator_candidates(info: dict, frame_path: str | None) -> list[dict]:
             f'role={info.get("role")}[name="{info["placeholderAttr"]}"]',
             force_fragile=True,
         )
+    # Last resort for a control with no testid/id/name/label/placeholder at
+    # all: an attribute selector on its own pre-set value. Fragile (a later
+    # fill legitimately changes it) but still a concrete, verifiable
+    # locator — better than falling straight through to a pure positional
+    # path that breaks the moment an unrelated sibling element is added.
+    if info.get("valueAttr"):
+        add("css_value", f'{info.get("tag") or "input"}[value="{info["valueAttr"]}"]', force_fragile=True)
     if info.get("firstClass"):
         add("css_scoped", f"css=.{info['firstClass']}")
     if info.get("scoped"):

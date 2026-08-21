@@ -98,6 +98,30 @@ def test_testid_ranks_first_among_multiple_candidates() -> None:
     assert candidates[0]["value"] == '[data-testid="save-button"]'
 
 
+def test_real_class_outranks_aria_role_and_name_for_a_button() -> None:
+    """Locator-priority fix: `role=button[name="Logout"]` matches ANY
+    element sharing that same visible text (a header "Logout" duplicated in
+    a mobile-nav clone, a modal, etc.) — a real, non-generated class doesn't
+    have that collision risk nearly as often, so it must rank first."""
+    info = {
+        "testid": None,
+        "role": "button",
+        "name": "Logout",
+        "text": "Logout",
+        "label": None,
+        "idAttr": None,
+        "firstClass": "link-button",
+        "scoped": None,
+        "absolute": "button:nth-child(5)",
+    }
+    candidates = _build_locator_candidates(info, frame_path=None)
+    assert candidates[0]["strategy"] == "css_scoped"
+    assert candidates[0]["value"] == "css=.link-button"
+    assert candidates[0]["fragile"] is False
+    aria_candidate = next(c for c in candidates if c["strategy"] == "aria")
+    assert candidates.index(aria_candidate) > 0
+
+
 def test_css_in_js_hash_ranks_below_aria_role_and_name() -> None:
     info = {
         "testid": None,
@@ -134,6 +158,54 @@ def test_no_testid_role_or_text_falls_through_to_scoped_css_and_scores_low() -> 
     candidates = _build_locator_candidates(info, frame_path=None)
     assert candidates[0]["strategy"] == "css_scoped"
     assert candidates[0]["value"] == "#bare-div"
+
+
+def test_value_only_input_gets_a_fragile_value_attribute_candidate() -> None:
+    info = {
+        "testid": None,
+        "role": "textbox",
+        "name": "",
+        "text": "",
+        "label": None,
+        "idAttr": None,
+        "nameAttr": None,
+        "placeholderAttr": None,
+        "firstClass": None,
+        "scoped": None,
+        "absolute": "input:nth-child(3)",
+        "tag": "input",
+        "valueAttr": "John Doe",
+    }
+    candidates = _build_locator_candidates(info, frame_path=None)
+    value_candidate = next(c for c in candidates if c["strategy"] == "css_value")
+    assert value_candidate["value"] == 'input[value="John Doe"]'
+    assert value_candidate["fragile"] is True
+    # Ranks above the pure positional path — still concrete, unlike a path
+    # that breaks the moment an unrelated sibling element is added.
+    absolute_index = next(i for i, c in enumerate(candidates) if c["strategy"] == "css_absolute")
+    assert candidates.index(value_candidate) < absolute_index
+
+
+def test_name_attr_outranks_value_attribute_when_both_present() -> None:
+    info = {
+        "testid": None,
+        "role": "textbox",
+        "name": "",
+        "text": "",
+        "label": None,
+        "idAttr": None,
+        "nameAttr": "principal",
+        "placeholderAttr": None,
+        "firstClass": None,
+        "scoped": None,
+        "absolute": "input:nth-child(1)",
+        "tag": "input",
+        "valueAttr": "500000",
+    }
+    candidates = _build_locator_candidates(info, frame_path=None)
+    assert candidates[0]["strategy"] == "css_scoped"
+    assert candidates[0]["value"] == '[name="principal"]'
+    assert candidates[0]["fragile"] is False
 
 
 def test_frame_path_is_prefixed_onto_every_candidate_value() -> None:
@@ -238,6 +310,10 @@ async def _capture_candidates_on_locators_page(target_app_url: str) -> dict[str,
             "bare": await _capture_locator_candidates(page.locator("#bare-div")),
             "principal": await _capture_locator_candidates(page.locator('input[name="principal"]')),
             "promoCode": await _capture_locator_candidates(page.locator('input[name="promoCode"]')),
+            "johnDoe": await _capture_locator_candidates(page.locator('input[value="John Doe"]')),
+            "Logout": await _capture_locator_candidates(
+                page.get_by_role("button", name="Logout", exact=True)
+            ),
         }
         await context.close()
         await browser.close()
@@ -279,13 +355,17 @@ async def test_real_prefilled_unlabeled_input_never_captures_its_value_as_a_name
     (the field's current value masquerading as its accessible name). Now:
     no "aria" candidate at all (nothing legitimate to build one from), and
     its own `name` attribute surfaces as a durable, non-fragile candidate
-    instead of falling straight through to the fragile absolute path."""
+    instead of falling straight through to the fragile absolute path. A
+    fragile `css_value` fallback candidate legitimately embeds the value too
+    (a last resort for a field with no better signal at all) — it just must
+    never rank ahead of the durable `[name="principal"]` candidate, and must
+    never appear as an "aria"/accessible-name candidate."""
     candidates = await _capture_candidates_on_locators_page(target_app_url)
     principal = candidates["principal"]
     assert not any(c["strategy"] == "aria" for c in principal), principal
-    name_attr_candidate = next(c for c in principal if c["value"] == '[name="principal"]')
-    assert name_attr_candidate["fragile"] is False
-    assert not any("500000" in c["value"] for c in principal), principal
+    assert not any("500000" in c["value"] for c in principal if c["strategy"] != "css_value"), principal
+    assert principal[0]["value"] == '[name="principal"]'
+    assert principal[0]["fragile"] is False
 
 
 @pytest.mark.asyncio
@@ -302,6 +382,38 @@ async def test_real_placeholder_only_input_captures_a_fragile_aria_candidate(
     )
     assert aria_candidate is not None, promo
     assert aria_candidate["fragile"] is True
+
+
+@pytest.mark.asyncio
+async def test_real_value_only_input_captures_a_fragile_value_candidate(
+    target_app_url: str,
+) -> None:
+    """`/locators`' third input has no id/name/label/placeholder at all —
+    only a pre-filled value. It must still surface a usable (if fragile)
+    `tag[value="..."]` candidate rather than falling through to a pure
+    positional path."""
+    candidates = await _capture_candidates_on_locators_page(target_app_url)
+    john_doe = candidates["johnDoe"]
+    value_candidate = next((c for c in john_doe if c["strategy"] == "css_value"), None)
+    assert value_candidate is not None, john_doe
+    assert value_candidate["value"] == 'input[value="John Doe"]'
+    assert value_candidate["fragile"] is True
+
+
+@pytest.mark.asyncio
+async def test_real_button_with_a_real_class_ranks_the_class_above_role_and_name(
+    target_app_url: str,
+) -> None:
+    """`/locators`' Logout button has a real (non-hash) class and visible
+    text — the exact shape that produced `role=button[name="Logout"]` as
+    the "preferred" locator for a real target's persistent header button,
+    which failed at test-run time (matched an invisible duplicate
+    elsewhere in the app). The class must rank first instead."""
+    candidates = await _capture_candidates_on_locators_page(target_app_url)
+    logout = candidates["Logout"]
+    assert logout[0]["strategy"] == "css_scoped"
+    assert logout[0]["value"] == "css=.link-button"
+    assert logout[0]["fragile"] is False
 
 
 @pytest.mark.asyncio
@@ -445,3 +557,94 @@ def test_derive_locators_and_fragile_proportion_against_real_postgres() -> None:
         assert legacy_locators[0].value == '[data-testid="legacy"]'
         assert legacy_locators[0].strategy == "testid"
         assert legacy_locators[0].fragile is False
+
+
+@pytest.mark.skipif(not _db_available(), reason="requires PostgreSQL reachable")
+def test_derive_components_and_assertions_keeps_distinct_nameless_fields_separate() -> None:
+    """Model-builder fix: two different fields with no HTML `name` attribute
+    on the same form used to collapse into ONE shared Component (grouped by
+    `(form_id, None)`), silently losing all but one of them. Falling back to
+    each field's own `captured_selector` when `name` is `None` keeps them
+    distinct."""
+    from discovery_worker.db import engine, init_db
+    from discovery_worker.model_builder import derive_components_and_assertions
+    from domain import (
+        Application,
+        Component,
+        ComponentLocator,
+        DiscoveryRun,
+        Form,
+        FormField,
+        Organization,
+        Page,
+    )
+    from sqlmodel import Session, select
+
+    init_db()
+    with Session(engine) as session:
+        org = Organization(name=f"Org {uuid.uuid4()}")
+        session.add(org)
+        session.flush()
+        application = Application(
+            organization_id=org.id,
+            name="Nameless Field Test App",
+            url="https://example.test",
+            environment="test",
+            secret_ref="unused",
+        )
+        session.add(application)
+        session.flush()
+        run = DiscoveryRun(application_id=application.id)
+        session.add(run)
+        session.flush()
+        page = Page(application_id=application.id, discovery_run_id=run.id, url="/form")
+        session.add(page)
+        session.flush()
+        form = Form(
+            application_id=application.id,
+            discovery_run_id=run.id,
+            page_id=page.id,
+            action_url="/submit",
+            method="POST",
+        )
+        session.add(form)
+        session.flush()
+
+        session.add(
+            FormField(
+                form_id=form.id,
+                name=None,
+                input_type="text",
+                captured_selector='input[value="John Doe"]',
+                locator_candidates=[
+                    {"strategy": "css_value", "value": 'input[value="John Doe"]', "fragile": True}
+                ],
+            )
+        )
+        session.add(
+            FormField(
+                form_id=form.id,
+                name=None,
+                input_type="text",
+                captured_selector='input[value="Jane Roe"]',
+                locator_candidates=[
+                    {"strategy": "css_value", "value": 'input[value="Jane Roe"]', "fragile": True}
+                ],
+            )
+        )
+        session.commit()
+
+        derive_components_and_assertions(
+            session, application.id, page_resolution={}, form_resolution={}
+        )
+
+        components = session.exec(select(Component).where(Component.form_id == form.id)).all()
+        assert len(components) == 2
+
+        locator_values: set[str] = set()
+        for component in components:
+            locators = session.exec(
+                select(ComponentLocator).where(ComponentLocator.component_id == component.id)
+            ).all()
+            locator_values.update(loc.value for loc in locators)
+        assert locator_values == {'input[value="John Doe"]', 'input[value="Jane Roe"]'}

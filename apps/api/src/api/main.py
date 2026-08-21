@@ -46,6 +46,7 @@ from secrets_client import VaultSecretsClient
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
+from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from workflows import (
     DISCOVERY_TASK_QUEUE,
@@ -1426,6 +1427,16 @@ async def generate_scenarios(
                 str(journey.external_id),
                 id=f"generation-{journey.external_id}-{journey.attempt}",
                 task_queue=GENERATION_TASK_QUEUE,
+                # `already_generated` above is checked, then this call races
+                # against any other in-flight trigger for the same Journey/
+                # attempt (e.g. a double-submitted "Continue to Scenarios"
+                # request) — the default reuse policy lets a second start
+                # succeed once the first run has already CLOSED, silently
+                # re-running ScenarioGenerationActivity and duplicating every
+                # Scenario it wrote. Rejecting outright makes the same-
+                # attempt workflow id truly once-only; a genuine retry still
+                # works because `journey.attempt` increments into a new id.
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             )
             triggered += 1
         except WorkflowAlreadyStartedError:

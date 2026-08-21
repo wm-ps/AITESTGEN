@@ -532,7 +532,17 @@ def locators_page(request: Request) -> Response:
     `.value` as an "aria" name candidate, and must surface `[name="..."]` as
     a durable candidate instead of falling through straight to the fragile
     absolute path. A second, placeholder-only input (no value, no label):
-    its placeholder is a legitimate but explicitly fragile "aria" candidate."""
+    its placeholder is a legitimate but explicitly fragile "aria" candidate.
+    A third input has NO id/name/label/placeholder at all but a pre-filled
+    value — the only thing left to build any locator from besides a pure
+    positional path.
+
+    `[ADDED]` locator-priority fix — a button with a real (non-hash) class
+    and visible text shared with other generic-verb controls elsewhere in a
+    real app (a header "Logout" duplicated in a desktop/mobile nav, a modal,
+    etc.): its `role=button[name="Logout"]` "aria" candidate must never
+    outrank the real `.link-button` class, since accessible-name collisions
+    on a common label are exactly the failure this must avoid."""
     if not _authenticated(request):
         return RedirectResponse(url="/login")
     return HTMLResponse(
@@ -544,6 +554,8 @@ def locators_page(request: Request) -> Response:
         <div id="bare-div" onclick="void(0)"></div>
         <input name="principal" value="500000">
         <input name="promoCode" placeholder="e.g. SAVE10">
+        <input value="John Doe">
+        <button type="submit" class="link-button" onclick="void(0)">Logout</button>
         </body></html>
         """
     )

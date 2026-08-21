@@ -440,6 +440,45 @@ def _build_auth_helper_script(login_evidence: LoginPageEvidence | None) -> str:
     )
 
 
+def _build_interactions_helper_script() -> str:
+    """Feature: shared element-resolution helper, not per-spec scroll logic.
+    Playwright's own `.click()`/`.fill()` already auto-scroll an element
+    into view as part of their actionability checks, but an assertion
+    (`toBeVisible()`, etc.) does not, and a custom-scrolling container can
+    occasionally still leave an element outside Playwright's own auto-
+    scroll. Every generated spec routes through this one implementation
+    instead of writing its own scroll-then-verify steps, so a genuinely
+    wrong/stale locator fails with a clear, diagnosable error instead of a
+    bare actionability timeout — the same "one implementation, not
+    duplicated per spec" reasoning `fillCredentials` already established."""
+    return (
+        "import type { Locator } from '@playwright/test'\n\n"
+        "export async function ensureVisible(\n"
+        "  locator: Locator,\n"
+        "  selectorText?: string,\n"
+        "  timeout = 15000,\n"
+        "): Promise<Locator> {\n"
+        "  if (await locator.isVisible().catch(() => false)) {\n"
+        "    return locator\n"
+        "  }\n"
+        "  await locator.scrollIntoViewIfNeeded({ timeout }).catch(() => {})\n"
+        "  const visibleAfterScroll = await locator.isVisible().catch(() => false)\n"
+        "  if (!visibleAfterScroll) {\n"
+        "    const label = selectorText ? ` (${selectorText})` : ''\n"
+        "    throw new Error(\n"
+        "      `Element matched by locator${label} is not visible even after scrolling it "
+        "into ` +\n"
+        "      'view — the locator may be wrong, or the element requires a prior action '"
+        " +\n"
+        "      '(opening a menu/accordion/tab, waiting for content to load) to become "
+        "visible.',\n"
+        "    )\n"
+        "  }\n"
+        "  return locator\n"
+        "}\n"
+    )
+
+
 class _ProjectWriter(ABC):
     """Abstracts "put this file somewhere" so `_write_project_files` runs
     identically for a zip archive and a plain directory — the only thing
@@ -556,6 +595,7 @@ def _write_project_files(
     )
     writer.write("support/config.ts", _build_config_script())
     writer.write("support/auth.ts", _build_auth_helper_script(login_evidence))
+    writer.write("support/interactions.ts", _build_interactions_helper_script())
 
     written_suite_folders = 0
     written_test_files = 0

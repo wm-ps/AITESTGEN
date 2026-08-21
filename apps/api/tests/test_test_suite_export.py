@@ -215,6 +215,18 @@ class TestAssembleTestSuiteProject:
         assert "SecretsClient" not in combined
         assert "resolve(" not in combined
 
+    def test_exports_shared_interactions_helper(self) -> None:
+        """Every generated spec routes element resolution through one shared
+        `ensureVisible` implementation (support/interactions.ts) instead of
+        each writing its own scroll-then-verify steps — same "one
+        implementation, not duplicated per spec" reasoning as
+        support/auth.ts's fillCredentials."""
+        zf = self._basic_zip()
+        interactions_helper = zf.read("support/interactions.ts").decode()
+        assert "export async function ensureVisible" in interactions_helper
+        assert "scrollIntoViewIfNeeded" in interactions_helper
+        assert "isVisible" in interactions_helper
+
     def test_standard_login_setup_verifies_login_actually_succeeded(self) -> None:
         """`[FIXED]` `auth.setup.ts` used to write `storageState` unconditionally
         right after calling `fillCredentials` — a wrong/missing credential (e.g.

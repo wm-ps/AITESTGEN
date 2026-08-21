@@ -298,7 +298,7 @@ _UNICODE_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 _NUMERIC_INTENT_RE = re.compile(
-    r"\bnumeric\b|\bnumber\b|\bquantity\b|\bboundary\b|\bdecimal\b|\binteger\b", re.IGNORECASE
+    r"\bnumeric\b|\bnumber\b|\bquantity\b|\bdecimal\b|\binteger\b", re.IGNORECASE
 )
 _DATE_INTENT_RE = re.compile(r"\bdate\b|\bdated\b", re.IGNORECASE)
 # Deliberately its own category, not folded into `_UNICODE_INTENT_RE` above:
@@ -389,6 +389,38 @@ def lint_password_boundary_ignored(
     return []
 
 
+_ASSERTION_TEXT_RE = re.compile(
+    r"(?:getByText|toHaveText|toContainText)\(\s*['\"]([^'\"]{4,})['\"]"
+)
+_FILL_TEXT_RE = re.compile(r"\.fill\(\s*['\"]([^'\"]{4,})['\"]")
+
+
+def lint_asserted_data_not_entered(code: str, test_data: list[dict]) -> list[str]:
+    """Discovery never captures an application's actual rendered row/cell
+    data (only structure — pages, forms, field names/types, selectors; see
+    `Component`/`ComponentLocator`) — so a `test_data` value this generator
+    resolved (a default, or a reviewer's placeholder) is never verified
+    real, pre-existing content anywhere else in the application. A spec
+    that searches for/asserts one of these values on a page WITHOUT this
+    same test ever having filled it in first (e.g. "the Cards page shows a
+    card ending in 4111111111", when nothing in this test ever entered
+    that number) is asserting a fabricated expectation, not a real one —
+    this is exactly the failure mode the Existing-data assertion rule in
+    `ai_provider/hosted.py`'s prompt targets; this is its deterministic
+    backstop, the same layering `lint_uses_shared_auth_helper` established
+    for the storageState rule."""
+    values = {str(f.get("value") or "") for f in test_data if f.get("value")}
+    asserted = {m.group(1) for m in _ASSERTION_TEXT_RE.finditer(code)}
+    filled = {m.group(1) for m in _FILL_TEXT_RE.finditer(code)}
+    return [
+        f"generated spec asserts test_data value {value!r} is displayed on the page, but this "
+        "test never fills/enters that value itself — Discovery never captures real, pre-"
+        "existing page content, so this looks like a generator default being asserted as if it "
+        "were real seeded data; verify this isn't a hallucinated expectation"
+        for value in sorted(values & asserted - filled)
+    ]
+
+
 _TAUTOLOGY_NOT_RE = re.compile(
     r"if\s*\(\s*([\w.\[\]'\"]+)\s*!==\s*([\w.\[\]'\"]+)\s*\)\s*\{\s*"
     r"(?:await\s+)?expect\(\s*\1\s*\)\.not\.toBe\(\s*\2\s*\)"
@@ -432,6 +464,52 @@ def _count_assertions(code: str) -> dict[str, int]:
         if key:
             result[key] = int(m.group("count"))
     return result
+
+
+_GENERIC_ERROR_GUESS_RE = re.compile(
+    r'role="alert"|aria-live|\.toast\b|\.modal\b|class\*="error"|class\*="failure"|'
+    r'class\*="failed"|data-state="error"|data-status="error"',
+    re.IGNORECASE,
+)
+_LOCATOR_VAR_ASSIGN_RE = re.compile(
+    r"(?:const|let)\s+(\w+)\s*=\s*page[\s\S]{0,30}?\.locator\(([\s\S]{0,400}?)\)"
+)
+
+
+def lint_ungrounded_error_container_assertion(code: str) -> list[str]:
+    """Discovery never captures an alert/toast/modal CONTAINER as such (see
+    `Component`'s own type list — only buttons, links, and form fields).
+    A locator string guessing at one via a generic, multi-convention CSS/
+    role selector (`[role="alert"]`, `.error`, `[aria-live]`, `.toast`,
+    `.modal`, ...) is therefore never grounded in anything Known locators
+    actually gave the LLM — it's always an invented guess, even when it
+    looks like idiomatic Playwright. Flags a HARD, must-pass \
+    `toBeVisible()` assertion on such a locator: if the real application \
+    never renders one of these conventions, the test times out and fails \
+    even though a real, already-queryable signal (URL/form-state) may \
+    already have proved the same outcome. A soft, log-only \
+    `.count() === 0` check on the same variable is fine and not flagged —
+    this is the deterministic backstop for the prompt's own Failure-
+    outcome assertion rules."""
+    warnings = []
+    for match in _LOCATOR_VAR_ASSIGN_RE.finditer(code):
+        var_name, locator_arg = match.group(1), match.group(2)
+        if not _GENERIC_ERROR_GUESS_RE.search(locator_arg):
+            continue
+        hard_assert_re = re.compile(rf"expect\(\s*{re.escape(var_name)}\b[^)]*\)\.toBeVisible\(")
+        if not hard_assert_re.search(code):
+            continue
+        soft_check_re = re.compile(rf"{re.escape(var_name)}\b[^;]*\.count\(\)\s*===?\s*0")
+        if soft_check_re.search(code):
+            continue
+        warnings.append(
+            f"generated spec hard-asserts that a generic, ungrounded error/alert-container "
+            f"guess ({var_name!r}) is visible — this locator has no basis in Known locators, "
+            "so if the application never renders one of these conventions, the test times out "
+            "and fails even though a real signal (URL/form-state) may already have proved the "
+            "expected failure; this should be a soft, log-only check instead"
+        )
+    return warnings
 
 
 def lint_shared_state_contradiction(code: str, sibling_code: str) -> list[str]:

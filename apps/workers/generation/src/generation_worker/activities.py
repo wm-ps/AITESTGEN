@@ -83,6 +83,19 @@ _TYPE_CANDIDATES = {
 # box is routinely `type="text"` on real sites, so `input_type` alone
 # already misses it) — same field-type-awareness gap, same fix.
 _QUANTITY_FIELD_RE = re.compile(r"qty|quantity|count|amount|number", re.IGNORECASE)
+# Every literal this generator (both the plain name/type defaults above and
+# the scenario-intent defaults below) can ever produce — nothing else ever
+# writes one of these exact strings into `test_data`, so a field holding one
+# is safe to treat as "still effectively blank" and re-evaluate.
+_KNOWN_GENERIC_PLACEHOLDERS = frozenset(
+    {"Test value", "Test value 2", "Test value 3"}
+    | {"Password1$", "Password2$", "Password3$"}
+    | {"4111111111111111", "5555555555554444", "4000000000000002"}
+    | {"test@example.com", "test2@example.com", "test3@example.com"}
+    | {"1", "2", "3"}
+    | {"555-0100", "555-0101", "555-0102"}
+    | {"2026-01-01", "2026-01-02", "2026-01-03"}
+)
 
 
 def _default_test_data_value(
@@ -178,9 +191,116 @@ def _is_existing_credential_field(field_name: str) -> bool:
     return bool(_USERNAME_FIELD_RE.search(field_name) or _PASSWORD_FIELD_RE.search(field_name))
 
 
-def _scenario_intent_default_value(
-    intent_text: str, field_name: str, used_values: set[str]
-) -> str | None:
+_NUMERIC_BOUNDARY_FIELD_EXCLUSION_RE = re.compile(r"name|subject|comment|holder", re.IGNORECASE)
+
+
+_SI_PASSWORD_UNICODE = "Pässwörd123$"
+_SI_PASSWORD_MAX_LEN = "P4ssw0rd$" + "x" * 119
+_SI_PASSWORD_MIN_LEN = "Pw1$"
+_SI_MAX_LEN = "x" * 128
+_SI_MIN_LEN = "a"
+_SI_EMOJI = "🚀😊"
+_SI_UNICODE_NAME = "José García"
+_SI_UNICODE_GENERIC = "こんにちは 你好 Pässwörd"
+_SI_MARKUP = "<test>&\"'</test>"
+_SI_BELOW_MIN = "0.00"
+_SI_ABOVE_MAX = "1000000.00"
+_SI_DECIMAL = "10000.50"
+_SI_AT_MIN = "0.01"
+_SI_AT_MAX = "999999.99"
+# Every literal `_scenario_intent_default_value` below can ever produce —
+# unioned into `_KNOWN_GENERIC_PLACEHOLDERS` above so a value from an
+# earlier, less-refined pass of this same generator is re-eligible for
+# re-evaluation too (not just the plain name/type defaults).
+_SCENARIO_INTENT_PLACEHOLDERS = frozenset(
+    {
+        _SI_PASSWORD_UNICODE,
+        _SI_PASSWORD_MAX_LEN,
+        _SI_PASSWORD_MIN_LEN,
+        _SI_MAX_LEN,
+        _SI_MIN_LEN,
+        _SI_EMOJI,
+        _SI_UNICODE_NAME,
+        _SI_UNICODE_GENERIC,
+        _SI_MARKUP,
+        _SI_BELOW_MIN,
+        _SI_ABOVE_MAX,
+        _SI_DECIMAL,
+        _SI_AT_MIN,
+        _SI_AT_MAX,
+    }
+)
+_KNOWN_GENERIC_PLACEHOLDERS = _KNOWN_GENERIC_PLACEHOLDERS | _SCENARIO_INTENT_PLACEHOLDERS
+
+
+def _password_category_value(text: str) -> str | None:
+    if _PASSWORD_UNICODE_INTENT_RE.search(text):
+        return _SI_PASSWORD_UNICODE
+    if _PASSWORD_MAX_LEN_INTENT_RE.search(text):
+        # No maxlength constraint is ever captured by Discovery today (only
+        # `required`/`html5_message` — see ValidationRule) — this is a
+        # best-effort long value, not a verified app-specific boundary.
+        # Closing that gap for real needs a crawler change, out of scope.
+        return _SI_PASSWORD_MAX_LEN
+    if _PASSWORD_MIN_LEN_INTENT_RE.search(text):
+        return _SI_PASSWORD_MIN_LEN
+    return None
+
+
+def _non_password_category_value(text: str, field_name: str) -> str | None:
+    # Length-boundary checks before the bare minimum/maximum ones below —
+    # "maximum ... length" always also contains the word "maximum", which
+    # would otherwise swallow it as a numeric-amount boundary instead.
+    if _MAX_LEN_INTENT_RE.search(text):
+        return _SI_MAX_LEN
+    if _MIN_LEN_INTENT_RE.search(text):
+        return _SI_MIN_LEN
+    if _EMOJI_INTENT_RE.search(text):
+        return _SI_EMOJI
+    if _UNICODE_INTENT_RE.search(text):
+        return _SI_UNICODE_NAME if _NAME_LIKE_FIELD_RE.search(field_name) else _SI_UNICODE_GENERIC
+    if _MARKUP_INTENT_RE.search(text):
+        return _SI_MARKUP
+    # Numeric-amount categories only ever apply to an amount-shaped field —
+    # a scenario like "insurance purchase at the minimum permitted cover
+    # amount" also has a "holder name" field that must NOT also get treated
+    # as the amount under test just because the scenario mentions "minimum".
+    if _NUMERIC_BOUNDARY_FIELD_EXCLUSION_RE.search(field_name):
+        return None
+    if _BELOW_MIN_INTENT_RE.search(text):
+        return _SI_BELOW_MIN
+    if _ABOVE_MAX_INTENT_RE.search(text):
+        return _SI_ABOVE_MAX
+    if _DECIMAL_INTENT_RE.search(text):
+        return _SI_DECIMAL
+    if _AT_MIN_INTENT_RE.search(text):
+        return _SI_AT_MIN
+    if _AT_MAX_INTENT_RE.search(text):
+        return _SI_AT_MAX
+    return None
+
+
+def _scenario_intent_default_value(intent_text: str, field_name: str) -> str | None:
+    """Returns a single, deterministic value when `intent_text` (the
+    Scenario's own name + steps) or `field_name` itself names a property
+    this field is a plausible target for, else `None`. `field_name` is
+    checked FIRST, before the scenario-wide `intent_text` — a Scenario can
+    cover more than one distinct property across different fields at once
+    (e.g. "Profile containing boundary-length and Unicode details" has one
+    field named for length, another for Unicode; each field's OWN name is
+    the stronger, disambiguating signal for which property IT needs,
+    falling back to the scenario-wide text only when the field's own name
+    doesn't say).
+
+    Deliberately not distinctness-checked against sibling fields the way
+    `_default_test_data_value` is (Checklist rule 6) — these categories
+    describe a property a boundary scenario needs EVERY relevant field to
+    exhibit (a "new password"/"confirm password" pair must match exactly,
+    three independent loan amount fields each just need to individually be
+    "at the minimum"), not a scenario whose point is that two fields
+    differ. A genuine mismatch scenario (e.g. "mismatched confirmation")
+    never matches any category below, so it still falls through to
+    `_default_test_data_value`'s existing distinct-by-design behavior."""
     if _PASSWORD_FIELD_RE.search(field_name):
         # The account's actual current password (a change-password form's
         # "current password" field) isn't the boundary/property under test
@@ -189,61 +309,14 @@ def _scenario_intent_default_value(
         # scenario-specific value below.
         if _CURRENT_PASSWORD_FIELD_RE.search(field_name):
             return None
-        if _PASSWORD_UNICODE_INTENT_RE.search(intent_text):
-            value = "Pässwörd123$"
-        elif _PASSWORD_MAX_LEN_INTENT_RE.search(intent_text):
-            # No maxlength constraint is ever captured by Discovery today
-            # (only `required`/`html5_message` — see ValidationRule) — this
-            # is a best-effort long value, not a verified app-specific
-            # boundary. Closing that gap for real needs a crawler change,
-            # out of scope here.
-            value = "P4ssw0rd$" + "x" * 119
-        elif _PASSWORD_MIN_LEN_INTENT_RE.search(intent_text):
-            value = "Pw1$"
-        else:
-            return None
-        # Deliberately NOT distinctness-checked against `used_values` (unlike
-        # every other category here) — a "new password"/"confirm password"
-        # pair for the SAME boundary must match exactly, or the form's own
-        # confirmation check fails and the boundary is never reached at all.
-        # A genuine mismatch scenario (e.g. "mismatched confirmation") never
-        # matches the intent categories above, so it still falls through to
-        # `_default_test_data_value`'s existing distinct-by-design behavior.
-        return value
+        return _password_category_value(field_name) or _password_category_value(intent_text)
 
     if _CARD_FIELD_RE.search(field_name) or _EMAIL_FIELD_RE.search(field_name):
         return None  # the categories below are never about these fields
 
-    if _BELOW_MIN_INTENT_RE.search(intent_text):
-        candidates = ("0.00", "-0.01")
-    elif _ABOVE_MAX_INTENT_RE.search(intent_text):
-        candidates = ("1000000.00", "1000000.01")
-    elif _DECIMAL_INTENT_RE.search(intent_text):
-        candidates = ("10000.50", "5.25")
-    # Length-boundary checks before the bare minimum/maximum ones below —
-    # "maximum ... length" always also contains the word "maximum", which
-    # would otherwise swallow it as a numeric-amount boundary instead.
-    elif _MAX_LEN_INTENT_RE.search(intent_text):
-        candidates = ("x" * 128, "y" * 128)
-    elif _MIN_LEN_INTENT_RE.search(intent_text):
-        candidates = ("a", "b")
-    elif _AT_MIN_INTENT_RE.search(intent_text):
-        candidates = ("0.01", "0.02")
-    elif _AT_MAX_INTENT_RE.search(intent_text):
-        candidates = ("999999.99", "999999.98")
-    elif _EMOJI_INTENT_RE.search(intent_text):
-        candidates = ("🚀😊", "😊🚀")
-    elif _UNICODE_INTENT_RE.search(intent_text):
-        candidates = (
-            ("José García", "François Müller")
-            if _NAME_LIKE_FIELD_RE.search(field_name)
-            else ("こんにちは 你好 Pässwörd", "Müller-Örström 你好")
-        )
-    elif _MARKUP_INTENT_RE.search(intent_text):
-        candidates = ("<test>&\"'</test>", "<div>&\"'</div>")
-    else:
-        return None
-    return next((c for c in candidates if c not in used_values), candidates[-1])
+    return _non_password_category_value(field_name, field_name) or _non_password_category_value(
+        intent_text, field_name
+    )
 
 
 @activity.defn(name="ScenarioGenerationActivity")
@@ -842,17 +915,34 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
         intent_text = f"{scenario.name} {' '.join(scenario.steps)}"
         updated_fields = [dict(field) for field in scenario.test_data]
         changed = False
-        used_values = {field["value"] for field in updated_fields if field.get("value")}
+        # `[FIXED]` A field that was already auto-defaulted by a prior run
+        # (before scenario-intent-awareness existed) is indistinguishable
+        # here from one a reviewer deliberately typed — except that its
+        # value is exactly one of this generator's own known placeholder
+        # literals, which nothing else ever writes (the AI never fills in
+        # `value`, and no reviewer types "Test value" as real data). Without
+        # this, a still-broken field silently stays broken forever, since
+        # `if not field.get("value")` below never re-triggers on the exact
+        # same already-existing data this whole fix targets. Only these
+        # exact literals are eligible for replacement — anything else a
+        # reviewer actually entered is left completely untouched.
+        used_values = {
+            field["value"]
+            for field in updated_fields
+            if field.get("value") and field["value"] not in _KNOWN_GENERIC_PLACEHOLDERS
+        }
         for field in updated_fields:
-            if not field.get("value"):
+            current_value = field.get("value")
+            if not current_value or current_value in _KNOWN_GENERIC_PLACEHOLDERS:
                 value = _scenario_intent_default_value(
-                    intent_text, field["name"], used_values
+                    intent_text, field["name"]
                 ) or _default_test_data_value(
                     field["name"], used_values, field_input_types.get(field["name"], "text")
                 )
-                field["value"] = value
+                if value != current_value:
+                    field["value"] = value
+                    changed = True
                 used_values.add(value)
-                changed = True
         if changed:
             scenario.test_data = updated_fields
             session.add(scenario)
@@ -915,7 +1005,9 @@ def _persist_test_asset_sync(
         warnings += spec_linter.lint_password_boundary_ignored(
             scenario.name, scenario.steps, scenario.test_data, code
         )
+        warnings += spec_linter.lint_asserted_data_not_entered(code, scenario.test_data)
         warnings += spec_linter.lint_tautological_assertion(code)
+        warnings += spec_linter.lint_ungrounded_error_container_assertion(code)
         if sibling is not None:
             warnings += spec_linter.lint_sibling_consistency(code, sibling.code)
             warnings += spec_linter.lint_shared_state_contradiction(code, sibling.code)

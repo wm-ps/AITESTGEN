@@ -172,6 +172,17 @@ never from a Scenario's test_data. A field that is itself a NEW/candidate value 
 (e.g. "new password", "confirm password" on a change-password form) is not covered by this \
 exception and should still be listed normally.
 
+Grounded-outcome rule — Discovery never captures a page's visual layout or presentation \
+mechanism (whether results render as a table, a list, cards, or plain text; whether an error \
+shows in an alert/toast/modal or as an inline message next to a field) — only its pages, \
+forms, fields, buttons/links, and API calls, given to you above. Never describe "steps"/ \
+"expected_result" in terms of a SPECIFIC UI mechanism you weren't given evidence for (e.g. \
+"results appear in a table", "a confirmation alert is shown", "a modal dialog opens"). \
+Describe the outcome in application-agnostic terms instead — what changes or becomes visible, \
+not how it's presented — e.g. "the result is displayed" rather than "shown in a table", "the \
+user is notified of the error" rather than "an alert appears". Only name a specific mechanism \
+if it's actually evidenced by a captured component/assertion given to you above.
+
 Respond with ONLY a JSON object of this shape, no prose: \
 {{"scenarios": [{{"name": "...", "type": "happy", "steps": ["...", "..."], \
 "expected_result": "...", "test_data": [{{"name": "...", "mandatory": true}}]}}, ...]}}"""
@@ -300,13 +311,18 @@ data. Only skip this when the step authenticates as an EXISTING account (login, 
 where the given literal must be used exactly as provided.
 
 Timeout rules — target applications vary widely in how long they take to load or process \
-a submission. Define TWO constants near the top of the file — never reuse one constant for \
-both jobs, they solve different problems:
+a submission. Define THREE constants near the top of the file — never reuse one constant for \
+another's job, they solve different problems:
+const NAVIGATION_TIMEOUT_MS = 30000;
 const ASSERTION_TIMEOUT_MS = 15000;
 const TEST_TIMEOUT_MS = 180000;
-`ASSERTION_TIMEOUT_MS` is the per-step wait: real render/network latency needs a few seconds, \
-but a genuinely broken locator should fail fast, not stall — pass `{{ timeout: \
-ASSERTION_TIMEOUT_MS }}` to every `page.goto(...)`, `page.waitForLoadState(...)`, \
+`NAVIGATION_TIMEOUT_MS` is for a full page navigation only: pass it to `page.goto(...)` \
+itself and to the `page.waitForLoadState(...)` call that immediately follows it (see the \
+Session/navigation rules below) — a full page load (assets, redirects, an SPA's initial data \
+fetch) routinely takes longer than any single locator action, so it gets its own, longer \
+budget rather than sharing the tighter per-step one. `ASSERTION_TIMEOUT_MS` is the per-step \
+wait for everything else: real render/network latency needs a few seconds, but a genuinely \
+broken locator should fail fast, not stall — pass `{{ timeout: ASSERTION_TIMEOUT_MS }}` to \
 `page.waitForURL(...)`, every locator action (`.click(...)`, `.fill(...)`, `.check(...)`, \
 etc), and every polling `expect(locator)` matcher (`toBeVisible()`, `toHaveText()`, \
 `toHaveURL()`, etc — anything that polls a locator/page until it matches or times out). \
@@ -333,14 +349,16 @@ check a validity/error state, express it via a real matcher against the actual D
 `:invalid`/custom selector combined with `toBeVisible()`), never a matcher you are only \
 assuming must exist.
 
-Not every Playwright method accepts a `timeout` option either — do not add `{{ timeout: \
-ASSERTION_TIMEOUT_MS }}` to a call unless that specific method's signature actually has an \
-options parameter. Most notably, `page.content()`, `page.url()`, and `response.status()` take \
-NO arguments at all — calling e.g. `page.content({{ timeout: ASSERTION_TIMEOUT_MS }})` is a \
-compile error, not a slower call. When in doubt, only pass `{{ timeout: ... }}` to navigation \
-(`page.goto`), waiting (`page.waitForLoadState`, `page.waitForURL`), locator actions \
-(`.click`, `.fill`, `.check`, etc), and polling `expect(...)` matchers — never to a plain \
-getter/accessor method, and never to a plain-value matcher.
+Not every Playwright method accepts a `timeout` option either — do not add a `timeout` \
+to a call unless that specific method's signature actually has an options parameter. Most \
+notably, `page.content()`, `page.url()`, and `response.status()` take NO arguments at all — \
+calling e.g. `page.content({{ timeout: ASSERTION_TIMEOUT_MS }})` is a compile error, not a \
+slower call. When in doubt, only pass `{{ timeout: ... }}` to navigation (`page.goto`, with \
+`NAVIGATION_TIMEOUT_MS`) and the `page.waitForLoadState(...)` call immediately following it \
+(also `NAVIGATION_TIMEOUT_MS`), waiting (`page.waitForURL`, with `ASSERTION_TIMEOUT_MS`), \
+locator actions (`.click`, `.fill`, `.check`, etc, with `ASSERTION_TIMEOUT_MS`), and polling \
+`expect(...)` matchers (`ASSERTION_TIMEOUT_MS`) — never to a plain getter/accessor method, \
+and never to a plain-value matcher.
 
 Critical: Playwright's own overall per-test timeout defaults to 30000ms regardless of any \
 `{{ timeout: ASSERTION_TIMEOUT_MS }}` passed to individual calls — a per-assertion timeout \
@@ -360,12 +378,17 @@ Scenarios:
 
 1. {initial_navigation_rule}
 
-2. After every `page.goto(...)` call, capture the returned response and verify it \
-succeeded before doing anything else with the page:
-const response = await page.goto(url, {{ timeout: ASSERTION_TIMEOUT_MS }});
+2. After every `page.goto(...)` call — not just the first one in the test — capture the \
+returned response, verify it succeeded, and then wait for the DOM to actually be rendered \
+before doing anything else with the page. A page load legitimately takes longer than a \
+locator action, so it gets its own, longer `NAVIGATION_TIMEOUT_MS` budget rather than \
+`ASSERTION_TIMEOUT_MS`; never locate or assert on an element right after `goto(...)` resolves \
+without this wait in between, since the initial HTML can still be mid-parse at that point:
+const response = await page.goto(url, {{ timeout: NAVIGATION_TIMEOUT_MS }});
 if (!response || response.status() >= 400) {{
   throw new Error(`Failed to load page. HTTP status: ${{response?.status()}}`);
 }}
+await page.waitForLoadState('domcontentloaded', {{ timeout: NAVIGATION_TIMEOUT_MS }});
 
 3. Before locating or asserting on any element, confirm the page did not render a server \
 error page in place of real application markup (this can happen even after a 200 \
@@ -388,10 +411,11 @@ error when the real cause is a server-side failure rather than a bad locator.
 
 4. After any step that changes auth/session state (logout, session expiry, a redirect), \
 never assume the next page has the element you expect it to. Either navigate to the known \
-target URL explicitly (`page.goto(...)`) or verify the landing page first — one \
-`expect(page).toHaveURL(..., {{ timeout: ASSERTION_TIMEOUT_MS }})` (or a content check) right \
-after the state-changing click, before touching any element on whatever page you land on. \
-Never guess a redirect target from convention (e.g. assuming a successful action lands on \
+target URL explicitly (`page.goto(...)` — apply rule 2's response check and \
+`waitForLoadState('domcontentloaded', ...)` wait to it too) or verify the landing page first \
+— one `expect(page).toHaveURL(..., {{ timeout: ASSERTION_TIMEOUT_MS }})` (or a content check) \
+right after the state-changing click, before touching any element on whatever page you land \
+on. Never guess a redirect target from convention (e.g. assuming a successful action lands on \
 `/` or "the home page") — if the destination isn't given by the Test steps or a Known page \
 match, verify the actual landing page via a content check rather than asserting an invented URL.
 
@@ -429,15 +453,22 @@ name (what a sighted user reads next to the field) — never the field's interna
 model-property string.
 
 Combine the CSS-attribute options as one comma-separated selector passed to `page.locator(...)` \
-and take `.first()`, so any one of them matching resolves the field unambiguously. Assert \
-visibility (with `{{ timeout: ASSERTION_TIMEOUT_MS }}`) before interacting, so a locator mismatch fails \
-clearly instead of a confusing fill/click error. For example, instead of:
+and take `.first()`, so any one of them matching resolves the field unambiguously. Before \
+interacting with ANY resolved locator (not just this password example), route it through the \
+shared `ensureVisible` helper (support/ is reached via '../../support/...' from this file, \
+not '../support/...') instead of writing your own visibility check — it scrolls the element \
+into view if it isn't already visible and re-verifies, so a genuinely wrong/stale locator (or \
+an element hidden behind a fixed header, off-screen in a long page, or inside an unusual \
+scroll container) fails with a clear, diagnosable error instead of a confusing fill/click \
+timeout. Always pass the exact selector string itself (not a human label) as the second \
+argument — this is what lets a failure message name the precise locator that broke, since \
+the error text alone never contains it. For example, instead of:
 await page.getByLabel(/password/i).fill(password);
 generate:
-const passwordField = page.locator(
-  'input[name="password"], input[type="password"], input[id="password"]'
-).first();
-await expect(passwordField).toBeVisible({{ timeout: ASSERTION_TIMEOUT_MS }});
+import {{ ensureVisible }} from '../../support/interactions';
+// ...
+const passwordSelector = 'input[name="password"], input[type="password"], input[id="password"]';
+const passwordField = await ensureVisible(page.locator(passwordSelector).first(), passwordSelector);
 await passwordField.fill(password);
 
 Never treat a button (e.g. `<button aria-label="Show password">`, `<button aria-label="Hide \
@@ -497,6 +528,18 @@ clear the whole form, some retain everything. Don't default to "text inputs usua
 their value" — if persistence/clearing isn't the thing the Scenario is actually testing, \
 don't assert on it at all.
 
+Known-locators-only structural rule — Discovery never captures a page's presentation \
+mechanism: Known locators above only ever lists buttons, links, and form fields it actually \
+observed — never a table, list, grid, alert, toast, or modal CONTAINER as such (only the real \
+interactive elements inside one, if any were captured). Never invent a selector for one of \
+these containers (e.g. `table`, `tr`, `.row`, `ul li`, `[role="alert"]`, `.toast`, `.modal`) \
+unless either (a) it corresponds to an actual entry in Known locators above, or (b) this same \
+test's own earlier steps just interacted with the exact element you're now asserting on. When \
+neither holds, ground the assertion in what you actually DO have evidence for instead — a \
+Known locator becoming visible, the page's known URL, or text already named in the Test \
+steps/Expected result — never a bare structural guess about how the page happens to be built. \
+The following rules apply this same principle to specific situations.
+
 Failure-outcome assertion rules — the same "don't invent wording" rule applies to any \
 failure/error outcome, not just field validation (e.g. an invalid-login message). Use the \
 literal text ONLY if it is explicitly given to you via the Test data or Expected result \
@@ -506,13 +549,22 @@ instead assert on an observable, application-agnostic signal that the action fai
 checking that the page did NOT navigate away from where the failing action was attempted \
 (e.g. compare `page.url()` before and after, or assert the same form/field is still present) \
 as the primary signal — this is always queryable regardless of the application's markup \
-conventions. Only additionally assert a generic error/alert container becoming visible \
-(e.g. `page.locator('[role="alert"], .error, [aria-live]').first()`) when you have reason to \
-believe the application actually renders one — never assert on that locator as your ONLY \
-failure signal, since many applications validate via native browser dialogs or custom markup \
-this pattern won't match, and a test that only waits on it will time out even though the \
-action genuinely failed as expected. Never hardcode a message like "Invalid username or \
-password" unless that exact string was given to you as data.
+conventions. A generic error/alert container guess (e.g. \
+`page.locator('[role="alert"], .error, [aria-live]').first()`) is NEVER grounded in anything \
+Known locators actually gave you (per the Known-locators-only structural rule above) — it is \
+always an invented guess, even when it looks like reasonable, idiomatic Playwright. Never make \
+it a hard, must-pass assertion (`await expect(errorContainer).toBeVisible(...)`) — if that \
+container never renders on this application, the test times out and fails even though the \
+real, already-queryable signal above (URL/form-still-present) already proved the action \
+failed exactly as expected. If you want to additionally check for one, make it soft and \
+log-only, the same pattern the Empty-result assertion rule below uses, never able to fail the \
+test on its own:
+const errorContainer = page.locator('[role="alert"], .error, [aria-live]').first();
+if (await errorContainer.count() === 0) {{
+  console.warn('No generic error container found; relying on the URL/form-state signal only.');
+}}
+Never hardcode a message like "Invalid username or password" unless that exact string was \
+given to you as data.
 
 Empty-result assertion rule — when a Scenario's Expected result is that a search/filter \
 yields no results (an empty state), do not assume the application renders a text message \
@@ -520,9 +572,14 @@ like "No results found" — many applications simply render an empty result list
 at all. Treat the structural signal as the authoritative pass condition: \
 `await expect(page.locator('<result-item selector>')).toHaveCount(0, {{ timeout: \
 ASSERTION_TIMEOUT_MS }})` against the same locator that would match individual result items \
-on a non-empty search. Only additionally check for empty-state copy if that literal text is \
-given to you via the Test data/Expected result above, and even then make it a soft, log-only \
-check that cannot fail the test on its own, e.g.:
+on a non-empty search — this item locator must itself correspond to an actual entry in Known \
+locators above (a captured component this page's non-empty state would show); never invent a \
+generic `tr`/`.list-item`/`table` selector with no such backing (per the Known-locators-only \
+structural rule above). If no such item locator exists in Known locators, fall back to \
+asserting the page's known URL/heading is correct instead of a count-based check. Only \
+additionally check for empty-state copy if that literal text is given to you via the Test \
+data/Expected result above, and even then make it a soft, log-only check that cannot fail the \
+test on its own, e.g.:
 const emptyMessage = page.getByText('<the given literal text>');
 if (await emptyMessage.count() === 0) {{
   console.warn('Empty-state message not found; relying on structural assertion only.');
@@ -550,6 +607,24 @@ inside the branch where the comparison is already known true, so it never actual
 anything. If none of the rules above give you a genuine, meaningful assertion to write, assert \
 on the most concrete observable signal the Test steps/Expected result actually describe instead \
 of inventing one.
+
+Existing-data assertion rule — the Test data above is a resolved value for FILLING a form \
+field; it is never verified real content that already exists elsewhere in the application \
+(e.g. a specific card number, account balance, or transaction amount you have not yourself \
+just entered). Never search for, or assert that, a specific Test-data literal is displayed on \
+a page UNLESS this same test's own steps entered/submitted that exact value earlier in this \
+same test — a value's mere presence in Test data does NOT mean it is real, pre-existing, \
+seeded data anywhere in the application. When a Scenario's whole point is reviewing/verifying \
+EXISTING data this test did not itself create (e.g. "review the Cards page", "view existing \
+transactions"), assert on an observable STRUCTURAL signal instead of a specific fabricated \
+value — but only using a locator that corresponds to an actual entry in Known locators above \
+(per the Known-locators-only structural rule): that at least one matching row/item is present \
+(e.g. `await expect(page.locator(<item selector>).first()).toBeVisible({{ timeout: \
+ASSERTION_TIMEOUT_MS }})`, or a `toHaveCount` greater than 0), or that a known label/column \
+header from Known pages/locators above is shown — never a specific number, name, or amount \
+this test never entered, and never an invented `tr`/`.row`/`table` selector with no Known-\
+locators backing. If Known locators gives you nothing to assert a row/item on, fall back to \
+confirming the page's known URL/heading is correct instead.
 
 Output ONLY the TypeScript code, no markdown fences, no prose, no explanation."""
 
@@ -860,9 +935,9 @@ class HostedAIProvider:
             if requires_auth
             else (
                 f"Before navigating anywhere else, first visit the application's base URL "
-                f"({base_url}) with `{{ timeout: ASSERTION_TIMEOUT_MS }}` and wait for it to "
+                f"({base_url}) with `{{ timeout: NAVIGATION_TIMEOUT_MS }}` and wait for it to "
                 "finish loading with `await page.waitForLoadState('networkidle', "
-                "{ timeout: ASSERTION_TIMEOUT_MS })`. This establishes the session/cookies a "
+                "{ timeout: NAVIGATION_TIMEOUT_MS })`. This establishes the session/cookies a "
                 "real user's browser would already have. Only after that initial visit should "
                 "the test navigate on to whatever page the Scenario's steps actually need (via "
                 "`page.goto`, or by clicking a discovered link/button). Never `page.goto()` "
