@@ -183,11 +183,12 @@ function StepPreview({ kind }: { kind: (typeof WIZARD_STEPS)[number]['kind'] }) 
 }
 
 // ponytail: hardcoded on per explicit request — enabled in every build,
-// prod included. Clicking the logo fills the seeded dev user's credentials
-// (see seed_dev_data.py / dev-start scripts) but still leaves the user to
-// submit the form themselves, so the real sign-in flow is untouched. If
-// this ever needs to be off in prod, reintroduce a VITE_ENABLE_DEV_LOGIN
-// build-time env check instead of this constant.
+// prod included. Clicking the logo (or the "Sign in" heading) fills the
+// seeded dev user's credentials (see seed_dev_data.py / dev-start scripts)
+// but still leaves the user to submit the form themselves, so the real
+// sign-in flow is untouched. If this ever needs to be off in prod,
+// reintroduce a VITE_ENABLE_DEV_LOGIN build-time env check instead of this
+// constant.
 const DEV_LOGIN_ENABLED = true
 const DEV_CREDENTIALS = { email: 'dev@example.com', password: 'devpassword123' }
 
@@ -199,7 +200,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
   const [activeStep, setActiveStep] = useState(0)
   const [showForgotPassword, setShowForgotPassword] = useState(false)
 
-  function handleLogoClick() {
+  function handleDevAutofill() {
     if (!DEV_LOGIN_ENABLED) return
     setEmail(DEV_CREDENTIALS.email)
     setPassword(DEV_CREDENTIALS.password)
@@ -302,7 +303,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
         </div>
 
         <div
-          onClick={DEV_LOGIN_ENABLED ? handleLogoClick : undefined}
+          onClick={DEV_LOGIN_ENABLED ? handleDevAutofill : undefined}
           title={DEV_LOGIN_ENABLED ? 'Fill dev sign-in credentials' : undefined}
           style={{
             position: 'relative',
@@ -445,7 +446,19 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
             }}
           >
             <div style={{ height: 3, background: 'linear-gradient(90deg, var(--accent) 0%, var(--accent-wash) 100%)', margin: '-32px -38px 22px' }} />
-            <h2 style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)', margin: '0 0 4px' }}>Sign in</h2>
+            <h2
+              onClick={DEV_LOGIN_ENABLED ? handleDevAutofill : undefined}
+              title={DEV_LOGIN_ENABLED ? 'Fill dev sign-in credentials' : undefined}
+              style={{
+                fontSize: 20,
+                fontWeight: 700,
+                color: 'var(--ink)',
+                margin: '0 0 4px',
+                cursor: DEV_LOGIN_ENABLED ? 'pointer' : undefined,
+              }}
+            >
+              Sign in
+            </h2>
             <p style={{ fontSize: 13.5, color: 'var(--ink-muted)', margin: '0 0 24px' }}>Use your work account to continue</p>
 
             <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
