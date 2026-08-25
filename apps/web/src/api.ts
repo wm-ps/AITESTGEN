@@ -38,7 +38,10 @@ export type TestCaseRead = components['schemas']['TestCaseRead'] & { description
 // `status` isn't in api-types.gen.ts yet (regenerate via `npm run
 // generate:api-types` once the API is running) — added by hand.
 export type TestSuiteStatus = 'generating' | 'complete' | 'incomplete' | 'terminated'
-export type TestSuiteRead = components['schemas']['TestSuiteRead'] & { status: TestSuiteStatus }
+export type TestSuiteRead = Omit<components['schemas']['TestSuiteRead'], 'test_cases'> & {
+  status: TestSuiteStatus
+  test_cases: TestCaseRead[]
+}
 // Not in api-types.gen.ts yet (backend schema is new, regenerate via
 // `npm run generate:api-types` once the API is running) — added by hand.
 export type InteractionLevel = 'passive' | 'normal' | 'aggressive'

@@ -107,7 +107,7 @@ export function Workspace({
     let cancelled = false
     async function poll() {
       try {
-        const page = await api.listTestRuns(applicationId, 1, 1)
+        const page = await api.listTestRuns(applicationId, null, 1)
         if (cancelled) return
         const latest = page.items[0]
         const active = !!latest && RUN_IS_ACTIVE(latest.status)
