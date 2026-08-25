@@ -17,7 +17,9 @@ const RUNS_PER_PAGE = 5
 const RESULTS_PER_PAGE = 5
 
 // Same arrow-left glyph as TopBar's own back button, not a text "←" glyph.
-function BackIcon() {
+// Exported so Workspace can render it next to the page title (single
+// "Test Runs" heading, not one there and a duplicate here).
+export function BackIcon() {
   return (
     <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M19 12H5M12 19l-7-7 7-7" />
@@ -276,7 +278,7 @@ function ResultListHeader({
   )
 }
 
-function TestResultRow({ result, isCurrentlyRunning }: { result: TestResultRead; isCurrentlyRunning?: boolean }) {
+function TestResultRow({ result }: { result: TestResultRead }) {
   const [artifactsFor, setArtifactsFor] = useState<TestResultRead | null>(null)
   const canShowArtifacts = NON_PASSED_STATUSES.has(result.status)
 
@@ -308,12 +310,8 @@ function TestResultRow({ result, isCurrentlyRunning }: { result: TestResultRead;
       <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap', textAlign: 'right' }}>
         {result.duration_ms != null ? `${(result.duration_ms / 1000).toFixed(1)}s` : ''}
       </span>
-      {/* No distinct "running" status exists on a TestResult row (it only
-          ever moves pending -> a terminal status) — the one test actually
-          executing right now is inferred as the first still-pending row
-          once finished ones are sorted to the top. */}
       <span>
-        <StatusPill status={result.status} label={isCurrentlyRunning ? 'Running' : undefined} pulsing={isCurrentlyRunning} />
+        <StatusPill status={result.status} />
       </span>
       <span style={{ textAlign: 'right' }}>
         {canShowArtifacts && (
@@ -377,11 +375,9 @@ export function formatDuration(ms: number | null): string {
 
 function RunDetail({
   run,
-  onBack,
   executionUnavailable,
 }: {
   run: TestRunRead
-  onBack: () => void
   executionUnavailable: boolean
 }) {
   const isRunning = run.status === 'pending' || run.status === 'running'
@@ -389,7 +385,6 @@ function RunDetail({
   const [resultSortKey, setResultSortKey] = useState<ResultSortKey | null>(null)
   const [resultSortDir, setResultSortDir] = useState<'asc' | 'desc'>('asc')
   const results = run.results ?? []
-  const runningResultId = run.status === 'running' ? results.find((r) => r.status === 'pending')?.id : undefined
   // Finished (passed/failed/etc.) first, still-pending ones last — each
   // group keeps its original request order (stable sort on one boolean).
   // Only the default order, used until the viewer picks a column to sort by.
@@ -413,23 +408,10 @@ function RunDetail({
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-        <div>
-          <button
-            type="button"
-            className="button-secondary"
-            onClick={onBack}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 8 }}
-          >
-            <BackIcon />
-            All Runs
-          </button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <StatusPill status={run.status} label={testRunStatusLabel(run.status)} />
-            <span className="caption" style={{ fontSize: 12.5 }}>
-              {run.trigger} · {formatDateTime(run.created_at)}
-            </span>
-          </div>
-        </div>
+        <StatusPill status={run.status} label={testRunStatusLabel(run.status)} />
+        <span className="caption" style={{ fontSize: 12.5 }}>
+          {run.trigger} · {formatDateTime(run.created_at)}
+        </span>
       </div>
 
       {run.status === 'blocked' && (
@@ -453,7 +435,7 @@ function RunDetail({
         <div className="card-panel" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <ResultListHeader sortKey={resultSortKey} sortDir={resultSortDir} onSort={handleResultSort} />
           {pagedResults.map((result) => (
-            <TestResultRow key={result.id} result={result} isCurrentlyRunning={result.id === runningResultId} />
+            <TestResultRow key={result.id} result={result} />
           ))}
           <Pagination
             page={resultsPage}
@@ -643,6 +625,7 @@ export function RunsTab({
   applicationId,
   autoSelectLatest,
   onAutoSelectConsumed,
+  onDetailChange,
 }: {
   applicationId: string
   // `triggerTestRun` starts a Temporal workflow fire-and-forget and only
@@ -655,6 +638,10 @@ export function RunsTab({
   // away and back with no fresh run triggered) would re-arm auto-select
   // and hijack a deliberate return to the run list.
   onAutoSelectConsumed?: () => void
+  // Workspace renders the back button next to its own page-title `<h1>`
+  // (one "Test Runs" heading, not a second one in here) — so it needs a
+  // way back into the list, not just a boolean for "currently in detail".
+  onDetailChange?: (onBack: (() => void) | null) => void
 }) {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
   const [selectedRun, setSelectedRun] = useState<TestRunRead | null>(null)
@@ -686,6 +673,12 @@ export function RunsTab({
   // down and restarting on every unrelated Workspace re-render.
   const onAutoSelectConsumedRef = useRef(onAutoSelectConsumed)
   onAutoSelectConsumedRef.current = onAutoSelectConsumed
+
+  useEffect(() => {
+    onDetailChange?.(selectedRunId ? () => setSelectedRunId(null) : null)
+    return () => onDetailChange?.(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRunId])
 
   useEffect(() => {
     if (selectedRunId) return
@@ -788,11 +781,7 @@ export function RunsTab({
 
   if (selectedRunId) {
     return selectedRun ? (
-      <RunDetail
-        run={selectedRun}
-        onBack={() => setSelectedRunId(null)}
-        executionUnavailable={executionUnavailable}
-      />
+      <RunDetail run={selectedRun} executionUnavailable={executionUnavailable} />
     ) : (
       <p className="caption" style={{ fontSize: 12.5 }}>
         Loading run…
@@ -827,8 +816,10 @@ export function RunsTab({
             page={page}
             hasPrev={page > 0}
             hasNext={hasNext}
+            knownPages={cursors.length}
             onPrev={() => setPage((p) => p - 1)}
             onNext={() => setPage((p) => p + 1)}
+            onPage={setPage}
           />
         </div>
       )}

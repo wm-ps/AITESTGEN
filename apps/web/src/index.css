@@ -99,7 +99,7 @@ textarea:focus-visible,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-sm);
+  border-radius: 50%;
   border: 1px solid var(--border-strong);
   background: var(--canvas);
   color: var(--ink-secondary);
@@ -109,8 +109,37 @@ textarea:focus-visible,
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
 }
 
-.pagination-page-btn:hover:not(.pagination-page-btn--active) {
+.pagination-page-btn:hover:not(.pagination-page-btn--active):not(:disabled) {
   background: var(--canvas-wash);
+}
+
+.pagination-page-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pagination-arrow-btn {
+  min-width: 20px;
+  height: 28px;
+  padding: 0 var(--space-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--ink-secondary);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.pagination-arrow-btn:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.pagination-arrow-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .pagination-page-btn--active {

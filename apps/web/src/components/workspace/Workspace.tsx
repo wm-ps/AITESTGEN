@@ -4,13 +4,13 @@ import { ServiceErrorNote } from '../ServiceError'
 import { Toast } from '../Toast'
 import { OverviewTab } from './OverviewTab'
 import { TestSuiteTab } from './TestSuiteTab'
-import { RunsTab } from './RunsTab'
+import { BackIcon, RunsTab } from './RunsTab'
 
 type WorkspaceTab = 'overview' | 'suite' | 'runs'
 
 function OverviewIcon() {
   return (
-    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={19} height={19} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x={3.5} y={3.5} width={7} height={7} rx={1.5} />
       <rect x={13.5} y={3.5} width={7} height={7} rx={1.5} />
       <rect x={3.5} y={13.5} width={7} height={7} rx={1.5} />
@@ -22,7 +22,7 @@ function OverviewIcon() {
 // Same icon Home's "Test cases" stat chip uses — not a new shape.
 function SuiteIcon() {
   return (
-    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={19} height={19} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M6.5 3.5h8l3 3v13a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z" />
       <path d="M14 3.5V7h3.5" />
       <path d="M8.5 12h7M8.5 15.3h7" />
@@ -33,7 +33,7 @@ function SuiteIcon() {
 // Same icon Home's "Executions" stat chip uses — not a new shape.
 function RunsIcon() {
   return (
-    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={19} height={19} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <circle cx="12" cy="12" r="8.5" />
       <path d="M10.3 8.7 15 12l-4.7 3.3V8.7Z" fill="currentColor" stroke="none" />
     </svg>
@@ -81,6 +81,10 @@ export function Workspace({
   const [triggerErrorUnavailable, setTriggerErrorUnavailable] = useState(false)
   const [running, setRunning] = useState(false)
   const [runToast, setRunToast] = useState<string | null>(null)
+  // Set by RunsTab while a single run's detail is open, so the back button
+  // can sit next to this page's own "Test Runs" title instead of RunsTab
+  // rendering a second, duplicate heading of its own.
+  const [runsBack, setRunsBack] = useState<(() => void) | null>(null)
   // Snapshotted at mount — App.tsx only ever mounts this component fresh
   // right after a "Run All Tests" click, so the effect below should fire
   // (or not) based on that one moment, not re-run if the prop identity
@@ -166,7 +170,7 @@ export function Workspace({
       <nav
         aria-label="Workspace sections"
         style={{
-          width: 76,
+          width: 92,
           flexShrink: 0,
           boxSizing: 'border-box',
           display: 'flex',
@@ -194,8 +198,9 @@ export function Workspace({
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: 4,
-                width: 60,
+                width: 76,
                 padding: '10px 4px',
+                whiteSpace: 'nowrap',
                 borderRadius: 'var(--radius)',
                 border: 'none',
                 background: active ? 'var(--accent-wash)' : 'transparent',
@@ -225,9 +230,22 @@ export function Workspace({
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-          <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
-            {TABS.find((tab) => tab.key === activeTab)?.heading}
-          </h1>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {activeTab === 'runs' && runsBack && (
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={runsBack}
+                aria-label="Back to Test Runs"
+                style={{ display: 'inline-flex', alignItems: 'center', padding: 8 }}
+              >
+                <BackIcon />
+              </button>
+            )}
+            <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
+              {TABS.find((tab) => tab.key === activeTab)?.heading}
+            </h1>
+          </div>
           {activeTab === 'runs' && (
             <button
               type="button"
@@ -261,6 +279,7 @@ export function Workspace({
             applicationId={applicationId}
             autoSelectLatest={autoSelectLatest}
             onAutoSelectConsumed={() => setAutoSelectLatest(false)}
+            onDetailChange={(onBack) => setRunsBack(() => onBack)}
           />
         )}
       </div>
