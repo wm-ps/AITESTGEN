@@ -138,6 +138,7 @@ export type LatestRunSummaryRead = {
   failed_count: number
   blocked_count: number
   duration_ms: number | null
+  trigger: string
 }
 export type OverviewRead = {
   health: HealthRead
@@ -149,6 +150,7 @@ export type OverviewRead = {
   trend: RunTrendPointRead[]
   latest_run: LatestRunSummaryRead | null
   last_discovery_started_at: string | null
+  journey_count: number
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'

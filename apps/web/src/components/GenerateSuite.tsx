@@ -192,7 +192,7 @@ export function GenerateSuite({
                   boxShadow: canGenerate ? '0 8px 20px -6px var(--accent-wash)' : 'none',
                 }}
               >
-                {generating ? 'Generating…' : 'Generate Test Suite →'}
+                {generating ? 'Generating…' : 'Generate Test Suite'}
               </button>
               {generateError && (
                 <div style={{ marginTop: 10 }}>

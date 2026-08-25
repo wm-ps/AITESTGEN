@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ApiError, api, type ApplicationRead, type UserRead } from './api'
 import { AcceptInvite } from './components/AcceptInvite'
 import { ConnectAppForm } from './components/ConnectAppForm'
+import { ConnectSuccessModal } from './components/ConnectSuccessModal'
 import { DiscoverJourneys } from './components/DiscoverJourneys'
 import { Home } from './components/Home'
 import { InviteTeammateModal } from './components/InviteTeammateModal'
@@ -66,6 +67,11 @@ function App() {
   const [view, setView] = useState<View>('home')
   const [previousView, setPreviousView] = useState<View>('home')
   const [application, setApplication] = useState<ApplicationRead | null>(null)
+  // Set right after Connect Application succeeds, cleared once the user
+  // dismisses ConnectSuccessModal — separate from `application` itself so
+  // resuming an already-connected app (handleResumeApplication) never
+  // re-triggers this one-time modal.
+  const [justConnected, setJustConnected] = useState<ApplicationRead | null>(null)
   // How many of the 4 wizard steps are actually finished — independent of
   // `view`, which is just whichever screen is on screen right now. Lets
   // Previous/Next and the Stepper's own step numbers revisit an earlier
@@ -161,6 +167,7 @@ function App() {
       setUser(null)
       setView('home')
       setApplication(null)
+      setJustConnected(null)
     } catch {
       setErrorToast('Failed to log out. Please try again.')
     } finally {
@@ -242,6 +249,15 @@ function App() {
         onViewDiscovery={application && view === 'workspace' ? () => setView('discover') : undefined}
       />
       {inviteModalOpen && <InviteTeammateModal onClose={() => setInviteModalOpen(false)} />}
+      {justConnected && (
+        <ConnectSuccessModal
+          application={justConnected}
+          onGoHome={() => {
+            setJustConnected(null)
+            setView('home')
+          }}
+        />
+      )}
       {view === 'home' && (
         <Home
           user={user}
@@ -256,7 +272,11 @@ function App() {
       {view === 'connect-app' && (
         <ConnectAppForm
           application={application}
-          onConnected={() => setView('home')}
+          onConnected={(connectedApplication) => {
+            setApplication(connectedApplication)
+            setFurthestCount((c) => Math.max(c, 1))
+            setJustConnected(connectedApplication)
+          }}
           onCancel={() => setView('home')}
           furthestCount={furthestCount}
           onStepClick={onStepClick}

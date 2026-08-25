@@ -1173,7 +1173,7 @@ export function Home({
           >
             <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>Product demo</div>
             <p className="caption" style={{ margin: '0 0 var(--space-7)' }}>
-              Connect App → Discover Journeys → Review Scenarios → Generate Suite, in a few minutes.
+              Connect App, Discover Journeys, Review Scenarios, Generate Suite — in a few minutes.
             </p>
             <video
               controls

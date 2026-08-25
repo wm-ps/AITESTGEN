@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, type TestCaseRead, type TestSuiteRead } from '../api'
 import { Stepper, type StepKey } from './Stepper'
 import { LoadingDots } from './LoadingDots'
@@ -8,6 +8,7 @@ import { Pagination } from './Pagination'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
 
 const POLL_INTERVAL_MS = 3000
+const STUCK_MS = 15 * 60 * 1000
 const SECONDS_PER_TEST_CASE = 45
 const SUITES_PER_PAGE = 5
 const TEST_CASES_PER_PAGE = 5
@@ -293,6 +294,22 @@ export function TestSuiteResults({
   const [generationUnavailable, setGenerationUnavailable] = useState(false)
   const [terminatingSuiteId, setTerminatingSuiteId] = useState<string | null>(null)
   const [retrying, setRetrying] = useState(false)
+  const startedAtRef = useRef(Date.now())
+  const [stuck, setStuck] = useState(false)
+  const [regenerating, setRegenerating] = useState(false)
+
+  async function handleRegenerate() {
+    setRegenerating(true)
+    try {
+      await api.generateSuite(applicationId)
+      startedAtRef.current = Date.now()
+      setStuck(false)
+    } catch {
+      // best-effort — a failed regenerate just leaves the button re-enabled
+    } finally {
+      setRegenerating(false)
+    }
+  }
 
   async function handleRetryFailed() {
     setRetrying(true)
@@ -408,6 +425,17 @@ export function TestSuiteResults({
       clearInterval(interval)
     }
   }, [applicationId, isComplete])
+
+  useEffect(() => {
+    if (isComplete) {
+      setStuck(false)
+      return
+    }
+    const check = () => setStuck(Date.now() - startedAtRef.current > STUCK_MS)
+    check()
+    const id = setInterval(check, POLL_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [isComplete])
   const estRuntimeMin = Math.max(1, Math.ceil((testCaseCount * SECONDS_PER_TEST_CASE) / 60))
 
   if (!isComplete && generationUnavailable) {
@@ -430,6 +458,30 @@ export function TestSuiteResults({
               <p className="caption" style={{ margin: 0, fontSize: 12.5 }}>
                 {testCaseCount}/{expectedTestCaseCount || '…'} test cases so far
               </p>
+            }
+            footer={
+              stuck && (
+                <button
+                  type="button"
+                  disabled={regenerating}
+                  onClick={handleRegenerate}
+                  style={{
+                    marginTop: 16,
+                    padding: '8px 18px',
+                    background: 'var(--accent)',
+                    color: '#FFFFFF',
+                    border: 'none',
+                    borderRadius: 'var(--radius)',
+                    fontSize: 13,
+                    fontWeight: 700,
+                    fontFamily: 'inherit',
+                    cursor: regenerating ? 'not-allowed' : 'pointer',
+                    opacity: regenerating ? 0.75 : 1,
+                  }}
+                >
+                  {regenerating ? <LoadingDots label="Regenerating" /> : 'Regenerate'}
+                </button>
+              )
             }
           />
         </main>

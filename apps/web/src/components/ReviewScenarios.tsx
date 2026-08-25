@@ -9,17 +9,8 @@ import { EmptyState, ScenariosIllustration } from './EmptyState'
 const POLL_INTERVAL_MS = 3000
 const SCENARIOS_PER_PAGE = 5
 
-const TYPE_BADGE: Record<string, { label: string; background: string; color: string }> = {
-  happy: { label: 'Happy Path', background: 'var(--happy-wash)', color: 'var(--happy-strong)' },
-  negative: { label: 'Negative Path', background: 'var(--danger-wash)', color: 'var(--danger-strong)' },
-  edge: { label: 'Edge Case', background: 'var(--warn-wash)', color: 'var(--warn-strong)' },
-}
-
 const READINESS_FILTERS = ['All', 'Ready', 'Needs data'] as const
 type ReadinessFilter = (typeof READINESS_FILTERS)[number]
-
-const TYPE_FILTERS = ['All', 'happy', 'negative', 'edge'] as const
-type TypeFilter = (typeof TYPE_FILTERS)[number]
 
 function ReadinessPill({ ready }: { ready: boolean }) {
   return (
@@ -374,7 +365,6 @@ export function ReviewScenarios({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [readinessFilter, setReadinessFilter] = useState<ReadinessFilter>('All')
-  const [typeFilter, setTypeFilter] = useState<TypeFilter>('All')
   const [journeyFilter, setJourneyFilter] = useState<Set<string>>(new Set())
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
@@ -468,7 +458,6 @@ export function ReviewScenarios({
   const visibleScenarios = scenarios.filter((s) => {
     if (!(s.name ?? '').toLowerCase().includes(searchLower)) return false
     if (journeyFilter.size > 0 && !journeyFilter.has(s.journey_id)) return false
-    if (typeFilter !== 'All' && s.type !== typeFilter) return false
     if (readinessFilter === 'Ready') return s.test_data_complete
     if (readinessFilter === 'Needs data') return !s.test_data_complete
     return true
@@ -511,53 +500,47 @@ export function ReviewScenarios({
             )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)', flexShrink: 0 }}>
-              <SingleSelectFilterDropdown
-                label="Readiness"
-                options={READINESS_FILTERS}
-                selected={readinessFilter}
-                onChange={(value) => {
-                  setReadinessFilter(value)
-                  setPage(0)
-                }}
-              />
-              <SingleSelectFilterDropdown
-                label="Type"
-                options={TYPE_FILTERS}
-                selected={typeFilter}
-                formatOption={(value) => (value === 'All' ? 'All' : TYPE_BADGE[value].label)}
-                onChange={(value) => {
-                  setTypeFilter(value)
-                  setPage(0)
-                }}
-              />
-              <JourneyFilterDropdown
-                journeys={journeys}
-                selected={journeyFilter}
-                onChange={(next) => {
-                  setJourneyFilter(next)
-                  setPage(0)
-                }}
-              />
-              <input
-                type="text"
-                placeholder="Search scenarios"
-                aria-label="Search scenarios"
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value)
-                  setPage(0)
-                }}
-                style={{
-                  width: 200,
-                  boxSizing: 'border-box',
-                  padding: '8px 12px',
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius)',
-                  fontSize: 13,
-                  fontFamily: 'inherit',
-                  color: 'var(--ink)',
-                }}
-              />
+              {isComplete && (
+                <>
+                  <SingleSelectFilterDropdown
+                    label="Readiness"
+                    options={READINESS_FILTERS}
+                    selected={readinessFilter}
+                    onChange={(value) => {
+                      setReadinessFilter(value)
+                      setPage(0)
+                    }}
+                  />
+                  <JourneyFilterDropdown
+                    journeys={journeys}
+                    selected={journeyFilter}
+                    onChange={(next) => {
+                      setJourneyFilter(next)
+                      setPage(0)
+                    }}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Search scenarios"
+                    aria-label="Search scenarios"
+                    value={search}
+                    onChange={(e) => {
+                      setSearch(e.target.value)
+                      setPage(0)
+                    }}
+                    style={{
+                      width: 200,
+                      boxSizing: 'border-box',
+                      padding: '8px 12px',
+                      border: '1px solid var(--border)',
+                      borderRadius: 'var(--radius)',
+                      fontSize: 13,
+                      fontFamily: 'inherit',
+                      color: 'var(--ink)',
+                    }}
+                  />
+                </>
+              )}
               <button
                 type="button"
                 onClick={onContinueToGenerate}
@@ -576,7 +559,7 @@ export function ReviewScenarios({
                   boxShadow: canContinue ? 'var(--shadow-button-primary)' : 'none',
                 }}
               >
-                Generate Test Suite →
+                Generate Test Suite
               </button>
           </div>
         </div>

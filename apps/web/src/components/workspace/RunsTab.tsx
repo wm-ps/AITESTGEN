@@ -364,11 +364,15 @@ function runDurationMs(run: TestRunRead): number | null {
   return new Date(run.completed_at).getTime() - new Date(run.started_at).getTime()
 }
 
-function formatDuration(ms: number | null): string {
+export function formatDuration(ms: number | null): string {
   if (ms == null) return '—'
   const totalSeconds = Math.round(ms / 1000)
   if (totalSeconds < 60) return `${totalSeconds}s`
-  return `${Math.floor(totalSeconds / 60)}m ${totalSeconds % 60}s`
+  const minutes = Math.floor(totalSeconds / 60) % 60
+  const seconds = totalSeconds % 60
+  if (totalSeconds < 3600) return `${minutes}m ${seconds}s`
+  const hours = Math.floor(totalSeconds / 3600)
+  return `${hours}h ${minutes}m ${seconds}s`
 }
 
 function RunDetail({
@@ -467,8 +471,8 @@ function RunDetail({
 }
 
 // Backend only ever produces "Manual run" / "Manual run by {name}" (see
-// `_to_test_run_read` in api/main.py).
-function parseTrigger(trigger: string): { by: string } {
+// `_to_test_run_read` in api/main.py). Exported for OverviewTab's "Run by".
+export function parseTrigger(trigger: string): { by: string } {
   const match = trigger.match(/^Manual run by (.+)$/)
   return { by: match ? match[1] : '—' }
 }

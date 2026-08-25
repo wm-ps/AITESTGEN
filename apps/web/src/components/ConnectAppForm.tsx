@@ -18,36 +18,7 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-function ConnectedAppSummary({ application }: { application: ApplicationRead }) {
-  const rows: [string, string][] = [
-    ['Application name', application.name],
-    ['Application URL', application.url],
-    ...(application.login_url ? ([['Login URL', application.login_url]] as [string, string][]) : []),
-    ['Environment', application.environment],
-    ['Authentication method', application.auth_method === 'standard_login' ? 'Username & Password' : application.auth_method],
-  ]
-  return (
-    <main style={{ maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))', margin: '0 auto', padding: '32px 24px' }}>
-      <h1 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 12px', textAlign: 'center' }}>
-        Connected application
-      </h1>
-      <div
-        className="card-panel"
-        style={{ padding: '14px 22px', display: 'flex', flexDirection: 'column', gap: 'var(--space-4)', boxShadow: 'var(--shadow-dropdown-lg)' }}
-      >
-        {rows.map(([label, value]) => (
-          <div key={label} className="field">
-            <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>{label}</span>
-            <span style={{ fontSize: 14 }}>{value}</span>
-          </div>
-        ))}
-        <p className="caption" style={{ margin: 0, fontSize: 12 }}>
-          Credentials are stored in the secrets vault and aren't shown here.
-        </p>
-      </div>
-    </main>
-  )
-}
+const KNOWN_ENVIRONMENTS = ['staging', 'qa']
 
 export function ConnectAppForm({
   application,
@@ -66,12 +37,20 @@ export function ConnectAppForm({
   onPrevious?: () => void
   onNext?: () => void
 }) {
-  const [name, setName] = useState('')
-  const [url, setUrl] = useState('')
-  const [loginUrl, setLoginUrl] = useState('')
-  const [environment, setEnvironment] = useState('staging')
-  const [customEnvironment, setCustomEnvironment] = useState('')
-  const [authMethod, setAuthMethod] = useState<AuthMethod>('standard_login')
+  // Once an application is connected, this screen is a read-only receipt of
+  // what was submitted — not editable, and never swaps to a different layout.
+  const readOnly = !!application
+
+  const [name, setName] = useState(application?.name ?? '')
+  const [url, setUrl] = useState(application?.url ?? '')
+  const [loginUrl, setLoginUrl] = useState(application?.login_url ?? '')
+  const [environment, setEnvironment] = useState(
+    application && !KNOWN_ENVIRONMENTS.includes(application.environment) ? 'other' : application?.environment ?? 'staging',
+  )
+  const [customEnvironment, setCustomEnvironment] = useState(
+    application && !KNOWN_ENVIRONMENTS.includes(application.environment) ? application.environment : '',
+  )
+  const [authMethod, setAuthMethod] = useState<AuthMethod>(application?.auth_method ?? 'standard_login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -99,27 +78,12 @@ export function ConnectAppForm({
     }
   }
 
-  if (application) {
-    return (
-      <>
-        <Stepper
-          current="connect-app"
-          furthestCount={furthestCount}
-          onStepClick={onStepClick}
-          onPrevious={onPrevious}
-          onNext={onNext}
-        />
-        <ConnectedAppSummary application={application} />
-      </>
-    )
-  }
-
   return (
     <>
       <Stepper current="connect-app" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
       <main style={{ maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))', margin: '0 auto', padding: '32px 24px' }}>
         <h1 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 12px', textAlign: 'center' }}>
-          Connect to your live application
+          {readOnly ? 'Connected application' : 'Connect to your live application'}
         </h1>
 
         <form
@@ -133,7 +97,7 @@ export function ConnectAppForm({
             boxShadow: 'var(--shadow-dropdown-lg)',
           }}
         >
-          <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
+          <fieldset disabled={submitting || readOnly} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 'var(--space-7)' }}>
             <label className="field">
               <FieldLabel>Application name</FieldLabel>
@@ -215,22 +179,26 @@ export function ConnectAppForm({
               <label className="field">
                 <FieldLabel>Username</FieldLabel>
                 <input
-                  required
+                  required={!readOnly}
                   autoComplete="off"
-                  placeholder="Login username"
+                  placeholder={readOnly ? 'Stored securely — not shown' : 'Login username'}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                 />
               </label>
               <label className="field">
                 <FieldLabel>Password</FieldLabel>
-                <PasswordInput
-                  required
-                  autoComplete="off"
-                  placeholder="Login password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
+                {readOnly ? (
+                  <input readOnly placeholder="Stored securely — not shown" value={password} />
+                ) : (
+                  <PasswordInput
+                    required
+                    autoComplete="off"
+                    placeholder="Login password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                )}
               </label>
             </div>
           ) : authMethod === 'api_key' ? (
@@ -246,20 +214,22 @@ export function ConnectAppForm({
             </label>
           ) : null}
 
-          <p
-            className="caption"
-            style={{
-              background: 'var(--canvas-wash)',
-              borderRadius: 'var(--radius)',
-              padding: 'var(--space-3)',
-              margin: 0,
-              fontSize: 12.5,
-              lineHeight: 1.5,
-            }}
-          >
-            Use a Dedicated Test Account for this Application, not a real end-user identity, on a lower environment.
-            Credentials are written directly to the secrets store and never stored in plaintext.
-          </p>
+          {!readOnly && (
+            <p
+              className="caption"
+              style={{
+                background: 'var(--canvas-wash)',
+                borderRadius: 'var(--radius)',
+                padding: 'var(--space-3)',
+                margin: 0,
+                fontSize: 12.5,
+                lineHeight: 1.5,
+              }}
+            >
+              Use a Dedicated Test Account for this Application, not a real end-user identity, on a lower environment.
+              Credentials are written directly to the secrets store and never stored in plaintext.
+            </p>
+          )}
 
           {error && (
             <div style={{ color: 'var(--danger)', fontSize: 13 }} role="alert">
@@ -267,14 +237,16 @@ export function ConnectAppForm({
             </div>
           )}
 
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
-            <button type="button" className="button-secondary" onClick={onCancel} style={{ padding: '9px 18px' }}>
-              Cancel
-            </button>
-            <button type="submit" className="button-primary" disabled={submitting} style={{ padding: '9px 20px' }}>
-              {submitting ? <LoadingDots label="Connecting" /> : 'Connect Application →'}
-            </button>
-          </div>
+          {!readOnly && (
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
+              <button type="button" className="button-secondary" onClick={onCancel} style={{ padding: '9px 18px' }}>
+                Cancel
+              </button>
+              <button type="submit" className="button-primary" disabled={submitting} style={{ padding: '9px 20px' }}>
+                {submitting ? <LoadingDots label="Connecting" /> : 'Proceed'}
+              </button>
+            </div>
+          )}
           </fieldset>
         </form>
       </main>

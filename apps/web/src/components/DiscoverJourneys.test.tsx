@@ -396,7 +396,7 @@ describe('DiscoverJourneys', () => {
       expect(screen.getByText('1 Journey Discovered')).toBeTruthy()
     })
     const button = screen.getByRole('button', {
-      name: 'Continue to Scenarios →',
+      name: 'Continue to Scenarios',
     }) as HTMLButtonElement
     expect(button.disabled).toBe(false)
   })
@@ -417,7 +417,7 @@ describe('DiscoverJourneys', () => {
       expect(screen.getByText('0 Journeys Discovered')).toBeTruthy()
     })
     const button = screen.getByRole('button', {
-      name: 'Continue to Scenarios →',
+      name: 'Continue to Scenarios',
     }) as HTMLButtonElement
     expect(button.disabled).toBe(true)
   })
@@ -435,7 +435,7 @@ describe('DiscoverJourneys', () => {
     })
     await waitFor(() => screen.getByText('1 Journey Discovered'))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue to Scenarios →' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Continue to Scenarios' }))
 
     await waitFor(() => {
       expect(navigated).toBe(true)

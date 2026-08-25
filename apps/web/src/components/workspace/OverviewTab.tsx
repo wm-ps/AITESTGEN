@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, type HealthTier, type OverviewRead } from '../../api'
 import { EmptyState, RunsIllustration } from '../EmptyState'
+import { formatDuration, parseTrigger } from './RunsTab'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -137,12 +138,31 @@ function RunHistoryIcon() {
   )
 }
 
+// Same journey-path glyph TestSuiteResults' `JourneysIcon` uses — this row
+// now headlines the journey count, so it gets the journeys icon rather than
+// a generic search/magnifying-glass mark.
 function DiscoveryIcon() {
   return (
     <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx={11} cy={11} r={6.5} />
-      <path d="M20 20l-3.8-3.8" />
+      <circle cx="6" cy="5" r="2.2" />
+      <circle cx="6" cy="19" r="2.2" />
+      <circle cx="18" cy="12" r="2.2" />
+      <path d="M6 7.2V16.8" />
+      <path d="M6 9.5C6 12 8 12 10.5 12H15.8" />
     </svg>
+  )
+}
+
+// Small labeled value used in the Activity/Discovery footer rows below —
+// same label styling as `SectionLabel`, just inline instead of block-level.
+function MetaField({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--ink-faint)', marginBottom: 2 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{value}</div>
+    </div>
   )
 }
 
@@ -557,7 +577,7 @@ export function OverviewTab({
               boxShadow: '0 1px 3px rgba(15,23,42,0.07)',
             }}
           >
-            <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
               <span
                 aria-hidden="true"
                 style={{
@@ -570,33 +590,45 @@ export function OverviewTab({
                   alignItems: 'center',
                   justifyContent: 'center',
                   flexShrink: 0,
+                  alignSelf: 'center',
                 }}
               >
                 <RunHistoryIcon />
               </span>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)', marginBottom: 6 }}>Latest run</div>
-                {overview.latest_run ? (
-                  <>
-                    <div className="caption" style={{ fontSize: 12, marginBottom: 4 }}>
+              <div style={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 16 }}>
+                <div style={{ minWidth: 0, flex: '1 1 50%' }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)', marginBottom: 6 }}>Latest run</div>
+                  {overview.latest_run ? (
+                    <div className="caption" style={{ fontSize: 12 }}>
                       {formatDateTime(overview.latest_run.created_at)}
                     </div>
-                    <div style={{ fontSize: 13, color: 'var(--ink-secondary)' }}>
-                      {overview.latest_run.passed_count} passed · {overview.latest_run.failed_count} failed
-                      {overview.latest_run.blocked_count > 0 && ` · ${overview.latest_run.blocked_count} skipped`}
-                      {overview.latest_run.duration_ms != null &&
-                        ` · ${(overview.latest_run.duration_ms / 1000).toFixed(0)}s`}
+                  ) : (
+                    <p className="caption" style={{ fontSize: 12.5, margin: 0 }}>
+                      No runs yet.
+                    </p>
+                  )}
+                </div>
+                {/* Divider next to the existing content, "Run by"/"Duration"
+                    laid out beside it with its own breathing room instead of
+                    being crammed against the card's edge. Both sides get an
+                    equal 50% share (`flex: '1 1 50%'`) instead of the right
+                    side just being as wide as its content. */}
+                {overview.latest_run && (
+                  <>
+                    <div style={{ width: 2, alignSelf: 'stretch', background: 'var(--border)', borderRadius: 1, flexShrink: 0 }} />
+                    <div style={{ minWidth: 0, flex: '1 1 50%', display: 'flex', flexDirection: 'column', gap: 10, paddingLeft: 4, paddingRight: 8 }}>
+                      <MetaField label="Run by" value={parseTrigger(overview.latest_run.trigger).by} />
+                      <MetaField
+                        label="Duration"
+                        value={formatDuration(overview.latest_run.duration_ms)}
+                      />
                     </div>
                   </>
-                ) : (
-                  <p className="caption" style={{ fontSize: 12.5, margin: 0 }}>
-                    No runs yet.
-                  </p>
                 )}
               </div>
             </div>
 
-            <div style={{ borderTop: '1px solid var(--border-hairline)', paddingTop: 16, display: 'flex', gap: 12 }}>
+            <div style={{ borderTop: '1px solid var(--border-hairline)', paddingTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
               <span
                 aria-hidden="true"
                 style={{
@@ -609,15 +641,26 @@ export function OverviewTab({
                   alignItems: 'center',
                   justifyContent: 'center',
                   flexShrink: 0,
+                  alignSelf: 'center',
                 }}
               >
                 <DiscoveryIcon />
               </span>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)', marginBottom: 6 }}>Last discovery</div>
-                <p className="caption" style={{ fontSize: 12.5, margin: 0 }}>
-                  {overview.last_discovery_started_at ? formatDateTime(overview.last_discovery_started_at) : 'Never run'}
-                </p>
+              <div style={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 16 }}>
+                <div style={{ minWidth: 0, flex: '1 1 50%' }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)', marginBottom: 6 }}>Last discovery</div>
+                  <p className="caption" style={{ fontSize: 12.5, margin: 0 }}>
+                    {overview.last_discovery_started_at ? formatDateTime(overview.last_discovery_started_at) : 'Never run'}
+                  </p>
+                </div>
+                {overview.last_discovery_started_at && (
+                  <>
+                    <div style={{ width: 2, alignSelf: 'stretch', background: 'var(--border)', borderRadius: 1, flexShrink: 0 }} />
+                    <div style={{ minWidth: 0, flex: '1 1 50%', paddingLeft: 4, paddingRight: 8 }}>
+                      <MetaField label="Journeys" value={overview.journey_count} />
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>

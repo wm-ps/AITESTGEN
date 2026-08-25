@@ -75,7 +75,7 @@ describe('ConnectAppForm', () => {
     fillCommonFields()
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'qa-password' } })
-    fireEvent.click(screen.getByRole('button', { name: /Connect Application/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Proceed/ }))
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
@@ -98,7 +98,7 @@ describe('ConnectAppForm', () => {
     fillCommonFields()
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'qa-password' } })
-    fireEvent.click(screen.getByRole('button', { name: /Connect Application/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Proceed/ }))
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
     const alert = await screen.findByRole('alert')

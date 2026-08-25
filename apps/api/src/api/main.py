@@ -2522,6 +2522,11 @@ class LatestRunSummaryRead(BaseModel):
     failed_count: int
     blocked_count: int
     duration_ms: int | None
+    # Same "Manual run" / "Manual run by {name}" format as TestRunRead.trigger
+    # (see `_to_test_run_read`) — kept as one formatted string rather than a
+    # separate `triggered_by_name` field so the frontend has one parser
+    # (`parseTrigger`) for both the Runs tab and this Overview tile.
+    trigger: str
 
 
 class OverviewRead(BaseModel):
@@ -2537,6 +2542,10 @@ class OverviewRead(BaseModel):
     # start time, and `status`) — this is honestly the most recent
     # *completed* run's start time, not when it finished.
     last_discovery_started_at: datetime | None
+    # Candidate journeys found by the most recent discovery — same
+    # `Journey.status == "candidate"` count `get_home` computes per
+    # application, just scoped to this one application instead of batched.
+    journey_count: int
 
 
 _OVERVIEW_TREND_RUN_COUNT = 10
@@ -2592,12 +2601,22 @@ def get_overview(
             failed_count=latest.failed_count,
             blocked_count=latest.blocked_count,
             duration_ms=duration_ms,
+            trigger=(
+                f"Manual run by {latest.triggered_by_name}"
+                if latest.triggered_by_name
+                else "Manual run"
+            ),
         )
 
     discovery_run = _latest_discovery_run(session, application.id)
     last_discovery_started_at = (
         discovery_run.created_at if discovery_run and discovery_run.status == "complete" else None
     )
+    journey_count = session.exec(
+        select(func.count())
+        .select_from(Journey)
+        .where(Journey.application_id == application.id, Journey.status == "candidate")
+    ).one()
 
     return OverviewRead(
         health=_health_tier(pass_rate),
@@ -2609,6 +2628,7 @@ def get_overview(
         trend=trend,
         latest_run=latest_run,
         last_discovery_started_at=last_discovery_started_at,
+        journey_count=journey_count,
     )
 
 
