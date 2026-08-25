@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Home } from './Home'
 
-const USER = { name: 'Ada Lovelace', email: 'ada@example.com', role: 'admin' }
+const USER = { name: 'Ada Lovelace', email: 'ada@example.com', role: 'admin' as const }
 
 const APP = {
   id: 'app-1',
