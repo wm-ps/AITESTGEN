@@ -651,26 +651,38 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
         primary_page_id,
     ) = await asyncio.to_thread(_resolve_scenario_defaults_sync, input.scenario_id)
 
-    code = await HostedAIProvider().generate_playwright(
-        scenario,
-        known_pages,
-        known_locators,
-        requires_auth=requires_auth,
-        field_input_types=field_input_types,
-    )
-
+    provider = HostedAIProvider()
+    repair = None
     # Checklist rule 3: a spec isn't "generated successfully" until it
     # compiles against real @playwright/test types — this catches
     # undefined-variable/hallucinated-matcher bugs at generation time
-    # instead of at real-test-run time. Raising (rather than persisting
-    # anyway) lets Temporal's activity retry re-run generation.
-    typecheck_errors = await typecheck_playwright_code(code.code)
-    if typecheck_errors:
+    # instead of at real-test-run time. A blind Temporal-level retry re-runs
+    # this whole activity with zero memory of the previous tsc error, and
+    # was observed live repeating the exact same string/number mistake
+    # across all 3 attempts — so self-correct with the real compiler
+    # feedback here first (up to 2 repair turns), and only let it fall
+    # through to Temporal's outer retry (genuine infra failures) if the
+    # model still can't fix it.
+    for attempt in range(3):
+        code = await provider.generate_playwright(
+            scenario,
+            known_pages,
+            known_locators,
+            requires_auth=requires_auth,
+            field_input_types=field_input_types,
+            repair=repair,
+        )
+        typecheck_errors = await typecheck_playwright_code(code.code)
+        if not typecheck_errors:
+            break
         logger.error(
-            "PlaywrightGenerationActivity: scenario_id=%s failed typecheck: %s",
+            "PlaywrightGenerationActivity: scenario_id=%s failed typecheck (attempt %d): %s",
             input.scenario_id,
+            attempt + 1,
             "; ".join(typecheck_errors),
         )
+        repair = (code.code, typecheck_errors)
+    else:
         raise ValueError(
             "Generated Playwright spec failed typecheck:\n" + "\n".join(typecheck_errors)
         )

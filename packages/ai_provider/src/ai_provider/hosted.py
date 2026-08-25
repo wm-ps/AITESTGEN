@@ -349,8 +349,12 @@ check a validity/error state, express it via a real matcher against the actual D
 `:invalid`/custom selector combined with `toBeVisible()`), never a matcher you are only \
 assuming must exist.
 
-Numeric-argument rule — `toHaveCount(n)`, `.nth(n)`, and `page.waitForTimeout(n)` all take a \
-real TypeScript `number`, never a `string` — this is a compile error, not a runtime one. Only \
+Numeric-argument rule — this is general, not limited to the examples below: ANY Playwright \
+argument typed `number` takes a real TypeScript `number`, never a `string` — this is a compile \
+error, not a runtime one. Applies to `toHaveCount(n)`, `.nth(n)`, `page.waitForTimeout(n)`, \
+`page.setViewportSize({{ width, height }})`, `page.mouse.click(x, y)`, `page.mouse.move(x, y)`, \
+`page.mouse.wheel(dx, dy)`, and the `delay` option on `.click(...)`/`.dblclick(...)`/`.type(...)` \
+— and any other Playwright call whose signature says `number`. Only \
 pass a bare numeric literal (`toHaveCount(1)`, `.nth(0)`) or a variable actually declared as \
 `number` (`const n: number = 3;`). Never pass a Test-data value straight into one of these — \
 Test data is filled into forms as strings, so a variable holding a Test-data value is typed \
@@ -925,6 +929,7 @@ class HostedAIProvider:
         *,
         requires_auth: bool = False,
         field_input_types: dict[str, str] | None = None,
+        repair: tuple[str, list[str]] | None = None,
     ) -> TestAssetCode:
         step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
         base_url = getattr(scenario, "base_url", None) or ""
@@ -965,30 +970,51 @@ class HostedAIProvider:
                 "straight to a deep URL as the first action of the test."
             )
         )
-        content = await _chat_completion(
-            [
-                {
-                    "role": "system",
-                    "content": _PLAYWRIGHT_PROMPT_SYSTEM.format(
-                        base_url=base_url,
-                        auth_precondition_note=auth_precondition_note,
-                        initial_navigation_rule=initial_navigation_rule,
-                    ),
-                },
+        messages = [
+            {
+                "role": "system",
+                "content": _PLAYWRIGHT_PROMPT_SYSTEM.format(
+                    base_url=base_url,
+                    auth_precondition_note=auth_precondition_note,
+                    initial_navigation_rule=initial_navigation_rule,
+                ),
+            },
+            {
+                "role": "user",
+                "content": _PLAYWRIGHT_PROMPT_USER.format(
+                    base_url=base_url,
+                    scenario_name=scenario.name,
+                    scenario_type=scenario.type,
+                    step_listing=step_listing,
+                    expected_result=scenario.expected_result,
+                    test_data_listing=_describe_test_data(scenario, field_input_types),
+                    known_pages_listing=_describe_known_pages(known_pages),
+                    known_locators_listing=_describe_known_locators(known_locators),
+                ),
+            },
+        ]
+        # Self-repair turn: a bare retry re-guesses blind and tends to repeat
+        # the exact same tsc error (observed live — same TS2345 string/number
+        # mistake across all 3 Temporal attempts). Handing back its own code
+        # plus the real compiler output lets it fix the specific line instead.
+        if repair is not None:
+            previous_code, typecheck_errors = repair
+            messages.append({"role": "assistant", "content": previous_code})
+            messages.append(
                 {
                     "role": "user",
-                    "content": _PLAYWRIGHT_PROMPT_USER.format(
-                        base_url=base_url,
-                        scenario_name=scenario.name,
-                        scenario_type=scenario.type,
-                        step_listing=step_listing,
-                        expected_result=scenario.expected_result,
-                        test_data_listing=_describe_test_data(scenario, field_input_types),
-                        known_pages_listing=_describe_known_pages(known_pages),
-                        known_locators_listing=_describe_known_locators(known_locators),
+                    "content": (
+                        "That code failed TypeScript compilation:\n\n"
+                        + "\n".join(typecheck_errors)
+                        + "\n\nFix only what's needed to resolve these compile errors "
+                        "(commonly: wrap a string value in `Number(...)` before passing it "
+                        "to a numeric Playwright argument). Return the complete corrected "
+                        "file, nothing else."
                     ),
-                },
-            ],
+                }
+            )
+        content = await _chat_completion(
+            messages,
             # A real Generate Suite submission fans out one Playwright call
             # per Scenario across every candidate Journey at once (a dozen+
             # Journeys x dozens of Scenarios isn't unusual) — the default
