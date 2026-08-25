@@ -211,7 +211,7 @@ class TestExecutionStatus:
 
 
 class TestListTestRuns:
-    def test_returns_paginated_envelope_newest_first(self) -> None:
+    def test_returns_cursor_envelope_newest_first(self) -> None:
         init_db()
         client, _ = _signed_in_client("Org List Runs")
         application = _create_application(client, "List Runs App")
@@ -223,12 +223,10 @@ class TestListTestRuns:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["page"] == 1
-        assert body["page_size"] == 10
-        assert body["total"] == 2
+        assert body["next_cursor"] is None
         assert [r["id"] for r in body["items"]] == [str(newer.external_id), str(older.external_id)]
 
-    def test_page_size_is_respected(self) -> None:
+    def test_limit_is_respected(self) -> None:
         init_db()
         client, _ = _signed_in_client("Org List Runs Paged")
         application = _create_application(client, "List Runs Paged App")
@@ -237,12 +235,32 @@ class TestListTestRuns:
             _seed_test_run(app_id)
 
         response = client.get(
-            f"/applications/{application['id']}/test-runs", params={"page": 1, "page_size": 2}
+            f"/applications/{application['id']}/test-runs", params={"limit": 2}
         )
 
         body = response.json()
-        assert body["total"] == 3
         assert len(body["items"]) == 2
+        assert body["next_cursor"] is not None
+
+    def test_cursor_pages_through_all_items_without_duplicates_or_gaps(self) -> None:
+        init_db()
+        client, _ = _signed_in_client("Org List Runs Cursor")
+        application = _create_application(client, "List Runs Cursor App")
+        app_id, _ = _seed_test_asset(application)
+        runs = [_seed_test_run(app_id) for _ in range(5)]
+        expected_ids = [str(r.external_id) for r in reversed(runs)]
+
+        seen_ids: list[str] = []
+        cursor: str | None = None
+        for _ in range(10):  # safety cap against an infinite loop if next_cursor never clears
+            params = {"limit": 2, **({"cursor": cursor} if cursor else {})}
+            body = client.get(f"/applications/{application['id']}/test-runs", params=params).json()
+            seen_ids += [r["id"] for r in body["items"]]
+            cursor = body["next_cursor"]
+            if cursor is None:
+                break
+
+        assert seen_ids == expected_ids
 
     def test_trigger_and_pass_rate_fields(self) -> None:
         init_db()

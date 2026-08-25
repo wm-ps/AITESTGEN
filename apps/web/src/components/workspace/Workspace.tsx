@@ -19,21 +19,23 @@ function OverviewIcon() {
   )
 }
 
+// Same icon Home's "Test cases" stat chip uses — not a new shape.
 function SuiteIcon() {
   return (
-    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 3 3 7.5 12 12l9-4.5z" />
-      <path d="M3 12l9 4.5 9-4.5" />
-      <path d="M3 16.5l9 4.5 9-4.5" />
+    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6.5 3.5h8l3 3v13a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z" />
+      <path d="M14 3.5V7h3.5" />
+      <path d="M8.5 12h7M8.5 15.3h7" />
     </svg>
   )
 }
 
+// Same icon Home's "Executions" stat chip uses — not a new shape.
 function RunsIcon() {
   return (
-    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx={12} cy={12} r={8.5} />
-      <path d="M12 7.5v5l3.2 3.2" />
+    <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M10.3 8.7 15 12l-4.7 3.3V8.7Z" fill="currentColor" stroke="none" />
     </svg>
   )
 }
@@ -49,10 +51,12 @@ function PlayIcon() {
 const RUN_IS_ACTIVE = (status: string) => status === 'pending' || status === 'running'
 const RUN_POLL_MS = 2000
 
-const TABS: { key: WorkspaceTab; label: string; icon: () => React.JSX.Element }[] = [
-  { key: 'overview', label: 'Overview', icon: OverviewIcon },
-  { key: 'suite', label: 'Suite', icon: SuiteIcon },
-  { key: 'runs', label: 'Runs', icon: RunsIcon },
+// `label` is the nav rail's word — kept short, the rail has no room for
+// more. `heading` is the fuller name shown as the content pane's page title.
+const TABS: { key: WorkspaceTab; label: string; heading: string; icon: () => React.JSX.Element }[] = [
+  { key: 'overview', label: 'Overview', heading: 'Test Overview', icon: OverviewIcon },
+  { key: 'suite', label: 'Suite', heading: 'Test Suite', icon: SuiteIcon },
+  { key: 'runs', label: 'Runs', heading: 'Test Runs', icon: RunsIcon },
 ]
 
 export function Workspace({
@@ -196,7 +200,7 @@ export function Workspace({
                 border: 'none',
                 background: active ? 'var(--accent-wash)' : 'transparent',
                 color: active ? 'var(--accent)' : 'var(--ink-muted)',
-                fontSize: 11,
+                fontSize: 13,
                 fontWeight: 600,
                 fontFamily: 'inherit',
                 cursor: 'pointer',
@@ -220,19 +224,11 @@ export function Workspace({
             'radial-gradient(900px 500px at 85% -10%, var(--accent-wash-soft) 0%, transparent 55%), linear-gradient(180deg, #FBFCFE 0%, #F6F9FB 100%)',
         }}
       >
-        {triggerError && (
-          <p role="alert" style={{ color: 'var(--danger-strong)', fontSize: 13, marginBottom: 16 }}>
-            {triggerError}
-          </p>
-        )}
-        {triggerErrorUnavailable && (
-          <div style={{ marginBottom: 16 }}>
-            <ServiceErrorNote code="EXECUTION_UNAVAILABLE" />
-          </div>
-        )}
-
-        {activeTab === 'runs' && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+          <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
+            {TABS.find((tab) => tab.key === activeTab)?.heading}
+          </h1>
+          {activeTab === 'runs' && (
             <button
               type="button"
               className="button-primary"
@@ -243,6 +239,16 @@ export function Workspace({
               <PlayIcon />
               {running ? 'Running…' : 'Run Suite'}
             </button>
+          )}
+        </div>
+        {triggerError && (
+          <p role="alert" style={{ color: 'var(--danger-strong)', fontSize: 13, marginBottom: 16 }}>
+            {triggerError}
+          </p>
+        )}
+        {triggerErrorUnavailable && (
+          <div style={{ marginBottom: 16 }}>
+            <ServiceErrorNote code="EXECUTION_UNAVAILABLE" />
           </div>
         )}
 

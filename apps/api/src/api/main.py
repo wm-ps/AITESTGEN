@@ -1565,6 +1565,7 @@ class TestCaseRead(BaseModel):
     id: uuid.UUID
     name: str
     type: str
+    description: str
     code: str
 
 
@@ -1769,7 +1770,11 @@ def list_test_suites(
                 continue
             test_cases.append(
                 TestCaseRead(
-                    id=asset.external_id, name=scenario.name, type=scenario.type, code=asset.code
+                    id=asset.external_id,
+                    name=scenario.name,
+                    type=scenario.type,
+                    description=scenario.expected_result,
+                    code=asset.code,
                 )
             )
         result.append(
@@ -1817,7 +1822,13 @@ def terminate_test_suite(
     session.refresh(test_suite)
 
     test_cases = [
-        TestCaseRead(id=asset.external_id, name=scenario.name, type=scenario.type, code=asset.code)
+        TestCaseRead(
+            id=asset.external_id,
+            name=scenario.name,
+            type=scenario.type,
+            description=scenario.expected_result,
+            code=asset.code,
+        )
         for asset in session.exec(
             select(TestAsset).where(
                 TestAsset.test_suite_id == test_suite.id,
@@ -2162,37 +2173,41 @@ async def execution_status(
     return {"available": await has_pollers(client, EXECUTION_TASK_QUEUE)}
 
 
-class TestRunPageRead(BaseModel):
+class TestRunCursorPageRead(BaseModel):
     items: list[TestRunRead]
-    page: int
-    page_size: int
-    total: int
+    next_cursor: str | None
 
 
-@app.get("/applications/{external_id}/test-runs", response_model=TestRunPageRead)
+@app.get("/applications/{external_id}/test-runs", response_model=TestRunCursorPageRead)
 def list_test_runs(
     external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
-    page: int = 1,
-    page_size: int = 10,
-) -> TestRunPageRead:
-    """Paginated (Application Workspace feature's Runs tab) — every run for
-    an Application is kept forever (immutable history), so an unpaginated
-    list would grow without bound."""
+    cursor: uuid.UUID | None = None,
+    limit: int = 10,
+) -> TestRunCursorPageRead:
+    """Keyset-paginated on the `id` PK (Application Workspace feature's Runs
+    tab) — every run for an Application is kept forever (immutable history)
+    and this list is polled every 1.5s while new runs land, so an
+    OFFSET-based page could duplicate/skip rows as they shift underneath a
+    poll; a keyset cursor can't, since it's anchored to a specific row
+    rather than a position. `id` (not `created_at`) is the keyset column
+    because it's a uuid7 — already time-sortable by construction (see
+    `TestRun.id`'s `uuidv7()` default) — and unique, so no tiebreaker is
+    needed for rows created in the same instant. The frontend keeps its own
+    stack of previously-seen cursors for "Previous" rather than this
+    endpoint supporting a reverse direction."""
     application = _get_org_application(session, organization_id, external_id)
-    base_query = select(TestRun).where(TestRun.application_id == application.id)
-    total = session.exec(select(func.count()).select_from(base_query.subquery())).one()
+    query = select(TestRun).where(TestRun.application_id == application.id)
+    if cursor is not None:
+        query = query.where(TestRun.id < cursor)  # type: ignore[arg-type]
     test_runs = session.exec(
-        base_query.order_by(TestRun.created_at.desc())  # type: ignore[arg-type]
-        .offset((page - 1) * page_size)
-        .limit(page_size)
+        query.order_by(TestRun.id.desc()).limit(limit)  # type: ignore[arg-type]
     ).all()
-    return TestRunPageRead(
+    next_cursor = str(test_runs[-1].id) if len(test_runs) == limit else None
+    return TestRunCursorPageRead(
         items=[_to_test_run_read(tr, results=None) for tr in test_runs],
-        page=page,
-        page_size=page_size,
-        total=total,
+        next_cursor=next_cursor,
     )
 
 

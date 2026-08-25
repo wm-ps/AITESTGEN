@@ -27,18 +27,6 @@ function BackIcon() {
 
 const NON_PASSED_STATUSES = new Set(['failed', 'timed_out', 'errored'])
 
-// Tier comes from the backend's `health` field (main.py `_health_tier`) —
-// not a re-derived 90%/70% cutoff — so this can't drift from the Overview
-// tab's own health badge.
-function runSignalColor(run: TestRunRead): string {
-  if (run.status === 'blocked') return 'var(--warn)'
-  if (run.status === 'pending' || run.status === 'running') return 'var(--accent)'
-  if (run.pass_rate == null) return 'var(--border-strong)'
-  if (run.health.tier === 'healthy') return 'var(--good)'
-  if (run.health.tier === 'needs_attention') return 'var(--warn)'
-  return 'var(--danger)'
-}
-
 export function ArtifactsModal({ testResult, onClose }: { testResult: TestResultRead; onClose: () => void }) {
   useEscapeToClose(onClose)
   const [artifacts, setArtifacts] = useState<TestResultArtifactRead[] | null>(null)
@@ -271,7 +259,6 @@ function ResultListHeader({
         gap: 12,
         padding: '8px 16px',
         background: 'var(--canvas-wash-alt)',
-        borderBottom: '1px solid var(--border-hairline)',
       }}
     >
       <SortableColumnLabel label="Test Case" sortKey="name" activeKey={sortKey} dir={sortDir} onSort={onSort} />
@@ -442,7 +429,7 @@ function RunDetail({
       </div>
 
       {run.status === 'blocked' && (
-        <div className="card-panel" style={{ padding: '16px 20px', marginBottom: 20, borderColor: 'var(--warn-wash-border)' }}>
+        <div className="card-panel" style={{ padding: '16px 20px', marginBottom: 20 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--warn-strong)', marginBottom: 4 }}>
             Execution blocked
           </div>
@@ -462,9 +449,7 @@ function RunDetail({
         <div className="card-panel" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <ResultListHeader sortKey={resultSortKey} sortDir={resultSortDir} onSort={handleResultSort} />
           {pagedResults.map((result) => (
-            <div key={result.id} style={{ borderBottom: '1px solid var(--border-hairline)' }}>
-              <TestResultRow result={result} isCurrentlyRunning={result.id === runningResultId} />
-            </div>
+            <TestResultRow key={result.id} result={result} isCurrentlyRunning={result.id === runningResultId} />
           ))}
           <Pagination
             page={resultsPage}
@@ -631,7 +616,7 @@ function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
         if (e.key === 'Enter' || e.key === ' ') onOpen()
       }}
     >
-      <td style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', borderLeft: `3px solid ${runSignalColor(run)}` }}>
+      <td style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>
         {formatDateTimeWithZone(run.created_at)}
       </td>
       <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>{by}</td>
@@ -671,7 +656,13 @@ export function RunsTab({
   const [selectedRun, setSelectedRun] = useState<TestRunRead | null>(null)
   const [executionUnavailable, setExecutionUnavailable] = useState(false)
   const [runs, setRuns] = useState<TestRunRead[]>([])
-  const [total, setTotal] = useState(0)
+  // Cursor-paginated: `cursors[i]` is the cursor to fetch page `i` with
+  // (`cursors[0]` is always null, i.e. "start from the newest run"). Moving
+  // "Next" appends the cursor the server just handed back for the page
+  // after the one we're on; moving "Prev" just re-fetches an already-known
+  // cursor rather than the server supporting a reverse direction.
+  const [cursors, setCursors] = useState<(string | null)[]>([null])
+  const [hasNext, setHasNext] = useState(false)
   const [page, setPage] = useState(0)
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
@@ -685,7 +676,6 @@ export function RunsTab({
     }
   }
   const autoSelectPendingRef = useRef(!!autoSelectLatest)
-  const totalPages = Math.max(1, Math.ceil(total / RUNS_PER_PAGE))
   // "Latest ref" pattern — `onAutoSelectConsumed` is a fresh arrow function
   // from Workspace on every render, so calling it via a ref rather than
   // depending on it directly keeps the polling effect below from tearing
@@ -707,10 +697,17 @@ export function RunsTab({
 
     async function load() {
       try {
-        const body = await api.listTestRuns(applicationId, page + 1, RUNS_PER_PAGE)
+        const body = await api.listTestRuns(applicationId, cursors[page] ?? null, RUNS_PER_PAGE)
         if (cancelled) return
         setRuns(body.items)
-        setTotal(body.total)
+        setHasNext(body.next_cursor !== null)
+        if (body.next_cursor !== null) {
+          setCursors((prev) =>
+            prev[page + 1] === body.next_cursor
+              ? prev
+              : [...prev.slice(0, page + 1), body.next_cursor],
+          )
+        }
         if (!baselineCaptured) {
           baselineCaptured = true
           baselineId = body.items[0]?.id
@@ -824,12 +821,10 @@ export function RunsTab({
           </div>
           <Pagination
             page={page}
-            totalPages={totalPages}
-            totalItems={total}
-            pageSize={RUNS_PER_PAGE}
+            hasPrev={page > 0}
+            hasNext={hasNext}
             onPrev={() => setPage((p) => p - 1)}
             onNext={() => setPage((p) => p + 1)}
-            onPage={setPage}
           />
         </div>
       )}

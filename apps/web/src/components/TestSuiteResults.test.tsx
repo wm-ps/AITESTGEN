@@ -103,7 +103,6 @@ describe('TestSuiteResults', () => {
     await waitFor(() => {
       expect(screen.getByText(/Generated 1 test cases across 1 journeys/)).toBeTruthy()
     })
-    fireEvent.click(screen.getByRole('button', { name: /View Tests/ }))
     expect(screen.getByText('Incomplete')).toBeTruthy()
   })
 
@@ -147,7 +146,7 @@ describe('TestSuiteResults', () => {
     })
   })
 
-  it('shows the completed summary and stats, with the file list and its scenarios collapsed by default', async () => {
+  it('shows the completed summary and stats, with each journey collapsed by default', async () => {
     stubFetch()
     render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunTests={() => {}} />)
 
@@ -155,18 +154,14 @@ describe('TestSuiteResults', () => {
       expect(screen.getByText(/Generated 2 test cases across 1 journeys/)).toBeTruthy()
     })
     expect(screen.getByText('Generated Tests')).toBeTruthy()
-    expect(screen.getByText('2 tests across 1 file')).toBeTruthy()
-    expect(screen.queryByText('checkout.spec.ts')).toBeNull()
+    expect(screen.getByText('Checkout')).toBeTruthy()
     expect(screen.queryByText('Guest checkout')).toBeNull()
 
-    fireEvent.click(screen.getByRole('button', { name: /View Tests/ }))
-    expect(screen.getByText('checkout.spec.ts')).toBeTruthy()
-    expect(screen.queryByText('Guest checkout')).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: /checkout\.spec\.ts/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Checkout/ }))
     expect(screen.getByText('Guest checkout')).toBeTruthy()
-    expect(screen.getByText('Happy Path')).toBeTruthy()
-    expect(screen.getByText('Negative Path')).toBeTruthy()
+    // ponytail: type badge hidden per request — commented, not deleted.
+    // expect(screen.getByText('Happy Path')).toBeTruthy()
+    // expect(screen.getByText('Negative Path')).toBeTruthy()
     expect(screen.getAllByRole('button', { name: 'Code' })).toHaveLength(2)
   })
 
@@ -176,13 +171,12 @@ describe('TestSuiteResults', () => {
 
     await waitFor(() => screen.getByText(/Generated 2 test cases across 1 journeys/))
 
-    fireEvent.click(screen.getByRole('button', { name: /View Tests/ }))
-    fireEvent.click(screen.getByRole('button', { name: /checkout\.spec\.ts/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Checkout/ }))
     expect(screen.getByText('Guest checkout')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: /Hide Tests/ }))
     expect(screen.queryByText('Guest checkout')).toBeNull()
-    expect(screen.queryByText('checkout.spec.ts')).toBeNull()
+    expect(screen.queryByText('Checkout')).toBeNull()
   })
 
   it('calls onRunTests when the Run Tests button is clicked', async () => {
@@ -200,9 +194,8 @@ describe('TestSuiteResults', () => {
     stubFetch()
     render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunTests={() => {}} />)
 
-    await waitFor(() => screen.getByRole('button', { name: /View Tests/ }))
-    fireEvent.click(screen.getByRole('button', { name: /View Tests/ }))
-    fireEvent.click(screen.getByRole('button', { name: /checkout\.spec\.ts/ }))
+    await waitFor(() => screen.getByRole('button', { name: /Checkout/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Checkout/ }))
     await waitFor(() => screen.getByText('Guest checkout'))
 
     const codeButtons = screen.getAllByRole('button', { name: 'Code' })

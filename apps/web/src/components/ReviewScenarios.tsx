@@ -503,9 +503,7 @@ export function ReviewScenarios({
           }}
         >
           <div>
-            <h1 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
-              Review Scenarios
-            </h1>
+            <h2 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>Review Scenarios</h2>
             {headerSub && (
               <div className="caption" style={{ fontSize: 13, marginTop: 3, maxWidth: 520 }}>
                 {headerSub}
@@ -661,7 +659,10 @@ export function ReviewScenarios({
                 }}
               >
                 {pagedScenarios.map((scenario) => {
-                  const badge = TYPE_BADGE[scenario.type] ?? TYPE_BADGE.happy
+                  // ponytail: Happy Path/Negative Path/Edge Case badge hidden
+                  // per request — commented, not deleted, so it's a one-line
+                  // revert. See the matching span below.
+                  // const badge = TYPE_BADGE[scenario.type] ?? TYPE_BADGE.happy
                   return (
                     <li
                       key={scenario.id}
@@ -692,9 +693,9 @@ export function ReviewScenarios({
                           >
                             {scenario.name}
                           </div>
-                          <span className="badge" style={{ background: badge.background, color: badge.color }}>
+                          {/* <span className="badge" style={{ background: badge.background, color: badge.color }}>
                             {badge.label}
-                          </span>
+                          </span> */}
                         </div>
                       )}
                       <ScenarioRowMenu
@@ -742,6 +743,8 @@ export function ReviewScenarios({
                     }}
                   >
                     <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedScenario.name}</div>
+                    {/* ponytail: Happy Path/Negative Path/Edge Case badge
+                        hidden per request — commented, not deleted.
                     {(() => {
                       const badge = TYPE_BADGE[selectedScenario.type] ?? TYPE_BADGE.happy
                       return (
@@ -750,6 +753,7 @@ export function ReviewScenarios({
                         </span>
                       )
                     })()}
+                    */}
                     <ReadinessPill ready={selectedScenario.test_data_complete} />
                   </div>
                   <div className="caption" style={{ fontSize: 12, marginBottom: 'var(--space-4)' }}>
@@ -770,7 +774,6 @@ export function ReviewScenarios({
                   <div
                     style={{
                       background: 'var(--accent-wash-soft)',
-                      border: '1px solid var(--accent-wash)',
                       borderRadius: 'var(--radius-lg)',
                       padding: 'var(--space-4)',
                       marginBottom: 'var(--space-4)',
@@ -784,7 +787,6 @@ export function ReviewScenarios({
                         role="alert"
                         style={{
                           background: 'var(--warn-wash)',
-                          border: '1px solid var(--warn-wash-border)',
                           color: '#92400E',
                           borderRadius: 'var(--radius)',
                           padding: 'var(--space-3)',
@@ -833,7 +835,6 @@ export function ReviewScenarios({
                   </div>
                   <div
                     style={{
-                      borderLeft: '3px solid var(--good)',
                       color: 'var(--ink-secondary)',
                       padding: 'var(--space-3)',
                       fontSize: 13,

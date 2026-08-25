@@ -90,7 +90,8 @@ describe('ReviewScenarios', () => {
     await waitFor(() => {
       expect(screen.getByText('Guest checkout')).toBeTruthy()
     })
-    expect(screen.getByText('Happy Path')).toBeTruthy()
+    // ponytail: type badge hidden per request — commented, not deleted.
+    // expect(screen.getByText('Happy Path')).toBeTruthy()
   })
 
   it('shows a Test Data Required readiness pill but leaves Continue enabled — blank fields get a default at generation time', async () => {
@@ -142,7 +143,8 @@ describe('ReviewScenarios', () => {
     })
     expect(screen.getByText('Order confirmation is shown')).toBeTruthy()
     expect(screen.getByLabelText(/^username/)).toBeTruthy()
-    expect(screen.getAllByText('Happy Path').length).toBeGreaterThan(0)
+    // ponytail: type badge hidden per request — commented, not deleted.
+    // expect(screen.getAllByText('Happy Path').length).toBeGreaterThan(0)
   })
 
   it('saves a test data value on blur', async () => {

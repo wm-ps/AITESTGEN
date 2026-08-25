@@ -12,15 +12,24 @@ const SECONDS_PER_TEST_CASE = 45
 const SUITES_PER_PAGE = 5
 const TEST_CASES_PER_PAGE = 5
 
-// Generated Test Assets are Playwright (TypeScript, @playwright/test) — group
-// by that real generated file structure, matching the reference prototype's
-// `.spec.ts` filenames directly.
-function toTestFileName(journeyName: string): string {
-  const slug = journeyName
+// Mirrors `sanitize_slug` (packages/test_suite_assembler/assembler.py) — the
+// exported project puts one `.spec.ts` file per test case inside a folder
+// named after its Journey (`tests/<journey-slug>/<test-case-slug>.spec.ts`).
+// This is a display-only best-effort reproduction of that same slugging, not
+// the source of truth — the assembler also dedupes colliding slugs
+// (`same-name.spec.ts`, `same-name-2.spec.ts`) within a folder/suite, which
+// this doesn't attempt, since nothing here reads or links to the actual file.
+function slugify(name: string): string {
+  return name
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-  return `${slug || 'journey'}.spec.ts`
+}
+function journeyFolderPath(journeyName: string): string {
+  return `tests/${slugify(journeyName) || 'journey'}/`
+}
+function testCaseFileName(testCaseName: string): string {
+  return `${slugify(testCaseName) || 'test'}.spec.ts`
 }
 
 function WarningIcon({ size }: { size: number }) {
@@ -50,23 +59,26 @@ function DownloadIcon() {
   )
 }
 
+// Same icon Home's "Test cases" stat chip uses — not a new shape.
 function ClipboardCheckIcon() {
   return (
     <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
-      <rect x={9} y={3} width={6} height={4} rx={1} />
-      <path d="M9 12l2 2 4-4" />
+      <path d="M6.5 3.5h8l3 3v13a1 1 0 0 1-1 1h-10a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1Z" />
+      <path d="M14 3.5V7h3.5" />
+      <path d="M8.5 12h7M8.5 15.3h7" />
     </svg>
   )
 }
 
+// Same icon Home's "Journeys" stat chip uses — not a new shape.
 function JourneysIcon() {
   return (
     <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx={12} cy={5.5} r={2} />
-      <circle cx={6} cy={17} r={2} />
-      <circle cx={18} cy={17} r={2} />
-      <path d="M12 7.5 6 15.3M12 7.5l6 7.8M7.8 17h8.4" />
+      <circle cx="6" cy="5" r="2.2" />
+      <circle cx="6" cy="19" r="2.2" />
+      <circle cx="18" cy="12" r="2.2" />
+      <path d="M6 7.2V16.8" />
+      <path d="M6 9.5C6 12 8 12 10.5 12H15.8" />
     </svg>
   )
 }
@@ -105,10 +117,6 @@ function ChevronIcon({ size, color, open }: { size: number; color: string; open:
 // Passed → good) instead of every tile reading identically neutral.
 export type StatTone = 'accent' | 'good' | 'danger' | 'warn' | 'muted'
 
-// `strong` drives both the icon and the border (via color-mix, not a fixed
-// per-tone wash-border token) — every tone gets a border at the same
-// perceived weight instead of good/danger's border silently matching their
-// own background (invisible) while warn/muted's happened to be visible.
 const STAT_TONE: Record<StatTone, { tileBackground: string; strong: string }> = {
   accent: { tileBackground: 'var(--accent-wash-soft)', strong: 'var(--accent)' },
   good: { tileBackground: 'var(--good-wash)', strong: 'var(--good-strong)' },
@@ -133,7 +141,6 @@ export function StatTile({
     <div
       style={{
         background: colors.tileBackground,
-        border: `1px solid color-mix(in srgb, ${colors.strong} 30%, transparent)`,
         borderRadius: 'var(--radius-md)',
         boxSizing: 'border-box',
         padding: '14px 16px',
@@ -173,11 +180,14 @@ export function StatTile({
 // Suite lands here; a "Test details" action reveals the per-TestSuite
 // breakdown; each test case shows a type badge and a "Code" button opening
 // one shared code-viewer modal — not a `<details>`-disclosure list.
-const TYPE_BADGE: Record<string, { label: string; background: string; color: string }> = {
-  happy: { label: 'Happy Path', background: 'var(--happy-wash)', color: 'var(--happy-strong)' },
-  negative: { label: 'Negative Path', background: 'var(--danger-wash)', color: 'var(--danger-strong)' },
-  edge: { label: 'Edge Case', background: 'var(--warn-wash)', color: 'var(--warn-strong)' },
-}
+// ponytail: type badge hidden per request (commented, not deleted — the
+// only remaining reference is commented out below too, so this would be
+// unused and fail `noUnusedLocals` left live).
+// const TYPE_BADGE: Record<string, { label: string; background: string; color: string }> = {
+//   happy: { label: 'Happy Path', background: 'var(--happy-wash)', color: 'var(--happy-strong)' },
+//   negative: { label: 'Negative Path', background: 'var(--danger-wash)', color: 'var(--danger-strong)' },
+//   edge: { label: 'Edge Case', background: 'var(--warn-wash)', color: 'var(--warn-strong)' },
+// }
 
 // Loosened to `{ name, code }` rather than the full `TestCaseRead` so the
 // Application Workspace's Test Suite tab (which only has a lazily-fetched
@@ -274,7 +284,7 @@ export function TestSuiteResults({
   const [suites, setSuites] = useState<TestSuiteRead[]>([])
   const [expectedTestCaseCount, setExpectedTestCaseCount] = useState(0)
   const [expectedJourneyCount, setExpectedJourneyCount] = useState(0)
-  const [testsExpanded, setTestsExpanded] = useState(false)
+  const [testsExpanded, setTestsExpanded] = useState(true)
   const [expandedSuiteIds, setExpandedSuiteIds] = useState<Set<string>>(new Set())
   const [suitesPage, setSuitesPage] = useState(0)
   const [testCasePages, setTestCasePages] = useState<Record<string, number>>({})
@@ -588,7 +598,6 @@ export function TestSuiteResults({
           <div
             style={{
               background: 'var(--canvas)',
-              border: '1px solid var(--border)',
               borderRadius: 'var(--radius-lg)',
               boxSizing: 'border-box',
               overflow: 'hidden',
@@ -608,7 +617,6 @@ export function TestSuiteResults({
                 padding: '16px 20px',
                 background: 'none',
                 border: 'none',
-                borderBottom: testsExpanded ? '1px solid var(--border-hairline)' : 'none',
                 textAlign: 'left',
                 fontFamily: 'inherit',
                 cursor: 'pointer',
@@ -616,11 +624,11 @@ export function TestSuiteResults({
             >
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)' }}>Generated Tests</div>
-                <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2 }}>
-                  {testCaseCount > 0
-                    ? `${testCaseCount} test${testCaseCount === 1 ? '' : 's'} across ${suites.length} file${suites.length === 1 ? '' : 's'}`
-                    : 'No tests generated'}
-                </div>
+                {testCaseCount === 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2 }}>
+                    No tests generated
+                  </div>
+                )}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', whiteSpace: 'nowrap' }}>
@@ -640,7 +648,7 @@ export function TestSuiteResults({
                   testCasePage * TEST_CASES_PER_PAGE + TEST_CASES_PER_PAGE,
                 )
                 return (
-                  <div key={suite.id} style={{ borderBottom: '1px solid var(--border-hairline)' }}>
+                  <div key={suite.id}>
                     <button
                       type="button"
                       onClick={() => toggleSuite(suite.id)}
@@ -658,19 +666,19 @@ export function TestSuiteResults({
                         cursor: 'pointer',
                       }}
                     >
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                         <span
                           style={{
                             fontSize: 13,
                             fontWeight: 700,
                             color: 'var(--ink)',
-                            fontFamily: 'var(--font-mono)',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          {toTestFileName(suite.journey_name)}
+                          {suite.journey_name}
                         </span>
                         <span style={{ fontSize: 12, color: 'var(--ink-muted)', whiteSpace: 'nowrap', flexShrink: 0 }}>
                           {suite.test_cases.length} test{suite.test_cases.length === 1 ? '' : 's'}
@@ -708,6 +716,16 @@ export function TestSuiteResults({
                           </span>
                         )}
                       </div>
+                      <span
+                        style={{
+                          fontSize: 11,
+                          color: 'var(--ink-faint)',
+                          fontFamily: 'var(--font-mono)',
+                        }}
+                      >
+                        {journeyFolderPath(suite.journey_name)}
+                      </span>
+                      </div>
                       <ChevronIcon size={14} color="var(--ink-faint)" open={suiteOpen} />
                     </button>
 
@@ -741,46 +759,83 @@ export function TestSuiteResults({
 
                     {suiteOpen && (
                       <div style={{ padding: '0 20px 14px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {pagedTestCases.map((testCase) => {
-                          const badge = TYPE_BADGE[testCase.type] ?? TYPE_BADGE.happy
+                        {pagedTestCases.map((testCase, i) => {
+                          // ponytail: Happy Path/Negative Path/Edge Case badge
+                          // hidden per request — commented, not deleted, so
+                          // it's a one-line revert. See the matching span below.
+                          // const badge = TYPE_BADGE[testCase.type] ?? TYPE_BADGE.happy
+                          const displayIndex = testCasePage * TEST_CASES_PER_PAGE + i + 1
                           return (
                             <div
                               key={testCase.id}
                               style={{
                                 display: 'flex',
-                                alignItems: 'center',
+                                alignItems: 'flex-start',
                                 justifyContent: 'space-between',
                                 gap: 12,
-                                padding: '7px 10px',
+                                padding: '8px 10px',
                                 borderRadius: 6,
                               }}
                             >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-                                <span
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                                  {/* <span
+                                    style={{
+                                      display: 'inline-block',
+                                      padding: '2px 7px',
+                                      borderRadius: 6,
+                                      fontSize: 10.5,
+                                      fontWeight: 600,
+                                      background: badge.background,
+                                      color: badge.color,
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    {badge.label}
+                                  </span> */}
+                                  <span
+                                    aria-hidden="true"
+                                    style={{
+                                      fontSize: 11.5,
+                                      fontWeight: 700,
+                                      color: 'var(--ink-faint)',
+                                      minWidth: 16,
+                                      flexShrink: 0,
+                                    }}
+                                  >
+                                    {displayIndex}.
+                                  </span>
+                                  <span
+                                    style={{
+                                      fontSize: 13,
+                                      fontWeight: 600,
+                                      color: 'var(--ink-secondary)',
+                                      overflow: 'hidden',
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap',
+                                    }}
+                                  >
+                                    {testCase.name}
+                                  </span>
+                                </div>
+                                {testCase.description && (
+                                  <p
+                                    className="caption"
+                                    style={{ margin: '3px 0 0', fontSize: 12, lineHeight: 1.4 }}
+                                  >
+                                    {testCase.description}
+                                  </p>
+                                )}
+                                <div
                                   style={{
-                                    display: 'inline-block',
-                                    padding: '2px 7px',
-                                    borderRadius: 6,
-                                    fontSize: 10.5,
-                                    fontWeight: 600,
-                                    background: badge.background,
-                                    color: badge.color,
-                                    flexShrink: 0,
+                                    fontSize: 11,
+                                    color: 'var(--ink-faint)',
+                                    fontFamily: 'var(--font-mono)',
+                                    marginTop: 3,
                                   }}
                                 >
-                                  {badge.label}
-                                </span>
-                                <span
-                                  style={{
-                                    fontSize: 13,
-                                    color: 'var(--ink-secondary)',
-                                    overflow: 'hidden',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                  }}
-                                >
-                                  {testCase.name}
-                                </span>
+                                  {testCaseFileName(testCase.name)}
+                                </div>
                               </div>
                               <button
                                 type="button"

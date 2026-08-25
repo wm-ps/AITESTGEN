@@ -20,8 +20,8 @@ function WorkspaceIcon() {
 function DiscoveryIcon() {
   return (
     <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx={11} cy={11} r={6.5} />
-      <path d="M20 20l-3.8-3.8" />
+      <circle cx={12} cy={12} r={9.5} />
+      <polygon points="15.5 8.5 13.3 13.3 8.5 15.5 10.7 10.7 15.5 8.5" />
     </svg>
   )
 }

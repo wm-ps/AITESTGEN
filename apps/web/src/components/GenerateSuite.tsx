@@ -115,7 +115,7 @@ export function GenerateSuite({
               <PlayIcon />
             </div>
             <div>
-              <div style={{ fontSize: 19, fontWeight: 700, color: 'var(--ink)' }}>Generate Test Suite</div>
+              <h2 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>Generate Test Suite</h2>
               <div style={{ fontSize: 13, color: 'var(--ink-muted)', marginTop: 2 }}>
                 Configure this suite, then generate production-ready tests for every mapped journey.
               </div>
@@ -126,7 +126,6 @@ export function GenerateSuite({
             <div
               style={{
                 background: 'var(--canvas)',
-                border: '1px solid var(--border)',
                 borderRadius: 'var(--radius-xl)',
                 boxSizing: 'border-box',
                 padding: '22px 24px',
@@ -205,7 +204,6 @@ export function GenerateSuite({
             <div
               style={{
                 background: 'var(--canvas)',
-                border: '1px solid var(--border)',
                 borderRadius: 'var(--radius-xl)',
                 boxSizing: 'border-box',
                 padding: '22px 24px',
@@ -228,7 +226,6 @@ export function GenerateSuite({
                 style={{
                   display: 'flex',
                   flexDirection: 'column',
-                  border: '1px solid var(--border-hairline)',
                   borderRadius: 10,
                   overflow: 'hidden',
                   marginBottom: 20,
@@ -249,7 +246,6 @@ export function GenerateSuite({
                       gap: 8,
                       padding: '10px 14px',
                       background: 'var(--canvas)',
-                      borderBottom: '1px solid var(--border-hairline)',
                     }}
                   >
                     <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-secondary)' }}>

@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Vantage — End-to-End Flow",
+    "subtitle": "Discover the app, LLM drafts the tests from its metadata, you validate at each gate, then run",
+    "output": "aitestgen-flow.html",
+    "quality_profile": "showcase",
+    "visual_preset": "editorial"
+  },
+  "components": [
+    { "id": "you-onboard", "type": "external", "label": "Add Your App", "sublabel": "enter URL + login", "pos": [40, 60], "size": [140, 62] },
+    { "id": "review-journeys", "type": "external", "label": "Review Journeys", "sublabel": "validate & approve", "pos": [440, 60], "size": [140, 62] },
+    { "id": "review-scenarios", "type": "external", "label": "Review Scenarios", "sublabel": "validate & approve", "pos": [640, 60], "size": [140, 62] },
+    { "id": "review-results", "type": "external", "label": "Review Results", "sublabel": "pass / fail results", "pos": [1040, 60], "size": [140, 62] },
+
+    { "id": "onboard", "type": "backend", "label": "Onboard App", "sublabel": "URL + login", "pos": [40, 280], "size": [140, 64], "tag": "1" },
+    { "id": "discover", "type": "backend", "label": "Discover", "sublabel": "builds app metadata", "pos": [240, 280], "size": [140, 64], "tag": "2" },
+    { "id": "journeys", "type": "backend", "label": "Journeys", "sublabel": "candidate user flows", "pos": [440, 280], "size": [140, 64], "tag": "3" },
+    { "id": "scenarios", "type": "backend", "label": "Scenarios", "sublabel": "happy / edge / neg.", "pos": [640, 280], "size": [140, 64], "tag": "4" },
+    { "id": "testassets", "type": "backend", "label": "Test Cases", "sublabel": "Playwright test code", "pos": [840, 280], "size": [140, 64], "tag": "5" },
+    { "id": "run", "type": "backend", "label": "Run Tests", "sublabel": "executes the suite", "pos": [1040, 280], "size": [140, 64], "tag": "6" },
+
+    { "id": "llm-journeys", "type": "cloud", "label": "LLM", "sublabel": "drafts the journeys", "pos": [440, 480], "size": [140, 62] },
+    { "id": "llm-scenarios", "type": "cloud", "label": "LLM", "sublabel": "drafts the scenarios", "pos": [640, 480], "size": [140, 62] },
+    { "id": "llm-tests", "type": "cloud", "label": "LLM", "sublabel": "writes the test code", "pos": [840, 480], "size": [140, 62] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Vantage platform", "wraps": ["onboard", "discover", "journeys", "scenarios", "testassets", "run"] }
+  ],
+  "connections": [
+    { "id": "you-onboard-onboard", "from": "you-onboard", "to": "onboard", "label": "adds URL + login", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "labelDy": 24 },
+
+    { "id": "onboard-discover", "from": "onboard", "to": "discover", "label": "auto-starts crawl", "variant": "emphasis", "labelDy": -26 },
+    { "id": "discover-journeys", "from": "discover", "to": "journeys", "variant": "emphasis" },
+
+    { "id": "journeys-review", "from": "journeys", "to": "review-journeys", "label": "human-in-the-loop gate", "variant": "emphasis", "fromSide": "top", "toSide": "bottom" },
+    { "id": "review-journeys-scenarios", "from": "review-journeys", "to": "scenarios", "label": "you click Generate", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+
+    { "id": "scenarios-review", "from": "scenarios", "to": "review-scenarios", "label": "human-in-the-loop gate", "variant": "emphasis", "fromSide": "top", "toSide": "bottom" },
+    { "id": "review-scenarios-testassets", "from": "review-scenarios", "to": "testassets", "label": "you click Build Suite", "variant": "emphasis", "fromSide": "right", "toSide": "left" },
+
+    { "id": "testassets-run", "from": "testassets", "to": "run", "label": "you click Run All", "variant": "emphasis", "labelDy": -26 },
+    { "id": "run-review-results", "from": "run", "to": "review-results", "fromSide": "top", "toSide": "bottom" },
+
+    { "id": "llm-journeys-journeys", "from": "llm-journeys", "to": "journeys", "fromSide": "top", "toSide": "bottom" },
+    { "id": "llm-scenarios-scenarios", "from": "llm-scenarios", "to": "scenarios", "fromSide": "top", "toSide": "bottom" },
+    { "id": "llm-tests-testassets", "from": "llm-tests", "to": "testassets", "fromSide": "top", "toSide": "bottom" }
+  ],
+  "cards": [
+    {
+      "title": "How it works",
+      "dot": "emerald",
+      "items": [
+        "1. Add your app's URL and login — Vantage crawls it and builds a metadata model of every page and flow",
+        "2. LLM groups that metadata into candidate journeys — you validate & acknowledge before continuing",
+        "3. LLM drafts test scenarios from the approved journey — you validate & acknowledge before continuing",
+        "4. LLM compiles the approved scenarios into runnable Playwright test code",
+        "5. You run every test with one click and review pass / fail results"
+      ]
+    },
+    {
+      "title": "Human-in-the-loop, by design",
+      "dot": "slate",
+      "items": [
+        "Journeys and Scenarios are checkpoints — the LLM's draft always pauses for your review before the next stage starts",
+        "At either checkpoint you can rename or delete what the LLM drafted before you acknowledge and proceed"
+      ]
+    }
+  ]
+}

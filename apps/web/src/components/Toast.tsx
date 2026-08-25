@@ -47,7 +47,6 @@ export function Toast({
         alignItems: 'flex-start',
         gap: 10,
         padding: '13px 14px 13px 15px',
-        borderLeft: `3px solid ${colors.accent}`,
         boxShadow: '0 10px 24px -6px rgba(15,23,42,0.16), 0 2px 6px rgba(15,23,42,0.06)',
         fontSize: 13.5,
         lineHeight: 1.4,

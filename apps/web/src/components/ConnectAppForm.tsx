@@ -250,7 +250,6 @@ export function ConnectAppForm({
             className="caption"
             style={{
               background: 'var(--canvas-wash)',
-              border: '1px solid var(--border)',
               borderRadius: 'var(--radius)',
               padding: 'var(--space-3)',
               margin: 0,

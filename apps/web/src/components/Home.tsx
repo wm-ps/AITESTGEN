@@ -167,31 +167,6 @@ function PassRateRing({ passRate }: { passRate: number | null }) {
   )
 }
 
-// The card's left accent bar is bold enough to read as a real health
-// signal — unlike `StatusPill`'s dot/text, which can afford `--accent`
-// (a teal that reads as "green enough") for every ordinary in-progress
-// stage. Reusing that same accent for a thick bar made routine "still
-// generating" cards look done/healthy. Only genuine states (ready, a run
-// actively executing, failed, paused) get a color; every other stage gets
-// a neutral bar.
-function accentBarColor(status: string): string {
-  switch (status) {
-    case 'ready_to_execute':
-    case 'healthy':
-      return 'var(--good-strong)'
-    case 'test_run_running':
-      return 'var(--accent)'
-    case 'failed':
-    case 'critical':
-      return 'var(--danger-strong)'
-    case 'paused':
-    case 'needs_attention':
-      return 'var(--warn-strong)'
-    default:
-      return 'var(--border-strong)'
-  }
-}
-
 // The SaaS-standard mini bar/column sparkline (Stripe/Vercel/GitHub-style
 // run history): each bar is one run, bar height is that run's pass rate,
 // bar color is its health tier — sequence AND magnitude read at a glance,
@@ -823,9 +798,6 @@ function ApplicationCard({
         view === 'list'
           ? {
               textAlign: 'left',
-              border: '1px solid var(--border-hairline)',
-              borderLeftWidth: 4,
-              borderLeftColor: accentBarColor(displayStatus),
               padding: '16px 22px',
               cursor: 'pointer',
               display: 'grid',
@@ -839,9 +811,6 @@ function ApplicationCard({
             }
           : {
               textAlign: 'left',
-              border: '1px solid var(--border-hairline)',
-              borderLeftWidth: 4,
-              borderLeftColor: accentBarColor(displayStatus),
               padding: '18px 20px',
               cursor: 'pointer',
               display: 'flex',

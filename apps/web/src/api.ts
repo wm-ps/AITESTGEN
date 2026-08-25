@@ -32,7 +32,9 @@ export type HomeApplicationRead = ApplicationRead & {
 export type JourneyRead = components['schemas']['JourneyRead']
 export type JourneyStepRead = components['schemas']['JourneyStepRead']
 export type ScenarioRead = components['schemas']['ScenarioRead']
-export type TestCaseRead = components['schemas']['TestCaseRead']
+// `description` isn't in api-types.gen.ts yet (regenerate via `npm run
+// generate:api-types` once the API is running) — added by hand.
+export type TestCaseRead = components['schemas']['TestCaseRead'] & { description: string }
 // `status` isn't in api-types.gen.ts yet (regenerate via `npm run
 // generate:api-types` once the API is running) — added by hand.
 export type TestSuiteStatus = 'generating' | 'complete' | 'incomplete' | 'terminated'
@@ -93,11 +95,9 @@ export type TestRunRead = {
   completed_at: string | null
   results?: TestResultRead[] | null
 }
-export type TestRunPageRead = {
+export type TestRunCursorPageRead = {
   items: TestRunRead[]
-  page: number
-  page_size: number
-  total: number
+  next_cursor: string | null
 }
 export type TestResultArtifactRead = {
   id: string
@@ -276,9 +276,9 @@ export const api = {
     }),
   triggerTestRun: (applicationId: string) =>
     request<{ started: boolean }>(`/applications/${applicationId}/test-runs`, { method: 'POST' }),
-  listTestRuns: (applicationId: string, page = 1, pageSize = 10) =>
-    request<TestRunPageRead>(
-      `/applications/${applicationId}/test-runs?page=${page}&page_size=${pageSize}`,
+  listTestRuns: (applicationId: string, cursor: string | null = null, limit = 10) =>
+    request<TestRunCursorPageRead>(
+      `/applications/${applicationId}/test-runs?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
     ),
   getTestRun: (applicationId: string, testRunId: string) =>
     request<TestRunRead>(`/applications/${applicationId}/test-runs/${testRunId}`),

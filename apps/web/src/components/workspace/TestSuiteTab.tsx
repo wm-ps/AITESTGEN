@@ -119,7 +119,6 @@ function AssetListHeader({
         gap: 20,
         padding: '8px 16px',
         background: 'var(--canvas-wash-alt)',
-        borderBottom: '1px solid var(--border-hairline)',
       }}
     >
       {/* 24px = chevron (14) + its gap (10) in each row below, so the label lines up over the row's text, not its icon. */}
@@ -178,7 +177,7 @@ function AssetRow({ asset }: { asset: TestAssetStatusRead }) {
   const testResult = assetToTestResult(asset)
 
   return (
-    <div style={{ borderBottom: '1px solid var(--border-hairline)' }}>
+    <div>
       <button
         type="button"
         onClick={() => setExpanded((o) => !o)}

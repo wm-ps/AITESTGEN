@@ -389,9 +389,7 @@ export function DiscoverJourneys({
         >
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-              <h1 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
-                Discover Journeys
-              </h1>
+              <h2 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>Discover Journeys</h2>
               <StatusPill status={pillStatus} />
             </div>
             <div className="caption" style={{ fontSize: 13, marginTop: 3 }}>

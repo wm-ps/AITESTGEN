@@ -9,6 +9,8 @@ function pageWindow(current: number, totalPages: number, size = 5): number[] {
 export function Pagination({
   page,
   totalPages,
+  hasPrev,
+  hasNext,
   totalItems,
   pageSize,
   onPrev,
@@ -16,17 +18,25 @@ export function Pagination({
   onPage,
 }: {
   page: number
-  totalPages: number
+  // Omitted (cursor pagination) → hasPrev/hasNext drive the button state
+  // and no "of Y"/total is shown, since a cursor doesn't know the total.
+  totalPages?: number
+  hasPrev?: boolean
+  hasNext?: boolean
   totalItems?: number
   pageSize?: number
   onPrev: () => void
   onNext: () => void
-  // Omitted → plain "Page X of Y" + Prev/Next (DiscoverJourneys/ReviewScenarios
-  // narrow sidebars, no room for numbered chips). Passed → "Showing X-Y of Z"
-  // plus clickable page numbers (workspace tables).
+  // Omitted → plain "Page X" + Prev/Next (DiscoverJourneys/ReviewScenarios
+  // narrow sidebars, cursor-paginated tables — no room for numbered chips
+  // or no total to build them from). Passed → "Showing X-Y of Z" plus
+  // clickable page numbers (offset-paginated workspace tables).
   onPage?: (page: number) => void
 }) {
-  if (totalPages <= 1) return null
+  const canPrev = hasPrev ?? page > 0
+  const canNext = hasNext ?? (totalPages !== undefined && page < totalPages - 1)
+  if (totalPages !== undefined && totalPages <= 1) return null
+  if (totalPages === undefined && !canPrev && !canNext) return null
 
   if (!onPage) {
     return (
@@ -39,19 +49,22 @@ export function Pagination({
           padding: 'var(--space-4) var(--space-5)',
         }}
       >
-        <button type="button" className="button-secondary" disabled={page <= 0} onClick={onPrev}>
+        <button type="button" className="button-secondary" disabled={!canPrev} onClick={onPrev}>
           Prev
         </button>
         <span className="caption" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
-          Page {page + 1} of {totalPages}
+          {totalPages !== undefined ? `Page ${page + 1} of ${totalPages}` : `Page ${page + 1}`}
         </span>
-        <button type="button" className="button-secondary" disabled={page >= totalPages - 1} onClick={onNext}>
+        <button type="button" className="button-secondary" disabled={!canNext} onClick={onNext}>
           Next
         </button>
       </div>
     )
   }
 
+  // Numbered chips need a real total — this branch is only reached by
+  // callers that pass `onPage` alongside `totalPages` (offset pagination).
+  const numberedTotalPages = totalPages ?? 1
   const showCount = totalItems !== undefined && pageSize !== undefined
   const rangeStart = page * (pageSize ?? 0) + 1
   const rangeEnd = Math.min(totalItems ?? 0, rangeStart + (pageSize ?? 0) - 1)
@@ -76,7 +89,7 @@ export function Pagination({
         <button type="button" className="button-secondary" disabled={page <= 0} onClick={onPrev}>
           Previous
         </button>
-        {pageWindow(page, totalPages).map((p) => (
+        {pageWindow(page, numberedTotalPages).map((p) => (
           <button
             key={p}
             type="button"
@@ -87,7 +100,7 @@ export function Pagination({
             {p + 1}
           </button>
         ))}
-        <button type="button" className="button-secondary" disabled={page >= totalPages - 1} onClick={onNext}>
+        <button type="button" className="button-secondary" disabled={page >= numberedTotalPages - 1} onClick={onNext}>
           Next
         </button>
       </div>

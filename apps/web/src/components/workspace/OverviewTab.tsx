@@ -79,11 +79,6 @@ function NeutralStatTile({
       className="stat-tile-hover"
       style={{
         background: 'var(--canvas)',
-        // `--border-hairline` (near-white) against this tile's own white
-        // background and the white card-panel behind it left these
-        // borderless-looking — bumped to `--border` (still subtle, matches
-        // every other bordered panel in the app) so the tile reads as a
-        // distinct card instead of blending into its container.
         border: '1px solid var(--border)',
         borderRadius: 'var(--radius-lg)',
         boxSizing: 'border-box',
