@@ -353,7 +353,7 @@ describe('DiscoverJourneys', () => {
     expect(deleted).toBe(true)
   })
 
-  it('shows the bare "All journeys have been removed." empty state after deleting the last Journey, not the Discovery Progress spinner', async () => {
+  it('shows the "All journeys have been removed." empty state after deleting the last Journey, not the Discovery Progress spinner', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     stubFetch()
     renderScreen()

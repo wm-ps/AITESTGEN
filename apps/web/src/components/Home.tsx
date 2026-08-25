@@ -4,9 +4,11 @@ import { api, type ApplicationRead, type HomeApplicationRead, type UserRead } fr
 import { StatusPill } from './StatusPill'
 import { Pagination } from './Pagination'
 import { Toast } from './Toast'
+import { useEscapeToClose } from '../hooks/useEscapeToClose'
 
 const POLL_INTERVAL_MS = 15000
 const APPS_PER_PAGE = 5
+const VIEW_STORAGE_KEY = 'aitg-home-view'
 // Mirrors MAX_ACTIVE_PROJECTS in apps/api/src/api/main.py — server enforces
 // this for real, this just keeps the button from inviting a 409.
 const MAX_ACTIVE_PROJECTS = 4
@@ -45,6 +47,27 @@ function MoreIcon({ size }: { size: number }) {
       <circle cx="12" cy="5" r="1.8" />
       <circle cx="12" cy="12" r="1.8" />
       <circle cx="12" cy="19" r="1.8" />
+    </svg>
+  )
+}
+
+function GridViewIcon({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3.5" y="3.5" width="7" height="7" rx="1.3" />
+      <rect x="13.5" y="3.5" width="7" height="7" rx="1.3" />
+      <rect x="3.5" y="13.5" width="7" height="7" rx="1.3" />
+      <rect x="13.5" y="13.5" width="7" height="7" rx="1.3" />
+    </svg>
+  )
+}
+
+function ListViewIcon({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3.5" y="4.5" width="17" height="4" rx="1" />
+      <rect x="3.5" y="10" width="17" height="4" rx="1" />
+      <rect x="3.5" y="15.5" width="17" height="4" rx="1" />
     </svg>
   )
 }
@@ -137,7 +160,7 @@ function PassRateRing({ passRate }: { passRate: number | null }) {
           {passRate == null ? '—' : `${Math.round(pct * 100)}%`}
         </span>
       </span>
-      <span className="caption" style={{ fontSize: 12 }}>
+      <span className="caption" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
         {passRate == null ? 'No runs yet' : 'Pass rate'}
       </span>
     </div>
@@ -154,12 +177,15 @@ function PassRateRing({ passRate }: { passRate: number | null }) {
 function accentBarColor(status: string): string {
   switch (status) {
     case 'ready_to_execute':
+    case 'healthy':
       return 'var(--good-strong)'
     case 'test_run_running':
       return 'var(--accent)'
     case 'failed':
+    case 'critical':
       return 'var(--danger-strong)'
     case 'paused':
+    case 'needs_attention':
       return 'var(--warn-strong)'
     default:
       return 'var(--border-strong)'
@@ -261,18 +287,35 @@ function StatChip({
   label,
   valueColor,
   icon,
+  layout = 'inline',
 }: {
   value: string | number
   label: string
   valueColor?: string
   icon: ReactNode
+  layout?: 'inline' | 'stacked'
 }) {
+  if (layout === 'stacked') {
+    return (
+      <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span aria-hidden="true" style={{ display: 'inline-flex', color: valueColor ?? 'var(--ink-muted)', flexShrink: 0 }}>
+            {icon}
+          </span>
+          <span style={{ fontWeight: 700, fontSize: 16, color: valueColor }}>{value}</span>
+        </span>
+        <span className="caption" style={{ fontSize: 12 }}>
+          {label}
+        </span>
+      </span>
+    )
+  }
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-      <span aria-hidden="true" style={{ display: 'inline-flex', color: valueColor ?? 'var(--ink-muted)' }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
+      <span aria-hidden="true" style={{ display: 'inline-flex', color: valueColor ?? 'var(--ink-muted)', flexShrink: 0 }}>
         {icon}
       </span>
-      <span>
+      <span style={{ whiteSpace: 'nowrap' }}>
         <span style={{ fontWeight: 700, color: valueColor }}>{value}</span>{' '}
         <span className="caption" style={{ fontSize: 12 }}>
           {label}
@@ -285,6 +328,7 @@ function StatChip({
 function ApplicationCard({
   application,
   isAdmin,
+  view,
   onResume,
   onBlocked,
   onChanged,
@@ -292,6 +336,7 @@ function ApplicationCard({
 }: {
   application: HomeApplicationRead
   isAdmin: boolean
+  view: 'grid' | 'list'
   onResume: () => void
   onBlocked: () => void
   onChanged: () => void
@@ -302,6 +347,7 @@ function ApplicationCard({
   const [menuOpen, setMenuOpen] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  useEscapeToClose(() => confirmingDelete && !deleting && setConfirmingDelete(false))
   const skipBlurRef = useRef(false)
 
   const discoveryStatus = application.discovery_status
@@ -314,6 +360,12 @@ function ApplicationCard({
   // signal that fix uses: whether any suite is still actually mid-run.
   const suiteGenerating = application.suite_count > 0 && application.suites_generating_count > 0
   const testCasesComplete = application.suite_count > 0 && !suiteGenerating
+  // Same signal ReviewScenarios.tsx uses: `scenario_count` alone can't tell
+  // "generation finished" from "still writing more Scenarios" once the
+  // first one lands — `scenario_journeys_covered < journey_count` means
+  // GenerationWorkflow is still running for at least one Journey.
+  const scenariosGenerating =
+    application.scenario_count > 0 && application.scenario_journeys_covered < application.journey_count
   const stage =
     discoveryStatus === 'failed' || discoveryStatus === 'paused'
       ? discoveryStatus
@@ -321,9 +373,11 @@ function ApplicationCard({
         ? 'generating_tests'
         : application.suite_count > 0
           ? 'suite_generated'
-          : application.scenario_count > 0
-            ? 'scenarios_generated'
-            : application.journey_count > 0
+          : scenariosGenerating
+            ? 'generating_scenarios'
+            : application.scenario_count > 0
+              ? 'scenarios_generated'
+              : application.journey_count > 0
               ? 'journeys_generated'
               // `discovery_status` flips to "complete" as soon as the crawl
               // finishes — before the LLM inference call that produces
@@ -343,9 +397,29 @@ function ApplicationCard({
   // generation stage above — it's a different axis (execution, not
   // pipeline position) and the card must say so regardless of `stage`.
   const testRunRunning = application.last_test_run_status === 'running'
-  const readyToExecute = stage === 'suite_generated' && !testRunRunning
-  const displayStatus = testRunRunning ? 'test_run_running' : readyToExecute ? 'ready_to_execute' : stage
+  const deleteBlocked = isRunning || scenariosGenerating || suiteGenerating || testRunRunning
+  const deleteBlockedReason = isRunning
+    ? 'Discovery is still running'
+    : scenariosGenerating
+      ? 'Scenario generation is still running'
+      : suiteGenerating
+        ? 'Test suite generation is still running'
+        : testRunRunning
+          ? 'A test run is still running'
+          : undefined
   const passRate = application.last_test_run_pass_rate
+  // Once a run has actually finished, the card should say how it went
+  // (Healthy/Needs Attention/Critical) rather than sitting on "Ready to
+  // run" forever — `ready_to_execute` only applies before the first run.
+  const hasCompletedRun = application.last_test_run_status === 'completed' && passRate != null
+  const readyToExecute = stage === 'suite_generated' && !testRunRunning && !hasCompletedRun
+  const displayStatus = testRunRunning
+    ? 'test_run_running'
+    : hasCompletedRun
+      ? application.last_test_run_health.tier
+      : readyToExecute
+        ? 'ready_to_execute'
+        : stage
   // ponytail: no "last touched" column on Application, so once a TestRun
   // exists it's the freshest signal we show; before that we fall back to
   // the connect timestamp (`created_at`), which is honestly older than
@@ -434,34 +508,8 @@ function ApplicationCard({
     }
   }
 
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={isRunning ? onBlocked : onResume}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') (isRunning ? onBlocked : onResume)()
-      }}
-      className="card-panel home-app-card"
-      style={{
-        textAlign: 'left',
-        border: '1px solid var(--border-hairline)',
-        borderLeftWidth: 4,
-        borderLeftColor: accentBarColor(displayStatus),
-        padding: '16px 22px',
-        cursor: 'pointer',
-        display: 'grid',
-        // Trend column commented out below (for now) — its 150px + gap
-        // folds into the identity column instead of sitting empty.
-        gridTemplateColumns: '52px minmax(220px, 500px) 120px 150px 160px 120px 24px',
-        alignItems: 'center',
-        columnGap: 'var(--space-6)',
-        width: '100%',
-        maxWidth: 1400,
-      }}
-    >
-      <InitialsAvatar name={application.name} coveragePct={coveragePct} hasJourneys={hasJourneys} />
-      <div style={{ minWidth: 0 }}>
+  const identitySection = (
+    <div style={{ minWidth: 0 }}>
         {editing ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
             <input
@@ -529,32 +577,77 @@ function ApplicationCard({
             {application.name}
           </div>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)', marginTop: 6 }}>
-          <StatusPill status={displayStatus} pulsing={testRunRunning || isRunning || suiteGenerating} />
-          <span aria-hidden="true" style={{ width: 2, height: 16, background: 'var(--border-strong)', borderRadius: 1 }} />
-          <span className="caption" style={{ fontSize: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-6)', marginTop: 6, minWidth: 0 }}>
+          <span style={{ flexShrink: 0, whiteSpace: 'nowrap' }}>
+            <StatusPill status={displayStatus} pulsing={testRunRunning || isRunning || scenariosGenerating || suiteGenerating} />
+          </span>
+          <span aria-hidden="true" style={{ width: 2, height: 16, background: 'var(--border-strong)', borderRadius: 1, flexShrink: 0 }} />
+          <span
+            className="caption"
+            style={{ fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}
+          >
             {activityLabel}
           </span>
         </div>
       </div>
-      <span style={{ opacity: hasJourneys ? 1 : 0.45 }}>
-        <StatChip value={application.journey_count} label="Journeys" icon={<BranchIcon size={19} />} />
-      </span>
-      <span style={{ opacity: testCasesComplete ? 1 : 0.45 }}>
-        <StatChip
-          value={testCasesComplete ? application.test_case_count : '–'}
-          label="Test cases"
-          icon={<DocumentIcon size={19} />}
-        />
-      </span>
-      <span style={{ opacity: passRate == null ? 0.45 : 1 }}>
-        <PassRateRing passRate={passRate} />
-      </span>
-      <span style={{ opacity: testCasesComplete ? 1 : 0.45 }}>
-        <StatChip value={application.test_run_count} label="Executions" icon={<RunsIcon size={19} />} />
-      </span>
-      {/* Trend column hidden for now — <MiniBarChart values={application.recent_pass_rates} /> */}
-      {isAdmin && !editing && (
+  )
+
+  const compact = view === 'grid'
+  const iconSize = compact ? 22 : 19
+  const chipLayout = compact ? 'stacked' : 'inline'
+  const journeysChip = (
+    <span style={{ opacity: hasJourneys ? 1 : 0.45 }}>
+      <StatChip value={application.journey_count} label="Journeys" icon={<BranchIcon size={iconSize} />} layout={chipLayout} />
+    </span>
+  )
+  const testCasesChip = (
+    <span style={{ opacity: testCasesComplete ? 1 : 0.45 }}>
+      <StatChip
+        value={testCasesComplete ? application.test_case_count : '–'}
+        label="Test cases"
+        icon={<DocumentIcon size={iconSize} />}
+        layout={chipLayout}
+      />
+    </span>
+  )
+  // Grid tiles are too small for the ring's stroke + percentage text to stay
+  // legible, so grid uses the same icon-value-label shape as the other three
+  // stats (a colored dot standing in for the icon) — list keeps the ring,
+  // which has the room for it.
+  const passRatePct = passRate == null ? null : Math.round(Math.min(1, Math.max(0, passRate)) * 100)
+  const passRateChip = compact ? (
+    <span style={{ opacity: passRate == null ? 0.45 : 1 }}>
+      <StatChip
+        value={passRatePct == null ? '—' : `${passRatePct}%`}
+        label={passRate == null ? 'No runs yet' : 'Pass rate'}
+        valueColor={passRate == null ? undefined : passRateColor(passRatePct! / 100)}
+        icon={
+          <span
+            aria-hidden="true"
+            style={{
+              display: 'inline-flex',
+              width: iconSize * 0.6,
+              height: iconSize * 0.6,
+              borderRadius: 'var(--radius-full)',
+              background: passRate == null ? 'var(--border-strong)' : passRateColor(passRatePct! / 100),
+            }}
+          />
+        }
+        layout="stacked"
+      />
+    </span>
+  ) : (
+    <span style={{ opacity: passRate == null ? 0.45 : 1 }}>
+      <PassRateRing passRate={passRate} />
+    </span>
+  )
+  const executionsChip = (
+    <span style={{ opacity: testCasesComplete ? 1 : 0.45 }}>
+      <StatChip value={application.test_run_count} label="Executions" icon={<RunsIcon size={iconSize} />} layout={chipLayout} />
+    </span>
+  )
+  // Trend column hidden for now — <MiniBarChart values={application.recent_pass_rates} />
+  const kebabMenu = isAdmin && !editing && (
         <div style={{ position: 'relative', flexShrink: 0 }}>
           <button
             type="button"
@@ -603,18 +696,19 @@ function ApplicationCard({
                 </button>
                 <button
                   type="button"
-                  disabled={isRunning}
-                  title={isRunning ? 'Discovery is still running' : undefined}
+                  disabled={deleteBlocked}
+                  title={deleteBlockedReason}
                   onClick={(e) => {
                     e.stopPropagation()
                     setMenuOpen(false)
+                    if (deleteBlocked) return
                     setConfirmingDelete(true)
                   }}
                   style={{
                     ...menuItemStyle,
                     color: 'var(--danger)',
-                    opacity: isRunning ? 0.4 : 1,
-                    cursor: isRunning ? 'not-allowed' : 'pointer',
+                    opacity: deleteBlocked ? 0.4 : 1,
+                    cursor: deleteBlocked ? 'not-allowed' : 'pointer',
                   }}
                 >
                   Delete
@@ -623,8 +717,11 @@ function ApplicationCard({
             </>
           )}
         </div>
-      )}
-      {confirmingDelete && createPortal(
+  )
+
+  const deleteDialog =
+    confirmingDelete &&
+    createPortal(
         <div
           role="dialog"
           aria-modal="true"
@@ -710,8 +807,79 @@ function ApplicationCard({
             </div>
           </div>
         </div>,
-        document.body,
+      document.body,
+    )
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={isRunning ? onBlocked : onResume}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') (isRunning ? onBlocked : onResume)()
+      }}
+      className="card-panel home-app-card"
+      style={
+        view === 'list'
+          ? {
+              textAlign: 'left',
+              border: '1px solid var(--border-hairline)',
+              borderLeftWidth: 4,
+              borderLeftColor: accentBarColor(displayStatus),
+              padding: '16px 22px',
+              cursor: 'pointer',
+              display: 'grid',
+              // Trend column commented out below (for now) — its 150px + gap
+              // folds into the identity column instead of sitting empty.
+              gridTemplateColumns: '52px minmax(220px, 500px) 120px 150px 160px 120px 24px',
+              alignItems: 'center',
+              columnGap: 'var(--space-6)',
+              width: '100%',
+              maxWidth: 1400,
+            }
+          : {
+              textAlign: 'left',
+              border: '1px solid var(--border-hairline)',
+              borderLeftWidth: 4,
+              borderLeftColor: accentBarColor(displayStatus),
+              padding: '18px 20px',
+              cursor: 'pointer',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 'var(--space-5)',
+              width: '100%',
+            }
+      }
+    >
+      {view === 'list' ? (
+        <>
+          <InitialsAvatar name={application.name} coveragePct={coveragePct} hasJourneys={hasJourneys} />
+          {identitySection}
+          {journeysChip}
+          {testCasesChip}
+          {passRateChip}
+          {executionsChip}
+          {kebabMenu}
+        </>
+      ) : (
+        <>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 'var(--space-4)' }}>
+            <div style={{ width: 48, height: 48, flexShrink: 0 }}>
+              <InitialsAvatar name={application.name} coveragePct={coveragePct} hasJourneys={hasJourneys} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>{identitySection}</div>
+            {kebabMenu}
+          </div>
+          <div aria-hidden="true" style={{ height: 1, background: 'var(--border-hairline)' }} />
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 'var(--space-3)' }}>
+            {journeysChip}
+            {testCasesChip}
+            {passRateChip}
+            {executionsChip}
+          </div>
+        </>
       )}
+      {deleteDialog}
     </div>
   )
 }
@@ -728,11 +896,28 @@ export function Home({
   const firstName = user.name.trim().split(/\s+/)[0]
   const isAdmin = user.role === 'admin'
   const [showDemo, setShowDemo] = useState(false)
+  useEscapeToClose(() => showDemo && setShowDemo(false))
   const [applications, setApplications] = useState<HomeApplicationRead[] | null>(null)
   const [snackbar, setSnackbar] = useState<{ message: string; kind: 'error' | 'info' } | null>(
     null,
   )
   const [page, setPage] = useState(0)
+  const [view, setView] = useState<'grid' | 'list'>(() => {
+    try {
+      return localStorage.getItem(VIEW_STORAGE_KEY) === 'list' ? 'list' : 'grid'
+    } catch {
+      return 'grid'
+    }
+  })
+
+  function changeView(next: 'grid' | 'list') {
+    setView(next)
+    try {
+      localStorage.setItem(VIEW_STORAGE_KEY, next)
+    } catch {
+      // best-effort — view choice just won't persist across reloads
+    }
+  }
 
   useEffect(() => {
     if (!snackbar) return
@@ -773,8 +958,7 @@ export function Home({
       style={{
         width: '100%',
         boxSizing: 'border-box',
-        height: 'calc(100vh - 64px)',
-        overflow: 'hidden',
+        minHeight: 'calc(100vh - 64px)',
         display: 'flex',
         flexDirection: 'column',
         background:
@@ -785,7 +969,6 @@ export function Home({
         style={{
           flex: 1,
           minWidth: 0,
-          overflow: 'hidden',
           padding: '36px 44px',
           boxSizing: 'border-box',
           display: 'flex',
@@ -804,12 +987,74 @@ export function Home({
           }}
         >
           <div>
-            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)', marginBottom: 4 }}>
+            <div
+              style={{
+                fontSize: 15,
+                fontWeight: 700,
+                color: 'var(--accent)',
+                marginBottom: 4,
+                animation: 'aitg-welcome-reveal 0.6s cubic-bezier(0.16, 1, 0.3, 1) 0.1s both',
+              }}
+            >
               Welcome, {firstName}
             </div>
             <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', margin: 0 }}>Projects</h1>
           </div>
-          <div style={{ display: 'flex', gap: 'var(--space-4)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 'var(--space-4)', flexShrink: 0, alignItems: 'center' }}>
+            <div
+              role="group"
+              aria-label="Choose project view"
+              style={{
+                display: 'flex',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius)',
+                padding: 2,
+                gap: 2,
+              }}
+            >
+              <button
+                type="button"
+                title="Grid view"
+                aria-label="Grid view"
+                aria-pressed={view === 'grid'}
+                onClick={() => changeView('grid')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 30,
+                  height: 30,
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm, 6px)',
+                  cursor: 'pointer',
+                  background: view === 'grid' ? 'var(--accent-wash)' : 'none',
+                  color: view === 'grid' ? 'var(--accent)' : 'var(--ink-muted)',
+                }}
+              >
+                <GridViewIcon size={16} />
+              </button>
+              <button
+                type="button"
+                title="List view"
+                aria-label="List view"
+                aria-pressed={view === 'list'}
+                onClick={() => changeView('list')}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: 30,
+                  height: 30,
+                  border: 'none',
+                  borderRadius: 'var(--radius-sm, 6px)',
+                  cursor: 'pointer',
+                  background: view === 'list' ? 'var(--accent-wash)' : 'none',
+                  color: view === 'list' ? 'var(--accent)' : 'var(--ink-muted)',
+                }}
+              >
+                <ListViewIcon size={16} />
+              </button>
+            </div>
             <button
               type="button"
               className="button-secondary"
@@ -844,21 +1089,29 @@ export function Home({
         {applications === null ? null : applications.length > 0 ? (
           <>
             <div
-              style={{
-                flex: 1,
-                minHeight: 0,
-                overflowY: 'auto',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 'var(--space-5)',
-                animation: 'aitg-fade-up 0.4s ease-out 0.1s both',
-              }}
+              style={
+                view === 'grid'
+                  ? {
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))',
+                      gap: 'var(--space-5)',
+                      alignContent: 'start',
+                      animation: 'aitg-fade-up 0.4s ease-out 0.1s both',
+                    }
+                  : {
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 'var(--space-5)',
+                      animation: 'aitg-fade-up 0.4s ease-out 0.1s both',
+                    }
+              }
             >
               {pagedApplications.map((application) => (
                 <ApplicationCard
                   key={application.id}
                   application={application}
                   isAdmin={isAdmin}
+                  view={view}
                   onResume={() => onResumeApplication(application)}
                   onBlocked={() =>
                     setSnackbar({

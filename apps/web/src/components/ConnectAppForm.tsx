@@ -70,6 +70,7 @@ export function ConnectAppForm({
   const [url, setUrl] = useState('')
   const [loginUrl, setLoginUrl] = useState('')
   const [environment, setEnvironment] = useState('staging')
+  const [customEnvironment, setCustomEnvironment] = useState('')
   const [authMethod, setAuthMethod] = useState<AuthMethod>('standard_login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -86,7 +87,7 @@ export function ConnectAppForm({
         name,
         url,
         login_url: loginUrl || undefined,
-        environment,
+        environment: environment === 'other' ? customEnvironment : environment,
         auth_method: authMethod as ApplicationCreate['auth_method'],
         ...(authMethod === 'standard_login' ? { username, password } : {}),
       })
@@ -176,8 +177,18 @@ export function ConnectAppForm({
               <select value={environment} onChange={(e) => setEnvironment(e.target.value)}>
                 <option value="staging">Staging</option>
                 <option value="qa">QA</option>
-                <option value="production">Production</option>
+                <option value="other">Other</option>
               </select>
+              {environment === 'other' && (
+                <input
+                  type="text"
+                  placeholder="e.g. sandbox, uat"
+                  value={customEnvironment}
+                  onChange={(e) => setCustomEnvironment(e.target.value)}
+                  required
+                  style={{ marginTop: 6 }}
+                />
+              )}
             </label>
 
             <label className="field">
@@ -247,7 +258,7 @@ export function ConnectAppForm({
               lineHeight: 1.5,
             }}
           >
-            Use a Dedicated Test Account for this Application, not a real end-user identity.
+            Use a Dedicated Test Account for this Application, not a real end-user identity, on a lower environment.
             Credentials are written directly to the secrets store and never stored in plaintext.
           </p>
 

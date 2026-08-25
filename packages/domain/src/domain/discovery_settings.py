@@ -20,7 +20,9 @@ class DiscoverySettings(SQLModel, table=True):
 
     id: int = Field(default=1, primary_key=True)
     max_pages: int = Field(default=500)
-    max_discovery_duration_minutes: int = Field(default=30)
+    # None = unlimited (discovery runs until BFS naturally exhausts, or
+    # max_pages/other stop conditions hit).
+    max_discovery_duration_minutes: int | None = Field(default=30)
     navigation_timeout_seconds: float = Field(default=15.0)
     # str, not the InteractionLevel Literal — SQLModel can't infer a column
     # type from Literal; the Literal is still the source of truth for callers.

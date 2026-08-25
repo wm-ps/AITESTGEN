@@ -84,9 +84,13 @@ export function Settings({ onCancel }: { onCancel: () => void }) {
           <label className="field">
             <FieldLabel>Maximum discovery duration</FieldLabel>
             <select
-              value={settings.max_discovery_duration_minutes}
+              value={settings.max_discovery_duration_minutes ?? 'unlimited'}
               onChange={(e) =>
-                setSettings({ ...settings, max_discovery_duration_minutes: Number(e.target.value) })
+                setSettings({
+                  ...settings,
+                  max_discovery_duration_minutes:
+                    e.target.value === 'unlimited' ? null : Number(e.target.value),
+                })
               }
             >
               {[2, 5, 10, 15, 30, 60].map((n) => (
@@ -94,6 +98,7 @@ export function Settings({ onCancel }: { onCancel: () => void }) {
                   {n} min
                 </option>
               ))}
+              <option value="unlimited">Unlimited</option>
             </select>
           </label>
         </div>

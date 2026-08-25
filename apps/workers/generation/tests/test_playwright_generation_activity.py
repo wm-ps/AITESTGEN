@@ -62,6 +62,7 @@ class _FakeAIProvider:
         known_locators: list[dict] | None = None,
         *,
         requires_auth: bool = False,
+        field_input_types: dict[str, str] | None = None,
     ) -> TestAssetCode:
         self.calls.append(str(scenario.external_id))
         self.known_pages_calls.append(known_pages or [])

@@ -246,7 +246,9 @@ export function Workspace({
           </div>
         )}
 
-        {activeTab === 'overview' && <OverviewTab applicationId={applicationId} />}
+        {activeTab === 'overview' && (
+          <OverviewTab applicationId={applicationId} onRunSuite={handleRunSuite} running={running} />
+        )}
         {activeTab === 'suite' && <TestSuiteTab applicationId={applicationId} />}
         {activeTab === 'runs' && (
           <RunsTab

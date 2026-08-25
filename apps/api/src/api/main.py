@@ -369,6 +369,25 @@ class ApplicationRead(BaseModel):
     discovery_coverage_summary: dict[str, int] | None = None
 
 
+class HealthRead(BaseModel):
+    tier: str
+    headline: str
+
+
+# Single source for the healthy/needs_attention/critical vocabulary — the
+# Home card, the per-run badge (TestRunRead.health) and the Overview tab
+# (get_overview) all call this instead of each re-deriving the 90%/70%
+# cutoffs.
+def _health_tier(pass_rate: float | None) -> HealthRead:
+    if pass_rate is None:
+        return HealthRead(tier="needs_attention", headline="No tests have run yet")
+    if pass_rate >= 0.90:
+        return HealthRead(tier="healthy", headline=f"{pass_rate:.0%} of tests are passing")
+    if pass_rate >= 0.70:
+        return HealthRead(tier="needs_attention", headline=f"{pass_rate:.0%} of tests are passing")
+    return HealthRead(tier="critical", headline=f"{pass_rate:.0%} of tests are passing")
+
+
 class HomeApplicationRead(ApplicationRead):
     journey_count: int
     scenario_count: int
@@ -383,6 +402,10 @@ class HomeApplicationRead(ApplicationRead):
     last_test_run_status: str | None
     last_test_run_created_at: datetime | None
     last_test_run_pass_rate: float | None
+    # Only meaningful once `last_test_run_status == "completed"` — mirrors
+    # TestRunRead.health so the card's post-execution badge and the Runs tab
+    # badge for the same run never disagree.
+    last_test_run_health: HealthRead
     # Home row's Executions/Trend columns — total run count (all-time) and
     # the last 8 runs' pass rates, oldest first (same convention as
     # `get_overview`'s `reversed(recent_runs)` trend).
@@ -694,6 +717,11 @@ def get_home(
         base = _to_application_read(session, application, discovery_run)
         runs = test_runs_by_app.get(application.id, [])
         last_test_run = runs[0] if runs else None
+        last_test_run_pass_rate = (
+            last_test_run.passed_count / last_test_run.total_count
+            if last_test_run and last_test_run.total_count
+            else None
+        )
         result.append(
             HomeApplicationRead(
                 **base.model_dump(),
@@ -705,11 +733,8 @@ def get_home(
                 suites_generating_count=suites_generating_counts.get(application.id, 0),
                 last_test_run_status=last_test_run.status if last_test_run else None,
                 last_test_run_created_at=last_test_run.created_at if last_test_run else None,
-                last_test_run_pass_rate=(
-                    last_test_run.passed_count / last_test_run.total_count
-                    if last_test_run and last_test_run.total_count
-                    else None
-                ),
+                last_test_run_pass_rate=last_test_run_pass_rate,
+                last_test_run_health=_health_tier(last_test_run_pass_rate),
                 test_run_count=len(runs),
                 recent_pass_rates=[
                     (r.passed_count / r.total_count) if r.total_count else None
@@ -2004,6 +2029,10 @@ class TestRunRead(BaseModel):
     status: str
     trigger: str
     pass_rate: float | None
+    # Same 3-tier vocabulary as the Overview health badge (`_health_tier`) —
+    # one source of truth reused here rather than a 4th place hardcoding the
+    # 90%/70% cutoffs (Home.tsx and RunsTab.tsx's border color already did).
+    health: HealthRead
     total_count: int
     passed_count: int
     failed_count: int
@@ -2030,6 +2059,9 @@ class TestResultArtifactRead(BaseModel):
 def _to_test_run_read(
     test_run: TestRun, *, results: list[TestResultRead] | None
 ) -> TestRunRead:
+    pass_rate = (
+        test_run.passed_count / test_run.total_count if test_run.total_count else None
+    )
     return TestRunRead(
         id=test_run.external_id,
         status=test_run.status,
@@ -2038,9 +2070,8 @@ def _to_test_run_read(
             if test_run.triggered_by_name
             else "Manual run"
         ),
-        pass_rate=(
-            test_run.passed_count / test_run.total_count if test_run.total_count else None
-        ),
+        pass_rate=pass_rate,
+        health=_health_tier(pass_rate),
         total_count=test_run.total_count,
         passed_count=test_run.passed_count,
         failed_count=test_run.failed_count,
@@ -2463,11 +2494,6 @@ def get_test_asset_code(
     return TestAssetCodeRead(code=test_asset.code)
 
 
-class HealthRead(BaseModel):
-    tier: str
-    headline: str
-
-
 class RunTrendPointRead(BaseModel):
     run_id: uuid.UUID
     pass_rate: float | None
@@ -2496,16 +2522,6 @@ class OverviewRead(BaseModel):
     # start time, and `status`) — this is honestly the most recent
     # *completed* run's start time, not when it finished.
     last_discovery_started_at: datetime | None
-
-
-def _health_tier(pass_rate: float | None) -> HealthRead:
-    if pass_rate is None:
-        return HealthRead(tier="needs_attention", headline="No tests have run yet")
-    if pass_rate >= 0.90:
-        return HealthRead(tier="healthy", headline=f"{pass_rate:.0%} of tests are passing")
-    if pass_rate >= 0.70:
-        return HealthRead(tier="needs_attention", headline=f"{pass_rate:.0%} of tests are passing")
-    return HealthRead(tier="critical", headline=f"{pass_rate:.0%} of tests are passing")
 
 
 _OVERVIEW_TREND_RUN_COUNT = 10
@@ -2583,7 +2599,7 @@ def get_overview(
 
 class SettingsRead(BaseModel):
     max_pages: int
-    max_discovery_duration_minutes: int
+    max_discovery_duration_minutes: int | None
     navigation_timeout_seconds: float
     interaction_level: InteractionLevel
     max_journeys: int | None
@@ -2594,13 +2610,13 @@ class SettingsRead(BaseModel):
 
 class SettingsUpdate(BaseModel):
     max_pages: int | None = None
-    max_discovery_duration_minutes: int | None = None
     navigation_timeout_seconds: float | None = None
     interaction_level: InteractionLevel | None = None
     delete_project_after: RetentionPeriod | None = None
     # Sentinel, not None: None already means "leave unchanged" for every
-    # other field here, but these three need "leave unchanged" AND "clear to
+    # other field here, but these four need "leave unchanged" AND "clear to
     # unlimited" to be distinguishable.
+    max_discovery_duration_minutes: int | None | Literal["__unset__"] = "__unset__"
     max_journeys: int | None | Literal["__unset__"] = "__unset__"
     max_scenarios_per_journey: int | None | Literal["__unset__"] = "__unset__"
     max_test_cases_per_application: int | None | Literal["__unset__"] = "__unset__"
@@ -2634,7 +2650,7 @@ def update_settings(
     settings = session.exec(select(DiscoverySettings)).one()
     if payload.max_pages is not None:
         settings.max_pages = payload.max_pages
-    if payload.max_discovery_duration_minutes is not None:
+    if payload.max_discovery_duration_minutes != "__unset__":
         settings.max_discovery_duration_minutes = payload.max_discovery_duration_minutes
     if payload.navigation_timeout_seconds is not None:
         settings.navigation_timeout_seconds = payload.navigation_timeout_seconds

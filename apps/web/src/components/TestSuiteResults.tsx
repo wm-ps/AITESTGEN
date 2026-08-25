@@ -23,6 +23,15 @@ function toTestFileName(journeyName: string): string {
   return `${slug || 'journey'}.spec.ts`
 }
 
+function WarningIcon({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10.3 3.6 2.5 17a1.8 1.8 0 0 0 1.5 2.7h16a1.8 1.8 0 0 0 1.5-2.7L13.7 3.6a1.8 1.8 0 0 0-3.4 0z" />
+      <path d="M12 9v4M12 17h.01" />
+    </svg>
+  )
+}
+
 function CheckIcon() {
   return (
     <svg width={15} height={15} viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth={3} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -345,6 +354,7 @@ export function TestSuiteResults({
 
   const testCaseCount = suites.reduce((sum, s) => sum + s.test_cases.length, 0)
   const hasIncomplete = suites.some((s) => s.status === 'incomplete')
+  const failedTestCaseCount = Math.max(0, expectedTestCaseCount - testCaseCount)
   const suitesTotalPages = Math.max(1, Math.ceil(suites.length / SUITES_PER_PAGE))
   const pagedSuites = suites.slice(suitesPage * SUITES_PER_PAGE, suitesPage * SUITES_PER_PAGE + SUITES_PER_PAGE)
   function setTestCasePage(suiteId: string, page: number) {
@@ -525,28 +535,47 @@ export function TestSuiteResults({
                 >
                   Run Tests
                 </button>
-                {hasIncomplete && (
+              </div>
+
+              {hasIncomplete && (
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexWrap: 'wrap',
+                    gap: '6px 10px',
+                    marginTop: 14,
+                  }}
+                >
+                  <span aria-hidden="true" style={{ display: 'inline-flex', color: '#FFD24D', flexShrink: 0 }}>
+                    <WarningIcon size={14} />
+                  </span>
+                  <span style={{ fontSize: 12.5, color: '#FFD24D', fontWeight: 600 }}>
+                    {failedTestCaseCount} test case{failedTestCaseCount === 1 ? '' : 's'} failed to generate.
+                  </span>
                   <button
                     type="button"
                     disabled={retrying}
                     onClick={handleRetryFailed}
                     style={{
-                      padding: '9px 20px',
-                      background: 'rgba(255,255,255,0.16)',
-                      color: '#FFFFFF',
-                      border: '1px solid rgba(255,255,255,0.5)',
-                      borderRadius: 'var(--radius)',
-                      fontSize: 13.5,
+                      background: 'none',
+                      border: 'none',
+                      color: '#FFD24D',
                       fontWeight: 700,
+                      fontSize: 12.5,
                       fontFamily: 'inherit',
+                      textDecoration: 'underline',
+                      whiteSpace: 'nowrap',
                       cursor: retrying ? 'not-allowed' : 'pointer',
-                      opacity: retrying ? 0.75 : 1,
+                      opacity: retrying ? 0.6 : 1,
+                      padding: 0,
                     }}
                   >
-                    {retrying ? <LoadingDots label="Retrying" /> : 'Retry Failed Test Cases'}
+                    {retrying ? <LoadingDots label="Generating" /> : 'Retry Generation'}
                   </button>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           </div>
 

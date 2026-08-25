@@ -25,6 +25,7 @@ export type HomeApplicationRead = ApplicationRead & {
   last_test_run_status: 'pending' | 'running' | 'completed' | 'blocked' | null
   last_test_run_created_at: string | null
   last_test_run_pass_rate: number | null
+  last_test_run_health: HealthRead
   test_run_count: number
   recent_pass_rates: (number | null)[]
 }
@@ -42,7 +43,7 @@ export type InteractionLevel = 'passive' | 'normal' | 'aggressive'
 export type RetentionPeriod = '1_day' | '1_week' | '1_month'
 export type SettingsRead = {
   max_pages: number
-  max_discovery_duration_minutes: number
+  max_discovery_duration_minutes: number | null
   navigation_timeout_seconds: number
   interaction_level: InteractionLevel
   max_journeys: number | null
@@ -77,6 +78,7 @@ export type TestRunRead = {
   status: TestRunStatus
   trigger: string
   pass_rate: number | null
+  health: HealthRead
   total_count: number
   passed_count: number
   failed_count: number

@@ -6,9 +6,9 @@ import {
   type TestResultRead,
   type TestRunRead,
 } from '../../api'
-import { StatTile } from '../TestSuiteResults'
 import { StatusPill } from '../StatusPill'
 import { ServiceErrorNote } from '../ServiceError'
+import { EmptyState, RunsIllustration } from '../EmptyState'
 import { Pagination } from '../Pagination'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 
@@ -25,58 +25,17 @@ function BackIcon() {
   )
 }
 
-function ClipboardCheckIcon() {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" />
-      <rect x={9} y={3} width={6} height={4} rx={1} />
-      <path d="M9 12l2 2 4-4" />
-    </svg>
-  )
-}
-
-function CheckIcon() {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M5 13l4 4L19 7" />
-    </svg>
-  )
-}
-
-function XIcon() {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M6 6l12 12M18 6L6 18" />
-    </svg>
-  )
-}
-
-function ClockIcon() {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx={12} cy={12} r={9} />
-      <path d="M12 7v5l3.5 3.5" />
-    </svg>
-  )
-}
-
-function AlertIcon() {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 9v4M12 17h.01" />
-      <path d="M10.3 3.6 2.5 17a1.8 1.8 0 0 0 1.5 2.7h16a1.8 1.8 0 0 0 1.5-2.7L13.7 3.6a1.8 1.8 0 0 0-3.4 0z" />
-    </svg>
-  )
-}
-
 const NON_PASSED_STATUSES = new Set(['failed', 'timed_out', 'errored'])
 
+// Tier comes from the backend's `health` field (main.py `_health_tier`) —
+// not a re-derived 90%/70% cutoff — so this can't drift from the Overview
+// tab's own health badge.
 function runSignalColor(run: TestRunRead): string {
   if (run.status === 'blocked') return 'var(--warn)'
   if (run.status === 'pending' || run.status === 'running') return 'var(--accent)'
   if (run.pass_rate == null) return 'var(--border-strong)'
-  if (run.pass_rate >= 0.9) return 'var(--good)'
-  if (run.pass_rate >= 0.7) return 'var(--warn)'
+  if (run.health.tier === 'healthy') return 'var(--good)'
+  if (run.health.tier === 'needs_attention') return 'var(--warn)'
   return 'var(--danger)'
 }
 
@@ -491,16 +450,6 @@ function RunDetail({
         </div>
       )}
 
-      {run.status !== 'blocked' && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12, marginBottom: 20 }}>
-          <StatTile icon={<ClipboardCheckIcon />} value={run.total_count} label="Total" tone="muted" />
-          <StatTile icon={<CheckIcon />} value={run.passed_count} label="Passed" tone="good" />
-          <StatTile icon={<XIcon />} value={run.failed_count} label="Failed" tone="danger" />
-          <StatTile icon={<ClockIcon />} value={run.timed_out_count} label="Timed out" tone="warn" />
-          <StatTile icon={<AlertIcon />} value={run.errored_count + run.blocked_count} label="Errored/Skipped" tone="warn" />
-        </div>
-      )}
-
       {isRunning && executionUnavailable && <ServiceErrorNote code="EXECUTION_UNAVAILABLE" />}
 
       {isRunning && !executionUnavailable && run.results == null && (
@@ -853,9 +802,11 @@ export function RunsTab({
   return (
     <div>
       {runs.length === 0 ? (
-        <p className="caption" style={{ fontSize: 13 }}>
-          No test runs yet — use "Run Suite" from the Test Suite tab to start one.
-        </p>
+        <EmptyState
+          illustration={<RunsIllustration />}
+          title="No test runs yet"
+          subtitle={'Use "Run Suite" to start one.'}
+        />
       ) : (
         <div
           className="card-panel"

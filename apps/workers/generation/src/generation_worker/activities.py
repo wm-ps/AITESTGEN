@@ -646,12 +646,17 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
         known_pages,
         known_locators,
         required_fields,
+        field_input_types,
         requires_auth,
         primary_page_id,
     ) = await asyncio.to_thread(_resolve_scenario_defaults_sync, input.scenario_id)
 
     code = await HostedAIProvider().generate_playwright(
-        scenario, known_pages, known_locators, requires_auth=requires_auth
+        scenario,
+        known_pages,
+        known_locators,
+        requires_auth=requires_auth,
+        field_input_types=field_input_types,
     )
 
     # Checklist rule 3: a spec isn't "generated successfully" until it
@@ -884,7 +889,13 @@ def _resolve_known_application_model_sync(
 
 
 _ScenarioDefaults = tuple[
-    Scenario, list[dict[str, str]], list[dict[str, str]], dict[str, bool], bool, uuid.UUID | None
+    Scenario,
+    list[dict[str, str]],
+    list[dict[str, str]],
+    dict[str, bool],
+    dict[str, str],
+    bool,
+    uuid.UUID | None,
 ]
 
 
@@ -958,6 +969,7 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
             known_pages,
             known_locators,
             required_fields,
+            field_input_types,
             requires_auth,
             primary_page_id,
         )

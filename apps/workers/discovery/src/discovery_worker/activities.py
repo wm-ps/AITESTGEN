@@ -946,7 +946,11 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                         or discovery_settings.navigation_timeout_seconds
                     ),
                     max_pages=discovery_settings.max_pages,
-                    max_duration_seconds=discovery_settings.max_discovery_duration_minutes * 60,
+                    max_duration_seconds=(
+                        discovery_settings.max_discovery_duration_minutes * 60
+                        if discovery_settings.max_discovery_duration_minutes is not None
+                        else None
+                    ),
                     interaction_level=discovery_settings.interaction_level,
                     data_resolver_pool=test_data_pool,
                     # Story 2.12 Task 3: replaces the Planner's pass-through

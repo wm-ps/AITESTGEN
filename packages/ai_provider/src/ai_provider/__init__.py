@@ -41,6 +41,9 @@ class AIProvider(Protocol):
         scenario: Scenario,
         known_pages: list[dict[str, str]] | None = None,
         known_locators: list[dict[str, str]] | None = None,
+        *,
+        requires_auth: bool = False,
+        field_input_types: dict[str, str] | None = None,
     ) -> TestAssetCode: ...
 
     # Story 2.10 AC 3: called only when the State Identity Engine's score

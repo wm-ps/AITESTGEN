@@ -349,6 +349,18 @@ check a validity/error state, express it via a real matcher against the actual D
 `:invalid`/custom selector combined with `toBeVisible()`), never a matcher you are only \
 assuming must exist.
 
+Numeric-argument rule — `toHaveCount(n)`, `.nth(n)`, and `page.waitForTimeout(n)` all take a \
+real TypeScript `number`, never a `string` — this is a compile error, not a runtime one. Only \
+pass a bare numeric literal (`toHaveCount(1)`, `.nth(0)`) or a variable actually declared as \
+`number` (`const n: number = 3;`). Never pass a Test-data value straight into one of these — \
+Test data is filled into forms as strings, so a variable holding a Test-data value is typed \
+`string` even when its contents look numeric, and reusing that same variable in \
+`toHaveCount(...)` will fail to compile. A Test-data entry below tagged `(number)` reflects \
+the real captured HTML input's type — declare its const with `Number(...)` right at \
+assignment (`const quantity: number = Number(<value>);`) so every later use of that variable \
+is already correctly typed, instead of only converting it at the one call site you happen to \
+remember: `toHaveCount(quantity)`.
+
 Not every Playwright method accepts a `timeout` option either — do not add a `timeout` \
 to a call unless that specific method's signature actually has an options parameter. Most \
 notably, `page.content()`, `page.url()`, and `response.status()` take NO arguments at all — \
@@ -629,8 +641,16 @@ confirming the page's known URL/heading is correct instead.
 Output ONLY the TypeScript code, no markdown fences, no prose, no explanation."""
 
 
-def _describe_test_data(scenario: Scenario) -> str:
-    return "\n".join(f"- {f['name']}: {f.get('value')}" for f in scenario.test_data) or "(none)"
+def _describe_test_data(
+    scenario: Scenario, field_input_types: dict[str, str] | None = None
+) -> str:
+    field_input_types = field_input_types or {}
+
+    def _line(f: dict) -> str:
+        tag = " (number)" if field_input_types.get(f["name"]) == "number" else ""
+        return f"- {f['name']}{tag}: {f.get('value')}"
+
+    return "\n".join(_line(f) for f in scenario.test_data) or "(none)"
 
 
 def _describe_known_pages(known_pages: list[dict[str, str]] | None) -> str:
@@ -904,6 +924,7 @@ class HostedAIProvider:
         known_locators: list[dict[str, str]] | None = None,
         *,
         requires_auth: bool = False,
+        field_input_types: dict[str, str] | None = None,
     ) -> TestAssetCode:
         step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
         base_url = getattr(scenario, "base_url", None) or ""
@@ -962,7 +983,7 @@ class HostedAIProvider:
                         scenario_type=scenario.type,
                         step_listing=step_listing,
                         expected_result=scenario.expected_result,
-                        test_data_listing=_describe_test_data(scenario),
+                        test_data_listing=_describe_test_data(scenario, field_input_types),
                         known_pages_listing=_describe_known_pages(known_pages),
                         known_locators_listing=_describe_known_locators(known_locators),
                     ),

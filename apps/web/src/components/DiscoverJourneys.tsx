@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { api, type JourneyRead, type JourneyStepRead } from '../api'
 import { useDiscoveryProgress } from '../hooks/useDiscoveryProgress'
+import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { ServiceErrorNote } from './ServiceError'
 import { ImportProgress } from './ImportProgress'
 import { Stepper, type StepKey } from './Stepper'
 import { StatusPill } from './StatusPill'
 import { Pagination } from './Pagination'
+import { EmptyState, JourneysIllustration } from './EmptyState'
 
 const POLL_INTERVAL_MS = 3000
 const JOURNEYS_PER_PAGE = 5
@@ -189,6 +191,7 @@ export function DiscoverJourneys({
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
+  useEscapeToClose(() => lightboxUrl && setLightboxUrl(null))
   // Story 2.17: pause/resume already round-trips through the API — this
   // just reflects the response immediately rather than waiting for
   // useDiscoveryProgress's next poll tick (which stops polling entirely
@@ -710,9 +713,11 @@ export function DiscoverJourneys({
 
         {journeys.length === 0 && status !== 'failed' && (
           hadJourneysRef.current ? (
-            <p style={{ textAlign: 'center', padding: '80px 24px', color: 'var(--ink-muted)', fontSize: 14 }}>
-              All journeys have been removed.
-            </p>
+            <EmptyState
+              illustration={<JourneysIllustration />}
+              title="No journeys"
+              subtitle="All journeys have been removed."
+            />
           ) : (
             <ImportProgress applicationName={applicationName} />
           )

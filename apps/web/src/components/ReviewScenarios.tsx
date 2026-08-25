@@ -4,6 +4,7 @@ import { Stepper, type StepKey } from './Stepper'
 import { GenerationLoader } from './GenerationLoader'
 import { ServiceErrorNote } from './ServiceError'
 import { Pagination } from './Pagination'
+import { EmptyState, ScenariosIllustration } from './EmptyState'
 
 const POLL_INTERVAL_MS = 3000
 const SCENARIOS_PER_PAGE = 5
@@ -19,43 +20,6 @@ type ReadinessFilter = (typeof READINESS_FILTERS)[number]
 
 const TYPE_FILTERS = ['All', 'happy', 'negative', 'edge'] as const
 type TypeFilter = (typeof TYPE_FILTERS)[number]
-
-function EmptyBoxIcon() {
-  return (
-    <svg width={28} height={28} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3.5 8.5 12 4l8.5 4.5-8.5 4.5-8.5-4.5Z" />
-      <path d="M3.5 8.5v7L12 20l8.5-4.5v-7" />
-      <path d="M12 13v7" />
-    </svg>
-  )
-}
-
-function EmptyState({ title, subtitle }: { title: string; subtitle: string }) {
-  return (
-    <div style={{ textAlign: 'center', padding: '48px 20px' }}>
-      <div
-        aria-hidden="true"
-        style={{
-          display: 'inline-flex',
-          width: 56,
-          height: 56,
-          borderRadius: 'var(--radius-full)',
-          background: 'var(--canvas-wash-alt)',
-          color: 'var(--ink-faint)',
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginBottom: 'var(--space-4)',
-        }}
-      >
-        <EmptyBoxIcon />
-      </div>
-      <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>{title}</div>
-      <div className="caption" style={{ fontSize: 12, marginTop: 4 }}>
-        {subtitle}
-      </div>
-    </div>
-  )
-}
 
 function ReadinessPill({ ready }: { ready: boolean }) {
   return (
@@ -621,6 +585,7 @@ export function ReviewScenarios({
 
         {scenarios.length === 0 && hadScenariosRef.current ? (
           <EmptyState
+            illustration={<ScenariosIllustration />}
             title="No scenarios remain"
             subtitle="Add journeys back to generate new scenarios."
           />
@@ -741,6 +706,7 @@ export function ReviewScenarios({
                 })}
                 {pagedScenarios.length === 0 && (
                   <EmptyState
+                    illustration={<ScenariosIllustration />}
                     title="No scenarios match these filters"
                     subtitle="Try clearing a filter or the search term."
                   />

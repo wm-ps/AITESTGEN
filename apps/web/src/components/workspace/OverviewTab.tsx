@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, type HealthTier, type OverviewRead } from '../../api'
+import { EmptyState, RunsIllustration } from '../EmptyState'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -217,7 +218,7 @@ function TrendChart({ trend }: { trend: OverviewRead['trend'] }) {
   if (trend.length === 0) {
     return (
       <p className="caption" style={{ fontSize: 12.5, margin: 0 }}>
-        No runs yet — trend appears after the first "Run Suite".
+        No runs yet — trend appears after your first "Run Suite".
       </p>
     )
   }
@@ -392,7 +393,23 @@ function TrendChart({ trend }: { trend: OverviewRead['trend'] }) {
   )
 }
 
-export function OverviewTab({ applicationId }: { applicationId: string }) {
+function PlayIcon() {
+  return (
+    <svg width={12} height={12} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M6 4.5v15l13-7.5z" />
+    </svg>
+  )
+}
+
+export function OverviewTab({
+  applicationId,
+  onRunSuite,
+  running,
+}: {
+  applicationId: string
+  onRunSuite: () => void
+  running: boolean
+}) {
   const [overview, setOverview] = useState<OverviewRead | null>(null)
 
   useEffect(() => {
@@ -420,6 +437,33 @@ export function OverviewTab({ applicationId }: { applicationId: string }) {
       <p className="caption" style={{ fontSize: 12.5 }}>
         Loading overview…
       </p>
+    )
+  }
+
+  // No run has ever happened for this application — health/pass-rate/trend
+  // are all meaningless zeros, so show one tab-level illustration instead of
+  // three separate cards each explaining their own absence of data.
+  if (!overview.latest_run) {
+    return (
+      <div className="card-panel" style={{ padding: 24 }}>
+        <EmptyState
+          illustration={<RunsIllustration />}
+          title="No test runs yet"
+          subtitle="Health, pass rate, and trend will show up here once your first run finishes."
+          action={
+            <button
+              type="button"
+              className="button-primary"
+              disabled={running}
+              onClick={onRunSuite}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+            >
+              <PlayIcon />
+              {running ? 'Running…' : 'Run Suite'}
+            </button>
+          }
+        />
+      </div>
     )
   }
 
@@ -486,14 +530,14 @@ export function OverviewTab({ applicationId }: { applicationId: string }) {
         <NeutralStatTile icon={<ClockPauseIcon />} value={overview.not_run} label="Not run" delay={0.2} />
       </div>
 
-      {/* Activity (one card, not two) and the trend chart side by side. Both
-          sit inside this tab's single outer card-panel now, so they're
-          plain tinted panels (no border/shadow of their own) rather than
-          a second layer of white-on-white card. No `alignItems` override on
-          the grid — default `stretch` gives both columns the row's full
-          height, and each column's own panel fills it via `flex: 1`, so the
-          shorter Activity panel matches the chart panel's height instead of
-          sitting next to empty space. */}
+      {/* Activity and the trend chart side by side. Same border/shadow fix as
+          NeutralStatTile above: --border-hairline with no background reads as
+          invisible against this tab's white card-panel, so both panels get
+          --border + a soft shadow to read as distinct cards. No `alignItems`
+          override on the grid — default `stretch` gives both columns the
+          row's full height, and each column's own panel fills it via
+          `flex: 1`, so the shorter Activity panel matches the chart panel's
+          height instead of sitting next to empty space. */}
       <div
         style={{
           display: 'grid',
@@ -513,7 +557,9 @@ export function OverviewTab({ applicationId }: { applicationId: string }) {
               justifyContent: 'center',
               gap: 16,
               borderRadius: 'var(--radius-lg)',
-              border: '1px solid var(--border-hairline)',
+              background: 'var(--canvas)',
+              border: '1px solid var(--border)',
+              boxShadow: '0 1px 3px rgba(15,23,42,0.07)',
             }}
           >
             <div style={{ display: 'flex', gap: 12 }}>
@@ -590,7 +636,9 @@ export function OverviewTab({ applicationId }: { applicationId: string }) {
               flex: 1,
               display: 'flex',
               borderRadius: 'var(--radius-lg)',
-              border: '1px solid var(--border-hairline)',
+              background: 'var(--canvas)',
+              border: '1px solid var(--border)',
+              boxShadow: '0 1px 3px rgba(15,23,42,0.07)',
             }}
           >
             <TrendChart trend={overview.trend} />

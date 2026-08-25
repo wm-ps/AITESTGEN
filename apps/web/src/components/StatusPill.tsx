@@ -12,6 +12,7 @@ const STATUS_COLORS: Record<string, { background: string; foreground: string }> 
   discovery_completed: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   journeys_generated: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   scenarios_generated: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
+  generating_scenarios: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   generating_tests: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   suite_generated: { background: 'var(--good-wash)', foreground: 'var(--good-strong)' },
   // Home card overrides (Story: Home card redesign) — `suite_generated`
@@ -33,6 +34,12 @@ const STATUS_COLORS: Record<string, { background: string; foreground: string }> 
   timed_out: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },
   errored: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },
   not_run: { background: 'var(--canvas-wash-alt)', foreground: 'var(--ink-muted)' },
+  // Post-execution pass-rate badge (Home card, Runs tab, Overview tab) —
+  // shares `_health_tier`'s tier names (apps/api/src/api/main.py) so the
+  // wording/color is one vocabulary everywhere it appears.
+  healthy: { background: 'var(--good-wash)', foreground: 'var(--good-strong)' },
+  needs_attention: { background: 'var(--warn-wash)', foreground: 'var(--warn-strong)' },
+  critical: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },
 }
 
 const LABELS: Record<string, string> = {
@@ -40,6 +47,7 @@ const LABELS: Record<string, string> = {
   discovery_completed: 'Discovery completed',
   journeys_generated: 'Journeys generated',
   scenarios_generated: 'Scenarios generated',
+  generating_scenarios: 'Generating scenarios',
   generating_tests: 'Generating test cases',
   suite_generated: 'Test suite generated',
   ready_to_execute: 'Ready to run',
@@ -55,6 +63,9 @@ const LABELS: Record<string, string> = {
   timed_out: 'Timed Out',
   errored: 'Errored',
   not_run: 'Not Run',
+  healthy: 'Healthy',
+  needs_attention: 'Needs Attention',
+  critical: 'Critical',
 }
 
 export function StatusPill({

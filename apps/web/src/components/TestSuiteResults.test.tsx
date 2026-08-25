@@ -107,7 +107,7 @@ describe('TestSuiteResults', () => {
     expect(screen.getByText('Incomplete')).toBeTruthy()
   })
 
-  it('retries only the failed suite when Retry Failed Test Cases is clicked, and the loader reappears', async () => {
+  it('retries only the failed suite when Generate is clicked, and the loader reappears', async () => {
     let suites = [{ ...SUITES[0], status: 'incomplete', test_cases: [SUITES[0].test_cases[0]] }]
     const fetchMock = vi.fn(async (url: string, _opts?: RequestInit) => {
       if (url.includes('/generate-suite')) {
@@ -132,7 +132,8 @@ describe('TestSuiteResults', () => {
 
     render(<TestSuiteResults furthestCount={4} applicationId="app-1" onRunTests={() => {}} />)
 
-    const retryButton = await screen.findByRole('button', { name: /Retry Failed Test Cases/ })
+    expect(await screen.findByText(/failed to generate\./)).toBeTruthy()
+    const retryButton = screen.getByRole('button', { name: /^Retry Generation$/ })
     fireEvent.click(retryButton)
 
     await waitFor(() => {
