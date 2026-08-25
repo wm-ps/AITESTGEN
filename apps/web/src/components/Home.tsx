@@ -1062,7 +1062,7 @@ export function Home({
                 view === 'grid'
                   ? {
                       display: 'grid',
-                      gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))',
+                      gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
                       gap: 'var(--space-5)',
                       alignContent: 'start',
                       animation: 'aitg-fade-up 0.4s ease-out 0.1s both',
