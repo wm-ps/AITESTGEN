@@ -11,10 +11,11 @@ import { ServiceErrorNote } from '../ServiceError'
 import { EmptyState, RunsIllustration } from '../EmptyState'
 import { Pagination } from '../Pagination'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
+import { ChevronIcon } from './TestSuiteTab'
 
 const POLL_INTERVAL_MS = 1500
-const RUNS_PER_PAGE = 5
-const RESULTS_PER_PAGE = 5
+const RUNS_PER_PAGE = 10
+const RESULTS_PER_PAGE = 10
 
 // Same arrow-left glyph as TopBar's own back button, not a text "←" glyph.
 // Exported so Workspace can render it next to the page title (single
@@ -28,6 +29,30 @@ export function BackIcon() {
 }
 
 const NON_PASSED_STATUSES = new Set(['failed', 'timed_out', 'errored'])
+
+// Self-explanatory icon (not text) for a passed result that only passed
+// after self-heal fixed it — a lightning bolt reads as "auto-fixed" without
+// a label competing for space in the row.
+function AutoHealedIcon() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="var(--good)" stroke="none" aria-hidden="true">
+      <path d="M13 2 3 14h7l-1 8 11-14h-7l1-6z" />
+    </svg>
+  )
+}
+
+// Retry-with-self-heal action, in-row — a circular-arrow "retry" glyph
+// (not the bolt above, which marks a row that already passed via heal).
+function SelfHealIcon() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <path d="M3 3v5h5" />
+      <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
+      <path d="M16 16h5v5" />
+    </svg>
+  )
+}
 
 export function ArtifactsModal({ testResult, onClose }: { testResult: TestResultRead; onClose: () => void }) {
   useEscapeToClose(onClose)
@@ -164,18 +189,12 @@ const columnHeaderLabelStyle: React.CSSProperties = {
   whiteSpace: 'nowrap',
 }
 
-// Same CSS Grid technique as TestSuiteTab.tsx's `ASSET_GRID_TEMPLATE` for
-// the same "Test Case / Duration / Status" shape — one shared template on
-// both the header and every row, not flex + matched `minWidth`s (the
-// previous approach here). That approach broke the moment a row's
-// right-hand group had a different number of children than another row's:
-// the "Artifacts" button only renders for non-passed rows, so a passed
-// row's Duration/Status sat at a different position than a failed row's,
-// which sat different again from the header. A dedicated Actions column
-// (present, just empty, on every row) fixes Duration/Status in place
-// regardless of whether Artifacts renders — and lines this list up with
-// the Test Suite tab's, since it's the same shape.
-const RESULT_GRID_TEMPLATE = '1fr 70px 130px 160px'
+// Same shape as TestSuiteTab.tsx's `ASSET_GRID_TEMPLATE` (name gets the
+// bulk of the row, the rest split evenly) minus its Last Run column — a
+// TestResult has no last-run-at of its own. Errors/artifacts/heal actions
+// live in the expand panel below the row, same as TestSuiteTab, so they
+// don't need their own column.
+const RESULT_GRID_TEMPLATE = '50% 1fr 1fr 32px'
 // Runs table columns (RunListHeader/RunListRow) use percentages, not px —
 // `table-layout: fixed` + `width: 100%` on `.data-table` means these scale
 // with the table instead of leaving it stuck at a fixed pixel sum. Date &
@@ -258,20 +277,16 @@ function ResultListHeader({
         display: 'grid',
         gridTemplateColumns: RESULT_GRID_TEMPLATE,
         alignItems: 'center',
-        gap: 12,
+        gap: 20,
         padding: '8px 16px',
         background: 'var(--canvas-wash-alt)',
       }}
     >
-      <SortableColumnLabel label="Test Case" sortKey="name" activeKey={sortKey} dir={sortDir} onSort={onSort} />
-      <SortableColumnLabel
-        label="Duration"
-        sortKey="duration"
-        activeKey={sortKey}
-        dir={sortDir}
-        onSort={onSort}
-        align="right"
-      />
+      {/* 24px = chevron (14) + its gap (10) in each row below, so the label lines up over the row's text, not its icon. */}
+      <div style={{ paddingLeft: 24, minWidth: 0 }}>
+        <SortableColumnLabel label="Test Case" sortKey="name" activeKey={sortKey} dir={sortDir} onSort={onSort} />
+      </div>
+      <SortableColumnLabel label="Duration" sortKey="duration" activeKey={sortKey} dir={sortDir} onSort={onSort} />
       <SortableColumnLabel label="Status" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={onSort} />
       <span aria-hidden="true" />
     </div>
@@ -289,6 +304,7 @@ function TestResultRow({
   result: TestResultRead
   isCurrentlyRunning?: boolean
 }) {
+  const [expanded, setExpanded] = useState(false)
   const [artifactsFor, setArtifactsFor] = useState<TestResultRead | null>(null)
   const [liveResult, setLiveResult] = useState(result)
   const [healing, setHealing] = useState(false)
@@ -348,75 +364,148 @@ function TestResultRow({
   }
 
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: RESULT_GRID_TEMPLATE,
-        alignItems: 'center',
-        gap: 12,
-        padding: '10px 16px',
-      }}
-    >
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 13, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {liveResult.scenario_name}
-        </div>
-        {liveResult.status === 'blocked' && liveResult.blocked_reason && (
-          <div className="caption" style={{ fontSize: 11.5, marginTop: 2 }}>
-            {liveResult.blocked_reason}
-          </div>
-        )}
-        {canShowArtifacts && liveResult.error_message && (
-          <div style={{ fontSize: 11.5, color: 'var(--danger-strong)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {liveResult.error_message}
-          </div>
-        )}
-        {healError && (
-          <div style={{ fontSize: 11.5, color: 'var(--danger-strong)', marginTop: 2 }}>{healError}</div>
-        )}
-      </div>
-      <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap', textAlign: 'right' }}>
-        {liveResult.duration_ms != null ? `${(liveResult.duration_ms / 1000).toFixed(1)}s` : ''}
-      </span>
-      {/* No distinct "running" status exists on a TestResult row (it only
-          ever moves pending -> a terminal status) — the one test actually
-          executing right now is inferred as the first still-pending row
-          once finished ones are sorted to the top. */}
-      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <StatusPill status={liveResult.status} label={isCurrentlyRunning ? 'Running' : undefined} pulsing={isCurrentlyRunning} />
-        {wasAutoHealed && (
+    <div>
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setExpanded((o) => !o)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') setExpanded((o) => !o)
+        }}
+        style={{
+          display: 'grid',
+          gridTemplateColumns: RESULT_GRID_TEMPLATE,
+          alignItems: 'center',
+          gap: 20,
+          width: '100%',
+          padding: '16px 16px',
+          textAlign: 'left',
+          cursor: 'pointer',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <ChevronIcon open={expanded} />
           <span
-            className="caption"
-            style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--good)', whiteSpace: 'nowrap' }}
-            title="This test failed on its first run and was automatically fixed by self-healing."
+            style={{
+              fontSize: 13,
+              color: 'var(--ink)',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
           >
-            Auto-healed
+            {liveResult.scenario_name}
           </span>
-        )}
-      </span>
-      <span style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
-        {canShowArtifacts && (
-          <button type="button" className="button-secondary" onClick={() => setArtifactsFor(liveResult)}>
-            Artifacts
+        </div>
+        <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>
+          {liveResult.duration_ms != null ? `${(liveResult.duration_ms / 1000).toFixed(1)}s` : '—'}
+        </span>
+        {/* No distinct "running" status exists on a TestResult row (it only
+            ever moves pending -> a terminal status) — the one test actually
+            executing right now is inferred as the first still-pending row
+            once finished ones are sorted to the top. */}
+        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <StatusPill status={liveResult.status} label={isCurrentlyRunning ? 'Running' : undefined} pulsing={isCurrentlyRunning} />
+          {wasAutoHealed && (
+            <span
+              title="Auto-healed — this test failed on its first run and was automatically fixed by self-healing."
+              aria-label="Auto-healed"
+              style={{ display: 'inline-flex', alignItems: 'center' }}
+            >
+              <AutoHealedIcon />
+            </span>
+          )}
+        </span>
+        {/* In-row self-heal action — icon-only (title carries the label),
+            not the old "Retry with self-heal" text button, and not tucked
+            into the expand panel: it's the one action worth reaching for
+            without opening a row first. */}
+        {!healing && canRetryHeal && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation()
+              handleHeal()
+            }}
+            title="Retry with self-heal"
+            aria-label="Retry with self-heal"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: 24,
+              height: 24,
+              padding: 0,
+              background: 'none',
+              border: 'none',
+              borderRadius: 6,
+              color: 'var(--accent)',
+              cursor: 'pointer',
+            }}
+          >
+            <SelfHealIcon />
           </button>
         )}
         {healing && (
-          <span className="caption" style={{ fontSize: 11 }}>
-            Healing… (attempt {liveResult.heal_attempt_count + 1} of {liveResult.max_heal_attempts})
+          <span
+            title={`Healing… (attempt ${liveResult.heal_attempt_count + 1} of ${liveResult.max_heal_attempts})`}
+            aria-label="Healing"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, color: 'var(--accent)' }}
+          >
+            <span style={{ display: 'inline-flex', animation: 'aitg-spin 1s linear infinite' }}>
+              <SelfHealIcon />
+            </span>
           </span>
-        )}
-        {!healing && canRetryHeal && (
-          <button type="button" className="button-secondary" onClick={handleHeal}>
-            Retry with self-heal
-          </button>
         )}
         {!healing && healExhausted && (
-          <span className="caption" style={{ fontSize: 10.5 }}>
-            Self-healing could not fix this test after {liveResult.max_heal_attempts} attempts. Manual review
-            required.
+          <span
+            title={`Self-healing could not fix this test after ${liveResult.max_heal_attempts} attempts. Manual review required.`}
+            aria-label="Self-heal exhausted — manual review required"
+            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, color: 'var(--ink-faint)' }}
+          >
+            <SelfHealIcon />
           </span>
         )}
-      </span>
+      </div>
+
+      {expanded && (
+        <div style={{ padding: '0 16px 14px 40px' }}>
+          {liveResult.status === 'blocked' && liveResult.blocked_reason && (
+            <p className="caption" style={{ margin: '0 0 10px', fontSize: 12.5 }}>
+              {liveResult.blocked_reason}
+            </p>
+          )}
+          {canShowArtifacts && liveResult.error_message && (
+            <pre
+              style={{
+                margin: '0 0 10px',
+                padding: 10,
+                background: 'var(--canvas-wash)',
+                border: '1px solid var(--border-hairline)',
+                borderRadius: 'var(--radius)',
+                fontSize: 11.5,
+                lineHeight: 1.5,
+                color: 'var(--danger-strong)',
+                fontFamily: "'SFMono-Regular',Consolas,monospace",
+                whiteSpace: 'pre-wrap',
+                overflow: 'auto',
+                maxHeight: 160,
+              }}
+            >
+              {liveResult.error_message}
+            </pre>
+          )}
+          {healError && <p style={{ color: 'var(--danger-strong)', fontSize: 12, margin: '0 0 10px' }}>{healError}</p>}
+          {canShowArtifacts && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="button" className="button-secondary" onClick={() => setArtifactsFor(liveResult)}>
+                Artifacts
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {artifactsFor && <ArtifactsModal testResult={artifactsFor} onClose={() => setArtifactsFor(null)} />}
     </div>
   )
@@ -535,14 +624,13 @@ function RunDetail({
         <div className="card-panel" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <ResultListHeader sortKey={resultSortKey} sortDir={resultSortDir} onSort={handleResultSort} />
           {pagedResults.map((result) => (
-            <div key={result.id} style={{ borderBottom: '1px solid var(--border-hairline)' }}>
-              <TestResultRow
-                applicationId={applicationId}
-                runId={run.id}
-                result={result}
-                isCurrentlyRunning={result.id === runningResultId}
-              />
-            </div>
+            <TestResultRow
+              key={result.id}
+              applicationId={applicationId}
+              runId={run.id}
+              result={result}
+              isCurrentlyRunning={result.id === runningResultId}
+            />
           ))}
           <Pagination
             page={resultsPage}

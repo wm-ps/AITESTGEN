@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { ApiError, api, type InteractionLevel, type RetentionPeriod, type SettingsRead } from '../api'
+import { ApiError, api, type InteractionLevel, type RetentionPeriod, type SettingsRead, type UserRead } from '../api'
 import { LoadingDots } from './LoadingDots'
+import { AccessDeniedIllustration } from './EmptyState'
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
@@ -10,19 +11,64 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
-export function Settings({ onCancel }: { onCancel: () => void }) {
+export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => void }) {
   const [settings, setSettings] = useState<SettingsRead | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
+  const isAdmin = user.role === 'admin'
 
   useEffect(() => {
+    // The account menu already hides Settings from non-admins — this guard
+    // is only for a member landing here some other way (e.g. restored view
+    // state). The API rejects non-admins anyway (CurrentAdminDep); skipping
+    // the call here just avoids a guaranteed-403 request.
+    if (!isAdmin) {
+      setLoading(false)
+      return
+    }
     api
       .getSettings()
       .then(setSettings)
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Loading settings failed.'))
       .finally(() => setLoading(false))
-  }, [])
+  }, [isAdmin])
+
+  if (!isAdmin) {
+    return (
+      <main style={{ maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))', margin: '0 auto', padding: '32px 24px' }}>
+        <div className="card-panel" style={{ padding: '56px 32px', textAlign: 'center' }}>
+          <div
+            aria-hidden="true"
+            style={{
+              display: 'inline-flex',
+              width: 160,
+              height: 160,
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: '42% 58% 53% 47% / 45% 40% 60% 55%',
+              background: 'linear-gradient(135deg, var(--canvas-wash-alt) 0%, var(--danger-wash) 100%)',
+              marginBottom: 'var(--space-6)',
+            }}
+          >
+            <AccessDeniedIllustration size={96} />
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--ink)' }}>Access denied</div>
+          <p className="caption" style={{ fontSize: 13.5, margin: '8px auto 0', maxWidth: 360, lineHeight: 1.5 }}>
+            Discovery settings are limited to organization admins. Ask an admin on your team for access.
+          </p>
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={onCancel}
+            style={{ marginTop: 'var(--space-7)', padding: '10px 20px' }}
+          >
+            Back
+          </button>
+        </div>
+      </main>
+    )
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

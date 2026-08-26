@@ -4,6 +4,7 @@ import { AcceptInvite } from './components/AcceptInvite'
 import { ConnectAppForm } from './components/ConnectAppForm'
 import { ConnectSuccessModal } from './components/ConnectSuccessModal'
 import { DiscoverJourneys } from './components/DiscoverJourneys'
+import { Footer } from './components/Footer'
 import { Home } from './components/Home'
 import { InviteTeammateModal } from './components/InviteTeammateModal'
 import { ResetPassword } from './components/ResetPassword'
@@ -258,91 +259,95 @@ function App() {
           }}
         />
       )}
-      {view === 'home' && (
-        <Home
-          user={user}
-          onConnectApp={() => {
-            setApplication(null)
-            setFurthestCount(0)
-            setView('connect-app')
-          }}
-          onResumeApplication={handleResumeApplication}
-        />
-      )}
-      {view === 'connect-app' && (
-        <ConnectAppForm
-          application={application}
-          onConnected={(connectedApplication) => {
-            setApplication(connectedApplication)
-            setFurthestCount((c) => Math.max(c, 1))
-            setJustConnected(connectedApplication)
-          }}
-          onCancel={() => setView('home')}
-          furthestCount={furthestCount}
-          onStepClick={onStepClick}
-          onPrevious={onPrevious}
-          onNext={onNext}
-        />
-      )}
-      {view === 'discover' && application && (
-        <DiscoverJourneys
-          applicationId={application.id}
-          applicationName={application.name}
-          discoveryStatus={application.discovery_status}
-          discoveryStage={application.discovery_stage ?? null}
-          discoveryFailureReason={application.discovery_failure_reason ?? null}
-          onContinueToScenarios={() => {
-            setFurthestCount((c) => Math.max(c, 2))
-            setView('review-scenarios')
-          }}
-          furthestCount={furthestCount}
-          onStepClick={onStepClick}
-          onPrevious={onPrevious}
-          onNext={onNext}
-        />
-      )}
-      {view === 'review-scenarios' && application && (
-        <ReviewScenarios
-          applicationId={application.id}
-          onContinueToGenerate={async () => {
-            if (globalLoading) return
-            setGlobalLoading('Generating test suite')
-            try {
-              await api.generateSuite(application.id)
-              setFurthestCount(4)
-              setView('test-suite-results')
-            } catch {
-              setErrorToast('Failed to start test suite generation. Please try again.')
-            } finally {
-              setGlobalLoading(null)
-            }
-          }}
-          furthestCount={furthestCount}
-          onStepClick={onStepClick}
-          onPrevious={onPrevious}
-          onNext={onNext}
-        />
-      )}
-      {view === 'test-suite-results' && application && (
-        <TestSuiteResults
-          applicationId={application.id}
-          onRunTests={() => {
-            setWorkspaceEntry({ initialTab: 'runs', autoTriggerRun: true })
-            setView('workspace')
-          }}
-          furthestCount={furthestCount}
-          onStepClick={onStepClick}
-          onPrevious={onPrevious}
-        />
-      )}
-      {view === 'workspace' && application && (
-        <Workspace
-          applicationId={application.id}
-          initialTab={workspaceEntry.initialTab}
-          autoTriggerRun={workspaceEntry.autoTriggerRun}
-        />
-      )}
-      {view === 'settings' && <Settings onCancel={() => setView(previousView)} />}
+      <main style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        {view === 'home' && (
+          <Home
+            user={user}
+            onConnectApp={() => {
+              setApplication(null)
+              setFurthestCount(0)
+              setView('connect-app')
+            }}
+            onResumeApplication={handleResumeApplication}
+          />
+        )}
+        {view === 'connect-app' && (
+          <ConnectAppForm
+            application={application}
+            onConnected={(connectedApplication) => {
+              setApplication(connectedApplication)
+              setFurthestCount((c) => Math.max(c, 1))
+              setJustConnected(connectedApplication)
+            }}
+            onCancel={() => setView('home')}
+            furthestCount={furthestCount}
+            onStepClick={onStepClick}
+            onPrevious={onPrevious}
+            onNext={onNext}
+          />
+        )}
+        {view === 'discover' && application && (
+          <DiscoverJourneys
+            applicationId={application.id}
+            applicationName={application.name}
+            discoveryStatus={application.discovery_status}
+            discoveryStage={application.discovery_stage ?? null}
+            discoveryFailureReason={application.discovery_failure_reason ?? null}
+            onContinueToScenarios={() => {
+              setFurthestCount((c) => Math.max(c, 2))
+              setView('review-scenarios')
+            }}
+            furthestCount={furthestCount}
+            onStepClick={onStepClick}
+            onPrevious={onPrevious}
+            onNext={onNext}
+          />
+        )}
+        {view === 'review-scenarios' && application && (
+          <ReviewScenarios
+            applicationId={application.id}
+            onContinueToGenerate={async () => {
+              if (globalLoading) return
+              setGlobalLoading('Generating test suite')
+              try {
+                await api.generateSuite(application.id)
+                setFurthestCount(4)
+                setView('test-suite-results')
+              } catch {
+                setErrorToast('Failed to start test suite generation. Please try again.')
+              } finally {
+                setGlobalLoading(null)
+              }
+            }}
+            furthestCount={furthestCount}
+            onStepClick={onStepClick}
+            onPrevious={onPrevious}
+            onNext={onNext}
+          />
+        )}
+        {view === 'test-suite-results' && application && (
+          <TestSuiteResults
+            applicationId={application.id}
+            onRunTests={() => {
+              setWorkspaceEntry({ initialTab: 'runs', autoTriggerRun: true })
+              setView('workspace')
+            }}
+            furthestCount={furthestCount}
+            onStepClick={onStepClick}
+            onPrevious={onPrevious}
+          />
+        )}
+        {view === 'workspace' && application && (
+          <Workspace
+            applicationId={application.id}
+            initialTab={workspaceEntry.initialTab}
+            autoTriggerRun={workspaceEntry.autoTriggerRun}
+          />
+        )}
+        {view === 'settings' && user && <Settings user={user} onCancel={() => setView(previousView)} />}
+      </main>
+
+      <Footer />
 
       {globalLoading && (
         <div

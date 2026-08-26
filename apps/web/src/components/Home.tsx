@@ -927,7 +927,7 @@ export function Home({
       style={{
         width: '100%',
         boxSizing: 'border-box',
-        minHeight: 'calc(100vh - 64px)',
+        flex: 1,
         display: 'flex',
         flexDirection: 'column',
         background:
@@ -937,7 +937,10 @@ export function Home({
       <div
         style={{
           flex: 1,
+          width: '100%',
           minWidth: 0,
+          maxWidth: 'var(--content-max-wide)',
+          margin: '0 auto',
           padding: '36px 44px',
           boxSizing: 'border-box',
           display: 'flex',

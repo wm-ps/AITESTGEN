@@ -5,7 +5,6 @@ import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { ServiceErrorNote } from './ServiceError'
 import { ImportProgress } from './ImportProgress'
 import { Stepper, type StepKey } from './Stepper'
-import { StatusPill } from './StatusPill'
 import { Pagination } from './Pagination'
 import { EmptyState, JourneysIllustration } from './EmptyState'
 
@@ -223,12 +222,6 @@ export function DiscoverJourneys({
 
   useEffect(() => setStatusOverride(null), [liveStatus])
   const status = statusOverride ?? liveStatus
-  // `status` flips to "complete" as soon as the crawl finishes — well before
-  // InferenceActivity's LLM call has run and Journeys exist (`stage` reaches
-  // "analyzed" only once it has). Showing "Complete" here that early reads as
-  // done when Journeys are still being inferred, so the pill stays on
-  // "running" until analysis has actually finished too.
-  const pillStatus = status === 'complete' && liveStage !== 'analyzed' ? 'running' : status
 
   const sessionExpired = status === 'failed' && liveFailureReason === 'session_expired'
   const discoveryWorkerDown =
@@ -317,6 +310,11 @@ export function DiscoverJourneys({
       setSteps([])
       return
     }
+    // Deliberately NOT clearing `steps` before this fetch resolves — doing
+    // so flashed the "no screenshot" placeholder for every journey switch,
+    // even ones with a screenshot, right before the real one popped in.
+    // Keeping the previous journey's steps on screen until the new ones
+    // arrive means the panel only ever changes once, not blank-then-real.
     let cancelled = false
     api.listJourneySteps(selectedId).then((rows) => {
       if (!cancelled) setSteps(rows)
@@ -343,6 +341,13 @@ export function DiscoverJourneys({
 
   const selectedJourney = journeys.find((j) => j.id === selectedId) ?? null
   const stages = stageFlow(steps)
+  const screenshotUrl = steps.at(-1)?.screenshot_url ?? null
+  // Reset the fade-in whenever the image actually changes (new journey, or
+  // steps still loading) — without this, switching journeys kept the old
+  // screenshot's opacity:1 while the new <img> loaded, so the stale picture
+  // stayed visible then snapped to the new one instead of fading in.
+  const [imgLoaded, setImgLoaded] = useState(false)
+  useEffect(() => setImgLoaded(false), [screenshotUrl])
   const canContinue = journeys.length > 0 && !continuing
 
   const searchLower = search.trim().toLowerCase()
@@ -388,10 +393,7 @@ export function DiscoverJourneys({
           }}
         >
           <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-              <h2 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>Discover Journeys</h2>
-              <StatusPill status={pillStatus} />
-            </div>
+            <h2 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>Discover Journeys</h2>
             <div className="caption" style={{ fontSize: 13, marginTop: 3 }}>
               {journeys.length} Journey{journeys.length === 1 ? '' : 's'} Discovered
             </div>
@@ -516,7 +518,7 @@ export function DiscoverJourneys({
                     className={`list-row card-clickable${selectedId === journey.id ? ' list-row-selected' : ''}`}
                     onClick={() => setSelectedId(journey.id)}
                     style={{
-                      padding: 'var(--space-3) var(--space-4)',
+                      padding: 'var(--space-4) var(--space-4)',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
@@ -646,7 +648,7 @@ export function DiscoverJourneys({
                     >
                       Reference screenshot
                     </div>
-                    {steps.at(-1)?.screenshot_url ? (
+                    {screenshotUrl ? (
                       <div
                         style={{
                           padding: 10,
@@ -657,9 +659,12 @@ export function DiscoverJourneys({
                         }}
                       >
                         <img
-                          src={steps.at(-1)?.screenshot_url ?? undefined}
+                          key={screenshotUrl}
+                          src={screenshotUrl}
                           alt="Journey's final step screenshot"
-                          onClick={() => setLightboxUrl(steps.at(-1)?.screenshot_url ?? null)}
+                          decoding="async"
+                          onClick={() => setLightboxUrl(screenshotUrl)}
+                          onLoad={() => setImgLoaded(true)}
                           style={{
                             display: 'block',
                             width: '100%',
@@ -667,6 +672,8 @@ export function DiscoverJourneys({
                             objectFit: 'contain',
                             cursor: 'zoom-in',
                             borderRadius: 'var(--radius-xs)',
+                            opacity: imgLoaded ? 1 : 0,
+                            transition: 'opacity 0.2s ease',
                           }}
                         />
                       </div>

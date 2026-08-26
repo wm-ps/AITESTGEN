@@ -549,13 +549,9 @@ export function TestSuiteResults({
                   <CheckIcon />
                 </div>
               </div>
-              <h1 style={{ fontSize: 19, fontWeight: 700, color: '#FFFFFF', margin: '0 0 5px' }}>
+              <h1 style={{ fontSize: 19, fontWeight: 700, color: '#FFFFFF', margin: '0 0 14px' }}>
                 Test Suites Generated
               </h1>
-              <p style={{ margin: '0 0 14px', fontSize: 12.5, color: 'rgba(255,255,255,0.85)' }}>
-                Generated {testCaseCount} test cases across {suites.length} journeys · Est. runtime{' '}
-                {estRuntimeMin} min
-              </p>
               <div style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>
                 <button
                   type="button"

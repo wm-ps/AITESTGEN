@@ -1012,6 +1012,88 @@ def _journey_step_route_and_method(
     return pages[component.page_id].url, "GET"
 
 
+# Journeys are created in navigation-cluster/batch order (InferenceActivity),
+# not app-flow order, so display order sorts by when each journey's entry
+# step's target was first discovered by the crawl instead — that puts login
+# (visited first) ahead of the modules behind it. Shared by list_journeys and
+# list_scenarios so both screens agree on the same order.
+def _order_journeys_by_app_flow(session: Session, journeys: list[Journey]) -> list[Journey]:
+    if not journeys:
+        return journeys
+    entry_steps = {
+        s.journey_id: s
+        for s in session.exec(
+            select(JourneyStep).where(
+                JourneyStep.journey_id.in_([j.id for j in journeys]),  # type: ignore[attr-defined]
+                JourneyStep.step_order == 1,
+            )
+        ).all()
+    }
+    component_ids = {s.component_id for s in entry_steps.values() if s.component_id}
+    components = {
+        c.id: c
+        for c in (
+            session.exec(
+                select(Component).where(Component.id.in_(component_ids))  # type: ignore[attr-defined]
+            ).all()
+            if component_ids
+            else []
+        )
+    }
+    page_ids = {s.page_id for s in entry_steps.values() if s.page_id} | {
+        c.page_id for c in components.values()
+    }
+    form_ids = {s.form_id for s in entry_steps.values() if s.form_id}
+    api_endpoint_ids = {s.api_endpoint_id for s in entry_steps.values() if s.api_endpoint_id}
+    pages = {
+        p.id: p
+        for p in (
+            session.exec(select(Page).where(Page.id.in_(page_ids))).all()  # type: ignore[attr-defined]
+            if page_ids
+            else []
+        )
+    }
+    forms = {
+        f.id: f
+        for f in (
+            session.exec(select(Form).where(Form.id.in_(form_ids))).all()  # type: ignore[attr-defined]
+            if form_ids
+            else []
+        )
+    }
+    api_endpoints = {
+        e.id: e
+        for e in (
+            session.exec(
+                select(ApiEndpoint).where(
+                    ApiEndpoint.id.in_(api_endpoint_ids)  # type: ignore[attr-defined]
+                )
+            ).all()
+            if api_endpoint_ids
+            else []
+        )
+    }
+
+    def _entry_discovered_at(journey: Journey) -> datetime:
+        step = entry_steps.get(journey.id)
+        if step is None:
+            return journey.created_at
+        target = (
+            pages.get(step.page_id)
+            if step.page_id
+            else forms.get(step.form_id)
+            if step.form_id
+            else api_endpoints.get(step.api_endpoint_id)
+            if step.api_endpoint_id
+            else pages.get(components[step.component_id].page_id)
+            if step.component_id and step.component_id in components
+            else None
+        )
+        return target.created_at if target is not None else journey.created_at
+
+    return sorted(journeys, key=_entry_discovered_at)
+
+
 @app.get("/applications/{external_id}/journeys", response_model=list[JourneyRead])
 def list_journeys(
     external_id: uuid.UUID,
@@ -1034,6 +1116,9 @@ def list_journeys(
                 .group_by(JourneyStep.journey_id)  # type: ignore[arg-type]
             ).all()
         )
+
+    journeys = _order_journeys_by_app_flow(session, journeys)
+
     return [
         JourneyRead(
             id=j.external_id,
@@ -1496,6 +1581,13 @@ def list_scenarios(
             Scenario.current.is_(True),  # type: ignore[attr-defined]
         )
     ).all()
+
+    # Same app-flow order as list_journeys, so scenarios group under login's
+    # journey first, then the next module's, etc. — matching how the user
+    # sees journeys ordered on the previous screen.
+    journey_order = {j.id: i for i, j in enumerate(_order_journeys_by_app_flow(session, journeys))}
+    scenarios = sorted(scenarios, key=lambda s: journey_order.get(s.journey_id, len(journey_order)))
+
     return [
         _to_scenario_read(
             s, journeys_by_id[s.journey_id].external_id, journeys_by_id[s.journey_id].name

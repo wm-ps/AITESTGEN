@@ -17,6 +17,8 @@ body {
 
 #root {
   min-height: 100svh;
+  display: flex;
+  flex-direction: column;
 }
 
 button,
@@ -207,7 +209,7 @@ textarea:focus-visible,
 
 .data-table th,
 .data-table td {
-  padding: 10px 12px;
+  padding: 14px 12px;
   text-align: left;
 }
 

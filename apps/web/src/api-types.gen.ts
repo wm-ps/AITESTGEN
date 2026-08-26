@@ -607,9 +607,17 @@ export interface paths {
         };
         /**
          * List Test Runs
-         * @description Paginated (Application Workspace feature's Runs tab) — every run for
-         *     an Application is kept forever (immutable history), so an unpaginated
-         *     list would grow without bound.
+         * @description Keyset-paginated on the `id` PK (Application Workspace feature's Runs
+         *     tab) — every run for an Application is kept forever (immutable history)
+         *     and this list is polled every 1.5s while new runs land, so an
+         *     OFFSET-based page could duplicate/skip rows as they shift underneath a
+         *     poll; a keyset cursor can't, since it's anchored to a specific row
+         *     rather than a position. `id` (not `created_at`) is the keyset column
+         *     because it's a uuid7 — already time-sortable by construction (see
+         *     `TestRun.id`'s `uuidv7()` default) — and unique, so no tiebreaker is
+         *     needed for rows created in the same instant. The frontend keeps its own
+         *     stack of previously-seen cursors for "Previous" rather than this
+         *     endpoint supporting a reverse direction.
          */
         get: operations["list_test_runs_applications__external_id__test_runs_get"];
         put?: never;
@@ -1032,6 +1040,7 @@ export interface components {
             last_test_run_created_at: string | null;
             /** Last Test Run Pass Rate */
             last_test_run_pass_rate: number | null;
+            last_test_run_health: components["schemas"]["HealthRead"];
             /** Test Run Count */
             test_run_count: number;
             /** Recent Pass Rates */
@@ -1122,6 +1131,8 @@ export interface components {
             blocked_count: number;
             /** Duration Ms */
             duration_ms: number | null;
+            /** Trigger */
+            trigger: string;
         };
         /** LoginRequest */
         LoginRequest: {
@@ -1148,6 +1159,8 @@ export interface components {
             latest_run: components["schemas"]["LatestRunSummaryRead"] | null;
             /** Last Discovery Started At */
             last_discovery_started_at: string | null;
+            /** Journey Count */
+            journey_count: number;
         };
         /** ResetPasswordRequest */
         ResetPasswordRequest: {
@@ -1231,7 +1244,7 @@ export interface components {
             /** Max Pages */
             max_pages: number;
             /** Max Discovery Duration Minutes */
-            max_discovery_duration_minutes: number;
+            max_discovery_duration_minutes: number | null;
             /** Navigation Timeout Seconds */
             navigation_timeout_seconds: number;
             /**
@@ -1257,8 +1270,6 @@ export interface components {
         SettingsUpdate: {
             /** Max Pages */
             max_pages?: number | null;
-            /** Max Discovery Duration Minutes */
-            max_discovery_duration_minutes?: number | null;
             /** Navigation Timeout Seconds */
             navigation_timeout_seconds?: number | null;
             /** Interaction Level */
@@ -1267,6 +1278,11 @@ export interface components {
             delete_project_after?: ("1_day" | "1_week" | "1_month") | null;
             /** Max Heal Attempts */
             max_heal_attempts?: number | null;
+            /**
+             * Max Discovery Duration Minutes
+             * @default __unset__
+             */
+            max_discovery_duration_minutes: number | "__unset__" | null;
             /**
              * Max Journeys
              * @default __unset__
@@ -1334,6 +1350,8 @@ export interface components {
             name: string;
             /** Type */
             type: string;
+            /** Description */
+            description: string;
             /** Code */
             code: string;
         };
@@ -1428,16 +1446,12 @@ export interface components {
             /** Max Heal Attempts */
             max_heal_attempts: number;
         };
-        /** TestRunPageRead */
-        TestRunPageRead: {
+        /** TestRunCursorPageRead */
+        TestRunCursorPageRead: {
             /** Items */
             items: components["schemas"]["TestRunRead"][];
-            /** Page */
-            page: number;
-            /** Page Size */
-            page_size: number;
-            /** Total */
-            total: number;
+            /** Next Cursor */
+            next_cursor: string | null;
         };
         /** TestRunRead */
         TestRunRead: {
@@ -1452,6 +1466,7 @@ export interface components {
             trigger: string;
             /** Pass Rate */
             pass_rate: number | null;
+            health: components["schemas"]["HealthRead"];
             /** Total Count */
             total_count: number;
             /** Passed Count */
@@ -2921,8 +2936,8 @@ export interface operations {
     list_test_runs_applications__external_id__test_runs_get: {
         parameters: {
             query?: {
-                page?: number;
-                page_size?: number;
+                cursor?: string | null;
+                limit?: number;
             };
             header?: never;
             path: {
@@ -2940,7 +2955,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TestRunPageRead"];
+                    "application/json": components["schemas"]["TestRunCursorPageRead"];
                 };
             };
             /** @description Validation Error */

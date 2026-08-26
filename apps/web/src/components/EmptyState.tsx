@@ -50,6 +50,22 @@ export function JourneysIllustration() {
   )
 }
 
+export function AccessDeniedIllustration({ size = 64 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" fill="none" aria-hidden="true">
+      <path
+        d="M32 8 58 52H6Z"
+        fill="var(--danger-wash)"
+        stroke="var(--danger)"
+        strokeWidth={1.8}
+        strokeLinejoin="round"
+      />
+      <line x1="32" y1="24" x2="32" y2="37" stroke="var(--danger-strong)" strokeWidth={2.6} strokeLinecap="round" />
+      <circle cx="32" cy="44.5" r="1.8" fill="var(--danger-strong)" />
+    </svg>
+  )
+}
+
 export function ScenariosIllustration() {
   return (
     <svg width={64} height={64} viewBox="0 0 64 64" fill="none" aria-hidden="true">

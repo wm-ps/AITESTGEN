@@ -5,9 +5,9 @@ import { StatusPill } from '../StatusPill'
 import { ArtifactsModal } from './RunsTab'
 import { Pagination } from '../Pagination'
 
-const ASSETS_PER_PAGE = 5
+const ASSETS_PER_PAGE = 10
 
-function ChevronIcon({ open }: { open: boolean }) {
+export function ChevronIcon({ open }: { open: boolean }) {
   return (
     <svg
       width={14}
@@ -194,7 +194,7 @@ function AssetRow({ asset }: { asset: TestAssetStatusRead }) {
           alignItems: 'center',
           gap: 20,
           width: '100%',
-          padding: '12px 16px',
+          padding: '16px 16px',
           background: 'none',
           border: 'none',
           textAlign: 'left',

@@ -652,7 +652,7 @@ export function ReviewScenarios({
                       className={`list-row card-clickable${selectedId === scenario.id ? ' list-row-selected' : ''}`}
                       onClick={() => setSelectedId(scenario.id)}
                       style={{
-                        padding: 'var(--space-3) var(--space-4)',
+                        padding: 'var(--space-4) var(--space-4)',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'space-between',
@@ -675,6 +675,18 @@ export function ReviewScenarios({
                             }}
                           >
                             {scenario.name}
+                          </div>
+                          <div
+                            className="caption"
+                            style={{
+                              fontSize: 11.5,
+                              marginTop: 2,
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {scenario.journey_name}
                           </div>
                           {/* <span className="badge" style={{ background: badge.background, color: badge.color }}>
                             {badge.label}
@@ -716,7 +728,7 @@ export function ReviewScenarios({
               }}
             >
               {selectedScenario ? (
-                <div style={{ maxWidth: 680 }}>
+                <div style={{ maxWidth: 950 }}>
                   <div
                     style={{
                       display: 'flex',

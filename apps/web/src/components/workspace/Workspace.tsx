@@ -163,7 +163,7 @@ export function Workspace({
   }, [])
 
   return (
-    <main style={{ display: 'flex', height: 'calc(100vh - 64px)' }}>
+    <main style={{ display: 'flex', flex: 1, minHeight: 0 }}>
       {/* Full-height rail flush against the viewport edge, not a floating
           icon row inline with the content column — icon + label stacked
           per item reads as the dashboard's fixed navigation spine. */}
@@ -229,59 +229,61 @@ export function Workspace({
             'radial-gradient(900px 500px at 85% -10%, var(--accent-wash-soft) 0%, transparent 55%), linear-gradient(180deg, #FBFCFE 0%, #F6F9FB 100%)',
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            {activeTab === 'runs' && runsBack && (
+        <div style={{ maxWidth: 'var(--content-max-wide)', margin: '0 auto' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {activeTab === 'runs' && runsBack && (
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={runsBack}
+                  aria-label="Back to Test Runs"
+                  style={{ display: 'inline-flex', alignItems: 'center', padding: 8 }}
+                >
+                  <BackIcon />
+                </button>
+              )}
+              <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
+                {TABS.find((tab) => tab.key === activeTab)?.heading}
+              </h1>
+            </div>
+            {activeTab === 'runs' && (
               <button
                 type="button"
-                className="button-secondary"
-                onClick={runsBack}
-                aria-label="Back to Test Runs"
-                style={{ display: 'inline-flex', alignItems: 'center', padding: 8 }}
+                className="button-primary"
+                disabled={running}
+                onClick={handleRunSuite}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
               >
-                <BackIcon />
+                <PlayIcon />
+                {running ? 'Running…' : 'Run Suite'}
               </button>
             )}
-            <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
-              {TABS.find((tab) => tab.key === activeTab)?.heading}
-            </h1>
           </div>
+          {triggerError && (
+            <p role="alert" style={{ color: 'var(--danger-strong)', fontSize: 13, marginBottom: 16 }}>
+              {triggerError}
+            </p>
+          )}
+          {triggerErrorUnavailable && (
+            <div style={{ marginBottom: 16 }}>
+              <ServiceErrorNote code="EXECUTION_UNAVAILABLE" />
+            </div>
+          )}
+
+          {activeTab === 'overview' && (
+            <OverviewTab applicationId={applicationId} onRunSuite={handleRunSuite} running={running} />
+          )}
+          {activeTab === 'suite' && <TestSuiteTab applicationId={applicationId} />}
           {activeTab === 'runs' && (
-            <button
-              type="button"
-              className="button-primary"
-              disabled={running}
-              onClick={handleRunSuite}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
-            >
-              <PlayIcon />
-              {running ? 'Running…' : 'Run Suite'}
-            </button>
+            <RunsTab
+              applicationId={applicationId}
+              autoSelectLatest={autoSelectLatest}
+              onAutoSelectConsumed={() => setAutoSelectLatest(false)}
+              onDetailChange={(onBack) => setRunsBack(() => onBack)}
+            />
           )}
         </div>
-        {triggerError && (
-          <p role="alert" style={{ color: 'var(--danger-strong)', fontSize: 13, marginBottom: 16 }}>
-            {triggerError}
-          </p>
-        )}
-        {triggerErrorUnavailable && (
-          <div style={{ marginBottom: 16 }}>
-            <ServiceErrorNote code="EXECUTION_UNAVAILABLE" />
-          </div>
-        )}
-
-        {activeTab === 'overview' && (
-          <OverviewTab applicationId={applicationId} onRunSuite={handleRunSuite} running={running} />
-        )}
-        {activeTab === 'suite' && <TestSuiteTab applicationId={applicationId} />}
-        {activeTab === 'runs' && (
-          <RunsTab
-            applicationId={applicationId}
-            autoSelectLatest={autoSelectLatest}
-            onAutoSelectConsumed={() => setAutoSelectLatest(false)}
-            onDetailChange={(onBack) => setRunsBack(() => onBack)}
-          />
-        )}
       </div>
 
       {runToast && <Toast message={runToast} kind="info" onDismiss={() => setRunToast(null)} />}

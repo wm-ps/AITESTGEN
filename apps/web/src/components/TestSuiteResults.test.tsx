@@ -101,7 +101,7 @@ describe('TestSuiteResults', () => {
     render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunTests={() => {}} />)
 
     await waitFor(() => {
-      expect(screen.getByText(/Generated 1 test cases across 1 journeys/)).toBeTruthy()
+      expect(screen.getByText('Test cases')).toBeTruthy()
     })
     expect(screen.getByText('Incomplete')).toBeTruthy()
   })
@@ -151,7 +151,7 @@ describe('TestSuiteResults', () => {
     render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunTests={() => {}} />)
 
     await waitFor(() => {
-      expect(screen.getByText(/Generated 2 test cases across 1 journeys/)).toBeTruthy()
+      expect(screen.getByText('Journeys covered')).toBeTruthy()
     })
     expect(screen.getByText('Generated Tests')).toBeTruthy()
     expect(screen.getByText('Checkout')).toBeTruthy()
@@ -169,7 +169,7 @@ describe('TestSuiteResults', () => {
     stubFetch()
     render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunTests={() => {}} />)
 
-    await waitFor(() => screen.getByText(/Generated 2 test cases across 1 journeys/))
+    await waitFor(() => screen.getByText('Journeys covered'))
 
     fireEvent.click(screen.getByRole('button', { name: /Checkout/ }))
     expect(screen.getByText('Guest checkout')).toBeTruthy()
