@@ -31,8 +31,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ai_provider.hosted import HostedAIProvider
 from domain import (
     Application,
+    DiscoverySettings,
     Journey,
     Scenario,
     TestAsset,
@@ -41,8 +43,14 @@ from domain import (
     TestRun,
     TestSuite,
 )
+from generation_worker.activities import (
+    resolve_known_application_model_sync,
+    supersede_test_asset,
+)
+from generation_worker.typecheck import typecheck_playwright_code
 from object_store import ObjectStore
 from secrets_client.vault_client import SecretRef, VaultSecretsClient
+from sqlalchemy import or_, update
 from sqlmodel import Session, select
 from temporalio import activity
 from test_suite_assembler import (
@@ -51,9 +59,12 @@ from test_suite_assembler import (
     find_login_page_evidence,
 )
 from workflows import (
+    HEAL_CLAIM_STALE_AFTER,
+    HEALABLE_STATUSES,
     ExecutableTest,
     ExecuteTestActivityInput,
     FinalizeTestRunActivityInput,
+    HealTestActivityInput,
     PrepareTestRunActivityInput,
     PrepareTestRunActivityResult,
 )
@@ -392,7 +403,7 @@ async def execute_test_activity(input: ExecuteTestActivityInput) -> str:
         PLAYWRIGHT_RUN_TIMEOUT_SECONDS,
         input.test_result_id,
     )
-    await asyncio.to_thread(_persist_test_result_sync, input, context, outcome)
+    await asyncio.to_thread(_persist_test_result_sync, input.test_run_id, context, outcome)
     logger.info(
         "ExecuteTestActivity: test_result_id=%s finished status=%s",
         input.test_result_id,
@@ -610,9 +621,13 @@ def _tally_counts(results: list[TestResult]) -> dict[str, int]:
     return counts
 
 
-def _persist_test_result_sync(
-    input: ExecuteTestActivityInput, context: _ExecutionContext, outcome: dict
-) -> None:
+def _persist_test_result_sync(test_run_id: str, context: _ExecutionContext, outcome: dict) -> None:
+    """`test_run_id` is a plain str (the TestRun's external id, used only to
+    scope ObjectStore artifact keys) rather than a whole
+    `ExecuteTestActivityInput`, so `HealTestActivity` — which has its own
+    `HealTestActivityInput`, not an `ExecuteTestActivityInput` — can reuse
+    this same persist-and-retally logic for a heal attempt's rerun outcome
+    without a fake/duck-typed input object."""
     with Session(engine) as session:
         test_result = session.exec(
             select(TestResult).where(TestResult.id == context.test_result_pk)
@@ -635,7 +650,7 @@ def _persist_test_result_sync(
             artifact_type = "trace" if path.suffix == ".zip" else "screenshot"
             content_type = "application/zip" if artifact_type == "trace" else "image/png"
             key = ObjectStore().put_test_artifact(
-                data, uuid.UUID(input.test_run_id), content_type=content_type
+                data, uuid.UUID(test_run_id), content_type=content_type
             )
             session.add(
                 TestResultArtifact(
@@ -665,6 +680,401 @@ def _persist_test_result_sync(
         session.add(test_run)
 
         session.commit()
+
+
+# --- Self-healing (HealTestActivity) --------------------------------------
+
+# A same-code, no-AI-call rerun when the *current* failure is infra, not a
+# code defect — bounds a persistently-down target application to one extra
+# rerun per check rather than spinning this activity forever. Never
+# increments TestResult.heal_attempt_count.
+MAX_INFRA_RETRIES_PER_CALL = 1
+
+_INFRA_ERROR_SIGNATURES = (
+    "playwright produced no parseable json report",  # _parse_playwright_report — process/report itself broke
+    "its setup dependency likely failed",  # auth.setup.ts (login) failed, not this test's code
+    "playwright report contained no suite matching",  # assembly/config issue
+    "playwright test exceeded the execution timeout",  # _run_playwright_test — the WHOLE process was killed after
+    # PLAYWRIGHT_RUN_TIMEOUT_SECONDS; distinct from Playwright's own
+    # per-test `timedOut` result (a real, healable locator/assertion
+    # timeout with its own, different error_message) — only this exact
+    # fixed string means the whole browser/subprocess hung, an environment
+    # problem, not this test's own logic.
+)
+
+
+def _is_infra_failure(status: str, error_message: str | None) -> bool:
+    if status not in ("errored", "timed_out"):
+        return False
+    if not error_message:
+        return True
+    lowered = error_message.lower()
+    return any(sig in lowered for sig in _INFRA_ERROR_SIGNATURES)
+
+
+async def _run_playwright_with_infra_retry(
+    project_dir: Path, spec_path: str, env: dict, timeout_seconds: float, test_result_id: str
+) -> dict:
+    """Runs the test; if the outcome is an infra failure (not a code
+    defect), reruns the *same* code up to MAX_INFRA_RETRIES_PER_CALL more
+    times with no AI call involved — this is what bounds a persistently-down
+    target application to one extra rerun per check instead of spinning
+    HealTestActivity forever."""
+    outcome = await _run_playwright_test(project_dir, spec_path, env, timeout_seconds, test_result_id)
+    retries = 0
+    while (
+        _is_infra_failure(outcome["status"], outcome.get("error_message"))
+        and retries < MAX_INFRA_RETRIES_PER_CALL
+    ):
+        retries += 1
+        outcome = await _run_playwright_test(project_dir, spec_path, env, timeout_seconds, test_result_id)
+    return outcome
+
+
+def _normalize_failure_signature(error_message: str | None) -> str:
+    """Coarse fingerprint for the no-progress guard. Strips digits (a
+    duration/timestamp/line-number that legitimately varies run to run
+    without the underlying failure actually changing) so two
+    functionally-identical errors don't compare unequal just because of
+    incidental noise."""
+    if not error_message:
+        return ""
+    return re.sub(r"\d+", "", error_message.lower()).strip()[:500]
+
+
+def _claim_heal_sync(test_result_external_id: str) -> bool:
+    """Concurrency guard: atomically claims this TestResult for healing by
+    setting `heal_started_at` only if no other claim is currently active (or
+    the existing one is stale) — a single conditional UPDATE, not a
+    check-then-set, so an automatic heal (from `run_one`, right after
+    `ExecuteTestActivity`) and a manual retry click can never both proceed
+    against the same TestResult at once. Returns whether *this* call won the
+    claim."""
+    now = datetime.now(UTC)
+    stale_before = now - HEAL_CLAIM_STALE_AFTER
+    with Session(engine) as session:
+        result = session.execute(
+            update(TestResult)
+            .where(
+                TestResult.external_id == uuid.UUID(test_result_external_id),  # type: ignore[arg-type]
+                or_(
+                    TestResult.heal_started_at.is_(None),  # type: ignore[attr-defined]
+                    TestResult.heal_started_at < stale_before,  # type: ignore[operator]
+                ),
+            )
+            .values(heal_started_at=now)
+        )
+        session.commit()
+        return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+
+
+def _release_heal_claim_sync(test_result_external_id: str) -> None:
+    with Session(engine) as session:
+        session.execute(
+            update(TestResult)
+            .where(TestResult.external_id == uuid.UUID(test_result_external_id))  # type: ignore[arg-type]
+            .values(heal_started_at=None)
+        )
+        session.commit()
+
+
+@dataclass
+class _HealContext:
+    test_result_pk: uuid.UUID
+    application: Application
+    scenario: Scenario
+    known_pages: list[dict[str, str]]
+    known_locators: list[dict[str, str]]
+    spec_path: str
+    max_heal_attempts: int
+
+
+def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None:
+    with Session(engine) as session:
+        test_result = session.exec(
+            select(TestResult).where(TestResult.external_id == uuid.UUID(input.test_result_id))
+        ).one()
+        discovery_settings = session.exec(select(DiscoverySettings)).one()
+        if (
+            test_result.status not in HEALABLE_STATUSES
+            or test_result.heal_attempt_count >= discovery_settings.max_heal_attempts
+        ):
+            # Not eligible — already passed/blocked, or the shared budget is
+            # already spent. Safe no-op: this is what lets HealTestActivity
+            # be called unconditionally after every ExecuteTestActivity with
+            # no branching in workflow code.
+            return None
+
+        application = session.exec(
+            select(Application).where(Application.external_id == uuid.UUID(input.application_id))
+        ).one()
+        test_asset = session.exec(
+            select(TestAsset).where(
+                TestAsset.scenario_id == test_result.scenario_id,
+                TestAsset.current.is_(True),  # type: ignore[attr-defined]
+            )
+        ).one()
+        test_suite = session.exec(
+            select(TestSuite).where(TestSuite.id == test_asset.test_suite_id)
+        ).one()
+        journey = session.exec(select(Journey).where(Journey.id == test_suite.journey_id)).one()
+        scenario = session.exec(select(Scenario).where(Scenario.id == test_asset.scenario_id)).one()
+        known_pages, known_locators, _ = resolve_known_application_model_sync(session, journey.id)
+        spec_path_by_asset_id = compute_spec_paths(
+            test_suites=[test_suite],
+            journeys_by_id={journey.id: journey},
+            assets_by_suite={test_suite.id: [test_asset]},
+            scenario_name_by_asset_id={test_asset.id: scenario.name},
+        )
+        return _HealContext(
+            test_result_pk=test_result.id,
+            application=application,
+            scenario=scenario,
+            known_pages=known_pages,
+            known_locators=known_locators,
+            spec_path=spec_path_by_asset_id[test_asset.id],
+            max_heal_attempts=discovery_settings.max_heal_attempts,
+        )
+
+
+@dataclass
+class _HealLoopState:
+    status: str
+    error_message: str | None
+    stack_trace: str | None
+    console_output: str | None
+    heal_attempt_count: int
+    test_asset: TestAsset
+
+
+def _load_heal_loop_state_sync(test_result_pk: uuid.UUID, scenario_id: uuid.UUID) -> _HealLoopState:
+    """Reloaded fresh at the top of every loop iteration (rather than
+    threading a stale in-memory TestAsset/TestResult across iterations) —
+    each attempt's `supersede_test_asset`/typecheck-failure write commits in
+    its own short transaction (see `_record_heal_supersede_sync`/
+    `_record_typecheck_failure_sync` below), so re-reading here is always
+    the truth after the previous iteration's write, and a Temporal-level
+    retry of this whole activity after a worker crash mid-loop resumes from
+    exactly what was actually committed rather than duplicating or losing
+    an attempt."""
+    with Session(engine) as session:
+        test_result = session.exec(select(TestResult).where(TestResult.id == test_result_pk)).one()
+        test_asset = session.exec(
+            select(TestAsset).where(
+                TestAsset.scenario_id == scenario_id,
+                TestAsset.current.is_(True),  # type: ignore[attr-defined]
+            )
+        ).one()
+        return _HealLoopState(
+            status=test_result.status,
+            error_message=test_result.error_message,
+            stack_trace=test_result.stack_trace,
+            console_output=test_result.console_output,
+            heal_attempt_count=test_result.heal_attempt_count,
+            test_asset=test_asset,
+        )
+
+
+def _fetch_latest_screenshot_sync(test_result_pk: uuid.UUID) -> bytes | None:
+    with Session(engine) as session:
+        artifact = session.exec(
+            select(TestResultArtifact)
+            .where(
+                TestResultArtifact.test_result_id == test_result_pk,
+                TestResultArtifact.artifact_type == "screenshot",
+            )
+            .order_by(TestResultArtifact.created_at.desc())  # type: ignore[arg-type]
+        ).first()
+        if artifact is None:
+            return None
+        key = artifact.object_store_key
+    try:
+        return ObjectStore().get(key)
+    except Exception:  # noqa: BLE001 — best-effort context, never blocks healing
+        logger.warning(
+            "HealTestActivity: test_result_id=%s failed to fetch screenshot for AI context, "
+            "continuing without it",
+            test_result_pk,
+        )
+        return None
+
+
+def _record_typecheck_failure_sync(test_result_pk: uuid.UUID, tsc_errors: list[str]) -> None:
+    with Session(engine) as session:
+        test_result = session.exec(select(TestResult).where(TestResult.id == test_result_pk)).one()
+        test_result.heal_attempt_count += 1
+        test_result.error_message = "generated fix failed typecheck: " + "; ".join(tsc_errors[:5])
+        session.add(test_result)
+        session.commit()
+
+
+def _record_heal_supersede_sync(test_result_pk: uuid.UUID, prior_test_asset_id: uuid.UUID, code: str) -> None:
+    """Typecheck passed — promote immediately (a healed candidate becomes
+    `current` the moment it typechecks clean, regardless of what the
+    subsequent real run does) and record it as this attempt's
+    `healed_test_asset_id`. Spec-linter warnings are deliberately not
+    re-run against healed code — this feature only needs the fix to
+    typecheck and actually pass; re-linting is the original generation
+    path's own concern, not asked for here."""
+    with Session(engine) as session:
+        prior = session.exec(select(TestAsset).where(TestAsset.id == prior_test_asset_id)).one()
+        new_asset = supersede_test_asset(
+            session,
+            prior,
+            code=code,
+            requires_auth=prior.requires_auth,
+            warnings=[],
+            status="ready",
+            primary_page_id=prior.primary_page_id,
+        )
+        session.flush()
+        test_result = session.exec(select(TestResult).where(TestResult.id == test_result_pk)).one()
+        test_result.heal_attempt_count += 1
+        test_result.healed_test_asset_id = new_asset.id
+        session.add(test_result)
+        session.commit()
+
+
+@activity.defn(name="HealTestActivity")
+async def heal_test_activity(input: HealTestActivityInput) -> None:
+    """Owns the entire bounded, iterative self-heal loop for one
+    TestResult — called unconditionally after every ExecuteTestActivity in
+    the automatic path, and once more (same activity, same logic) from
+    HealTestExecutionWorkflow for the manual-retry path. Never raises for a
+    heal attempt's own AI/typecheck/execution outcome; a genuine infra
+    failure here (subprocess couldn't start, DB write failed) is what
+    Temporal's own retry_policy on this activity call handles.
+
+    The heal loop, one iteration:
+      real execution -> failure evidence -> AI diagnosis -> targeted edit ->
+      typecheck -> update current TestAsset -> real re-execution -> new
+      failure evidence -> (pass | no-progress stop | loop again), bounded by
+      the configurable DiscoverySettings.max_heal_attempts.
+    """
+    claimed = await asyncio.to_thread(_claim_heal_sync, input.test_result_id)
+    if not claimed:
+        logger.info(
+            "HealTestActivity: test_result_id=%s already being healed (automatic or manual), "
+            "skipping",
+            input.test_result_id,
+        )
+        return
+    try:
+        ctx = await asyncio.to_thread(_load_heal_context_sync, input)
+        if ctx is None:
+            logger.info(
+                "HealTestActivity: test_result_id=%s not eligible for healing, skipping",
+                input.test_result_id,
+            )
+            return
+
+        await _ensure_project_dir(uuid.UUID(input.test_run_id), uuid.UUID(input.application_id))
+        project_dir = project_dir_for(uuid.UUID(input.test_run_id))
+        env = await asyncio.to_thread(_build_subprocess_env, ctx.application)
+        exec_context = _ExecutionContext(
+            application=ctx.application, test_result_pk=ctx.test_result_pk, spec_path=ctx.spec_path
+        )
+
+        # Step 2 — infra check on the failure that triggered healing, before
+        # any AI call or attempt is spent. A same-code, no-AI-call rerun;
+        # still infra after that one bounded retry stops here entirely,
+        # leaving heal_attempt_count untouched for a later trigger once the
+        # environment issue clears.
+        initial_state = await asyncio.to_thread(
+            _load_heal_loop_state_sync, ctx.test_result_pk, ctx.scenario.id
+        )
+        if _is_infra_failure(initial_state.status, initial_state.error_message):
+            outcome = await _run_playwright_with_infra_retry(
+                project_dir, ctx.spec_path, env, PLAYWRIGHT_RUN_TIMEOUT_SECONDS, input.test_result_id
+            )
+            await asyncio.to_thread(_persist_test_result_sync, input.test_run_id, exec_context, outcome)
+            if _is_infra_failure(outcome["status"], outcome.get("error_message")):
+                logger.info(
+                    "HealTestActivity: test_result_id=%s still an infra failure after one "
+                    "bounded retry, stopping",
+                    input.test_result_id,
+                )
+                return
+
+        # Step 3 — the bounded, iterative heal loop.
+        while True:
+            state = await asyncio.to_thread(
+                _load_heal_loop_state_sync, ctx.test_result_pk, ctx.scenario.id
+            )
+            if state.status not in HEALABLE_STATUSES or state.heal_attempt_count >= ctx.max_heal_attempts:
+                break
+            if _is_infra_failure(state.status, state.error_message):
+                # Already resolved by the step-2 pre-check above; landing
+                # here again is unexpected but safe to stop on rather than
+                # spend an attempt against an environment problem.
+                break
+
+            pre_attempt_signature = _normalize_failure_signature(state.error_message)
+            screenshot_png = await asyncio.to_thread(_fetch_latest_screenshot_sync, ctx.test_result_pk)
+
+            try:
+                code_result = await HostedAIProvider().generate_playwright(
+                    ctx.scenario,
+                    ctx.known_pages,
+                    ctx.known_locators,
+                    requires_auth=state.test_asset.requires_auth,
+                    previous_code=state.test_asset.code,
+                    failure_error_message=state.error_message,
+                    failure_stack_trace=state.stack_trace,
+                    failure_console_output=state.console_output,
+                    target_url=ctx.application.url,
+                    failure_screenshot_png=screenshot_png,
+                )
+            except Exception:
+                logger.exception(
+                    "HealTestActivity: test_result_id=%s AI generation call failed, stopping "
+                    "heal loop",
+                    input.test_result_id,
+                )
+                break
+
+            tsc_errors = await typecheck_playwright_code(code_result.code)
+            if tsc_errors:
+                # An attempt is "an AI generation call was made" — already
+                # counted here regardless of what typecheck does with it.
+                await asyncio.to_thread(_record_typecheck_failure_sync, ctx.test_result_pk, tsc_errors)
+                continue
+
+            await asyncio.to_thread(
+                _record_heal_supersede_sync, ctx.test_result_pk, state.test_asset.id, code_result.code
+            )
+
+            spec_file = project_dir / ctx.spec_path
+            await asyncio.to_thread(spec_file.write_text, code_result.code, "utf-8")
+            outcome = await _run_playwright_with_infra_retry(
+                project_dir, ctx.spec_path, env, PLAYWRIGHT_RUN_TIMEOUT_SECONDS, input.test_result_id
+            )
+            await asyncio.to_thread(_persist_test_result_sync, input.test_run_id, exec_context, outcome)
+
+            if outcome["status"] == "passed":
+                logger.info("HealTestActivity: test_result_id=%s healed successfully", input.test_result_id)
+                break
+            if _is_infra_failure(outcome["status"], outcome.get("error_message")):
+                logger.info(
+                    "HealTestActivity: test_result_id=%s rerun still an infra failure after one "
+                    "bounded retry, stopping",
+                    input.test_result_id,
+                )
+                break
+
+            new_signature = _normalize_failure_signature(outcome.get("error_message"))
+            if new_signature == pre_attempt_signature:
+                logger.info(
+                    "HealTestActivity: test_result_id=%s no-progress guard triggered, stopping "
+                    "heal loop",
+                    input.test_result_id,
+                )
+                break
+            # Otherwise loop again — the top of the loop re-reads the
+            # now-current TestAsset and this attempt's fresh failure
+            # evidence as the next attempt's input.
+    finally:
+        await asyncio.to_thread(_release_heal_claim_sync, input.test_result_id)
 
 
 @activity.defn(name="FinalizeTestRunActivity")

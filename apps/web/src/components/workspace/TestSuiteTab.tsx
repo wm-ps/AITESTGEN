@@ -150,6 +150,13 @@ function assetToTestResult(asset: TestAssetStatusRead): TestResultRead | null {
     error_message: asset.error_message,
     stack_trace: null,
     blocked_reason: null,
+    // This is a synthesized stand-in (from TestAssetStatusRead, not a real
+    // TestResult row) used only for the artifacts modal here — self-heal
+    // has no meaning in the Test Suite tab, so max_heal_attempts: 0 keeps
+    // any heal UI a caller might add from ever appearing for it.
+    heal_attempt_count: 0,
+    healed_test_asset_id: null,
+    max_heal_attempts: 0,
   }
 }
 

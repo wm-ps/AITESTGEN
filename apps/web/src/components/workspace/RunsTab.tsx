@@ -175,7 +175,7 @@ const columnHeaderLabelStyle: React.CSSProperties = {
 // (present, just empty, on every row) fixes Duration/Status in place
 // regardless of whether Artifacts renders — and lines this list up with
 // the Test Suite tab's, since it's the same shape.
-const RESULT_GRID_TEMPLATE = '1fr 70px 130px 100px'
+const RESULT_GRID_TEMPLATE = '1fr 70px 130px 160px'
 // Runs table columns (RunListHeader/RunListRow) use percentages, not px —
 // `table-layout: fixed` + `width: 100%` on `.data-table` means these scale
 // with the table instead of leaving it stuck at a fixed pixel sum. Date &
@@ -278,9 +278,74 @@ function ResultListHeader({
   )
 }
 
-function TestResultRow({ result }: { result: TestResultRead }) {
+function TestResultRow({
+  applicationId,
+  runId,
+  result,
+  isCurrentlyRunning,
+}: {
+  applicationId: string
+  runId: string
+  result: TestResultRead
+  isCurrentlyRunning?: boolean
+}) {
   const [artifactsFor, setArtifactsFor] = useState<TestResultRead | null>(null)
-  const canShowArtifacts = NON_PASSED_STATUSES.has(result.status)
+  const [liveResult, setLiveResult] = useState(result)
+  const [healing, setHealing] = useState(false)
+  const [healError, setHealError] = useState<string | null>(null)
+
+  // A run-level poll (RunsTab) refreshing `result` should win — except
+  // while our own tighter poll below is actively tracking an in-flight
+  // heal, which is the more current source for this one row.
+  useEffect(() => {
+    if (!healing) setLiveResult(result)
+  }, [result, healing])
+
+  // A manual heal can target an already-`completed` TestRun, which the
+  // run-level poll (RunsTab) has already stopped refreshing — this row
+  // polls for itself instead, only while a heal it started is in flight.
+  useEffect(() => {
+    if (!healing) return
+    let cancelled = false
+    const interval = setInterval(async () => {
+      try {
+        const detail = await api.getTestRun(applicationId, runId)
+        if (cancelled) return
+        const updated = detail.results?.find((r) => r.id === result.id)
+        if (!updated) return
+        setLiveResult(updated)
+        if (updated.status === 'passed' || updated.heal_attempt_count >= updated.max_heal_attempts) {
+          setHealing(false)
+        }
+      } catch {
+        // best-effort poll — a transient failure just skips this tick
+      }
+    }, POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [healing, applicationId, runId, result.id])
+
+  const canShowArtifacts = NON_PASSED_STATUSES.has(liveResult.status)
+  const canRetryHeal =
+    NON_PASSED_STATUSES.has(liveResult.status) && liveResult.heal_attempt_count < liveResult.max_heal_attempts
+  const healExhausted =
+    liveResult.max_heal_attempts > 0 &&
+    NON_PASSED_STATUSES.has(liveResult.status) &&
+    liveResult.heal_attempt_count >= liveResult.max_heal_attempts
+  const wasAutoHealed = liveResult.healed_test_asset_id != null && liveResult.status === 'passed'
+
+  async function handleHeal() {
+    setHealError(null)
+    setHealing(true)
+    try {
+      await api.healTestResult(liveResult.id)
+    } catch (err) {
+      setHealError(err instanceof ApiError ? err.message : 'Failed to start self-heal.')
+      setHealing(false)
+    }
+  }
 
   return (
     <div
@@ -294,30 +359,62 @@ function TestResultRow({ result }: { result: TestResultRead }) {
     >
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 13, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {result.scenario_name}
+          {liveResult.scenario_name}
         </div>
-        {result.status === 'blocked' && result.blocked_reason && (
+        {liveResult.status === 'blocked' && liveResult.blocked_reason && (
           <div className="caption" style={{ fontSize: 11.5, marginTop: 2 }}>
-            {result.blocked_reason}
+            {liveResult.blocked_reason}
           </div>
         )}
-        {canShowArtifacts && result.error_message && (
+        {canShowArtifacts && liveResult.error_message && (
           <div style={{ fontSize: 11.5, color: 'var(--danger-strong)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {result.error_message}
+            {liveResult.error_message}
           </div>
+        )}
+        {healError && (
+          <div style={{ fontSize: 11.5, color: 'var(--danger-strong)', marginTop: 2 }}>{healError}</div>
         )}
       </div>
       <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap', textAlign: 'right' }}>
-        {result.duration_ms != null ? `${(result.duration_ms / 1000).toFixed(1)}s` : ''}
+        {liveResult.duration_ms != null ? `${(liveResult.duration_ms / 1000).toFixed(1)}s` : ''}
       </span>
-      <span>
-        <StatusPill status={result.status} />
+      {/* No distinct "running" status exists on a TestResult row (it only
+          ever moves pending -> a terminal status) — the one test actually
+          executing right now is inferred as the first still-pending row
+          once finished ones are sorted to the top. */}
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <StatusPill status={liveResult.status} label={isCurrentlyRunning ? 'Running' : undefined} pulsing={isCurrentlyRunning} />
+        {wasAutoHealed && (
+          <span
+            className="caption"
+            style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--good)', whiteSpace: 'nowrap' }}
+            title="This test failed on its first run and was automatically fixed by self-healing."
+          >
+            Auto-healed
+          </span>
+        )}
       </span>
-      <span style={{ textAlign: 'right' }}>
+      <span style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
         {canShowArtifacts && (
-          <button type="button" className="button-secondary" onClick={() => setArtifactsFor(result)}>
+          <button type="button" className="button-secondary" onClick={() => setArtifactsFor(liveResult)}>
             Artifacts
           </button>
+        )}
+        {healing && (
+          <span className="caption" style={{ fontSize: 11 }}>
+            Healing… (attempt {liveResult.heal_attempt_count + 1} of {liveResult.max_heal_attempts})
+          </span>
+        )}
+        {!healing && canRetryHeal && (
+          <button type="button" className="button-secondary" onClick={handleHeal}>
+            Retry with self-heal
+          </button>
+        )}
+        {!healing && healExhausted && (
+          <span className="caption" style={{ fontSize: 10.5 }}>
+            Self-healing could not fix this test after {liveResult.max_heal_attempts} attempts. Manual review
+            required.
+          </span>
         )}
       </span>
       {artifactsFor && <ArtifactsModal testResult={artifactsFor} onClose={() => setArtifactsFor(null)} />}
@@ -374,9 +471,11 @@ export function formatDuration(ms: number | null): string {
 }
 
 function RunDetail({
+  applicationId,
   run,
   executionUnavailable,
 }: {
+  applicationId: string
   run: TestRunRead
   executionUnavailable: boolean
 }) {
@@ -385,6 +484,7 @@ function RunDetail({
   const [resultSortKey, setResultSortKey] = useState<ResultSortKey | null>(null)
   const [resultSortDir, setResultSortDir] = useState<'asc' | 'desc'>('asc')
   const results = run.results ?? []
+  const runningResultId = run.status === 'running' ? results.find((r) => r.status === 'pending')?.id : undefined
   // Finished (passed/failed/etc.) first, still-pending ones last — each
   // group keeps its original request order (stable sort on one boolean).
   // Only the default order, used until the viewer picks a column to sort by.
@@ -435,7 +535,14 @@ function RunDetail({
         <div className="card-panel" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <ResultListHeader sortKey={resultSortKey} sortDir={resultSortDir} onSort={handleResultSort} />
           {pagedResults.map((result) => (
-            <TestResultRow key={result.id} result={result} />
+            <div key={result.id} style={{ borderBottom: '1px solid var(--border-hairline)' }}>
+              <TestResultRow
+                applicationId={applicationId}
+                runId={run.id}
+                result={result}
+                isCurrentlyRunning={result.id === runningResultId}
+              />
+            </div>
           ))}
           <Pagination
             page={resultsPage}
@@ -781,7 +888,7 @@ export function RunsTab({
 
   if (selectedRunId) {
     return selectedRun ? (
-      <RunDetail run={selectedRun} executionUnavailable={executionUnavailable} />
+      <RunDetail applicationId={applicationId} run={selectedRun} executionUnavailable={executionUnavailable} />
     ) : (
       <p className="caption" style={{ fontSize: 12.5 }}>
         Loading run…

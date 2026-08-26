@@ -721,6 +721,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/test-results/{external_id}/heal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Heal Test Result
+         * @description Manual "Retry with self-heal" — starts the same HealTestActivity the
+         *     automatic path runs (inside ApplicationTestExecutionWorkflow.run_one),
+         *     via HealTestExecutionWorkflow, drawing from the exact same shared
+         *     attempt budget. The eligibility checks below mirror
+         *     `heal_test_activity`'s own no-op condition and claim guard exactly (same
+         *     HEALABLE_STATUSES, same DiscoverySettings.max_heal_attempts, same
+         *     HEAL_CLAIM_STALE_AFTER staleness window) so this endpoint's 409s and the
+         *     activity's own behavior never disagree.
+         */
+        post: operations["heal_test_result_test_results__external_id__heal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications/{external_id}/test-suite-status": {
         parameters: {
             query?: never;
@@ -1223,6 +1250,8 @@ export interface components {
              * @enum {string}
              */
             delete_project_after: "1_day" | "1_week" | "1_month";
+            /** Max Heal Attempts */
+            max_heal_attempts: number;
         };
         /** SettingsUpdate */
         SettingsUpdate: {
@@ -1236,6 +1265,8 @@ export interface components {
             interaction_level?: ("passive" | "normal" | "aggressive") | null;
             /** Delete Project After */
             delete_project_after?: ("1_day" | "1_week" | "1_month") | null;
+            /** Max Heal Attempts */
+            max_heal_attempts?: number | null;
             /**
              * Max Journeys
              * @default __unset__
@@ -1390,6 +1421,12 @@ export interface components {
             stack_trace: string | null;
             /** Blocked Reason */
             blocked_reason: string | null;
+            /** Heal Attempt Count */
+            heal_attempt_count: number;
+            /** Healed Test Asset Id */
+            healed_test_asset_id: string | null;
+            /** Max Heal Attempts */
+            max_heal_attempts: number;
         };
         /** TestRunPageRead */
         TestRunPageRead: {
@@ -3074,6 +3111,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TestResultArtifactRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    heal_test_result_test_results__external_id__heal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
                 };
             };
             /** @description Validation Error */

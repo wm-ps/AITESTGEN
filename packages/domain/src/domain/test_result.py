@@ -71,3 +71,26 @@ class TestResult(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
+    # Self-healing (HealTestActivity). Single counter shared by automatic
+    # healing (run right after ExecuteTestActivity) and the manual retry
+    # endpoint alike — never a separate budget for either, capped at the
+    # admin-configurable DiscoverySettings.max_heal_attempts.
+    heal_attempt_count: int = Field(default=0)
+    # The *latest* TestAsset a heal attempt produced (set on every attempt
+    # that passes typecheck, whether or not that version then passes
+    # execution) — combined with `status`, distinguishes "healed and now
+    # passing" from "healed but still failing" with no extra field.
+    healed_test_asset_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("test_asset.id"), nullable=True),
+    )
+    # Concurrency guard, not business data: set to the current time while a
+    # HealTestActivity invocation (automatic or manual) is actively working
+    # this TestResult, cleared back to None when it finishes. Lets the
+    # manual-retry endpoint refuse a click that would race an in-flight
+    # automatic heal for the same result; a claim older than
+    # HEAL_ACTIVITY_STALE_AFTER (see execution_workflow.py) is treated as
+    # abandoned (worker crash) rather than a permanent lock.
+    heal_started_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )

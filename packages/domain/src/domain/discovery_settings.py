@@ -38,3 +38,11 @@ class DiscoverySettings(SQLModel, table=True):
     # (deleted_at set) survives before the daily cleanup job purges it and
     # all its dependent rows for good.
     delete_project_after: str = Field(default="1_month")
+    # Self-healing (HealTestActivity) shared attempt budget. Plain
+    # non-nullable int, not the None="unlimited" pattern max_journeys/
+    # max_scenarios_per_journey/max_test_cases_per_application use —
+    # unbounded self-healing (unbounded AI cost, unbounded real browser
+    # runs) is never a valid state, so there is always a concrete positive
+    # value. 0 disables self-healing entirely (every attempt-count check is
+    # `>=`/`<` against this value).
+    max_heal_attempts: int = Field(default=3)

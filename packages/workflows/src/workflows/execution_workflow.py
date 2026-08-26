@@ -41,8 +41,21 @@ EXECUTION_TASK_QUEUE = "execution-task-queue"
 PREPARE_TEST_RUN_ACTIVITY_NAME = "PrepareTestRunActivity"
 EXECUTE_TEST_ACTIVITY_NAME = "ExecuteTestActivity"
 FINALIZE_TEST_RUN_ACTIVITY_NAME = "FinalizeTestRunActivity"
+HEAL_TEST_ACTIVITY_NAME = "HealTestActivity"
 
 DEFAULT_MAX_CONCURRENCY = 5
+
+# Self-healing for failed generated Playwright test cases. "blocked" is
+# excluded — a safety-policy gate, not a code defect, never healable.
+HEALABLE_STATUSES = {"failed", "timed_out", "errored"}
+
+# Generous margin over HealTestActivity's own 25-minute
+# start_to_close_timeout below — a TestResult.heal_started_at claim older
+# than this is a crashed/abandoned attempt, not a real in-progress one.
+# Shared (not duplicated) between execution_worker's own claim/release logic
+# and the manual-retry API endpoint's pre-check, so the two can never
+# disagree about what counts as "still in progress."
+HEAL_CLAIM_STALE_AFTER = timedelta(minutes=30)
 
 
 @dataclass
@@ -84,6 +97,13 @@ class FinalizeTestRunActivityInput:
     test_run_id: str
 
 
+@dataclass
+class HealTestActivityInput:
+    application_id: str
+    test_run_id: str
+    test_result_id: str
+
+
 @workflow.defn(name="ApplicationTestExecutionWorkflow")
 class ApplicationTestExecutionWorkflow:
     @workflow.run
@@ -109,7 +129,7 @@ class ApplicationTestExecutionWorkflow:
 
             async def run_one(item: ExecutableTest) -> str:
                 async with semaphore:
-                    return await workflow.execute_activity(
+                    result_id = await workflow.execute_activity(
                         EXECUTE_TEST_ACTIVITY_NAME,
                         ExecuteTestActivityInput(
                             application_id=input.application_id,
@@ -127,6 +147,27 @@ class ApplicationTestExecutionWorkflow:
                         retry_policy=RetryPolicy(maximum_attempts=2),
                         result_type=str,
                     )
+                    # Always called — HealTestActivity itself no-ops for
+                    # passed/blocked/budget-exhausted results (see its own
+                    # docstring), so no branching is needed here. A "Run All
+                    # Tests" click can now take up to max_heal_attempts×
+                    # longer per failing test while this runs.
+                    await workflow.execute_activity(
+                        HEAL_TEST_ACTIVITY_NAME,
+                        HealTestActivityInput(
+                            application_id=input.application_id,
+                            test_run_id=prep.test_run_id,
+                            test_result_id=result_id,
+                        ),
+                        # Up to max_heal_attempts (default 3) attempts x (AI
+                        # call + typecheck + ~8min run) + the bounded infra
+                        # retries.
+                        start_to_close_timeout=timedelta(minutes=25),
+                        # Infra-failure retries at the Temporal level only,
+                        # same convention as ExecuteTestActivity above.
+                        retry_policy=RetryPolicy(maximum_attempts=2),
+                    )
+                    return result_id
 
             await asyncio.gather(
                 *[run_one(item) for item in prep.executable], return_exceptions=True
@@ -141,17 +182,50 @@ class ApplicationTestExecutionWorkflow:
         return prep.test_run_id
 
 
+@workflow.defn(name="HealTestExecutionWorkflow")
+class HealTestExecutionWorkflow:
+    """Thin one-activity workflow for the manual "Retry with self-heal"
+    path — same HealTestActivity, same logic, as the automatic path inside
+    ApplicationTestExecutionWorkflow.run_one above; there is exactly one
+    implementation of "heal a test," never two.
+
+    Started with a deterministic workflow id (`heal-{test_result_external_id}`,
+    no random suffix — see the manual-retry endpoint in apps/api) so a
+    duplicate/rapid double-click naturally rejects via Temporal's
+    WorkflowAlreadyStartedError, the same idempotency convention
+    SuiteGenerationWorkflow's `suite-{journey_id}-{attempt}` already uses,
+    instead of a separate manual-use boolean flag. HealTestActivity's own
+    `heal_started_at` DB-level claim (see execution_worker/activities.py)
+    is the second, independent guard that also covers the narrower race
+    against an automatic heal already in flight for the same TestResult —
+    the workflow id alone only dedupes two manual starts."""
+
+    @workflow.run
+    async def run(self, input: HealTestActivityInput) -> None:
+        await workflow.execute_activity(
+            HEAL_TEST_ACTIVITY_NAME,
+            input,
+            start_to_close_timeout=timedelta(minutes=25),
+            retry_policy=RetryPolicy(maximum_attempts=2),
+        )
+
+
 __all__ = [
     "DEFAULT_MAX_CONCURRENCY",
     "EXECUTE_TEST_ACTIVITY_NAME",
     "EXECUTION_TASK_QUEUE",
     "FINALIZE_TEST_RUN_ACTIVITY_NAME",
+    "HEALABLE_STATUSES",
+    "HEAL_CLAIM_STALE_AFTER",
+    "HEAL_TEST_ACTIVITY_NAME",
     "PREPARE_TEST_RUN_ACTIVITY_NAME",
     "ApplicationTestExecutionWorkflow",
     "ExecutableTest",
     "ExecuteTestActivityInput",
     "ExecutionWorkflowInput",
     "FinalizeTestRunActivityInput",
+    "HealTestActivityInput",
+    "HealTestExecutionWorkflow",
     "PrepareTestRunActivityInput",
     "PrepareTestRunActivityResult",
 ]

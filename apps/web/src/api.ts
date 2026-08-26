@@ -55,6 +55,7 @@ export type SettingsRead = {
   max_scenarios_per_journey: number | null
   max_test_cases_per_application: number | null
   delete_project_after: RetentionPeriod
+  max_heal_attempts: number
 }
 export type SettingsUpdate = Partial<SettingsRead>
 // Not in api-types.gen.ts yet (backend schema is new, regenerate via
@@ -76,6 +77,12 @@ export type TestResultRead = {
   error_message: string | null
   stack_trace: string | null
   blocked_reason: string | null
+  heal_attempt_count: number
+  healed_test_asset_id: string | null
+  // The current DiscoverySettings.max_heal_attempts, read alongside every
+  // result rather than a second admin-only GET /settings call — see
+  // TestResultRead in apps/api/src/api/main.py.
+  max_heal_attempts: number
 }
 export type TestRunStatus = 'pending' | 'running' | 'completed' | 'blocked'
 export type TestRunRead = {
@@ -289,6 +296,8 @@ export const api = {
     request<TestRunRead>(`/applications/${applicationId}/test-runs/${testRunId}`),
   listTestResultArtifacts: (testResultId: string) =>
     request<TestResultArtifactRead[]>(`/test-results/${testResultId}/artifacts`),
+  healTestResult: (testResultId: string) =>
+    request<{ started: boolean }>(`/test-results/${testResultId}/heal`, { method: 'POST' }),
   getTestSuiteStatus: (applicationId: string, page = 1, pageSize = 10) =>
     request<TestAssetStatusPageRead>(
       `/applications/${applicationId}/test-suite-status?page=${page}&page_size=${pageSize}`,

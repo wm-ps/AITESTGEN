@@ -10,6 +10,8 @@ dependencies = [
     "secrets-client",
     "object-store",
     "test-suite-assembler",
+    "ai-provider",
+    "generation-worker",
     "sqlmodel>=0.0.24",
     "psycopg[binary]>=3.2",
 ]
@@ -26,6 +28,15 @@ domain = { workspace = true }
 secrets-client = { workspace = true }
 object-store = { workspace = true }
 test-suite-assembler = { workspace = true }
+ai-provider = { workspace = true }
+# Self-healing (HealTestActivity) reuses generation-worker's existing
+# supersede_test_asset persistence helper and its tsc-based
+# typecheck_playwright_code gate rather than duplicating a second
+# Node/TypeScript typecheck toolchain (its own npm-installed node_modules)
+# in this worker too — the first cross-worker-app dependency in this repo,
+# made tractable by every worker's Dockerfile already `COPY . .`-ing the
+# whole monorepo as its build context (see this worker's own Dockerfile).
+generation-worker = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

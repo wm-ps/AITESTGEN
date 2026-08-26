@@ -20,10 +20,12 @@ to build it in — Epic 7 is removed; not built here or anywhere else without
 a fresh product decision.
 """
 
+import base64
 import json
 import logging
 import os
 import re
+from typing import Any
 
 import httpx
 from domain import Journey, Page, Scenario
@@ -246,7 +248,25 @@ substring of a longer one on the same page (e.g. "New password" vs. "Confirm new
 "Amount" vs. "Loan Amount") resolves to BOTH elements and fails with a strict-mode violation \
 instead of the one you meant. `page.getByLabel("New password", {{ exact: true }})` — never a \
 bare `page.getByLabel("New password")` — is what actually isolates the field you want.
-{known_locators_listing}"""
+{known_locators_listing}{failure_context}"""
+
+_PLAYWRIGHT_FAILURE_CONTEXT = """
+
+Prior attempt failed and needs to be fixed. Make the SMALLEST change that
+addresses the specific problem below — do not rewrite unrelated parts of
+the test, and preserve its original intent, structure, and assertions
+except where the failure requires changing them.
+
+--- previous code ---
+{previous_code}
+--- target URL at time of failure ---
+{target_url}
+--- error ---
+{failure_error_message}
+--- stack trace ---
+{failure_stack_trace}
+--- console output ---
+{failure_console_output}"""
 
 _PLAYWRIGHT_PROMPT_SYSTEM = """You are converting one integration test Scenario into a single, \
 executable Playwright (TypeScript, @playwright/test) test.
@@ -710,7 +730,7 @@ Respond with one word (SAFE, DESTRUCTIVE, or AMBIGUOUS) followed by a one-senten
 
 
 async def _chat_completion(
-    messages: list[dict[str, str]],
+    messages: list[dict[str, Any]],
     *,
     response_format: dict[str, str] | None = None,
     timeout: int = 60,
@@ -930,6 +950,12 @@ class HostedAIProvider:
         requires_auth: bool = False,
         field_input_types: dict[str, str] | None = None,
         repair: tuple[str, list[str]] | None = None,
+        previous_code: str | None = None,
+        failure_error_message: str | None = None,
+        failure_stack_trace: str | None = None,
+        failure_console_output: str | None = None,
+        target_url: str | None = None,
+        failure_screenshot_png: bytes | None = None,
     ) -> TestAssetCode:
         step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
         base_url = getattr(scenario, "base_url", None) or ""
@@ -970,36 +996,47 @@ class HostedAIProvider:
                 "straight to a deep URL as the first action of the test."
             )
         )
-        messages = [
-            {
-                "role": "system",
-                "content": _PLAYWRIGHT_PROMPT_SYSTEM.format(
-                    base_url=base_url,
-                    auth_precondition_note=auth_precondition_note,
-                    initial_navigation_rule=initial_navigation_rule,
-                ),
-            },
-            {
-                "role": "user",
-                "content": _PLAYWRIGHT_PROMPT_USER.format(
-                    base_url=base_url,
-                    scenario_name=scenario.name,
-                    scenario_type=scenario.type,
-                    step_listing=step_listing,
-                    expected_result=scenario.expected_result,
-                    test_data_listing=_describe_test_data(scenario, field_input_types),
-                    known_pages_listing=_describe_known_pages(known_pages),
-                    known_locators_listing=_describe_known_locators(known_locators),
-                ),
-            },
+        failure_context = (
+            _PLAYWRIGHT_FAILURE_CONTEXT.format(
+                previous_code=previous_code,
+                target_url=target_url or "(unknown)",
+                failure_error_message=failure_error_message or "(none)",
+                failure_stack_trace=failure_stack_trace or "(none)",
+                failure_console_output=failure_console_output or "(none)",
+            )
+            if previous_code is not None
+            else ""
+        )
+        system_message = {
+            "role": "system",
+            "content": _PLAYWRIGHT_PROMPT_SYSTEM.format(
+                base_url=base_url,
+                auth_precondition_note=auth_precondition_note,
+                initial_navigation_rule=initial_navigation_rule,
+            ),
+        }
+        user_text = _PLAYWRIGHT_PROMPT_USER.format(
+            base_url=base_url,
+            scenario_name=scenario.name,
+            scenario_type=scenario.type,
+            step_listing=step_listing,
+            expected_result=scenario.expected_result,
+            test_data_listing=_describe_test_data(scenario, field_input_types),
+            known_pages_listing=_describe_known_pages(known_pages),
+            known_locators_listing=_describe_known_locators(known_locators),
+            failure_context=failure_context,
+        )
+        messages: list[dict[str, Any]] = [
+            system_message,
+            {"role": "user", "content": user_text},
         ]
         # Self-repair turn: a bare retry re-guesses blind and tends to repeat
         # the exact same tsc error (observed live — same TS2345 string/number
         # mistake across all 3 Temporal attempts). Handing back its own code
         # plus the real compiler output lets it fix the specific line instead.
         if repair is not None:
-            previous_code, typecheck_errors = repair
-            messages.append({"role": "assistant", "content": previous_code})
+            repaired_code, typecheck_errors = repair
+            messages.append({"role": "assistant", "content": repaired_code})
             messages.append(
                 {
                     "role": "user",
@@ -1013,18 +1050,45 @@ class HostedAIProvider:
                     ),
                 }
             )
-        content = await _chat_completion(
-            messages,
-            # A real Generate Suite submission fans out one Playwright call
-            # per Scenario across every candidate Journey at once (a dozen+
-            # Journeys x dozens of Scenarios isn't unusual) — the default
-            # 60s timeout gets exceeded once that concurrency is real,
-            # observed live as `httpx.ReadTimeout` for a chunk of Scenarios
-            # (silently dropped by SuiteGenerationWorkflow's per-Scenario
-            # fault isolation, no way to tell "slow" from "actually broken").
-            # Matches generate_scenarios' own timeout=240 for the same reason.
-            timeout=240,
-        )
+        # A real Generate Suite submission fans out one Playwright call per
+        # Scenario across every candidate Journey at once (a dozen+ Journeys
+        # x dozens of Scenarios isn't unusual) — the default 60s timeout gets
+        # exceeded once that concurrency is real, observed live as
+        # `httpx.ReadTimeout` for a chunk of Scenarios (silently dropped by
+        # SuiteGenerationWorkflow's per-Scenario fault isolation, no way to
+        # tell "slow" from "actually broken"). Matches generate_scenarios'
+        # own timeout=240 for the same reason.
+        if failure_screenshot_png is not None:
+            # Best-effort: assumes the configured AI_MODEL (via the LiteLLM
+            # proxy) accepts vision input, which this codebase has no
+            # capability-detection for — a rejection from the proxy falls
+            # back to the plain text-only call rather than failing the
+            # whole heal attempt.
+            b64_screenshot = base64.b64encode(failure_screenshot_png).decode("ascii")
+            vision_messages: list[dict[str, Any]] = [
+                system_message,
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_text},
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": f"data:image/png;base64,{b64_screenshot}"},
+                        },
+                    ],
+                },
+            ]
+            try:
+                content = await _chat_completion(vision_messages, timeout=240)
+            except Exception:
+                logger.warning(
+                    "HostedAIProvider: vision-inclusive heal call failed for scenario %r, "
+                    "retrying without the screenshot",
+                    scenario.name,
+                )
+                content = await _chat_completion(messages, timeout=240)
+        else:
+            content = await _chat_completion(messages, timeout=240)
         # No JSON response_format here (unlike infer_journeys/generate_scenarios)
         # — the model's own code fences are the one common failure mode worth
         # stripping defensively, since raw TypeScript code has no equivalent

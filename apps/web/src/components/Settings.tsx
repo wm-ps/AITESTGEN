@@ -200,6 +200,22 @@ export function Settings({ onCancel }: { onCancel: () => void }) {
               <option value="1_month">1 month</option>
             </select>
           </label>
+
+          <label className="field">
+            <FieldLabel>Max self-heal attempts</FieldLabel>
+            <select
+              value={settings.max_heal_attempts}
+              onChange={(e) =>
+                setSettings({ ...settings, max_heal_attempts: Number(e.target.value) })
+              }
+            >
+              {[0, 1, 2, 3, 5, 10].map((n) => (
+                <option key={n} value={n}>
+                  {n === 0 ? 'Disabled' : n}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
 
         {error && (

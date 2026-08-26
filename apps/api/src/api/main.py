@@ -52,10 +52,14 @@ from workflows import (
     DISCOVERY_TASK_QUEUE,
     EXECUTION_TASK_QUEUE,
     GENERATION_TASK_QUEUE,
+    HEAL_CLAIM_STALE_AFTER,
+    HEALABLE_STATUSES,
     ApplicationTestExecutionWorkflow,
     CleanupWorkflow,
     ExecutionWorkflowInput,
     GenerationWorkflow,
+    HealTestActivityInput,
+    HealTestExecutionWorkflow,
     SuiteGenerationWorkflow,
 )
 
@@ -2033,6 +2037,13 @@ class TestResultRead(BaseModel):
     error_message: str | None
     stack_trace: str | None
     blocked_reason: str | None
+    heal_attempt_count: int
+    healed_test_asset_id: uuid.UUID | None
+    # The current DiscoverySettings.max_heal_attempts, read alongside every
+    # TestResult rather than requiring a second call to admin-only
+    # GET /settings — RunsTab (any authenticated org member) needs this to
+    # render self-heal button/messaging state correctly.
+    max_heal_attempts: int
 
 
 class TestRunRead(BaseModel):
@@ -2247,6 +2258,7 @@ def get_test_run(
         if scenario_ids
         else {}
     )
+    max_heal_attempts = session.exec(select(DiscoverySettings)).one().max_heal_attempts
     result_reads = [
         TestResultRead(
             id=r.external_id,
@@ -2258,6 +2270,9 @@ def get_test_run(
             error_message=r.error_message,
             stack_trace=r.stack_trace,
             blocked_reason=r.blocked_reason,
+            heal_attempt_count=r.heal_attempt_count,
+            healed_test_asset_id=r.healed_test_asset_id,
+            max_heal_attempts=max_heal_attempts,
         )
         for r in results
     ]
@@ -2311,6 +2326,71 @@ def list_test_result_artifacts(
         )
         for a in artifacts
     ]
+
+
+@app.post("/test-results/{external_id}/heal", status_code=202)
+async def heal_test_result(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> dict[str, bool]:
+    """Manual "Retry with self-heal" — starts the same HealTestActivity the
+    automatic path runs (inside ApplicationTestExecutionWorkflow.run_one),
+    via HealTestExecutionWorkflow, drawing from the exact same shared
+    attempt budget. The eligibility checks below mirror
+    `heal_test_activity`'s own no-op condition and claim guard exactly (same
+    HEALABLE_STATUSES, same DiscoverySettings.max_heal_attempts, same
+    HEAL_CLAIM_STALE_AFTER staleness window) so this endpoint's 409s and the
+    activity's own behavior never disagree."""
+    test_result = session.exec(
+        select(TestResult).where(TestResult.external_id == external_id)
+    ).first()
+    test_run = (
+        session.get(TestRun, test_result.test_run_id) if test_result is not None else None
+    )
+    application = (
+        session.get(Application, test_run.application_id) if test_run is not None else None
+    )
+    if (
+        test_result is None
+        or test_run is None
+        or application is None
+        or application.organization_id != organization_id
+    ):
+        raise HTTPException(status_code=404, detail="test result not found")
+
+    discovery_settings = session.exec(select(DiscoverySettings)).one()
+    if test_result.status not in HEALABLE_STATUSES:
+        raise HTTPException(status_code=409, detail="test result is not in a healable state")
+    if test_result.heal_attempt_count >= discovery_settings.max_heal_attempts:
+        raise HTTPException(status_code=409, detail="self-heal attempt budget already spent")
+    if (
+        test_result.heal_started_at is not None
+        and test_result.heal_started_at >= datetime.now(UTC) - HEAL_CLAIM_STALE_AFTER
+    ):
+        raise HTTPException(status_code=409, detail="a self-heal attempt is already in progress")
+
+    client = await get_temporal_client()
+    if not await has_pollers(client, EXECUTION_TASK_QUEUE):
+        raise HTTPException(status_code=503, detail="EXECUTION_UNAVAILABLE")
+    try:
+        await client.start_workflow(
+            HealTestExecutionWorkflow.run,
+            HealTestActivityInput(
+                application_id=str(application.external_id),
+                test_run_id=str(test_run.external_id),
+                test_result_id=str(test_result.external_id),
+            ),
+            # Deterministic — a duplicate/rapid double-click naturally
+            # rejects via WorkflowAlreadyStartedError below, same
+            # idempotency convention SuiteGenerationWorkflow's
+            # `suite-{journey_id}-{attempt}` already uses.
+            id=f"heal-{test_result.external_id}",
+            task_queue=EXECUTION_TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        pass  # already in progress — not an error
+    return {"started": True}
 
 
 def _current_test_assets_for_application(
@@ -2641,6 +2721,7 @@ class SettingsRead(BaseModel):
     max_scenarios_per_journey: int | None
     max_test_cases_per_application: int | None
     delete_project_after: RetentionPeriod
+    max_heal_attempts: int
 
 
 class SettingsUpdate(BaseModel):
@@ -2648,6 +2729,7 @@ class SettingsUpdate(BaseModel):
     navigation_timeout_seconds: float | None = None
     interaction_level: InteractionLevel | None = None
     delete_project_after: RetentionPeriod | None = None
+    max_heal_attempts: int | None = None
     # Sentinel, not None: None already means "leave unchanged" for every
     # other field here, but these four need "leave unchanged" AND "clear to
     # unlimited" to be distinguishable.
@@ -2667,6 +2749,7 @@ def _to_settings_read(settings: DiscoverySettings) -> SettingsRead:
         max_scenarios_per_journey=settings.max_scenarios_per_journey,
         max_test_cases_per_application=settings.max_test_cases_per_application,
         delete_project_after=settings.delete_project_after,  # type: ignore[arg-type]
+        max_heal_attempts=settings.max_heal_attempts,
     )
 
 
@@ -2699,6 +2782,8 @@ def update_settings(
         settings.max_scenarios_per_journey = payload.max_scenarios_per_journey
     if payload.max_test_cases_per_application != "__unset__":
         settings.max_test_cases_per_application = payload.max_test_cases_per_application
+    if payload.max_heal_attempts is not None:
+        settings.max_heal_attempts = payload.max_heal_attempts
     session.add(settings)
     session.commit()
     session.refresh(settings)

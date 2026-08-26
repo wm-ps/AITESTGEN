@@ -779,7 +779,7 @@ def _test_case_limit_reached_sync(scenario_external_id: str) -> bool:
         return current_count >= settings.max_test_cases_per_application
 
 
-def _resolve_known_application_model_sync(
+def resolve_known_application_model_sync(
     session: Session, journey_id: uuid.UUID
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], uuid.UUID | None]:
     """Grounds Playwright generation in what Discovery actually captured for
@@ -787,6 +787,11 @@ def _resolve_known_application_model_sync(
     steps->components->pages resolution above (duplicated rather than
     shared — that function serves a different Activity and touching it for
     marginal reuse isn't worth the regression risk here).
+
+    Not underscore-private despite the name — also called by
+    `execution_worker`'s `HealTestActivity`, which needs the same known
+    pages/locators a healed retry's `generate_playwright` call is grounded
+    in as the original generation was.
 
     Returns `(known_pages, known_locators, primary_page_id)`:
     - `known_pages`/`known_locators`: plain dicts (never ORM objects, so the
@@ -917,7 +922,7 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
             select(Scenario).where(Scenario.external_id == uuid.UUID(scenario_external_id))
         ).one()
 
-        known_pages, known_locators, primary_page_id = _resolve_known_application_model_sync(
+        known_pages, known_locators, primary_page_id = resolve_known_application_model_sync(
             session, scenario.journey_id
         )
 
@@ -1050,3 +1055,41 @@ def _persist_test_asset_sync(
         session.commit()
         session.refresh(test_asset)
         return str(test_asset.external_id)
+
+
+def supersede_test_asset(
+    session: Session,
+    prior: TestAsset,
+    *,
+    code: str,
+    requires_auth: bool,
+    warnings: list[str],
+    status: str,
+    primary_page_id: uuid.UUID | None,
+) -> TestAsset:
+    """Flips `prior.current` off and inserts a new `current=True` TestAsset
+    for the same scenario/suite — the in-place "replace the current asset"
+    operation `_persist_test_asset_sync` above never needed (it only ever
+    inserts a brand-new current row; whole-suite supersede is handled
+    separately by `ensure_test_suite_activity`, on a *new* TestSuite, not by
+    flipping an existing row). HealTestActivity (execution worker) is the
+    first caller that needs this, every time a healed candidate passes
+    typecheck — not only when it also passes execution — so the "latest
+    code" for the next heal attempt is simply whatever TestAsset is
+    currently `current` for this scenario, with no separate state to thread
+    through the heal loop."""
+    prior.current = False
+    session.add(prior)
+    new_asset = TestAsset(
+        scenario_id=prior.scenario_id,
+        test_suite_id=prior.test_suite_id,
+        code=code,
+        current=True,
+        requires_auth=requires_auth,
+        warnings=warnings,
+        status=status,
+        primary_page_id=primary_page_id,
+    )
+    session.add(new_asset)
+    session.flush()
+    return new_asset

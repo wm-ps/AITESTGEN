@@ -31,11 +31,17 @@ from concurrent.futures import ThreadPoolExecutor
 
 from temporalio.client import Client
 from temporalio.worker import Worker
-from workflows import EXECUTION_TASK_QUEUE, ApplicationTestExecutionWorkflow, CleanupWorkflow
+from workflows import (
+    EXECUTION_TASK_QUEUE,
+    ApplicationTestExecutionWorkflow,
+    CleanupWorkflow,
+    HealTestExecutionWorkflow,
+)
 
 from execution_worker.activities import (
     execute_test_activity,
     finalize_test_run_activity,
+    heal_test_activity,
     prepare_test_run_activity,
 )
 from execution_worker.cleanup_activities import (
@@ -58,10 +64,11 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=EXECUTION_TASK_QUEUE,
-        workflows=[ApplicationTestExecutionWorkflow, CleanupWorkflow],
+        workflows=[ApplicationTestExecutionWorkflow, HealTestExecutionWorkflow, CleanupWorkflow],
         activities=[
             prepare_test_run_activity,
             execute_test_activity,
+            heal_test_activity,
             finalize_test_run_activity,
             find_purge_candidates_activity,
             purge_application_activity,

@@ -31,7 +31,6 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 from workflows import (
-    ExecuteTestActivityInput,
     FinalizeTestRunActivityInput,
     PrepareTestRunActivityInput,
 )
@@ -272,12 +271,7 @@ def test_persist_result_updates_live_counts_before_run_finishes() -> None:
         done_result_pk = done_result.id
 
     activities_module._persist_test_result_sync(
-        ExecuteTestActivityInput(
-            application_id=str(application.external_id),
-            test_run_id=str(test_run_external_id),
-            test_result_id=str(done_result.external_id),
-            test_asset_id=str(asset_done.external_id),
-        ),
+        str(test_run_external_id),
         activities_module._ExecutionContext(
             application=application, test_result_pk=done_result_pk, spec_path="tests/x.spec.ts"
         ),

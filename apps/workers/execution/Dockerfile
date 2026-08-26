@@ -16,6 +16,11 @@ COPY . .
 
 RUN uv sync --frozen --no-dev --package execution-worker
 
+# Self-healing (HealTestActivity) reuses generation-worker's tsc-based
+# typecheck gate (apps/workers/generation/typecheck) — install its
+# node_modules here too, same as generation's own Dockerfile step.
+RUN cd apps/workers/generation/typecheck && npm install
+
 # Pre-install @playwright/test + Chromium once at image-build time. Every
 # TestRun's own assembled project still runs `npm ci` against its own
 # package.json, but the browser binaries this installs land in the OS-level

@@ -359,7 +359,9 @@ name = "execution-worker"
 version = "0.1.0"
 source = { editable = "apps/workers/execution" }
 dependencies = [
+    { name = "ai-provider" },
     { name = "domain" },
+    { name = "generation-worker" },
     { name = "object-store" },
     { name = "psycopg", extra = ["binary"] },
     { name = "secrets-client" },
@@ -377,7 +379,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "ai-provider", editable = "packages/ai_provider" },
     { name = "domain", editable = "packages/domain" },
+    { name = "generation-worker", editable = "apps/workers/generation" },
     { name = "object-store", editable = "packages/object_store" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "secrets-client", editable = "packages/secrets_client" },
