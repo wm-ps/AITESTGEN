@@ -230,7 +230,11 @@ function App() {
       <TopBar
         user={user}
         applicationBadge={
-          view === 'home' ? undefined : application ? { name: application.name, environment: application.environment } : undefined
+          view === 'home' || view === 'settings'
+            ? undefined
+            : application
+              ? { name: application.name, environment: application.environment }
+              : undefined
         }
         onLogout={handleLogout}
         onGoHome={() => setView('home')}

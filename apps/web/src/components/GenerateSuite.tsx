@@ -94,8 +94,18 @@ export function GenerateSuite({
   return (
     <>
       <Stepper current="generate" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
-      <main style={{ display: 'flex', justifyContent: 'center', padding: 24 }}>
-        <div style={{ maxWidth: 'clamp(1050px, 90vw, 1720px)', width: '100%' }}>
+      <main style={{ width: '100%', boxSizing: 'border-box', flex: 1, display: 'flex', flexDirection: 'column' }}>
+        <div
+          style={{
+            flex: 1,
+            width: '100%',
+            minWidth: 0,
+            maxWidth: 'var(--content-max-wide)',
+            margin: '0 auto',
+            padding: `var(--content-top) var(--content-x)`,
+            boxSizing: 'border-box',
+          }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
             <div
               aria-hidden="true"

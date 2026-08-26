@@ -6,10 +6,10 @@ import { PasswordInput } from './PasswordInput'
 import { VantageBrand } from './Brand'
 
 const WIZARD_STEPS = [
-  { label: 'Scan', desc: 'Crawls every screen and workflow in your application.', kind: 'scan' },
-  { label: 'Discover', desc: 'Surfaces the critical journeys your users actually take.', kind: 'discover' },
-  { label: 'Generate', desc: 'Converts each journey into a ready-to-run test scenario.', kind: 'generate' },
-  { label: 'Run', desc: 'Executes the full suite and reports live coverage.', kind: 'run' },
+  { label: 'Scan', desc: 'Every screen, mapped.', kind: 'scan' },
+  { label: 'Discover', desc: 'Journeys that matter, found.', kind: 'discover' },
+  { label: 'Generate', desc: 'Tests, written for you.', kind: 'generate' },
+  { label: 'Run', desc: 'Coverage, in real time.', kind: 'run' },
 ] as const
 
 const JOURNEY_ROWS = ['Customer Login & MFA', 'External Wire Transfer', 'Bill Pay Setup']
@@ -209,7 +209,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
   useEffect(() => {
     const timer = setInterval(() => setActiveStep((i) => (i + 1) % WIZARD_STEPS.length), 2600)
     return () => clearInterval(timer)
-  }, [activeStep])
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -250,7 +250,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'flex-start',
-          padding: '24px 24px 18px 40px',
+          padding: '64px 24px 18px 40px',
           boxSizing: 'border-box',
           background: 'linear-gradient(165deg, #FFFFFF 0%, #F4F6FA 45%, #ECEFF5 100%)',
         }}
@@ -276,31 +276,10 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
             height: 820,
             borderRadius: 'var(--radius-full)',
             background: 'radial-gradient(circle, var(--accent-wash) 0%, transparent 70%)',
-            opacity: 0.55,
             pointerEvents: 'none',
-            animation: 'aitg-drift 14s ease-in-out infinite',
+            animation: 'aitg-drift 16s ease-in-out infinite',
           }}
         />
-        <div aria-hidden="true" style={{ position: 'absolute', top: '6%', left: '50%', width: 0, height: 0, pointerEvents: 'none' }}>
-          {[0, 1.5, 3].map((delay) => (
-            <div
-              key={delay}
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: 340,
-                height: 340,
-                margin: '-170px 0 0 -170px',
-                borderRadius: 'var(--radius-full)',
-                border: '1px solid var(--accent)',
-                opacity: 0,
-                animation: `aitg-radar-ring 4.5s ease-out infinite`,
-                animationDelay: `${delay}s`,
-              }}
-            />
-          ))}
-        </div>
 
         <div
           onClick={DEV_LOGIN_ENABLED ? handleDevAutofill : undefined}
@@ -316,7 +295,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
             animation: 'aitg-materialize 0.6s ease-out both',
           }}
         >
-          <VantageBrand wordmarkSize={40} markSize={56} />
+          <VantageBrand markSize={32} />
         </div>
 
         <h1
@@ -332,21 +311,8 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
             animation: 'aitg-materialize 0.6s ease-out 0.08s both',
           }}
         >
-          Point it at your app. <span style={{ color: 'var(--accent)' }}>Get a full test suite back.</span>
+          Point it at your app. <span style={{ color: 'var(--accent)' }}>Get a production-ready test suite back.</span>
         </h1>
-        <p
-          style={{
-            position: 'relative',
-            fontSize: 16.5,
-            color: 'var(--ink-muted)',
-            maxWidth: 'clamp(560px, 53vw, 900px)',
-            lineHeight: 1.45,
-            margin: '0 0 10px',
-            animation: 'aitg-materialize 0.6s ease-out 0.14s both',
-          }}
-        >
-          Scans your product, discovers every user journey, and writes working tests for it.
-        </p>
         <div
           style={{
             position: 'relative',
@@ -355,7 +321,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
             letterSpacing: '0.06em',
             textTransform: 'uppercase',
             color: 'var(--ink-secondary)',
-            marginBottom: 6,
+            margin: '14px 0 6px',
             animation: 'aitg-materialize 0.6s ease-out 0.18s both',
           }}
         >
@@ -365,8 +331,9 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
         <div
           style={{
             position: 'relative',
-            maxWidth: 'clamp(680px, 62vw, 1080px)',
+            maxWidth: '100%',
             paddingLeft: 32,
+            paddingRight: 8,
             animation: 'aitg-materialize 0.7s ease-out 0.22s both',
           }}
         >
@@ -434,18 +401,13 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
         <div style={{ width: '100%', maxWidth: 'clamp(400px, 33vw, 520px)', animation: 'aitg-materialize 0.6s ease-out 0.3s both' }}>
           <form
             onSubmit={handleSubmit}
-            className="card-panel"
             style={{
-              padding: '32px 38px',
+              padding: '8px 4px',
               display: 'flex',
               flexDirection: 'column',
               boxSizing: 'border-box',
-              overflow: 'hidden',
-              border: '1px solid var(--border-strong)',
-              boxShadow: '0 24px 48px -24px rgba(15,23,42,0.22), 0 2px 8px rgba(15,23,42,0.05)',
             }}
           >
-            <div style={{ height: 3, background: 'linear-gradient(90deg, var(--accent) 0%, var(--accent-wash) 100%)', margin: '-32px -38px 22px' }} />
             <h2
               onClick={DEV_LOGIN_ENABLED ? handleDevAutofill : undefined}
               title={DEV_LOGIN_ENABLED ? 'Fill dev sign-in credentials' : undefined}

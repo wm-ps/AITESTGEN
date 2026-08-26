@@ -343,16 +343,6 @@ textarea:focus-visible,
   }
 }
 
-@keyframes aitg-drift {
-  0%,
-  100% {
-    transform: translate(0, 0);
-  }
-  50% {
-    transform: translate(-16px, 18px);
-  }
-}
-
 @keyframes aitg-crossfade-a {
   0%,
   45% {
@@ -375,14 +365,13 @@ textarea:focus-visible,
   }
 }
 
-@keyframes aitg-radar-ring {
-  0% {
-    transform: scale(0.35);
-    opacity: 0.32;
-  }
+@keyframes aitg-drift {
+  0%,
   100% {
-    transform: scale(1.35);
-    opacity: 0;
+    transform: translate(0, 0);
+  }
+  50% {
+    transform: translate(-20px, 22px);
   }
 }
 

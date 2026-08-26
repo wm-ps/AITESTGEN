@@ -81,7 +81,18 @@ export function ConnectAppForm({
   return (
     <>
       <Stepper current="connect-app" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
-      <main style={{ maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))', margin: '0 auto', padding: '32px 24px' }}>
+      <main style={{ width: '100%', boxSizing: 'border-box', flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div
+        style={{
+          flex: 1,
+          width: '100%',
+          minWidth: 0,
+          maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))',
+          margin: '0 auto',
+          padding: '32px 24px',
+          boxSizing: 'border-box',
+        }}
+      >
         <h1 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 12px', textAlign: 'center' }}>
           {readOnly ? 'Connected application' : 'Connect to your live application'}
         </h1>
@@ -249,6 +260,7 @@ export function ConnectAppForm({
           )}
           </fieldset>
         </form>
+      </div>
       </main>
     </>
   )

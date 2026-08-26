@@ -103,6 +103,30 @@ function RunsIcon({ size }: { size: number }) {
   )
 }
 
+// Stock-market-style trend vs the previous run — up green, down red, absent when flat or no prior run to compare.
+function TrendArrow({ direction, size }: { direction: 'up' | 'down'; size: number }) {
+  const color = direction === 'up' ? 'var(--good-strong)' : 'var(--danger-strong)'
+  const points = direction === 'up' ? '23 6 13.5 15.5 8.5 10.5 1 18' : '23 18 13.5 8.5 8.5 13.5 1 6'
+  const headPoints = direction === 'up' ? '17 6 23 6 23 12' : '17 18 23 18 23 12'
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke={color}
+      strokeWidth={2.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      <polyline points={points} />
+      <polyline points={headPoints} />
+    </svg>
+  )
+}
+
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/)
   return parts
@@ -264,19 +288,21 @@ function StatChip({
   icon,
   layout = 'inline',
 }: {
-  value: string | number
+  value: ReactNode
   label: string
   valueColor?: string
-  icon: ReactNode
+  icon?: ReactNode
   layout?: 'inline' | 'stacked'
 }) {
   if (layout === 'stacked') {
     return (
       <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <span aria-hidden="true" style={{ display: 'inline-flex', color: valueColor ?? 'var(--ink-muted)', flexShrink: 0 }}>
-            {icon}
-          </span>
+          {icon && (
+            <span aria-hidden="true" style={{ display: 'inline-flex', color: valueColor ?? 'var(--ink-muted)', flexShrink: 0 }}>
+              {icon}
+            </span>
+          )}
           <span style={{ fontWeight: 700, fontSize: 16, color: valueColor }}>{value}</span>
         </span>
         <span className="caption" style={{ fontSize: 12 }}>
@@ -287,9 +313,11 @@ function StatChip({
   }
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}>
-      <span aria-hidden="true" style={{ display: 'inline-flex', color: valueColor ?? 'var(--ink-muted)', flexShrink: 0 }}>
-        {icon}
-      </span>
+      {icon && (
+        <span aria-hidden="true" style={{ display: 'inline-flex', color: valueColor ?? 'var(--ink-muted)', flexShrink: 0 }}>
+          {icon}
+        </span>
+      )}
       <span style={{ whiteSpace: 'nowrap' }}>
         <span style={{ fontWeight: 700, color: valueColor }}>{value}</span>{' '}
         <span className="caption" style={{ fontSize: 12 }}>
@@ -586,28 +614,21 @@ function ApplicationCard({
     </span>
   )
   // Grid tiles are too small for the ring's stroke + percentage text to stay
-  // legible, so grid uses the same icon-value-label shape as the other three
-  // stats (a colored dot standing in for the icon) — list keeps the ring,
-  // which has the room for it.
+  // legible, so grid uses the same value-label shape as the other three
+  // stats (no icon — the trend arrow and colored percentage carry that role)
+  // — list keeps the ring, which has the room for it.
   const passRatePct = passRate == null ? null : Math.round(Math.min(1, Math.max(0, passRate)) * 100)
+  // Trend vs the run before this one — only when there's a prior run to compare and it actually moved.
+  const priorRates = application.recent_pass_rates.slice(0, -1)
+  const priorRate = priorRates.length > 0 ? priorRates[priorRates.length - 1] : null
+  const trend = passRate == null || priorRate == null || passRate === priorRate ? null : passRate > priorRate ? 'up' : 'down'
   const passRateChip = compact ? (
     <span style={{ opacity: passRate == null ? 0.45 : 1 }}>
       <StatChip
         value={passRatePct == null ? '—' : `${passRatePct}%`}
         label={passRate == null ? 'No runs yet' : 'Pass rate'}
         valueColor={passRate == null ? undefined : passRateColor(passRatePct! / 100)}
-        icon={
-          <span
-            aria-hidden="true"
-            style={{
-              display: 'inline-flex',
-              width: iconSize * 0.6,
-              height: iconSize * 0.6,
-              borderRadius: 'var(--radius-full)',
-              background: passRate == null ? 'var(--border-strong)' : passRateColor(passRatePct! / 100),
-            }}
-          />
-        }
+        icon={trend ? <TrendArrow direction={trend} size={iconSize} /> : undefined}
         layout="stacked"
       />
     </span>

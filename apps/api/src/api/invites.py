@@ -42,21 +42,17 @@ def _hash_token(token: str) -> str:
 
 
 # Reuses the exact web app brand (apps/web/src/components/Brand.tsx
-# VantageMark), pre-rasterized to a PNG and sent as a CID-attached inline
+# VantageBrand), pre-rasterized to a PNG and sent as a CID-attached inline
 # image — not a data: URI or inline <svg>, both of which Gmail and legacy
 # desktop Outlook strip. CID `add_related` is the one embedding method every
-# major client (Gmail included) displays. The "Vantage" wordmark next to it
-# is plain HTML text, not an image — text renders natively, no CID needed.
-_LOGO_CID = "vantage-mark"
-_LOGO_PNG = (Path(__file__).parent / "assets" / "vantage-mark.png").read_bytes()
+# major client (Gmail included) displays. The logo image already contains
+# the "Vantage" wordmark, so no separate text cell is needed here.
+_LOGO_CID = "vantage-logo"
+_LOGO_PNG = (Path(__file__).parent / "assets" / "vantage-logo-v2.png").read_bytes()
+_LOGO_WIDTH, _LOGO_HEIGHT = 124, 24  # source is 315x61, scaled to email header size
 
 _EMAIL_HEADER = f"""\
-          <table role="presentation" cellpadding="0" cellspacing="0"><tr>
-            <td style="width:64px;height:59px;"><img src="cid:{_LOGO_CID}" width="64" height="59" alt="Vantage" style="display:block;border:0;"></td>
-            <td style="padding-left:12px;vertical-align:middle;font-size:28px;letter-spacing:-0.03em;font-weight:700;color:#0f766e;">
-              Vantage
-            </td>
-          </tr></table>"""
+          <img src="cid:{_LOGO_CID}" width="{_LOGO_WIDTH}" height="{_LOGO_HEIGHT}" alt="Vantage" style="display:block;border:0;">"""
 
 
 def _attach_logo(message: EmailMessage) -> None:

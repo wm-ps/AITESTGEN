@@ -376,11 +376,16 @@ export function DiscoverJourneys({
   return (
     <>
       <Stepper current="discover" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
-      <main
+      <main style={{ width: '100%', boxSizing: 'border-box', flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div
         style={{
+          flex: 1,
+          width: '100%',
+          minWidth: 0,
           maxWidth: 'var(--content-max-wide)',
           margin: '0 auto',
           padding: `var(--content-top) var(--content-x)`,
+          boxSizing: 'border-box',
         }}
       >
         <div
@@ -668,7 +673,7 @@ export function DiscoverJourneys({
                           style={{
                             display: 'block',
                             width: '100%',
-                            height: 'auto',
+                            aspectRatio: '1920 / 1080',
                             objectFit: 'contain',
                             cursor: 'zoom-in',
                             borderRadius: 'var(--radius-xs)',
@@ -727,6 +732,7 @@ export function DiscoverJourneys({
             <ImportProgress applicationName={applicationName} />
           )
         )}
+      </div>
       </main>
       {lightboxUrl && (
         <div

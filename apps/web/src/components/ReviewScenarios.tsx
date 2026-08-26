@@ -475,11 +475,16 @@ export function ReviewScenarios({
   return (
     <>
       <Stepper current="review" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
-      <main
+      <main style={{ width: '100%', boxSizing: 'border-box', flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div
         style={{
+          flex: 1,
+          width: '100%',
+          minWidth: 0,
           maxWidth: 'var(--content-max-wide)',
           margin: '0 auto',
           padding: `var(--content-top) var(--content-x)`,
+          boxSizing: 'border-box',
         }}
       >
         <div
@@ -846,6 +851,7 @@ export function ReviewScenarios({
             </div>
           </div>
         )}
+      </div>
       </main>
     </>
   )

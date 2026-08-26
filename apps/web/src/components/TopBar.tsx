@@ -86,7 +86,7 @@ export function TopBar({
             color: 'inherit',
           }}
         >
-          <VantageBrand wordmarkSize={30} markSize={40} />
+          <VantageBrand markSize={24} />
         </button>
         {applicationBadge && (
           <>

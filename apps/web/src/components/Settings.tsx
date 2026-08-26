@@ -11,6 +11,26 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   )
 }
 
+function SettingsSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-4)' }}>
+      <h2
+        style={{
+          fontSize: 12,
+          fontWeight: 700,
+          letterSpacing: '0.04em',
+          textTransform: 'uppercase',
+          color: 'var(--ink-muted)',
+          margin: 0,
+        }}
+      >
+        {title}
+      </h2>
+      {children}
+    </div>
+  )
+}
+
 export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => void }) {
   const [settings, setSettings] = useState<SettingsRead | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -36,7 +56,18 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
 
   if (!isAdmin) {
     return (
-      <main style={{ maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))', margin: '0 auto', padding: '32px 24px' }}>
+      <main
+        style={{
+          width: '100%',
+          boxSizing: 'border-box',
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))',
+          margin: '0 auto',
+          padding: '32px 24px',
+        }}
+      >
         <div className="card-panel" style={{ padding: '56px 32px', textAlign: 'center' }}>
           <div
             aria-hidden="true"
@@ -88,198 +119,231 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
 
   if (loading || !settings) {
     return (
-      <main style={{ maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))', margin: '0 auto', padding: '32px 24px' }} role="status">
+      <main
+        style={{
+          width: '100%',
+          boxSizing: 'border-box',
+          flex: 1,
+          maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))',
+          margin: '0 auto',
+          padding: '32px 24px',
+        }}
+        role="status"
+      >
         {error ?? <LoadingDots label="Loading settings" />}
       </main>
     )
   }
 
   return (
-    <main style={{ maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))', margin: '0 auto', padding: '32px 24px' }}>
-      <h1 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 12px', textAlign: 'center' }}>
-        Discovery settings
-      </h1>
-
-      <form
-        onSubmit={handleSubmit}
-        className="card-panel"
+    <main style={{ width: '100%', boxSizing: 'border-box', flex: 1, display: 'flex', flexDirection: 'column' }}>
+      <div
         style={{
-          padding: '14px 22px',
+          flex: 1,
+          width: '100%',
+          minWidth: 0,
+          maxWidth: 'var(--content-max-wide)',
+          margin: '0 auto',
+          padding: '36px 44px',
+          boxSizing: 'border-box',
           display: 'flex',
           flexDirection: 'column',
-          gap: 'var(--space-3)',
-          boxShadow: 'var(--shadow-dropdown-lg)',
+          gap: 'var(--space-6)',
         }}
       >
-        <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
-          <label className="field">
-            <FieldLabel>Maximum pages</FieldLabel>
-            <select
-              value={settings.max_pages}
-              onChange={(e) => setSettings({ ...settings, max_pages: Number(e.target.value) })}
-            >
-              {[5, 10, 20, 50, 100, 250, 500, 1000].map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
+        <h1 style={{ fontSize: 16, fontWeight: 700, margin: 0, textAlign: 'center' }}>
+          Discovery settings
+        </h1>
 
-          <label className="field">
-            <FieldLabel>Maximum discovery duration</FieldLabel>
-            <select
-              value={settings.max_discovery_duration_minutes ?? 'unlimited'}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  max_discovery_duration_minutes:
-                    e.target.value === 'unlimited' ? null : Number(e.target.value),
-                })
-              }
-            >
-              {[2, 5, 10, 15, 30, 60].map((n) => (
-                <option key={n} value={n}>
-                  {n} min
-                </option>
-              ))}
-              <option value="unlimited">Unlimited</option>
-            </select>
-          </label>
-        </div>
+        <form
+          onSubmit={handleSubmit}
+          className="card-panel"
+          style={{
+            padding: '20px 24px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 'var(--space-6)',
+            boxShadow: 'var(--shadow-dropdown-lg)',
+          }}
+        >
+          <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
+          <SettingsSection title="Discovery">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
+              <label className="field">
+                <FieldLabel>Maximum pages</FieldLabel>
+                <select
+                  value={settings.max_pages}
+                  onChange={(e) => setSettings({ ...settings, max_pages: Number(e.target.value) })}
+                >
+                  {[5, 10, 20, 50, 100, 250, 500, 1000].map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
-          <label className="field">
-            <FieldLabel>Navigation timeout</FieldLabel>
-            <select
-              value={settings.navigation_timeout_seconds}
-              onChange={(e) =>
-                setSettings({ ...settings, navigation_timeout_seconds: Number(e.target.value) })
-              }
-            >
-              {[10, 15, 30, 60].map((n) => (
-                <option key={n} value={n}>
-                  {n} sec
-                </option>
-              ))}
-            </select>
-          </label>
+              <label className="field">
+                <FieldLabel>Maximum discovery duration</FieldLabel>
+                <select
+                  value={settings.max_discovery_duration_minutes ?? 'unlimited'}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      max_discovery_duration_minutes:
+                        e.target.value === 'unlimited' ? null : Number(e.target.value),
+                    })
+                  }
+                >
+                  {[2, 5, 10, 15, 30, 60].map((n) => (
+                    <option key={n} value={n}>
+                      {n} min
+                    </option>
+                  ))}
+                  <option value="unlimited">Unlimited</option>
+                </select>
+              </label>
 
-          <label className="field">
-            <FieldLabel>Interaction level</FieldLabel>
-            <select
-              value={settings.interaction_level}
-              onChange={(e) =>
-                setSettings({ ...settings, interaction_level: e.target.value as InteractionLevel })
-              }
-            >
-              <option value="passive">Passive</option>
-              <option value="normal">Normal</option>
-              <option value="aggressive">Aggressive</option>
-            </select>
-          </label>
-        </div>
+              <label className="field">
+                <FieldLabel>Navigation timeout</FieldLabel>
+                <select
+                  value={settings.navigation_timeout_seconds}
+                  onChange={(e) =>
+                    setSettings({ ...settings, navigation_timeout_seconds: Number(e.target.value) })
+                  }
+                >
+                  {[10, 15, 30, 60].map((n) => (
+                    <option key={n} value={n}>
+                      {n} sec
+                    </option>
+                  ))}
+                </select>
+              </label>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-7)' }}>
-          <label className="field">
-            <FieldLabel>Max journeys</FieldLabel>
-            <input
-              type="number"
-              min={1}
-              placeholder="Unlimited"
-              value={settings.max_journeys ?? ''}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  max_journeys: e.target.value === '' ? null : Number(e.target.value),
-                })
-              }
-            />
-          </label>
+              <label className="field">
+                <FieldLabel>Interaction level</FieldLabel>
+                <select
+                  value={settings.interaction_level}
+                  onChange={(e) =>
+                    setSettings({ ...settings, interaction_level: e.target.value as InteractionLevel })
+                  }
+                >
+                  <option value="passive">Passive</option>
+                  <option value="normal">Normal</option>
+                  <option value="aggressive">Aggressive</option>
+                </select>
+              </label>
+            </div>
+          </SettingsSection>
 
-          <label className="field">
-            <FieldLabel>Max scenarios / journey</FieldLabel>
-            <input
-              type="number"
-              min={1}
-              placeholder="Unlimited"
-              value={settings.max_scenarios_per_journey ?? ''}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  max_scenarios_per_journey: e.target.value === '' ? null : Number(e.target.value),
-                })
-              }
-            />
-          </label>
+          <div aria-hidden="true" style={{ height: 1, background: 'var(--border-hairline)' }} />
 
-          <label className="field">
-            <FieldLabel>Max test cases / application</FieldLabel>
-            <input
-              type="number"
-              min={1}
-              placeholder="Unlimited"
-              value={settings.max_test_cases_per_application ?? ''}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  max_test_cases_per_application:
-                    e.target.value === '' ? null : Number(e.target.value),
-                })
-              }
-            />
-          </label>
-        </div>
+          <SettingsSection title="Limits">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-7)' }}>
+              <label className="field">
+                <FieldLabel>Max journeys</FieldLabel>
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="Unlimited"
+                  value={settings.max_journeys ?? ''}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      max_journeys: e.target.value === '' ? null : Number(e.target.value),
+                    })
+                  }
+                />
+              </label>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
-          <label className="field">
-            <FieldLabel>Delete project after</FieldLabel>
-            <select
-              value={settings.delete_project_after}
-              onChange={(e) =>
-                setSettings({ ...settings, delete_project_after: e.target.value as RetentionPeriod })
-              }
-            >
-              <option value="1_day">1 day</option>
-              <option value="1_week">1 week</option>
-              <option value="1_month">1 month</option>
-            </select>
-          </label>
+              <label className="field">
+                <FieldLabel>Max scenarios / journey</FieldLabel>
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="Unlimited"
+                  value={settings.max_scenarios_per_journey ?? ''}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      max_scenarios_per_journey: e.target.value === '' ? null : Number(e.target.value),
+                    })
+                  }
+                />
+              </label>
 
-          <label className="field">
-            <FieldLabel>Max self-heal attempts</FieldLabel>
-            <select
-              value={settings.max_heal_attempts}
-              onChange={(e) =>
-                setSettings({ ...settings, max_heal_attempts: Number(e.target.value) })
-              }
-            >
-              {[0, 1, 2, 3, 5, 10].map((n) => (
-                <option key={n} value={n}>
-                  {n === 0 ? 'Disabled' : n}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
+              <label className="field">
+                <FieldLabel>Max test cases / application</FieldLabel>
+                <input
+                  type="number"
+                  min={1}
+                  placeholder="Unlimited"
+                  value={settings.max_test_cases_per_application ?? ''}
+                  onChange={(e) =>
+                    setSettings({
+                      ...settings,
+                      max_test_cases_per_application:
+                        e.target.value === '' ? null : Number(e.target.value),
+                    })
+                  }
+                />
+              </label>
+            </div>
+          </SettingsSection>
 
-        {error && (
-          <div style={{ color: 'var(--danger)', fontSize: 13 }} role="alert">
-            {error}
+          <div aria-hidden="true" style={{ height: 1, background: 'var(--border-hairline)' }} />
+
+          <SettingsSection title="Others">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
+              <label className="field">
+                <FieldLabel>Delete project after</FieldLabel>
+                <select
+                  value={settings.delete_project_after}
+                  onChange={(e) =>
+                    setSettings({ ...settings, delete_project_after: e.target.value as RetentionPeriod })
+                  }
+                >
+                  <option value="1_day">1 day</option>
+                  <option value="1_week">1 week</option>
+                  <option value="1_month">1 month</option>
+                </select>
+              </label>
+
+              <label className="field">
+                <FieldLabel>Max self-heal attempts</FieldLabel>
+                <select
+                  value={settings.max_heal_attempts}
+                  onChange={(e) =>
+                    setSettings({ ...settings, max_heal_attempts: Number(e.target.value) })
+                  }
+                >
+                  {[0, 1, 2, 3, 5, 10].map((n) => (
+                    <option key={n} value={n}>
+                      {n === 0 ? 'Disabled' : n}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+          </SettingsSection>
+
+          {error && (
+            <div style={{ color: 'var(--danger)', fontSize: 13 }} role="alert">
+              {error}
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-4)' }}>
+            <button type="button" className="button-secondary" onClick={onCancel} style={{ padding: '9px 18px' }}>
+              Cancel
+            </button>
+            <button type="submit" className="button-primary" disabled={submitting} style={{ padding: '9px 20px' }}>
+              {submitting ? <LoadingDots label="Saving" /> : 'Save settings'}
+            </button>
           </div>
-        )}
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
-          <button type="button" className="button-secondary" onClick={onCancel} style={{ padding: '9px 18px' }}>
-            Cancel
-          </button>
-          <button type="submit" className="button-primary" disabled={submitting} style={{ padding: '9px 20px' }}>
-            {submitting ? <LoadingDots label="Saving" /> : 'Save settings'}
-          </button>
-        </div>
-        </fieldset>
-      </form>
+          </fieldset>
+        </form>
+      </div>
     </main>
   )
 }

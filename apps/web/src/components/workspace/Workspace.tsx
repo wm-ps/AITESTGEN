@@ -180,6 +180,12 @@ export function Workspace({
           padding: '20px 8px',
           background: 'var(--canvas)',
           borderRight: '1px solid var(--border)',
+          // Page scrolls at the body level (no height cap up the tree), not
+          // inside the content pane — sticky keeps the rail pinned to the
+          // viewport through that scroll instead of riding away with it.
+          position: 'sticky',
+          top: 0,
+          alignSelf: 'flex-start',
         }}
       >
         {TABS.map((tab) => {
