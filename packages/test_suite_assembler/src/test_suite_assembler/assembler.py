@@ -350,11 +350,13 @@ def _build_auth_setup_script(auth_method: str, login_evidence: LoginPageEvidence
     login_url = login_evidence.url if login_evidence else "/"
     return (
         "import { test as setup } from '@playwright/test'\n"
-        "import { fillCredentials } from '../support/auth'\n\n"
+        "import { fillCredentials, isAuthenticated } from '../support/auth'\n"
+        "import { mkdirSync, writeFileSync } from 'fs'\n\n"
         "// Logs in once (via the shared fillCredentials helper — see support/auth.ts) and\n"
         "// saves the resulting session for every other test to reuse.\n"
         "setup('authenticate', async ({ page }) => {\n"
-        f"  await page.goto({login_url!r})\n"
+        f"  const loginUrl = {login_url!r}\n"
+        "  await page.goto(loginUrl)\n"
         "  await fillCredentials(page)\n"
         "\n"
         "  // `[FIXED]` Verify login actually succeeded before trusting this session for\n"
@@ -363,25 +365,167 @@ def _build_auth_setup_script(auth_method: str, login_evidence: LoginPageEvidence
         "  // without throwing, but lands back on the same login form or an error page, not a\n"
         "  // real authenticated one. Never assume success just because fillCredentials()\n"
         "  // completed without an exception — that only proves the form was submitted, not\n"
-        "  // that the submission was accepted. Same signal this project's own crawler uses\n"
-        "  // elsewhere to detect a live, still-showing login form: a visible password field.\n"
+        "  // that the submission was accepted. `isAuthenticated` (support/auth.ts) checks\n"
+        "  // both the URL (did we actually leave the login page?) and the password field\n"
+        "  // (absence alone was the old, weaker signal on its own).\n"
         "  await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {})\n"
-        "  const loginFormStillVisible = await page\n"
-        "    .locator('input[type=\"password\"]')\n"
-        "    .first()\n"
-        "    .isVisible()\n"
-        "    .catch(() => false)\n"
-        "  if (loginFormStillVisible) {\n"
+        "  if (!(await isAuthenticated(page, loginUrl))) {\n"
         "    throw new Error(\n"
-        "      'Authentication failed: a password field is still visible after submitting ' +\n"
-        "      'credentials, so the app never navigated away from the login form. Verify ' +\n"
+        "      'Authentication failed: still on the login page (or a password field is ' +\n"
+        "      'still visible) after submitting credentials. Verify ' +\n"
         "      'AITESTGEN_LOGIN_USERNAME/AITESTGEN_LOGIN_PASSWORD are set to valid credentials ' +\n"
         "      'for this application before running the suite.',\n"
         "    )\n"
         "  }\n"
         "\n"
-        "  await page.context().storageState({ path: '.auth/state.json' })\n"
+        "  // `indexedDB: true` — Playwright only captures IndexedDB when asked; some auth\n"
+        "  // libraries (Firebase Auth, MSAL/OAuth token caches, ...) store their session\n"
+        "  // there instead of cookies/localStorage, and it would otherwise be silently\n"
+        "  // dropped from every restored session below.\n"
+        "  await page.context().storageState({ path: '.auth/state.json', indexedDB: true })\n"
+        "\n"
+        "  // `[FIXED]` `storageState()` above never captures `sessionStorage` at all — not\n"
+        "  // an oversight to work around here, just outside what that API snapshots (see\n"
+        "  // https://playwright.dev/docs/auth#session-storage). Some apps keep a session\n"
+        "  // artifact there (a CSRF token, a tab-scoped session flag, ...) that API calls on\n"
+        "  // every later authenticated page depend on — dropped, those calls fail and the\n"
+        "  // page renders as if signed out even though cookies/localStorage restored fine.\n"
+        "  // Captured generically (every key this origin's sessionStorage actually holds,\n"
+        "  // nothing app-specific named here) and restored by support/fixtures.ts for every\n"
+        "  // `@auth` test — see that file for the restore side of this.\n"
+        "  const sessionStorageSnapshot = await page.evaluate(() => {\n"
+        "    const entries: Record<string, string> = {}\n"
+        "    for (let i = 0; i < window.sessionStorage.length; i++) {\n"
+        "      const key = window.sessionStorage.key(i)\n"
+        "      if (key !== null) entries[key] = window.sessionStorage.getItem(key) ?? ''\n"
+        "    }\n"
+        "    return entries\n"
+        "  })\n"
+        "  mkdirSync('.auth', { recursive: true })\n"
+        "  writeFileSync(\n"
+        "    '.auth/session-storage.json',\n"
+        "    JSON.stringify({ [new URL(page.url()).origin]: sessionStorageSnapshot }),\n"
+        "  )\n"
         "})\n"
+    )
+
+
+def _build_fixtures_helper_script(login_url: str | None) -> str:
+    """`[FIXED]` Every generated spec's `import { test, expect } from
+    '@playwright/test'` resolves HERE instead, via this project's
+    tsconfig.json `paths` mapping — never by editing that import line, in
+    an already-generated spec or a newly-generated one. Playwright's own
+    context/page fixtures apply `storageState` (cookies/localStorage,
+    IndexedDB when asked) automatically; the one thing they never restore
+    — `sessionStorage`, see auth.setup.ts's own note — is restored exactly
+    once here, for every `@auth`-tagged test's context, before that test's
+    first navigation, from whatever `auth.setup.ts` captured. A `@public`
+    test (or an `@auth` run before any `.auth/session-storage.json` exists)
+    gets an untouched context, same as today.
+
+    `[FIXED]` `@auth` tests all share the ONE session `auth.setup.ts`
+    captured — a concurrently-running test that logs out, changes the
+    password, or otherwise invalidates the account's session invalidates it
+    for every other `@auth` test still using that same snapshot, which then
+    fails on whatever locator it happened to be waiting on with no hint why.
+
+    `[FIXED]` This used to try to detect that specifically — an HTTP status,
+    a URL/password-field check, a curated list of "session expired"/
+    "something went wrong" phrasings — before deciding whether to raise.
+    Every one of those is a guess at how a particular app happens to phrase
+    or signal it, and real apps kept surfacing new ones a fixed list could
+    never fully cover. Dropped entirely: any `@auth` test that fails now
+    raises this one marker unconditionally, and `execution_worker` retries
+    it once against a freshly re-established session regardless of why it
+    failed (see its own note) — a real bug in the test's own steps just
+    fails the same way again on retry, so nothing is masked, and the only
+    cost of a false alarm is one extra retry."""
+    context_fixture = (
+        "  context: async ({ context }, use, testInfo) => {\n"
+        "    if (testInfo.tags.includes('@auth') && existsSync(SESSION_STORAGE_PATH)) {\n"
+        "      const byOrigin = JSON.parse(readFileSync(SESSION_STORAGE_PATH, 'utf-8'))\n"
+        "      await context.addInitScript((snapshot: Record<string, Record<string, string>>) => {\n"
+        "        const entries = snapshot[window.location.origin]\n"
+        "        if (entries) {\n"
+        "          for (const key of Object.keys(entries)) {\n"
+        "            window.sessionStorage.setItem(key, entries[key])\n"
+        "          }\n"
+        "        }\n"
+        "      }, byOrigin)\n"
+        "    }\n"
+        "    await use(context)\n"
+        "  },\n"
+    )
+    if login_url is None:
+        # No login page was ever captured — there is no known login URL to
+        # compare a possibly-invalidated session against, so there is
+        # nothing this can check. Skip the whole thing rather than guess
+        # with an empty/placeholder URL.
+        return (
+            "export * from '../node_modules/@playwright/test'\n"
+            "import { test as base } from '../node_modules/@playwright/test'\n"
+            "import { existsSync, readFileSync } from 'fs'\n"
+            "import { join } from 'path'\n\n"
+            "const SESSION_STORAGE_PATH = join(__dirname, '..', '.auth', 'session-storage.json')\n\n"
+            "export const test = base.extend({\n"
+            f"{context_fixture}"
+            "})\n"
+        )
+    # `[FIXED]` Used to try to *detect* an invalidated session before
+    # retrying — an HTTP status check, then a URL/password-field check, then
+    # a curated list of "session expired"/"something went wrong" phrasings.
+    # Every one of those is a guess at how some particular app happens to
+    # phrase or signal it, and real apps keep surfacing new ones (a non-401
+    # status, a generic error boundary with no session-related wording at
+    # all, ...) — an unbounded, unwinnable list to maintain generically.
+    # There is nothing to lose by dropping the guessing entirely: any
+    # `@auth` test that fails gets exactly one retry against a freshly
+    # re-established session (`execution_worker` greps for this marker —
+    # see its own note) regardless of why it failed. A genuine bug in the
+    # test's own steps just fails the same way again on retry and is
+    # reported as-is; the only cost of being "wrong" is one extra retry,
+    # never a masked failure.
+    page_fixture = (
+        "  page: async ({ page }, use, testInfo) => {\n"
+        "    await use(page)\n"
+        "    if (testInfo.tags.includes('@auth') && testInfo.status !== 'passed') {\n"
+        "      throw new Error(\n"
+        "        'AUTH_SESSION_INVALID: this @auth test failed — retrying once against a ' +\n"
+        "        'freshly re-established session in case a concurrently-running test ' +\n"
+        "        'logged out or otherwise invalidated the shared account session. If it ' +\n"
+        "        'fails again after the retry, this is the original failure, not a ' +\n"
+        "        'session problem.',\n"
+        "      )\n"
+        "    }\n"
+        "  },\n"
+    )
+    return (
+        "export * from '../node_modules/@playwright/test'\n"
+        "import { test as base } from '../node_modules/@playwright/test'\n"
+        "import { existsSync, readFileSync } from 'fs'\n"
+        "import { join } from 'path'\n\n"
+        "const SESSION_STORAGE_PATH = join(__dirname, '..', '.auth', 'session-storage.json')\n\n"
+        "export const test = base.extend({\n"
+        f"{context_fixture}"
+        f"{page_fixture}"
+        "})\n"
+    )
+
+
+def _build_tsconfig() -> str:
+    """The only piece wiring `support/fixtures.ts` in — every generated (and
+    already-generated) spec keeps importing the literal string
+    `'@playwright/test'`; this is what makes that resolve to the fixtures
+    file above instead of the real package, transparently, project-wide."""
+    return (
+        "{\n"
+        '  "compilerOptions": {\n'
+        '    "baseUrl": ".",\n'
+        '    "paths": {\n'
+        '      "@playwright/test": ["./support/fixtures.ts"]\n'
+        "    }\n"
+        "  }\n"
+        "}\n"
     )
 
 
@@ -436,6 +580,62 @@ def _build_auth_helper_script(login_evidence: LoginPageEvidence | None) -> str:
         "  } else {\n"
         f"    await {password_locator}.press('Enter')\n"
         "  }\n"
+        "}\n\n"
+        "// `[FIXED]` Shared by auth.setup.ts (verifying the initial login) and\n"
+        "// support/fixtures.ts (verifying a *restored* session is still valid before an\n"
+        "// `@auth` test runs) — one implementation of what \"actually authenticated\" means,\n"
+        "// not two heuristics that can drift apart. A password field being gone is not\n"
+        "// enough on its own — some apps land on a generic error page, not the login form,\n"
+        "// when a session is rejected. Combined with a URL check (still on the exact login\n"
+        "// page path) covers both a traditional server-rendered redirect-to-login and an\n"
+        "// SPA that just re-renders the same route's form without leaving it.\n"
+        "//\n"
+        "// `[FIXED]` Neither of those catches a server that renders an \"invalid session\"\n"
+        "// page in place — HTTP 200, same URL the test asked for, no login form at all —\n"
+        "// instead of a status code or a redirect. There is no reliable structural signal\n"
+        "// for this (unlike the login form itself, this markup is different for every\n"
+        "// app), so this falls back to scanning the rendered text for the same small set\n"
+        "// of phrasings essentially every app uses for it — the same \"curated marker\n"
+        "// list, not a guess at one app's exact wording\" approach every generated spec's\n"
+        "// own `assertNoServerError` already uses for a *server* error page. Deliberately\n"
+        "// broad (session OR generic auth phrasing) since the point is to catch the class,\n"
+        "// not one exact string.\n"
+        "const SESSION_INVALID_MARKERS = [\n"
+        "  /session\\s+(has\\s+|is\\s+)?(expired|expir(ing|ed)|timed?\\s*out|is\\s+invalid|"
+        "is\\s+no\\s+longer\\s+valid|id\\s+is\\s+invalid)/i,\n"
+        "  /invalid\\s+session/i,\n"
+        "  /please\\s+(log|sign)\\s+in(\\s+again)?/i,\n"
+        "  /\\b(log|sign)\\s+in\\s+again\\b/i,\n"
+        "  /authentication\\s+(required|failed)/i,\n"
+        "  /not\\s+authenticated/i,\n"
+        "  // `[FIXED]` Some apps route an invalid/expired session through the same\n"
+        "  // generic error boundary as any other unhandled failure — no \"session\"/\"log\n"
+        "  // in\" wording at all, just a catch-all \"something broke\" page. Still a\n"
+        "  // generic, framework-level phrasing (a React/Next.js-style error boundary's\n"
+        "  // stock copy), not one app's exact text, so it belongs in this same curated\n"
+        "  // list rather than being hardcoded as a one-off special case. A false\n"
+        "  // positive here only ever costs one extra retry against a freshly\n"
+        "  // re-authenticated session (see support/fixtures.ts) — worst case it's\n"
+        "  // wasted, never a masked bug, since a retry that fails again for an\n"
+        "  // unrelated reason still reports as failed.\n"
+        "  /something\\s+went\\s+wrong/i,\n"
+        "  /an\\s+unexpected\\s+error\\s+(has\\s+)?occurred/i,\n"
+        "]\n\n"
+        "export async function isAuthenticated(page: Page, loginUrl: string): Promise<boolean> {\n"
+        "  const loginPath = new URL(loginUrl, page.url()).pathname\n"
+        "  if (new URL(page.url()).pathname === loginPath) {\n"
+        "    return false\n"
+        "  }\n"
+        "  const passwordFieldVisible = await page\n"
+        "    .locator('input[type=\"password\"]')\n"
+        "    .first()\n"
+        "    .isVisible()\n"
+        "    .catch(() => false)\n"
+        "  if (passwordFieldVisible) {\n"
+        "    return false\n"
+        "  }\n"
+        "  const bodyText = await page.content().catch(() => '')\n"
+        "  return !SESSION_INVALID_MARKERS.some((marker) => marker.test(bodyText))\n"
         "}\n"
     )
 
@@ -450,12 +650,23 @@ def _build_interactions_helper_script() -> str:
     instead of writing its own scroll-then-verify steps, so a genuinely
     wrong/stale locator fails with a clear, diagnosable error instead of a
     bare actionability timeout — the same "one implementation, not
-    duplicated per spec" reasoning `fillCredentials` already established."""
+    duplicated per spec" reasoning `fillCredentials` already established.
+
+    `[FIXED]` Used to take an optional `description`/`selectorText` second
+    argument that the generation prompt asked the AI to always pass — but
+    an LLM instruction is a request, not a guarantee, and plenty of
+    generated calls still omitted it, leaving the thrown error just as
+    anonymous as before. `Locator.toString()` (Playwright's own "human-
+    readable representation... based on the locator's selector") is always
+    available with zero cooperation required from whatever calls this, so
+    the identifying detail is now unconditional — this single shared
+    implementation is also what every already-generated spec's one-arg
+    `ensureVisible(locator)` call resolves to at export/run time, so this
+    fix is retroactive without regenerating anything."""
     return (
         "import type { Locator } from '@playwright/test'\n\n"
         "export async function ensureVisible(\n"
         "  locator: Locator,\n"
-        "  selectorText?: string,\n"
         "  timeout = 15000,\n"
         "): Promise<Locator> {\n"
         "  if (await locator.isVisible().catch(() => false)) {\n"
@@ -464,10 +675,9 @@ def _build_interactions_helper_script() -> str:
         "  await locator.scrollIntoViewIfNeeded({ timeout }).catch(() => {})\n"
         "  const visibleAfterScroll = await locator.isVisible().catch(() => false)\n"
         "  if (!visibleAfterScroll) {\n"
-        "    const label = selectorText ? ` (${selectorText})` : ''\n"
         "    throw new Error(\n"
-        "      `Element matched by locator${label} is not visible even after scrolling it "
-        "into ` +\n"
+        "      `Element matched by locator ${locator.toString()} is not visible even after "
+        "scrolling it into ` +\n"
         "      'view — the locator may be wrong, or the element requires a prior action '"
         " +\n"
         "      '(opening a menu/accordion/tab, waiting for content to load) to become "
@@ -582,6 +792,7 @@ def _write_project_files(
     )
 
     writer.write("package.json", _build_package_json())
+    writer.write("tsconfig.json", _build_tsconfig())
     writer.write(
         "playwright.config.ts",
         _build_playwright_config(application.url, has_login=login_evidence is not None),
@@ -596,6 +807,10 @@ def _write_project_files(
     writer.write("support/config.ts", _build_config_script())
     writer.write("support/auth.ts", _build_auth_helper_script(login_evidence))
     writer.write("support/interactions.ts", _build_interactions_helper_script())
+    writer.write(
+        "support/fixtures.ts",
+        _build_fixtures_helper_script(login_evidence.url if login_evidence else None),
+    )
 
     written_suite_folders = 0
     written_test_files = 0

@@ -18,8 +18,11 @@ import pytest
 from domain import (
     Application,
     DiscoveryRun,
+    Form,
+    FormField,
     Journey,
     Organization,
+    Page,
     Scenario,
     TestAsset,
     TestResult,
@@ -31,6 +34,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 from workflows import (
+    ExecuteTestActivityInput,
     FinalizeTestRunActivityInput,
     PrepareTestRunActivityInput,
 )
@@ -178,6 +182,244 @@ def test_prepare_runs_destructive_and_unknown_scenarios_unconditionally(
             select(TestResult).where(TestResult.test_run_id == test_run.id)
         ).all()
         assert all(r.status == "pending" for r in results)
+
+
+def test_prepare_logs_in_once_when_login_evidence_exists(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`[FIXED]` Every `ExecuteTestActivity` used to re-run `auth.setup.ts`
+    inside its own concurrent subprocess, each overwriting the shared
+    `.auth/state.json` — a same-account app allowing only one active
+    session then boots out whichever concurrent test was mid-run, landing
+    it back on the login page (`toHaveURL` mismatch redirected to
+    `/Account/Login?ReturnUrl=...`). Login must happen exactly once, in
+    `PrepareTestRunActivity`, which always runs alone (see module
+    docstring) — never once per `ExecuteTestActivity`."""
+    init_db()
+    application = _seed_application()
+    _seed_test_asset(application, safety_classification="SAFE")
+
+    with Session(engine) as session:
+        discovery_run = DiscoveryRun(application_id=application.id, status="complete")
+        session.add(discovery_run)
+        session.flush()
+        page = Page(
+            application_id=application.id, discovery_run_id=discovery_run.id, url="/login"
+        )
+        session.add(page)
+        session.flush()
+        form = Form(
+            application_id=application.id,
+            discovery_run_id=discovery_run.id,
+            page_id=page.id,
+            action_url="/login",
+        )
+        session.add(form)
+        session.flush()
+        session.add(FormField(form_id=form.id, name="password", input_type="password"))
+        session.commit()
+
+    monkeypatch.setattr(
+        activities_module, "assemble_test_suite_project_to_dir", lambda *a, **k: None
+    )
+    monkeypatch.setattr(activities_module, "_install_project", lambda *a, **k: None)
+    calls = []
+    monkeypatch.setattr(
+        activities_module, "_run_auth_setup_once", lambda *a, **k: calls.append(a)
+    )
+
+    result = activities_module._prepare_test_run_sync(
+        PrepareTestRunActivityInput(application_id=str(application.external_id))
+    )
+
+    assert result.blocked is False
+    assert len(calls) == 1
+
+
+async def test_run_playwright_test_skips_setup_dependency(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Pairs with the once-only login above: each per-spec invocation must
+    reuse the `.auth/state.json` that `PrepareTestRunActivity` already
+    wrote instead of re-running the `setup` project dependency itself."""
+
+    class _FakeProcess:
+        async def communicate(self):
+            return b'{"suites": []}', b""
+
+    captured_args = []
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        captured_args.extend(args)
+        return _FakeProcess()
+
+    monkeypatch.setattr(
+        activities_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec
+    )
+
+    await activities_module._run_playwright_test(
+        tmp_path, "tests/example.spec.ts", {}, 30.0, "test-result-id"
+    )
+
+    assert "--no-deps" in captured_args
+
+
+async def test_execute_test_retries_once_after_session_invalidation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[FIXED]` support/fixtures.ts marks a failure caused by an invalidated
+    shared `@auth` session with `AUTH_SESSION_INVALID` (see its own note) —
+    `ExecuteTestActivity` must recognize that marker, refresh the session
+    exactly once, and retry the same spec rather than reporting a flaky-
+    looking failure. A failure WITHOUT the marker must never trigger a
+    retry — that's a real test failure, not a session problem."""
+    init_db()
+    application = _seed_application()
+    asset = _seed_test_asset(application, safety_classification="SAFE")
+
+    with Session(engine) as session:
+        test_run = TestRun(
+            application_id=application.id,
+            status="running",
+            environment_snapshot="staging",
+            target_base_url_snapshot=application.url,
+        )
+        session.add(test_run)
+        session.flush()
+        test_result = TestResult(
+            test_run_id=test_run.id,
+            test_asset_id=asset.id,
+            scenario_id=asset.scenario_id,
+            status="pending",
+        )
+        session.add(test_result)
+        session.commit()
+        session.refresh(test_run)
+        session.refresh(test_result)
+        test_run_external_id = test_run.external_id
+        test_result_external_id = test_result.external_id
+
+    monkeypatch.setattr(activities_module, "_ensure_project_dir", lambda *a, **k: _noop())
+    monkeypatch.setattr(activities_module, "_build_subprocess_env", lambda *a, **k: {})
+
+    refresh_calls = []
+
+    async def fake_refresh(*a, **k):
+        refresh_calls.append(a)
+
+    monkeypatch.setattr(activities_module, "_refresh_auth_once", fake_refresh)
+
+    outcomes = [
+        {
+            "status": "failed",
+            "duration_ms": 100,
+            "error_message": "Error: locator not found\n\nAUTH_SESSION_INVALID: session dead",
+            "stack_trace": None,
+            "console_output": None,
+            "artifact_paths": [],
+        },
+        {
+            "status": "passed",
+            "duration_ms": 50,
+            "error_message": None,
+            "stack_trace": None,
+            "console_output": None,
+            "artifact_paths": [],
+        },
+    ]
+    run_calls = []
+
+    async def fake_run_playwright_test(*a, **k):
+        run_calls.append(a)
+        return outcomes[len(run_calls) - 1]
+
+    monkeypatch.setattr(activities_module, "_run_playwright_test", fake_run_playwright_test)
+
+    await activities_module.execute_test_activity(
+        ExecuteTestActivityInput(
+            application_id=str(application.external_id),
+            test_run_id=str(test_run_external_id),
+            test_result_id=str(test_result_external_id),
+            test_asset_id=str(asset.external_id),
+        )
+    )
+
+    assert len(run_calls) == 2
+    assert len(refresh_calls) == 1
+    with Session(engine) as session:
+        result = session.exec(
+            select(TestResult).where(TestResult.external_id == test_result_external_id)
+        ).one()
+        assert result.status == "passed"
+
+
+async def test_execute_test_does_not_retry_an_unrelated_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    init_db()
+    application = _seed_application()
+    asset = _seed_test_asset(application, safety_classification="SAFE")
+
+    with Session(engine) as session:
+        test_run = TestRun(
+            application_id=application.id,
+            status="running",
+            environment_snapshot="staging",
+            target_base_url_snapshot=application.url,
+        )
+        session.add(test_run)
+        session.flush()
+        test_result = TestResult(
+            test_run_id=test_run.id,
+            test_asset_id=asset.id,
+            scenario_id=asset.scenario_id,
+            status="pending",
+        )
+        session.add(test_result)
+        session.commit()
+        session.refresh(test_run)
+        session.refresh(test_result)
+        test_run_external_id = test_run.external_id
+        test_result_external_id = test_result.external_id
+
+    monkeypatch.setattr(activities_module, "_ensure_project_dir", lambda *a, **k: _noop())
+    monkeypatch.setattr(activities_module, "_build_subprocess_env", lambda *a, **k: {})
+
+    refresh_calls = []
+
+    async def fake_refresh(*a, **k):
+        refresh_calls.append(a)
+
+    monkeypatch.setattr(activities_module, "_refresh_auth_once", fake_refresh)
+
+    run_calls = []
+
+    async def fake_run_playwright_test(*a, **k):
+        run_calls.append(a)
+        return {
+            "status": "failed",
+            "duration_ms": 100,
+            "error_message": "Error: locator not found",
+            "stack_trace": None,
+            "console_output": None,
+            "artifact_paths": [],
+        }
+
+    monkeypatch.setattr(activities_module, "_run_playwright_test", fake_run_playwright_test)
+
+    await activities_module.execute_test_activity(
+        ExecuteTestActivityInput(
+            application_id=str(application.external_id),
+            test_run_id=str(test_run_external_id),
+            test_result_id=str(test_result_external_id),
+            test_asset_id=str(asset.external_id),
+        )
+    )
+
+    assert len(run_calls) == 1
+    assert len(refresh_calls) == 0
+
+
+async def _noop() -> None:
+    return None
 
 
 def test_finalize_aggregates_counts_and_marks_completed() -> None:

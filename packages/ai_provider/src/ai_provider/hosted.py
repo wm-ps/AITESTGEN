@@ -496,15 +496,14 @@ not '../support/...') instead of writing your own visibility check — it scroll
 into view if it isn't already visible and re-verifies, so a genuinely wrong/stale locator (or \
 an element hidden behind a fixed header, off-screen in a long page, or inside an unusual \
 scroll container) fails with a clear, diagnosable error instead of a confusing fill/click \
-timeout. Always pass the exact selector string itself (not a human label) as the second \
-argument — this is what lets a failure message name the precise locator that broke, since \
-the error text alone never contains it. For example, instead of:
+timeout. For example, instead of:
 await page.getByLabel(/password/i).fill(password);
 generate:
 import {{ ensureVisible }} from '../../support/interactions';
 // ...
-const passwordSelector = 'input[name="password"], input[type="password"], input[id="password"]';
-const passwordField = await ensureVisible(page.locator(passwordSelector).first(), passwordSelector);
+const passwordField = await ensureVisible(page.locator(
+  'input[name="password"], input[type="password"], input[id="password"]'
+).first());
 await passwordField.fill(password);
 
 Never treat a button (e.g. `<button aria-label="Show password">`, `<button aria-label="Hide \
@@ -556,6 +555,17 @@ fallback guess, not a known-good default, and prefer whichever the Test steps/Ex
 actually name over guessing. Only assert on visible error text if that exact text is given to \
 you via the Test data or Expected result above — never invent your own generic message (e.g. \
 "This field is required") and search for it.
+
+Native browser validation message rule — an Expected result that quotes wording like "Please \
+fill out this field.", "Please match the requested format.", or "Please select a value in the \
+list." (the browser's own built-in constraint-validation copy, verbatim from a captured \
+`html5_message`) is NEVER part of the page's DOM or accessibility tree, even though the exact \
+text was given to you above — it's rendered by the browser's native validation bubble, outside \
+the document entirely, so `getByText`/`toContainText`/`page.content()` can never find it and a \
+generated assertion that searches for it can never pass. For that exact wording, assert against \
+the field's own validity state instead: `await expect(field).toHaveJSProperty('validationMessage', \
+'<exact text>')`, or, if only checking that the field is flagged invalid (no exact wording given), \
+the native `:invalid` pseudo-class / `field.evaluate(el => el.checkValidity())`.
 
 Form-field value-persistence rule — never assert that a field "retains its value" after a \
 submit/postback (or that it was cleared) unless the Test steps or Expected result explicitly \

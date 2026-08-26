@@ -227,15 +227,101 @@ class TestAssembleTestSuiteProject:
         assert "scrollIntoViewIfNeeded" in interactions_helper
         assert "isVisible" in interactions_helper
 
+    def test_generated_specs_transparently_resolve_to_shared_fixtures(self) -> None:
+        """`[FIXED]` Playwright's `storageState` never captures `sessionStorage`
+        (only cookies/localStorage, and IndexedDB when asked) — some apps keep
+        a session artifact there that every later authenticated page's API
+        calls depend on, silently dropped otherwise. `support/fixtures.ts`
+        restores it for every `@auth` test; `tsconfig.json`'s `paths` mapping
+        is what makes every generated spec's own, unmodified
+        `import { test, expect } from '@playwright/test'` resolve there
+        instead — the fix reaches every already-generated spec too, exactly
+        like `support/interactions.ts`'s `ensureVisible`, with zero change to
+        spec content."""
+        zf = self._basic_zip(auth_method="standard_login")
+        tsconfig = zf.read("tsconfig.json").decode()
+        fixtures = zf.read("support/fixtures.ts").decode()
+
+        assert '"@playwright/test": ["./support/fixtures.ts"]' in tsconfig
+        assert "export * from '../node_modules/@playwright/test'" in fixtures
+        assert "base.extend" in fixtures
+        assert "sessionStorage" in fixtures
+        assert "@auth" in fixtures
+
+    def test_fixtures_retries_any_failed_auth_test_unconditionally(self) -> None:
+        """`[FIXED]` Every `@auth` test shares the ONE session `auth.setup.ts`
+        captured — a concurrently-running test that logs out or otherwise
+        invalidates the account's session invalidates it for every other
+        `@auth` test still using that snapshot, which then fails on whatever
+        locator it happened to be waiting on with no hint why.
+
+        `[FIXED]` This used to try to DETECT that specifically first — an
+        HTTP status, a URL/password-field check, a curated phrase list —
+        before deciding whether to raise. Every one of those is a guess at
+        how a particular app happens to signal it, and real apps kept
+        surfacing new ones. Dropped: any `@auth` test that fails now raises
+        the marker unconditionally, and `execution_worker` retries it once
+        against a freshly re-established session regardless of why it
+        failed — a real bug in the test's own steps just fails the same way
+        again on retry, so nothing is masked."""
+        evidence = LoginPageEvidence(
+            url="https://acme.example.com/login",
+            username_locator='page.locator(\'[name="email"]\')',
+            password_locator='page.locator(\'[name="password"]\')',
+        )
+        zf = self._basic_zip(auth_method="standard_login", login_evidence=evidence)
+        fixtures = zf.read("support/fixtures.ts").decode()
+
+        assert "AUTH_SESSION_INVALID" in fixtures
+        assert "testInfo.status" in fixtures
+        # No content/status guessing left in this file at all.
+        assert "isAuthenticated" not in fixtures
+        assert "resourceType" not in fixtures
+        # Only an `@auth` test's page fixture does this — a `@public` test
+        # (which never had a session to begin with) must never be flagged.
+        assert "testInfo.tags.includes('@auth')" in fixtures
+
+    def test_fixtures_session_check_is_a_noop_without_a_captured_login_page(self) -> None:
+        """No login page was ever captured (e.g. Discovery never found one) —
+        there is no known login URL to compare against, so the check must not
+        exist at all rather than guess with an empty/placeholder URL."""
+        zf = self._basic_zip(auth_method="standard_login", login_evidence=None)
+        fixtures = zf.read("support/fixtures.ts").decode()
+        assert "AUTH_SESSION_INVALID" not in fixtures
+        assert "isAuthenticated" not in fixtures
+        # The sessionStorage-restoring `context` fixture is unrelated to the
+        # login page and must still be present.
+        assert "sessionStorage" in fixtures
+
+    def test_standard_login_setup_captures_indexeddb_and_session_storage(self) -> None:
+        """`[FIXED]` Sibling fix to the one above, on the capture side:
+        `context.storageState()` only includes IndexedDB when explicitly
+        asked (some auth libraries — Firebase Auth, MSAL/OAuth token caches —
+        keep their session there), and never includes `sessionStorage` at
+        all. Both are captured generically here (no app-specific key names)
+        for `support/fixtures.ts` to restore."""
+        zf = self._basic_zip(auth_method="standard_login")
+        setup_script = zf.read("tests/auth.setup.ts").decode()
+        assert "indexedDB: true" in setup_script
+        assert "session-storage.json" in setup_script
+        assert "window.sessionStorage" in setup_script
+
     def test_standard_login_setup_verifies_login_actually_succeeded(self) -> None:
         """`[FIXED]` `auth.setup.ts` used to write `storageState` unconditionally
         right after calling `fillCredentials` — a wrong/missing credential (e.g.
         the placeholder default in support/config.ts) submits without throwing,
         silently producing a storageState that was never actually authenticated.
         Every downstream `@auth` test then failed for an unrelated, harder-to-
-        diagnose reason instead of one clear failure at setup time."""
+        diagnose reason instead of one clear failure at setup time.
+
+        `[FIXED]` The verification itself used to be "no password field
+        visible" alone — too weak on its own (an app can land on a generic
+        error page, not the login form, when a session is rejected). It now
+        goes through the shared `isAuthenticated` helper (support/auth.ts),
+        which also checks the URL actually left the login page."""
         zf = self._basic_zip(auth_method="standard_login")
         setup_script = zf.read("tests/auth.setup.ts").decode()
+        auth_helper = zf.read("support/auth.ts").decode()
 
         # fillCredentials() completing without an exception must not be
         # trusted on its own — there must be a real post-login check before
@@ -243,12 +329,65 @@ class TestAssembleTestSuiteProject:
         # which every `@auth` test depends on) when that check fails.
         assert "fillCredentials(page)" in setup_script
         assert "storageState" in setup_script
+        assert "isAuthenticated" in setup_script
         fill_index = setup_script.index("fillCredentials(page)")
         storage_index = setup_script.index("storageState")
         assert fill_index < storage_index, "must verify login before saving storageState"
         verification_section = setup_script[fill_index:storage_index]
         assert "throw new Error" in verification_section
-        assert 'input[type="password"]' in verification_section
+        assert "isAuthenticated(page, loginUrl)" in verification_section
+        # The shared helper itself must check both signals, not just one.
+        assert "export async function isAuthenticated" in auth_helper
+        assert "pathname" in auth_helper
+        assert 'input[type="password"]' in auth_helper
+
+    def test_is_authenticated_catches_ssr_invalid_session_markup(self) -> None:
+        """`[FIXED]` Neither the URL check nor the password-field check
+        catches a server that renders an "invalid session" page in place —
+        HTTP 200, the exact URL the test asked for, no redirect, no login
+        form — instead of a status code or a redirect. Verified live against
+        a real server doing exactly this: same fix, `page.content()` scanned
+        for the same small set of session/auth phrasings essentially every
+        app uses for it, the same curated-marker-list approach
+        `assertNoServerError` already uses for a *server* error page."""
+        zf = self._basic_zip(auth_method="standard_login")
+        auth_helper = zf.read("support/auth.ts").decode()
+
+        assert "SESSION_INVALID_MARKERS" in auth_helper
+        assert "page.content()" in auth_helper
+        import re
+
+        markers_section = auth_helper[
+            auth_helper.index("SESSION_INVALID_MARKERS") : auth_helper.index(
+                "export async function isAuthenticated"
+            )
+        ]
+        patterns = [
+            re.compile(p, re.IGNORECASE) for p in re.findall(r"/(.+?)/i", markers_section)
+        ]
+        assert patterns, "expected at least one marker regex"
+
+        # Real reported phrasing — must match.
+        assert any(
+            p.search("Your session has expired. Please sign in again to continue.")
+            for p in patterns
+        )
+        # `[FIXED]` A second real report: an invalid session routed through a
+        # generic "something broke" error boundary, no session/login wording
+        # at all.
+        assert any(
+            p.search(
+                "Something went wrong\n"
+                "An unexpected error occurred while processing your request. "
+                "Our team has been notified."
+            )
+            for p in patterns
+        )
+        # A genuine, unrelated page must never match any marker — this is
+        # only ever consulted after a test has already failed, but a false
+        # positive here would misdiagnose a real bug as a session problem.
+        ordinary_page = "<h1>Dashboard</h1><p>Welcome back, view your account below.</p>"
+        assert not any(p.search(ordinary_page) for p in patterns)
 
     def test_standard_login_falls_back_to_generic_selectors_without_evidence(self) -> None:
         zf = self._basic_zip(auth_method="standard_login", login_evidence=None)

@@ -191,6 +191,28 @@ def _is_existing_credential_field(field_name: str) -> bool:
     return bool(_USERNAME_FIELD_RE.search(field_name) or _PASSWORD_FIELD_RE.search(field_name))
 
 
+# `[FIXED]` A "confirm X" field (confirm password, confirm new password, ...)
+# used to get its value from the exact same distinct-by-design candidate
+# cycling as any other same-shaped field (Checklist rule 6, above) — correct
+# for a scenario whose whole point is that two fields DIFFER, but wrong for
+# every ordinary scenario, which needs a confirm field to match its
+# counterpart exactly or the form's own client-side "doesn't match"
+# validation blocks the very outcome the scenario is testing for (e.g. a
+# "successfully change password" Scenario silently getting an unusable
+# new/confirm pair). Only overridden when the Scenario's own intent
+# genuinely calls for a mismatch.
+_CONFIRM_FIELD_RE = re.compile(r"\bconfirm(?:ation)?\b", re.IGNORECASE)
+_MISMATCH_INTENT_RE = re.compile(
+    r"mismatch|don'?t match|does(?:n'?t| not) match|\bdiffer(?:ent|ing|s)?\b", re.IGNORECASE
+)
+
+
+def _confirm_field_counterpart_name(field_name: str) -> str:
+    """'confirm new password' -> 'new password'; 'confirm password' ->
+    'password'."""
+    return _CONFIRM_FIELD_RE.sub("", field_name).strip()
+
+
 _NUMERIC_BOUNDARY_FIELD_EXCLUSION_RE = re.compile(r"name|subject|comment|holder", re.IGNORECASE)
 
 
@@ -781,7 +803,7 @@ def _test_case_limit_reached_sync(scenario_external_id: str) -> bool:
 
 def resolve_known_application_model_sync(
     session: Session, journey_id: uuid.UUID
-) -> tuple[list[dict[str, str]], list[dict[str, str]], uuid.UUID | None]:
+) -> tuple[list[dict[str, str]], list[dict[str, str]], uuid.UUID | None, list[uuid.UUID]]:
     """Grounds Playwright generation in what Discovery actually captured for
     this Journey, mirroring `scenario_generation_activity`'s own
     steps->components->pages resolution above (duplicated rather than
@@ -793,7 +815,7 @@ def resolve_known_application_model_sync(
     pages/locators a healed retry's `generate_playwright` call is grounded
     in as the original generation was.
 
-    Returns `(known_pages, known_locators, primary_page_id)`:
+    Returns `(known_pages, known_locators, primary_page_id, known_page_ids)`:
     - `known_pages`/`known_locators`: plain dicts (never ORM objects, so the
       result stays valid once this function's caller's session closes) —
       see below.
@@ -811,7 +833,14 @@ def resolve_known_application_model_sync(
       always the most durable survivor).
     - `primary_page_id`: the first Page this Journey's steps visit — used
       for the requires_auth heuristic and for grouping sibling TestAssets
-      (Story: generation pipeline hardening)."""
+      (Story: generation pipeline hardening).
+    - `known_page_ids`: every one of `known_pages`' Page ids, same order.
+      `[FIXED]` A field's `required`/`input_type` metadata used to only ever
+      be looked up on `primary_page_id` — the wrong page for any multi-page
+      Journey (e.g. Dashboard -> a Loans page holding the actual form),
+      which starves `_default_test_data_value`'s type-aware fallback for
+      every field on the real target page. Callers needing that metadata
+      should look it up across all of `known_page_ids`, not just the first."""
     steps = list(
         session.exec(
             select(JourneyStep)
@@ -820,7 +849,7 @@ def resolve_known_application_model_sync(
         ).all()
     )
     if not steps:
-        return [], [], None
+        return [], [], None, []
 
     component_ids = {s.component_id for s in steps if s.component_id}
     components_by_id = {
@@ -837,7 +866,7 @@ def resolve_known_application_model_sync(
         c.page_id for c in components_by_id.values()
     }
     if not page_ids:
-        return [], [], None
+        return [], [], None, []
 
     pages_by_id = {
         p.id: p
@@ -859,8 +888,10 @@ def resolve_known_application_model_sync(
                 {"stage_label": step.stage_label, "url": pages_by_id[step_page_id].url}
             )
     # dict preserves insertion order — the first page a step actually
-    # resolves to is this Journey's primary page.
-    primary_page_id = next(iter(stage_label_by_page_id), None)
+    # resolves to is this Journey's primary page; every key is every page
+    # this Journey ever visits, in that same step order.
+    known_page_ids = list(stage_label_by_page_id.keys())
+    primary_page_id = next(iter(known_page_ids), None)
 
     all_components = list(
         session.exec(
@@ -870,7 +901,7 @@ def resolve_known_application_model_sync(
         ).all()
     )
     if not all_components:
-        return known_pages, [], primary_page_id
+        return known_pages, [], primary_page_id, known_page_ids
 
     locators = list(
         session.exec(
@@ -902,7 +933,7 @@ def resolve_known_application_model_sync(
                 "strategy": chosen.strategy,
             }
         )
-    return known_pages, known_locators, primary_page_id
+    return known_pages, known_locators, primary_page_id, known_page_ids
 
 
 _ScenarioDefaults = tuple[
@@ -922,16 +953,19 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
             select(Scenario).where(Scenario.external_id == uuid.UUID(scenario_external_id))
         ).one()
 
-        known_pages, known_locators, primary_page_id = resolve_known_application_model_sync(
-            session, scenario.journey_id
-        )
+        (
+            known_pages,
+            known_locators,
+            primary_page_id,
+            known_page_ids,
+        ) = resolve_known_application_model_sync(session, scenario.journey_id)
 
         required_fields: dict[str, bool] = {}
         field_input_types: dict[str, str] = {}
         requires_auth = False
         if primary_page_id is not None:
-            required_fields = spec_linter.required_fields_for_page(session, primary_page_id)
-            field_input_types = spec_linter.field_input_types_for_page(session, primary_page_id)
+            required_fields = spec_linter.required_fields_for_pages(session, known_page_ids)
+            field_input_types = spec_linter.field_input_types_for_pages(session, known_page_ids)
             journey = session.get(Journey, scenario.journey_id)
             application = session.get(Application, journey.application_id) if journey else None
             primary_page = session.get(Page, primary_page_id)
@@ -959,7 +993,14 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
             for field in updated_fields
             if field.get("value") and field["value"] not in _KNOWN_GENERIC_PLACEHOLDERS
         }
-        for field in updated_fields:
+        # Confirm-qualified fields are resolved in a second pass, below, so
+        # their counterpart's own value has already settled by the time they
+        # look it up.
+        confirm_ids = {id(f) for f in updated_fields if _CONFIRM_FIELD_RE.search(f["name"])}
+        confirm_fields = [f for f in updated_fields if id(f) in confirm_ids]
+        other_fields = [f for f in updated_fields if id(f) not in confirm_ids]
+
+        for field in other_fields:
             current_value = field.get("value")
             if not current_value or current_value in _KNOWN_GENERIC_PLACEHOLDERS:
                 value = _scenario_intent_default_value(
@@ -967,6 +1008,27 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
                 ) or _default_test_data_value(
                     field["name"], used_values, field_input_types.get(field["name"], "text")
                 )
+                if value != current_value:
+                    field["value"] = value
+                    changed = True
+                used_values.add(value)
+
+        for field in confirm_fields:
+            current_value = field.get("value")
+            if not current_value or current_value in _KNOWN_GENERIC_PLACEHOLDERS:
+                counterpart_name = _confirm_field_counterpart_name(field["name"]).lower()
+                counterpart = next(
+                    (f for f in other_fields if f["name"].strip().lower() == counterpart_name),
+                    None,
+                )
+                if counterpart is not None and not _MISMATCH_INTENT_RE.search(intent_text):
+                    value = counterpart["value"]
+                else:
+                    value = _scenario_intent_default_value(
+                        intent_text, field["name"]
+                    ) or _default_test_data_value(
+                        field["name"], used_values, field_input_types.get(field["name"], "text")
+                    )
                 if value != current_value:
                     field["value"] = value
                     changed = True

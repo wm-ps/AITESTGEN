@@ -26,6 +26,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -309,6 +310,8 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
                 inputs.login_evidence,
             )
             _install_project(dest_dir)
+            if inputs.login_evidence is not None:
+                _run_auth_setup_once(dest_dir, application)
         except Exception as exc:  # noqa: BLE001 — infra failure, not a test outcome
             for asset in pending_assets:
                 test_result = test_results_by_asset_id[asset.id]
@@ -347,6 +350,79 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
         return PrepareTestRunActivityResult(
             test_run_id=str(test_run.external_id), blocked=False, executable=executable
         )
+
+
+def _run_auth_setup_once(dest_dir: Path, application: Application) -> None:
+    """Logs in exactly once per TestRun, here in `PrepareTestRunActivity` —
+    which always runs alone, no concurrency to race (see module docstring)
+    — instead of letting `auth.setup.ts` run again inside every individual
+    `ExecuteTestActivity`'s own `npx playwright test <spec>` subprocess.
+    Each of those runs concurrently against this *same* project directory
+    (see `_run_playwright_test`'s docstring); without this, every one of
+    them independently re-logs-in and overwrites the shared `.auth/
+    state.json`, so a same-account app that only allows one active session
+    (routine for a banking-style app) boots out whichever concurrent test
+    was mid-run, and it lands back on the login page. One login here, then
+    every `ExecuteTestActivity` invocation passes `--no-deps` to reuse the
+    resulting file read-only instead of repeating the race."""
+    try:
+        subprocess.run(
+            [_resolve_bin("npx"), "playwright", "test", "--project=setup"],
+            cwd=dest_dir,
+            env=_build_subprocess_env(application),
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+    except subprocess.CalledProcessError as exc:
+        # `[FIXED]` `logger.exception` on the caller side only ever logged
+        # the Python traceback — `CalledProcessError.__str__` doesn't
+        # include the subprocess's own stdout/stderr, so every refresh
+        # failure was logged with no way to tell *why* the login itself
+        # failed (real bad credentials vs. a bug in `isAuthenticated`'s own
+        # verification vs. something else). Re-raised with both attached to
+        # the message so it survives into that same log line.
+        raise RuntimeError(
+            f"auth.setup.ts failed (exit {exc.returncode}):\n"
+            f"stdout: {exc.stdout.decode(errors='replace')}\n"
+            f"stderr: {exc.stderr.decode(errors='replace')}"
+        ) from exc
+
+
+# The clear, greppable marker support/fixtures.ts's `page` fixture raises when
+# an `@auth` test's restored session looks to have gone bad mid-run (see that
+# file's own note) — `_maybe_retry_after_session_invalidation` below looks for
+# this exact string in a failed test's `error_message`.
+AUTH_SESSION_INVALID_MARKER = "AUTH_SESSION_INVALID"
+
+# One shared account's session is used by every `@auth` test in a TestRun
+# (see `_run_auth_setup_once`) — several can hit the same invalidated session
+# and want to refresh it around the same moment. Global, not per-TestRun,
+# matching `_project_rebuild_lock`'s own reasoning: refreshing is an
+# exceptional recovery path, not the hot path.
+_auth_refresh_lock = asyncio.Lock()
+_last_auth_refresh_at: dict[uuid.UUID, float] = {}
+# A concurrent caller that lost the race to refresh reuses whatever the
+# winner just produced instead of logging in again itself — a second login
+# moments later is wasted work at best, and on an app that treats concurrent
+# logins as suspicious, could invalidate the very session it just fixed.
+_AUTH_REFRESH_DEDUP_SECONDS = 5.0
+
+
+async def _refresh_auth_once(test_run_id: uuid.UUID, dest_dir: Path, application: Application) -> None:
+    async with _auth_refresh_lock:
+        last = _last_auth_refresh_at.get(test_run_id, 0.0)
+        if time.monotonic() - last < _AUTH_REFRESH_DEDUP_SECONDS:
+            return
+        # `[FIXED]` Recorded even when the attempt below fails — this used to
+        # only record on success, so a genuinely broken login (bad
+        # credentials, a real outage) got hammered again by every next
+        # caller with zero backoff instead of being deduped like a
+        # successful refresh is. Every caller still sees the real failure
+        # (this re-raises), just not on top of a thundering herd of
+        # identical doomed attempts.
+        _last_auth_refresh_at[test_run_id] = time.monotonic()
+        await asyncio.to_thread(_run_auth_setup_once, dest_dir, application)
 
 
 def _install_project(dest_dir: Path) -> None:
@@ -393,9 +469,10 @@ async def execute_test_activity(input: ExecuteTestActivityInput) -> str:
         input.test_result_id,
         context.spec_path,
     )
-    await _ensure_project_dir(uuid.UUID(input.test_run_id), uuid.UUID(input.application_id))
+    test_run_id = uuid.UUID(input.test_run_id)
+    await _ensure_project_dir(test_run_id, uuid.UUID(input.application_id))
     env = await asyncio.to_thread(_build_subprocess_env, context.application)
-    project_dir = project_dir_for(uuid.UUID(input.test_run_id))
+    project_dir = project_dir_for(test_run_id)
     outcome = await _run_playwright_test(
         project_dir,
         context.spec_path,
@@ -403,6 +480,40 @@ async def execute_test_activity(input: ExecuteTestActivityInput) -> str:
         PLAYWRIGHT_RUN_TIMEOUT_SECONDS,
         input.test_result_id,
     )
+    # `[FIXED]` Every `@auth` test in this TestRun shares the ONE session
+    # `_run_auth_setup_once` established — a concurrently-running test that
+    # logs out, changes the password, or otherwise invalidates the account's
+    # session invalidates it for every other `@auth` test still using that
+    # same snapshot. support/fixtures.ts detects this and raises a clear,
+    # marked error instead of (or alongside) a confusing locator failure —
+    # retried here exactly once, against a freshly re-established session,
+    # rather than reported as a flaky/broken test. A retry that fails again
+    # (a genuinely broken credential, an app that's actually down) is
+    # reported as-is, not retried further.
+    if outcome["status"] == "failed" and AUTH_SESSION_INVALID_MARKER in (
+        outcome.get("error_message") or ""
+    ):
+        logger.warning(
+            "ExecuteTestActivity: test_result_id=%s hit an invalidated session — "
+            "refreshing auth and retrying once",
+            input.test_result_id,
+        )
+        try:
+            await _refresh_auth_once(test_run_id, project_dir, context.application)
+        except Exception:  # noqa: BLE001 — retry is best-effort; report the original outcome
+            logger.exception(
+                "ExecuteTestActivity: test_result_id=%s auth refresh failed, keeping "
+                "original outcome",
+                input.test_result_id,
+            )
+        else:
+            outcome = await _run_playwright_test(
+                project_dir,
+                context.spec_path,
+                env,
+                PLAYWRIGHT_RUN_TIMEOUT_SECONDS,
+                input.test_result_id,
+            )
     await asyncio.to_thread(_persist_test_result_sync, input.test_run_id, context, outcome)
     logger.info(
         "ExecuteTestActivity: test_result_id=%s finished status=%s",
@@ -480,12 +591,15 @@ async def _run_playwright_test(
     screenshot/trace scan could pick up another concurrently-running test's
     artifacts. Verified against a real `npx playwright test` run (schema
     below is not guessed): the target spec's own project (`chromium`)
-    always depends on the `setup` project (`auth.setup.ts`), so a failed
-    setup makes the target spec show up with `results: []` and a top-level
-    `status: "skipped"` — never its own `results[-1]`, which is why this
-    parser checks the *target file's own suite* specifically rather than
-    just returning the first suite with any results (that would silently
-    report the setup project's own outcome instead of the test's own).
+    depends on the `setup` project (`auth.setup.ts`) — skipped here via
+    `--no-deps` since `PrepareTestRunActivity` already ran it once (see
+    `_run_auth_setup_once`), but a *pre-`--no-deps`* run with a failed
+    setup showed the target spec with `results: []` and a top-level
+    `status: "skipped"` — never its own `results[-1]`. This parser still
+    checks the *target file's own suite* specifically rather than just
+    returning the first suite with any results, so that shape (or a
+    project without a `setup` dependency at all) both still resolve to the
+    test's own outcome instead of some other suite's.
 
     ponytail: parses only the JSON-reporter fields this activity actually
     needs (final outcome, duration, first error) rather than the full
@@ -500,6 +614,14 @@ async def _run_playwright_test(
         spec_path,
         "--reporter=json",
         f"--output={output_dir}",
+        # `PrepareTestRunActivity` already ran the `setup` project's login
+        # once (see `_run_auth_setup_once`) — skip re-running it as a
+        # dependency here. Several of these invocations run concurrently
+        # against the same project dir; without `--no-deps` each would
+        # re-login and overwrite the shared `.auth/state.json`, racing
+        # exactly the scenario `_run_auth_setup_once` exists to avoid. A
+        # no-op when the target spec has no dependency project at all.
+        "--no-deps",
         cwd=str(project_dir),
         env=env,
         stdout=asyncio.subprocess.PIPE,
@@ -565,16 +687,27 @@ def _parse_playwright_report(stdout: bytes, stderr: bytes, spec_path: str) -> di
                         "failed": "failed",
                         "timedOut": "timed_out",
                     }.get(result.get("status"), "errored")
-                    error_obj = result.get("error") or next(
-                        iter(result.get("errors") or []), None
+                    # `[FIXED]` Used to take only the FIRST error (`result["error"]`,
+                    # falling back to `errors[0]`) — an `@auth` test whose restored
+                    # session went bad mid-run gets a SECOND error appended by
+                    # support/fixtures.ts's page fixture (see its own note), always
+                    # after the original, now-misleading locator/assertion failure.
+                    # Taking only the first one silently dropped that clarifying
+                    # signal, which `_maybe_retry_after_session_invalidation` below
+                    # greps `error_message` for. Concatenate every error instead —
+                    # nothing from before is lost, and the clarifying one (when
+                    # present) is now actually visible/greppable.
+                    raw_errors = result.get("errors") or (
+                        [result["error"]] if result.get("error") else []
                     )
-                    error_message = None
-                    stack_trace = None
-                    if isinstance(error_obj, dict):
-                        error_message = error_obj.get("message")
-                        stack_trace = error_obj.get("stack")
-                    elif error_obj:
-                        error_message = str(error_obj)
+                    messages = [
+                        e.get("message") for e in raw_errors if isinstance(e, dict) and e.get("message")
+                    ]
+                    error_message = "\n\n".join(messages) if messages else None
+                    stack_trace = next(
+                        (e.get("stack") for e in raw_errors if isinstance(e, dict) and e.get("stack")),
+                        None,
+                    )
                     return {
                         "status": status,
                         "duration_ms": result.get("duration"),
@@ -819,7 +952,7 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
         ).one()
         journey = session.exec(select(Journey).where(Journey.id == test_suite.journey_id)).one()
         scenario = session.exec(select(Scenario).where(Scenario.id == test_asset.scenario_id)).one()
-        known_pages, known_locators, _ = resolve_known_application_model_sync(session, journey.id)
+        known_pages, known_locators, _, _ = resolve_known_application_model_sync(session, journey.id)
         spec_path_by_asset_id = compute_spec_paths(
             test_suites=[test_suite],
             journeys_by_id={journey.id: journey},

@@ -1,5 +1,5 @@
 """spec_linter — pure regex/logic unit tests (no DB; the DB-touching helpers
-`resolve_requires_auth`/`required_fields_for_page` are exercised indirectly
+`resolve_requires_auth`/`required_fields_for_pages` are exercised indirectly
 via `test_playwright_generation_activity.py`)."""
 
 from generation_worker.spec_linter import (

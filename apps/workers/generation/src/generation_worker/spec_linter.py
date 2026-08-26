@@ -224,51 +224,59 @@ def _find_login_page_url(session: Session, application_id: uuid.UUID) -> str | N
     return None
 
 
-_NEGATIVE_AUTH_INTENT_RE = re.compile(
-    r"session\s*(?:has\s*|is\s*)?expir|log(?:ged)?\s*out|sign(?:ed)?\s*out|"
-    r"unauthenticat|not\s+logged\s*in|without\s+(?:being\s+)?logged\s*in|"
-    r"invalid\s+session|no\s+session|(?:lacks?|without|missing)\s+(?:a\s+)?(?:valid\s+)?session",
-    re.IGNORECASE,
-)
-
-
 def resolve_requires_auth(
     session: Session,
     application: Application,
     primary_page: Page | None,
     scenario: Scenario | None = None,
 ) -> bool:
-    """Feature 4's app-level heuristic (per plan sign-off — no true per-page
-    "reached without session" capture exists in Discovery today, and adding
-    it would mean crawler changes out of scope here): a login page was
-    actually captured for this Application AND this Scenario's primary page
-    isn't that login page itself.
+    """Feature 4's app-level heuristic: a login page was actually captured
+    for this Application AND this Scenario's primary page isn't that login
+    page itself.
 
-    `[FIXED]` The page-level heuristic alone mistags a Scenario whose whole
-    point is arriving WITHOUT a valid session (session-expired, post-logout
-    access, unauthenticated access) — its primary page is legitimately an
-    authenticated one, so the page-only check says `True`, which wrongly
-    hands it the `authenticated` Playwright project's pre-applied
-    `storageState` (defeating the scenario) and mistags it `@auth`. When
-    `scenario` is given and its name/steps name that intent, this overrides
-    to `False` — the same ground-truth-over-guess precedence this
-    function's callers already give it over the LLM."""
+    `[REMOVED]` This used to also override to `False` (no pre-applied
+    `storageState`) whenever the Scenario's name/steps named a "no valid
+    session" intent — session-expired, unauthenticated access, post-logout
+    access, never having logged in. Verified against real generated specs
+    for every one of those phrasings (not just the logout case): each one's
+    OWN steps first navigate to an authenticated page and assert reaching
+    it successfully, THEN simulate losing the session (clearing cookies,
+    clicking logout) before checking the now-blocked page — e.g.
+    "Unauthenticated access to the profile" reaches `/Dashboard` and clicks
+    a `Logout` button before ever touching `/Account/Profile`. None of
+    this generator's own output is a scenario that starts genuinely
+    anonymous — every "arrives without a session" Scenario still needs the
+    real, pre-applied `storageState` to reach the authenticated state it
+    starts from. Tagging any of them `@public` breaks that first half:
+    the test was never authenticated to begin with, so navigating straight
+    to the authenticated page it needs as a precondition redirects to
+    login and fails immediately — the exact same bug class as the logout
+    one, just for a sibling set of phrasings. `scenario` is kept as a
+    parameter (unused) rather than dropped, in case a future phrasing
+    genuinely never establishes a session and needs a fresh, real
+    override — not to be reintroduced from words alone without the same
+    against-real-generated-code verification this removal was based on."""
     login_url = _find_login_page_url(session, application.id)
     if login_url is None:
         return False
     if primary_page is not None and primary_page.url == login_url:
         return False
-    if scenario is not None and _NEGATIVE_AUTH_INTENT_RE.search(
-        scenario.name + " " + " ".join(scenario.steps)
-    ):
-        return False
     return True
 
 
-def required_fields_for_page(session: Session, page_id: uuid.UUID) -> dict[str, bool]:
+def required_fields_for_pages(session: Session, page_ids: list[uuid.UUID]) -> dict[str, bool]:
     """Feature 3's manifest — Discovery's own `FormField.required` for every
-    field captured on this page, keyed by field name."""
-    forms = session.exec(select(Form).where(Form.page_id == page_id)).all()
+    field captured across a Journey's pages, keyed by field name.
+
+    `[FIXED]` Used to take a single `page_id` (the Journey's primary page —
+    the first one its steps visit). A multi-page Journey (e.g. Dashboard ->
+    a Loans page with the actual form) has its real fields on a LATER page,
+    so that page's metadata was never looked up at all — every field on it
+    silently lost its `required`/`input_type` awareness below, for any
+    application, not just one."""
+    if not page_ids:
+        return {}
+    forms = session.exec(select(Form).where(Form.page_id.in_(page_ids))).all()  # type: ignore[attr-defined]
     if not forms:
         return {}
     fields = session.exec(
@@ -277,14 +285,16 @@ def required_fields_for_page(session: Session, page_id: uuid.UUID) -> dict[str, 
     return {field.name: field.required for field in fields if field.name}
 
 
-def field_input_types_for_page(session: Session, page_id: uuid.UUID) -> dict[str, str]:
-    """Mirrors `required_fields_for_page`'s query exactly, returning each
+def field_input_types_for_pages(session: Session, page_ids: list[uuid.UUID]) -> dict[str, str]:
+    """Mirrors `required_fields_for_pages`'s query exactly, returning each
     field's captured HTML `input_type` by name instead of its `required`
     flag. Lets `_default_test_data_value`'s generation-time fallback stay
     type-aware the same way Discovery's own crawler (`_generic_value` in
     `discovery_worker/crawler.py`) already is, instead of guessing purely
     from the field's name."""
-    forms = session.exec(select(Form).where(Form.page_id == page_id)).all()
+    if not page_ids:
+        return {}
+    forms = session.exec(select(Form).where(Form.page_id.in_(page_ids))).all()  # type: ignore[attr-defined]
     if not forms:
         return {}
     fields = session.exec(

@@ -185,6 +185,25 @@ def _seed_login_form(journey: Journey, login_page: Page) -> None:
         session.commit()
 
 
+def _seed_form_field(
+    journey: Journey, page: Page, name: str, input_type: str = "text", required: bool = True
+) -> None:
+    with Session(engine) as session:
+        form = Form(
+            application_id=journey.application_id,
+            discovery_run_id=journey.discovery_run_id,
+            page_id=page.id,
+            action_url=page.url,
+            method="POST",
+        )
+        session.add(form)
+        session.flush()
+        session.add(
+            FormField(form_id=form.id, name=name, input_type=input_type, required=required)
+        )
+        session.commit()
+
+
 def _seed_scenario(
     journey: Journey, test_data: list[dict] | None = None, name: str = "Guest checkout"
 ) -> Scenario:
@@ -454,6 +473,134 @@ def test_playwright_generation_activity_is_idempotent_and_skips_the_ai_call(
         assert count == 1
 
 
+def test_default_test_data_value_uses_second_pages_input_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[FIXED]` regression: field metadata used to be looked up only on the
+    Journey's primary (first-visited) page — a field whose form lives on a
+    LATER page (e.g. Dashboard -> Loans) never got its real `input_type`,
+    and a name like "principal" (no "amount"/"qty" substring) fell all the
+    way to the generic text placeholder instead of a numeric one."""
+    init_db()
+    journey = _seed_journey()
+    dashboard = _seed_page(journey, url="https://app.example.com/dashboard")
+    loans = _seed_page(journey, url="https://app.example.com/loans")
+    _seed_journey_step(journey, dashboard, step_order=1, stage_label="Dashboard")
+    _seed_journey_step(journey, loans, step_order=2, stage_label="Loans")
+    _seed_form_field(journey, loans, name="principal", input_type="number")
+    scenario = _seed_scenario(
+        journey,
+        test_data=[{"name": "principal", "mandatory": True, "value": None}],
+    )
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: _FakeAIProvider())
+
+    asyncio.run(
+        activities_module.playwright_generation_activity(
+            PlaywrightGenerationActivityInput(
+                scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+            )
+        )
+    )
+
+    with Session(engine) as session:
+        refreshed_scenario = session.get(Scenario, scenario.id)
+        assert refreshed_scenario is not None
+        principal_field = next(
+            f for f in refreshed_scenario.test_data if f["name"] == "principal"
+        )
+        assert principal_field["value"] == "1"
+
+
+def test_confirm_field_matches_its_counterpart_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[FIXED]` regression: a "confirm X" field used to always get the next
+    *distinct* placeholder candidate — correct for a scenario about a
+    mismatch, but wrong for an ordinary scenario, which needs the pair to
+    match or the form's own client-side check blocks the outcome under
+    test."""
+    init_db()
+    journey = _seed_journey()
+    scenario = _seed_scenario(
+        journey,
+        name="Successfully change password",
+        test_data=[
+            {"name": "new password", "mandatory": True, "value": None},
+            {"name": "confirm new password", "mandatory": True, "value": None},
+        ],
+    )
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: _FakeAIProvider())
+
+    asyncio.run(
+        activities_module.playwright_generation_activity(
+            PlaywrightGenerationActivityInput(
+                scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+            )
+        )
+    )
+
+    with Session(engine) as session:
+        refreshed_scenario = session.get(Scenario, scenario.id)
+        assert refreshed_scenario is not None
+        new_password = next(
+            f for f in refreshed_scenario.test_data if f["name"] == "new password"
+        )
+        confirm_password = next(
+            f for f in refreshed_scenario.test_data if f["name"] == "confirm new password"
+        )
+        assert new_password["value"] == confirm_password["value"]
+
+
+def test_confirm_field_stays_distinct_when_scenario_wants_a_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    init_db()
+    journey = _seed_journey()
+    scenario = _seed_scenario(
+        journey,
+        name="Change password with a mismatched confirmation",
+        test_data=[
+            {"name": "new password", "mandatory": True, "value": None},
+            {"name": "confirm new password", "mandatory": True, "value": None},
+        ],
+    )
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: _FakeAIProvider())
+
+    asyncio.run(
+        activities_module.playwright_generation_activity(
+            PlaywrightGenerationActivityInput(
+                scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+            )
+        )
+    )
+
+    with Session(engine) as session:
+        refreshed_scenario = session.get(Scenario, scenario.id)
+        assert refreshed_scenario is not None
+        new_password = next(
+            f for f in refreshed_scenario.test_data if f["name"] == "new password"
+        )
+        confirm_password = next(
+            f for f in refreshed_scenario.test_data if f["name"] == "confirm new password"
+        )
+        assert new_password["value"] != confirm_password["value"]
+
+
 def test_playwright_generation_activity_passes_known_page_to_ai_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -698,11 +845,41 @@ def test_resolve_requires_auth_true_for_ordinary_scenario_on_authenticated_page(
         )
 
 
-def test_resolve_requires_auth_false_when_scenario_targets_expired_session() -> None:
-    """Problem 4 — a scenario about arriving WITHOUT a valid session (session
-    expiry, post-logout access, unauthenticated access) must not be tagged
-    as requiring the pre-applied `authenticated` storageState, even though
-    its primary page is otherwise an authenticated one."""
+def test_resolve_requires_auth_true_when_scenario_performs_its_own_logout() -> None:
+    """`[FIXED]` A Scenario that signs in, navigates, logs out, and then
+    retries a page (this app's own generated shape — e.g. "Cards page
+    revisited after logout") must still start with the pre-applied
+    `storageState` — it needs to be authenticated to reach the logout
+    control at all. Mistagging it `@public` (as the old, broader
+    "log(?:ged)?\\s*out" match in `_NEGATIVE_AUTH_INTENT_RE` used to)
+    generates a spec with no session, so the logout button it tries to
+    click never exists — exactly the reported bug."""
+    init_db()
+    journey = _seed_journey()
+    login_page = _seed_page(journey, url="https://app.example.com/login")
+    _seed_login_form(journey, login_page)
+    dashboard_page = _seed_page(journey, url="https://app.example.com/dashboard")
+    scenario = _seed_scenario(journey, name="Cards page revisited after logout")
+
+    with Session(engine) as session:
+        application = session.get(Application, journey.application_id)
+        assert (
+            spec_linter.resolve_requires_auth(session, application, dashboard_page, scenario)
+            is True
+        )
+
+
+def test_resolve_requires_auth_true_when_scenario_targets_expired_session() -> None:
+    """`[FIXED]` Problem 4 originally tagged a scenario about arriving
+    WITHOUT a valid session (session expiry, post-logout access,
+    unauthenticated access) as `@public`, on the theory that its primary
+    page being an authenticated one shouldn't matter. Verified against a
+    real generated spec for this exact phrasing: it still reaches
+    `/Dashboard` and asserts that navigation succeeded BEFORE simulating
+    the session expiring — it needs the real, pre-applied `storageState`
+    to get there at all, same as the logout case below. `@public` means no
+    session ever, so that first navigation redirects to login and the test
+    never gets anywhere near testing what happens after expiry."""
     init_db()
     journey = _seed_journey()
     login_page = _seed_page(journey, url="https://app.example.com/login")
@@ -716,5 +893,5 @@ def test_resolve_requires_auth_false_when_scenario_targets_expired_session() -> 
         application = session.get(Application, journey.application_id)
         assert (
             spec_linter.resolve_requires_auth(session, application, dashboard_page, scenario)
-            is False
+            is True
         )
