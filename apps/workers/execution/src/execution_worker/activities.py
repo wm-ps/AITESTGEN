@@ -775,6 +775,23 @@ def _persist_test_result_sync(test_run_id: str, context: _ExecutionContext, outc
         session.add(test_result)
         session.flush()
 
+        # A heal attempt reruns this same TestResult for real — each rerun
+        # would otherwise pile its own screenshot/trace on top of every
+        # prior attempt's, showing the whole heal history instead of just
+        # what the *current* code produces. Only the latest run's artifacts
+        # are ever meaningful (they're what the current TestAsset code
+        # actually did), so the prior set is deleted, both from the DB and
+        # the underlying objects, before the new one is recorded.
+        prior_artifacts = session.exec(
+            select(TestResultArtifact).where(TestResultArtifact.test_result_id == test_result.id)
+        ).all()
+        if prior_artifacts:
+            object_store = ObjectStore()
+            for artifact in prior_artifacts:
+                object_store.delete(artifact.object_store_key)
+                session.delete(artifact)
+            session.flush()
+
         for path in outcome.get("artifact_paths", []):
             try:
                 data = path.read_bytes()

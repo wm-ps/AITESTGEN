@@ -41,6 +41,34 @@ function AutoHealedIcon() {
   )
 }
 
+// Exhausted state gets its own glyph (not the retry arrow, faded) — reusing
+// the same icon dimmed reads as "just a disabled button," not "self-healing
+// gave up, a human needs to look at this."
+function HealExhaustedIcon() {
+  return (
+    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M10.3 3.6 2.5 17a1.8 1.8 0 0 0 1.5 2.7h16a1.8 1.8 0 0 0 1.5-2.7L13.7 3.6a1.8 1.8 0 0 0-3.4 0z" />
+      <path d="M12 9v4M12 17h.01" />
+    </svg>
+  )
+}
+
+// Expand panel's passed-state illustration — same soft-blob-behind-a-badge
+// language as EmptyState.tsx's illustrations (ScenariosIllustration's own
+// checkmark circle, specifically), just scaled down for an inline row
+// instead of a whole empty tab. Without this, a passed row's expand panel
+// was just blank padding, which reads as "something failed to load" rather
+// than "nothing to show — this one's clean."
+function PassedIllustration() {
+  return (
+    <svg width={40} height={40} viewBox="0 0 40 40" fill="none" aria-hidden="true">
+      <rect x="1" y="1" width="38" height="38" rx="12" fill="var(--good-wash)" />
+      <circle cx="20" cy="20" r="10" fill="var(--good-strong)" />
+      <path d="M15 20.5 18.4 24 25.5 16.5" stroke="var(--canvas)" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    </svg>
+  )
+}
+
 // Retry-with-self-heal action, in-row — a circular-arrow "retry" glyph
 // (not the bolt above, which marks a row that already passed via heal).
 function SelfHealIcon() {
@@ -194,7 +222,7 @@ const columnHeaderLabelStyle: React.CSSProperties = {
 // TestResult has no last-run-at of its own. Errors/artifacts/heal actions
 // live in the expand panel below the row, same as TestSuiteTab, so they
 // don't need their own column.
-const RESULT_GRID_TEMPLATE = '50% 1fr 1fr 32px'
+const RESULT_GRID_TEMPLATE = '50% 1fr 1fr'
 // Runs table columns (RunListHeader/RunListRow) use percentages, not px —
 // `table-layout: fixed` + `width: 100%` on `.data-table` means these scale
 // with the table instead of leaving it stuck at a fixed pixel sum. Date &
@@ -288,7 +316,6 @@ function ResultListHeader({
       </div>
       <SortableColumnLabel label="Duration" sortKey="duration" activeKey={sortKey} dir={sortDir} onSort={onSort} />
       <SortableColumnLabel label="Status" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={onSort} />
-      <span aria-hidden="true" />
     </div>
   )
 }
@@ -305,7 +332,8 @@ function TestResultRow({
   isCurrentlyRunning?: boolean
 }) {
   const [expanded, setExpanded] = useState(false)
-  const [artifactsFor, setArtifactsFor] = useState<TestResultRead | null>(null)
+  const [artifacts, setArtifacts] = useState<TestResultArtifactRead[] | null>(null)
+  const [artifactsError, setArtifactsError] = useState<string | null>(null)
   const [liveResult, setLiveResult] = useState(result)
   const [healing, setHealing] = useState(false)
   const [healError, setHealError] = useState<string | null>(null)
@@ -344,6 +372,27 @@ function TestResultRow({
   }, [healing, applicationId, runId, result.id])
 
   const canShowArtifacts = NON_PASSED_STATUSES.has(liveResult.status)
+
+  // Screenshot/trace load inline, in the expand panel itself, the moment
+  // it opens on a failed result — no separate "Artifacts" dialog to open
+  // on top of the row that's already showing the error. Fetched once per
+  // row (not re-fetched on collapse/re-expand).
+  useEffect(() => {
+    if (!expanded || !canShowArtifacts || artifacts !== null) return
+    let cancelled = false
+    api
+      .listTestResultArtifacts(liveResult.id)
+      .then((rows) => {
+        if (!cancelled) setArtifacts(rows)
+      })
+      .catch((err) => {
+        if (!cancelled) setArtifactsError(err instanceof ApiError ? err.message : 'Failed to load artifacts')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [expanded, canShowArtifacts, artifacts, liveResult.id])
+
   const canRetryHeal =
     NON_PASSED_STATUSES.has(liveResult.status) && liveResult.heal_attempt_count < liveResult.max_heal_attempts
   const healExhausted =
@@ -358,7 +407,7 @@ function TestResultRow({
     try {
       await api.healTestResult(liveResult.id)
     } catch (err) {
-      setHealError(err instanceof ApiError ? err.message : 'Failed to start self-heal.')
+      setHealError(err instanceof ApiError ? err.message : 'Failed to start self-healing remediation.')
       setHealing(false)
     }
   }
@@ -392,10 +441,81 @@ function TestResultRow({
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
+              minWidth: 0,
+              flex: '0 1 auto',
             }}
           >
             {liveResult.scenario_name}
           </span>
+          {/* Self-healing status/action lives right on the test case it
+              applies to, not off in its own column — bolt (already
+              healed), retry arrow, spinner, or exhausted glyph are
+              mutually exclusive (status passed vs. non-passed), so only
+              one of these four ever renders per row. */}
+          {wasAutoHealed && (
+            <span
+              title="Self-healed — this test failed on initial execution and was automatically remediated by self-healing test automation."
+              aria-label="Self-healed"
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, flexShrink: 0 }}
+            >
+              <AutoHealedIcon />
+            </span>
+          )}
+          {/* In-row self-heal action — icon-only (title carries the label),
+              not the old "Retry with self-heal" text button, and not tucked
+              into the expand panel: it's the one action worth reaching for
+              without opening a row first. */}
+          {!healing && canRetryHeal && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                handleHeal()
+              }}
+              title="Retry with self-healing"
+              aria-label="Retry with self-healing"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 20,
+                height: 20,
+                flexShrink: 0,
+                padding: 0,
+                background: 'none',
+                border: 'none',
+                borderRadius: 6,
+                color: 'var(--accent)',
+                cursor: 'pointer',
+              }}
+            >
+              <SelfHealIcon />
+            </button>
+          )}
+          {healing && (
+            <span
+              title={`Self-healing in progress — remediation attempt ${liveResult.heal_attempt_count + 1} of ${liveResult.max_heal_attempts}`}
+              aria-label="Self-healing in progress"
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, flexShrink: 0, color: 'var(--accent)' }}
+            >
+              <span style={{ display: 'inline-flex', animation: 'aitg-spin 1s linear infinite' }}>
+                <SelfHealIcon />
+              </span>
+            </span>
+          )}
+          {/* Exhausted — its own glyph + warn tint (not the retry arrow
+              faded), so "no more heal attempts, needs a human" doesn't
+              read as a merely-disabled version of the retry button
+              above. */}
+          {!healing && healExhausted && (
+            <span
+              title={`Self-healing remediation exhausted after ${liveResult.max_heal_attempts} attempts — manual triage required.`}
+              aria-label="Self-healing exhausted — manual triage required"
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, flexShrink: 0, color: 'var(--warn-strong)' }}
+            >
+              <HealExhaustedIcon />
+            </span>
+          )}
         </div>
         <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>
           {liveResult.duration_ms != null ? `${(liveResult.duration_ms / 1000).toFixed(1)}s` : '—'}
@@ -404,72 +524,24 @@ function TestResultRow({
             ever moves pending -> a terminal status) — the one test actually
             executing right now is inferred as the first still-pending row
             once finished ones are sorted to the top. */}
-        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ justifySelf: 'start' }}>
           <StatusPill status={liveResult.status} label={isCurrentlyRunning ? 'Running' : undefined} pulsing={isCurrentlyRunning} />
-          {wasAutoHealed && (
-            <span
-              title="Auto-healed — this test failed on its first run and was automatically fixed by self-healing."
-              aria-label="Auto-healed"
-              style={{ display: 'inline-flex', alignItems: 'center' }}
-            >
-              <AutoHealedIcon />
-            </span>
-          )}
-        </span>
-        {/* In-row self-heal action — icon-only (title carries the label),
-            not the old "Retry with self-heal" text button, and not tucked
-            into the expand panel: it's the one action worth reaching for
-            without opening a row first. */}
-        {!healing && canRetryHeal && (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleHeal()
-            }}
-            title="Retry with self-heal"
-            aria-label="Retry with self-heal"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: 24,
-              height: 24,
-              padding: 0,
-              background: 'none',
-              border: 'none',
-              borderRadius: 6,
-              color: 'var(--accent)',
-              cursor: 'pointer',
-            }}
-          >
-            <SelfHealIcon />
-          </button>
-        )}
-        {healing && (
-          <span
-            title={`Healing… (attempt ${liveResult.heal_attempt_count + 1} of ${liveResult.max_heal_attempts})`}
-            aria-label="Healing"
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, color: 'var(--accent)' }}
-          >
-            <span style={{ display: 'inline-flex', animation: 'aitg-spin 1s linear infinite' }}>
-              <SelfHealIcon />
-            </span>
-          </span>
-        )}
-        {!healing && healExhausted && (
-          <span
-            title={`Self-healing could not fix this test after ${liveResult.max_heal_attempts} attempts. Manual review required.`}
-            aria-label="Self-heal exhausted — manual review required"
-            style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, color: 'var(--ink-faint)' }}
-          >
-            <SelfHealIcon />
-          </span>
-        )}
+        </div>
       </div>
 
       {expanded && (
         <div style={{ padding: '0 16px 14px 40px' }}>
+          {liveResult.status === 'passed' && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 0 10px' }}>
+              <PassedIllustration />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-secondary)' }}>Passed cleanly</div>
+                <div className="caption" style={{ fontSize: 12, marginTop: 2 }}>
+                  No errors, screenshots, or traces — this scenario ran with nothing to flag.
+                </div>
+              </div>
+            </div>
+          )}
           {liveResult.status === 'blocked' && liveResult.blocked_reason && (
             <p className="caption" style={{ margin: '0 0 10px', fontSize: 12.5 }}>
               {liveResult.blocked_reason}
@@ -497,16 +569,41 @@ function TestResultRow({
           )}
           {healError && <p style={{ color: 'var(--danger-strong)', fontSize: 12, margin: '0 0 10px' }}>{healError}</p>}
           {canShowArtifacts && (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button type="button" className="button-secondary" onClick={() => setArtifactsFor(liveResult)}>
-                Artifacts
-              </button>
-            </div>
+            <>
+              {artifactsError && (
+                <p style={{ color: 'var(--danger-strong)', fontSize: 12, margin: '0 0 10px' }}>{artifactsError}</p>
+              )}
+              {artifacts === null && !artifactsError && (
+                <p className="caption" style={{ fontSize: 12 }}>
+                  Loading screenshot/trace…
+                </p>
+              )}
+              {artifacts !== null && artifacts.length === 0 && !artifactsError && (
+                <p className="caption" style={{ fontSize: 12 }}>
+                  No screenshot or trace was captured for this failure.
+                </p>
+              )}
+              {artifacts !== null && artifacts.length > 0 && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  {artifacts.map((artifact) => (
+                    <a
+                      key={artifact.id}
+                      href={artifact.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="button-secondary"
+                      style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+                    >
+                      {artifact.artifact_type === 'trace' ? 'Playwright trace' : 'Screenshot'} (
+                      {Math.max(1, Math.round(artifact.size_bytes / 1024))} KB)
+                    </a>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
-
-      {artifactsFor && <ArtifactsModal testResult={artifactsFor} onClose={() => setArtifactsFor(null)} />}
     </div>
   )
 }

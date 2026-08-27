@@ -346,6 +346,7 @@ function App() {
             applicationId={application.id}
             initialTab={workspaceEntry.initialTab}
             autoTriggerRun={workspaceEntry.autoTriggerRun}
+            isAdmin={user?.role === 'admin'}
           />
         )}
         {view === 'settings' && user && <Settings user={user} onCancel={() => setView(previousView)} />}

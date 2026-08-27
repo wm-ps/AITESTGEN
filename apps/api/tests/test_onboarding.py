@@ -62,9 +62,9 @@ PLAINTEXT_PASSWORD = "s3cr3t-credential-value"
 PLAINTEXT_SESSION_TOKEN = "s3cr3t-session-token-value"
 
 
-def _signed_in_client(org_name: str) -> TestClient:
+def _signed_in_client(org_name: str, role: str = "admin") -> TestClient:
     email = f"user-{uuid.uuid4()}@example.com"
-    seed(email=email, password="pw", org_name=org_name, name="Tester")
+    seed(email=email, password="pw", org_name=org_name, name="Tester", role=role)
     client = TestClient(app)
     client.post("/auth/login", json={"email": email, "password": "pw"})
     return client
@@ -549,3 +549,75 @@ def test_discovery_status_reports_unavailable_when_worker_crashes_mid_run(
     retried_response = client.get(f"/applications/{body['id']}/discovery-status")
     assert retried_response.status_code == 200
     assert retried_response.json() == {"available": False, "retry_count": 1}
+
+
+# --- Credential rotation (PATCH /applications/{id}/credentials) ---
+
+
+def test_update_application_credentials_overwrites_secret_ref_in_place() -> None:
+    init_db()
+    client = _signed_in_client("Org Rotate Credentials")
+    created = _post_application(client, "Rotate Creds App")
+    application_id = created.json()["id"]
+
+    with Session(engine) as session:
+        original_secret_ref = session.exec(
+            select(Application).where(Application.external_id == uuid.UUID(application_id))
+        ).one().secret_ref
+
+    response = client.patch(
+        f"/applications/{application_id}/credentials",
+        json={"username": "new-qa-account", "password": "new-" + PLAINTEXT_PASSWORD},
+    )
+
+    assert response.status_code == 200
+    with Session(engine) as session:
+        app_row = session.exec(
+            select(Application).where(Application.external_id == uuid.UUID(application_id))
+        ).one()
+        assert app_row.secret_ref == original_secret_ref  # same path, overwritten in place
+
+        from secrets_client.vault_client import SecretRef, VaultSecretsClient
+
+        stored = json.loads(
+            VaultSecretsClient().resolve(SecretRef(path=app_row.secret_ref)).decode()
+        )
+        assert stored == {"username": "new-qa-account", "password": "new-" + PLAINTEXT_PASSWORD}
+
+
+def test_update_application_credentials_requires_admin() -> None:
+    init_db()
+    admin_client = _signed_in_client("Org Rotate Creds Non Admin")
+    created = _post_application(admin_client, "Non Admin Rotate App")
+    application_id = created.json()["id"]
+
+    member_client = _signed_in_client("Org Rotate Creds Non Admin", role="member")
+    response = member_client.patch(
+        f"/applications/{application_id}/credentials",
+        json={"username": "attempt", "password": "attempt"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_update_application_credentials_rejects_sso_session_reuse_app() -> None:
+    init_db()
+    client = _signed_in_client("Org Rotate Creds SSO Rejected")
+    created = client.post(
+        "/applications",
+        json={
+            "name": "SSO Rotate Rejected App",
+            "url": "https://sso.example.com",
+            "environment": "staging",
+            "auth_method": "sso_session_reuse",
+            "session_state": json.dumps({"cookies": []}),
+        },
+    )
+    application_id = created.json()["id"]
+
+    response = client.patch(
+        f"/applications/{application_id}/credentials",
+        json={"username": "attempt", "password": "attempt"},
+    )
+
+    assert response.status_code == 422

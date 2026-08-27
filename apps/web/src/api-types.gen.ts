@@ -262,6 +262,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/{external_id}/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Application Credentials
+         * @description Rotates a standard_login Application's stored credential in place —
+         *     overwrites the same Vault path (secret_ref never changes) rather than
+         *     minting a new one, no login validation before saving. sso_session_reuse
+         *     apps aren't supported here (a session_state blob, not a username/
+         *     password, isn't what this form collects).
+         */
+        patch: operations["update_application_credentials_applications__external_id__credentials_patch"];
+        trace?: never;
+    };
     "/applications/{external_id}/resume-discovery": {
         parameters: {
             query?: never;
@@ -888,6 +912,13 @@ export interface components {
              * @description A previously-authenticated session the customer already produced (e.g. Playwright storageState.json contents), pasted as-is. Required when auth_method is 'sso_session_reuse'. The platform never performs the SSO/MFA handshake itself — it only reuses a session the customer supplies.
              */
             session_state?: string | null;
+        };
+        /** ApplicationCredentialsUpdatePayload */
+        ApplicationCredentialsUpdatePayload: {
+            /** Username */
+            username: string;
+            /** Password */
+            password: string;
         };
         /** ApplicationRead */
         ApplicationRead: {
@@ -2134,6 +2165,43 @@ export interface operations {
                     "application/json": {
                         [key: string]: boolean | number;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_application_credentials_applications__external_id__credentials_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplicationCredentialsUpdatePayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationRead"];
                 };
             };
             /** @description Validation Error */

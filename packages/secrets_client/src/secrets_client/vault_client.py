@@ -44,6 +44,16 @@ class VaultSecretsClient:
         )
         return SecretRef(path=path)
 
+    def update(self, ref: SecretRef, secret: bytes) -> None:
+        """Overwrites `ref`'s existing path in place — KV v2 versions the
+        write automatically, so `secret_ref` never changes and nothing is
+        orphaned (unlike `store`, which always mints a fresh path)."""
+        self._client.secrets.kv.v2.create_or_update_secret(
+            path=ref.path,
+            secret={"value": secret.decode()},
+            mount_point=VAULT_MOUNT_POINT,
+        )
+
     def resolve(self, ref: SecretRef) -> bytes:
         result = self._client.secrets.kv.v2.read_secret_version(
             path=ref.path,

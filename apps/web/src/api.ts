@@ -223,6 +223,11 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ name }),
     }),
+  updateApplicationCredentials: (applicationId: string, username: string, password: string) =>
+    request<ApplicationRead>(`/applications/${applicationId}/credentials`, {
+      method: 'PATCH',
+      body: JSON.stringify({ username, password }),
+    }),
   deleteApplication: (applicationId: string) =>
     request<undefined>(`/applications/${applicationId}`, { method: 'DELETE' }),
   pauseDiscovery: (applicationId: string) =>

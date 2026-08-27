@@ -42,7 +42,7 @@ from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from object_store import ObjectStore
 from pydantic import BaseModel, Field, field_validator, model_validator
-from secrets_client import VaultSecretsClient
+from secrets_client import SecretRef, VaultSecretsClient
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
@@ -351,6 +351,16 @@ class ApplicationCreate(BaseModel):
 
 class ApplicationRenamePayload(BaseModel):
     name: str
+
+
+class ApplicationCredentialsUpdatePayload(BaseModel):
+    username: str
+    password: str
+
+    @field_validator("username", "password", mode="before")
+    @classmethod
+    def _strip_credential_whitespace(cls, value: str) -> str:
+        return value.strip() if isinstance(value, str) else value
 
 
 class ApplicationRead(BaseModel):
@@ -813,6 +823,31 @@ def rename_application(
     application.name = payload.name
     session.add(application)
     session.commit()
+    discovery_run = _latest_discovery_run(session, application.id)
+    assert discovery_run is not None
+    return _to_application_read(session, application, discovery_run)
+
+
+@app.patch("/applications/{external_id}/credentials", response_model=ApplicationRead)
+def update_application_credentials(
+    external_id: uuid.UUID,
+    payload: ApplicationCredentialsUpdatePayload,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> ApplicationRead:
+    """Rotates a standard_login Application's stored credential in place —
+    overwrites the same Vault path (secret_ref never changes) rather than
+    minting a new one, no login validation before saving. sso_session_reuse
+    apps aren't supported here (a session_state blob, not a username/
+    password, isn't what this form collects)."""
+    application = _get_org_application(session, organization_id, external_id)
+    if application.auth_method != "standard_login":
+        raise HTTPException(
+            status_code=422, detail="credential update is only supported for standard_login"
+        )
+    creds = {"username": payload.username, "password": payload.password}
+    VaultSecretsClient().update(SecretRef(path=application.secret_ref), json.dumps(creds).encode())
     discovery_run = _latest_discovery_run(session, application.id)
     assert discovery_run is not None
     return _to_application_read(session, application, discovery_run)
@@ -2538,31 +2573,42 @@ def _current_test_assets_for_application(
     return test_assets, scenarios_by_id
 
 
-def _latest_result_by_asset(
-    session: Session, application: Application, asset_ids: list[uuid.UUID]
+def _latest_result_by_scenario(
+    session: Session, application: Application, scenario_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, TestResult]:
-    """The most recent `TestResult` per `TestAsset`, across every `TestRun`
+    """The most recent `TestResult` per `Scenario`, across every `TestRun`
     the Application has ever had — no window function exists elsewhere in
     this codebase, so this uses the same order-by-desc + `setdefault` idiom
     already established for "most recent X" lookups (mirrors
-    `_latest_discovery_run` above, just keyed per-asset instead of
-    per-application). An asset with no key in the returned dict has never
-    been executed at all ("Not Run")."""
-    if not asset_ids:
+    `_latest_discovery_run` above, just keyed per-scenario instead of
+    per-application).
+
+    Keyed by `scenario_id`, not `test_asset_id`: `HealTestActivity`
+    (`execution_worker/activities.py`) supersedes a healed scenario's
+    `TestAsset` onto a brand-new row (`supersede_test_asset`) but every
+    `TestResult` keeps pointing at whichever `TestAsset` was current when it
+    ran — a scenario's post-heal `TestResult`s would otherwise sit under an
+    id no longer in `asset_ids`, invisible to a caller that only asks about
+    the *current* asset, so the row reads "Not Run" for a test that just
+    passed (its `TestRun.passed_count` tally already counts it correctly —
+    that's the mismatch this fixes). `scenario_id` is stable across a heal
+    supersede, so this survives it. A scenario with no key in the returned
+    dict has never been executed at all ("Not Run")."""
+    if not scenario_ids:
         return {}
     results = session.exec(
         select(TestResult)
         .join(TestRun, TestResult.test_run_id == TestRun.id)  # type: ignore[arg-type]
         .where(
             TestRun.application_id == application.id,
-            TestResult.test_asset_id.in_(asset_ids),  # type: ignore[attr-defined]
+            TestResult.scenario_id.in_(scenario_ids),  # type: ignore[attr-defined]
         )
         .order_by(TestResult.created_at.desc())  # type: ignore[arg-type]
     ).all()
-    latest_by_asset: dict[uuid.UUID, TestResult] = {}
+    latest_by_scenario: dict[uuid.UUID, TestResult] = {}
     for result in results:
-        latest_by_asset.setdefault(result.test_asset_id, result)
-    return latest_by_asset
+        latest_by_scenario.setdefault(result.scenario_id, result)
+    return latest_by_scenario
 
 
 def _collapse_to_suite_row_status(result: TestResult | None) -> str:
@@ -2644,12 +2690,14 @@ def get_test_suite_status(
     total = len(test_assets)
     page_assets = test_assets[(page - 1) * page_size : (page - 1) * page_size + page_size]
 
-    latest_by_asset = _latest_result_by_asset(session, application, [a.id for a in page_assets])
+    latest_by_scenario = _latest_result_by_scenario(
+        session, application, [a.scenario_id for a in page_assets]
+    )
 
     items = []
     for asset in page_assets:
         scenario = scenarios_by_id.get(asset.scenario_id)
-        result = latest_by_asset.get(asset.id)
+        result = latest_by_scenario.get(asset.scenario_id)
         items.append(
             TestAssetStatusRead(
                 id=asset.external_id,
@@ -2733,15 +2781,19 @@ def get_overview(
     polling waterfall" rationale."""
     application = _get_org_application(session, organization_id, external_id)
     test_assets, scenarios_by_id = _current_test_assets_for_application(session, application)
-    asset_ids = [a.id for a in test_assets]
-    latest_by_asset = _latest_result_by_asset(session, application, asset_ids)
+    scenario_ids = [a.scenario_id for a in test_assets]
+    latest_by_scenario = _latest_result_by_scenario(session, application, scenario_ids)
 
     total_tests = len(test_assets)
     passed = sum(
-        1 for a in test_assets if _collapse_to_suite_row_status(latest_by_asset.get(a.id)) == "passed"
+        1
+        for a in test_assets
+        if _collapse_to_suite_row_status(latest_by_scenario.get(a.scenario_id)) == "passed"
     )
     failed = sum(
-        1 for a in test_assets if _collapse_to_suite_row_status(latest_by_asset.get(a.id)) == "failed"
+        1
+        for a in test_assets
+        if _collapse_to_suite_row_status(latest_by_scenario.get(a.scenario_id)) == "failed"
     )
     not_run = total_tests - passed - failed
     pass_rate = (passed / total_tests) if total_tests else None

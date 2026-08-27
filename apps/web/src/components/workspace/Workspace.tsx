@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../../api'
 import { ServiceErrorNote } from '../ServiceError'
 import { Toast } from '../Toast'
+import { CredentialsTab } from './CredentialsTab'
 import { OverviewTab } from './OverviewTab'
 import { TestSuiteTab } from './TestSuiteTab'
 import { BackIcon, RunsTab } from './RunsTab'
 
-type WorkspaceTab = 'overview' | 'suite' | 'runs'
+type WorkspaceTab = 'overview' | 'suite' | 'runs' | 'credentials'
 
 function OverviewIcon() {
   return (
@@ -48,6 +49,15 @@ function PlayIcon() {
   )
 }
 
+function CredentialsIcon() {
+  return (
+    <svg width={19} height={19} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="8" cy="15" r="4.5" />
+      <path d="M11.2 11.8 19.5 3.5M16.5 6.5l2.5 2.5M13.5 9.5l2 2" />
+    </svg>
+  )
+}
+
 const RUN_IS_ACTIVE = (status: string) => status === 'pending' || status === 'running'
 const RUN_POLL_MS = 2000
 
@@ -57,12 +67,14 @@ const TABS: { key: WorkspaceTab; label: string; heading: string; icon: () => Rea
   { key: 'overview', label: 'Overview', heading: 'Test Overview', icon: OverviewIcon },
   { key: 'suite', label: 'Suite', heading: 'Test Suite', icon: SuiteIcon },
   { key: 'runs', label: 'Runs', heading: 'Test Runs', icon: RunsIcon },
+  { key: 'credentials', label: 'Credentials', heading: 'Application Credentials', icon: CredentialsIcon },
 ]
 
 export function Workspace({
   applicationId,
   initialTab = 'overview',
   autoTriggerRun = false,
+  isAdmin = false,
 }: {
   applicationId: string
   initialTab?: WorkspaceTab
@@ -71,6 +83,7 @@ export function Workspace({
   // (if any) has somewhere to surface, mirroring what the old standalone
   // TestExecutionResults.tsx screen used to show.
   autoTriggerRun?: boolean
+  isAdmin?: boolean
 }) {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>(initialTab)
   // Set once, the moment "Run Suite"/"Run All Tests" switches to the Runs
@@ -188,7 +201,7 @@ export function Workspace({
           alignSelf: 'flex-start',
         }}
       >
-        {TABS.map((tab) => {
+        {TABS.filter((tab) => tab.key !== 'credentials' || isAdmin).map((tab) => {
           const active = activeTab === tab.key
           const Icon = tab.icon
           return (
@@ -281,6 +294,7 @@ export function Workspace({
             <OverviewTab applicationId={applicationId} onRunSuite={handleRunSuite} running={running} />
           )}
           {activeTab === 'suite' && <TestSuiteTab applicationId={applicationId} />}
+          {activeTab === 'credentials' && isAdmin && <CredentialsTab applicationId={applicationId} />}
           {activeTab === 'runs' && (
             <RunsTab
               applicationId={applicationId}

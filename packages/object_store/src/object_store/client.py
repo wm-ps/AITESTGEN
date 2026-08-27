@@ -57,6 +57,9 @@ class ObjectStore:
     def get(self, key: str) -> bytes:
         return self._s3_client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
 
+    def delete(self, key: str) -> None:
+        self._s3_client.delete_object(Bucket=self._bucket, Key=key)
+
     def delete_prefix(self, prefix: str) -> int:
         """Permanently deletes every object under `prefix` (e.g.
         `discovery-runs/{id}/`) — used only by the deleted-project purge job.
