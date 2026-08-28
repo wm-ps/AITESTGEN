@@ -178,6 +178,17 @@ textarea:focus-visible,
   box-shadow: 0 0 0 3px var(--accent-wash);
 }
 
+.ribbon-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    var(--accent) 45%,
+    rgba(255, 255, 255, 0.35) 50%,
+    var(--accent) 55%
+  );
+  background-size: 200px 100%;
+  animation: aitg-ribbon-shimmer 4.5s ease-in-out infinite;
+}
+
 .card-panel {
   background: var(--canvas);
   border-radius: var(--radius-xl);
@@ -426,6 +437,15 @@ textarea:focus-visible,
   }
   50% {
     box-shadow: 0 0 0 6px rgba(0, 0, 0, 0);
+  }
+}
+
+@keyframes aitg-ribbon-shimmer {
+  0% {
+    background-position: -60px 0;
+  }
+  100% {
+    background-position: 140px 0;
   }
 }
 

@@ -2,12 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiError, api } from '../../api'
 import { ServiceErrorNote } from '../ServiceError'
 import { Toast } from '../Toast'
+import { AuthoringTab } from './AuthoringTab'
 import { CredentialsTab } from './CredentialsTab'
 import { OverviewTab } from './OverviewTab'
 import { TestSuiteTab } from './TestSuiteTab'
 import { BackIcon, RunsTab } from './RunsTab'
 
-type WorkspaceTab = 'overview' | 'suite' | 'runs' | 'credentials'
+type WorkspaceTab = 'overview' | 'suite' | 'runs' | 'author' | 'credentials'
 
 function OverviewIcon() {
   return (
@@ -49,6 +50,18 @@ function PlayIcon() {
   )
 }
 
+// Pen (authoring) + spark (assisted/automatic) — distinct from either tile's
+// own icon since this one has to represent both at once.
+function AuthorIcon() {
+  return (
+    <svg width={19} height={19} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M13.5 5.5 4.5 14.5 3.5 18.5 7.5 17.5 16.5 8.5Z" />
+      <path d="M12 7 15 10" />
+      <path d="M18.5 3.5 19.2 5.1 20.8 5.8 19.2 6.5 18.5 8.1 17.8 6.5 16.2 5.8 17.8 5.1Z" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
 function CredentialsIcon() {
   return (
     <svg width={19} height={19} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -67,6 +80,7 @@ const TABS: { key: WorkspaceTab; label: string; heading: string; icon: () => Rea
   { key: 'overview', label: 'Overview', heading: 'Test Overview', icon: OverviewIcon },
   { key: 'suite', label: 'Suite', heading: 'Test Suite', icon: SuiteIcon },
   { key: 'runs', label: 'Runs', heading: 'Test Runs', icon: RunsIcon },
+  { key: 'author', label: 'Author', heading: 'Add Test Cases', icon: AuthorIcon },
   { key: 'credentials', label: 'Credentials', heading: 'Application Credentials', icon: CredentialsIcon },
 ]
 
@@ -294,6 +308,7 @@ export function Workspace({
             <OverviewTab applicationId={applicationId} onRunSuite={handleRunSuite} running={running} />
           )}
           {activeTab === 'suite' && <TestSuiteTab applicationId={applicationId} />}
+          {activeTab === 'author' && <AuthoringTab />}
           {activeTab === 'credentials' && isAdmin && <CredentialsTab applicationId={applicationId} />}
           {activeTab === 'runs' && (
             <RunsTab
