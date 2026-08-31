@@ -49,13 +49,15 @@ DEFAULT_MAX_CONCURRENCY = 5
 # excluded — a safety-policy gate, not a code defect, never healable.
 HEALABLE_STATUSES = {"failed", "timed_out", "errored"}
 
-# Generous margin over HealTestActivity's own 25-minute
+# Generous margin over HealTestActivity's own 28-minute
 # start_to_close_timeout below — a TestResult.heal_started_at claim older
 # than this is a crashed/abandoned attempt, not a real in-progress one.
 # Shared (not duplicated) between execution_worker's own claim/release logic
 # and the manual-retry API endpoint's pre-check, so the two can never
-# disagree about what counts as "still in progress."
-HEAL_CLAIM_STALE_AFTER = timedelta(minutes=30)
+# disagree about what counts as "still in progress." (Was 30 min against a
+# 25-min timeout; bumped by the same +3 min the timeout below gained for
+# self-heal's live inspection, to preserve the original 5-min margin.)
+HEAL_CLAIM_STALE_AFTER = timedelta(minutes=33)
 
 
 @dataclass
@@ -161,8 +163,11 @@ class ApplicationTestExecutionWorkflow:
                         ),
                         # Up to max_heal_attempts (default 3) attempts x (AI
                         # call + typecheck + ~8min run) + the bounded infra
-                        # retries.
-                        start_to_close_timeout=timedelta(minutes=25),
+                        # retries. +3 min over the original 25 for self-heal's
+                        # targeted live inspection (its own ~45s budget,
+                        # gated to at most once per attempt — ~150s worst
+                        # case across 3 attempts, well inside this margin).
+                        start_to_close_timeout=timedelta(minutes=28),
                         # Infra-failure retries at the Temporal level only,
                         # same convention as ExecuteTestActivity above.
                         retry_policy=RetryPolicy(maximum_attempts=2),
@@ -205,7 +210,9 @@ class HealTestExecutionWorkflow:
         await workflow.execute_activity(
             HEAL_TEST_ACTIVITY_NAME,
             input,
-            start_to_close_timeout=timedelta(minutes=25),
+            # Kept identical to the automatic path's own HealTestActivity
+            # timeout above — same activity, same logic, same budget.
+            start_to_close_timeout=timedelta(minutes=28),
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
 

@@ -17,7 +17,15 @@ now has its real `Scenario -> TestAssetCode` signature, `async` for the same
 reason. `[ADDED 2026-08-05]` `generate_playwright` also takes optional
 `known_pages`/`known_locators` — real crawled Pages/ComponentLocators for the
 Scenario's Journey, letting the AI ground generated code in discovered URLs/
-selectors instead of inventing its own.
+selectors instead of inventing its own. `[CORRECTED, self-heal]` this
+Protocol had drifted out of sync with `HostedAIProvider`'s real
+`generate_playwright` implementation, which had already grown `repair`
+(compile-time self-repair) and `previous_code`/`failure_error_message`/
+`failure_stack_trace`/`failure_console_output`/`target_url`/
+`failure_screenshot_png` (runtime self-heal) without this Protocol ever
+being updated — corrected here, together with `live_inspection_locators`
+(self-heal's targeted live-inspection evidence), so this stays the one
+place a caller's type-check actually reflects the real port.
 """
 
 from typing import Protocol
@@ -44,6 +52,14 @@ class AIProvider(Protocol):
         *,
         requires_auth: bool = False,
         field_input_types: dict[str, str] | None = None,
+        repair: tuple[str, list[str]] | None = None,
+        previous_code: str | None = None,
+        failure_error_message: str | None = None,
+        failure_stack_trace: str | None = None,
+        failure_console_output: str | None = None,
+        target_url: str | None = None,
+        failure_screenshot_png: bytes | None = None,
+        live_inspection_locators: list[dict] | None = None,
     ) -> TestAssetCode: ...
 
     # Story 2.10 AC 3: called only when the State Identity Engine's score

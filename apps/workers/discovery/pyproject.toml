@@ -11,6 +11,7 @@ dependencies = [
     "ai-provider",
     "object-store",
     "safety-classifier",
+    "locator-capture",
     "sqlmodel>=0.0.24",
     "psycopg[binary]>=3.2",
     "playwright>=1.57",
@@ -32,6 +33,7 @@ secrets-client = { workspace = true }
 ai-provider = { workspace = true }
 object-store = { workspace = true }
 safety-classifier = { workspace = true }
+locator-capture = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

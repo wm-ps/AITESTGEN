@@ -12,8 +12,14 @@ dependencies = [
     "test-suite-assembler",
     "ai-provider",
     "generation-worker",
+    "locator-capture",
     "sqlmodel>=0.0.24",
     "psycopg[binary]>=3.2",
+    # Self-heal live inspection (live_inspection.py) is the first in-process
+    # Playwright use in this worker — everything else here shells out to
+    # `npx playwright test` instead. Confined to that one module; see its
+    # own docstring for why.
+    "playwright>=1.57",
 ]
 
 [dependency-groups]
@@ -29,6 +35,7 @@ secrets-client = { workspace = true }
 object-store = { workspace = true }
 test-suite-assembler = { workspace = true }
 ai-provider = { workspace = true }
+locator-capture = { workspace = true }
 # Self-healing (HealTestActivity) reuses generation-worker's existing
 # supersede_test_asset persistence helper and its tsc-based
 # typecheck_playwright_code gate rather than duplicating a second

@@ -44,6 +44,7 @@ from domain import (
     TestRun,
     TestSuite,
 )
+from generation_worker import spec_linter
 from generation_worker.activities import (
     resolve_known_application_model_sync,
     supersede_test_asset,
@@ -71,6 +72,7 @@ from workflows import (
 )
 
 from execution_worker.db import engine
+from execution_worker.live_inspection import _live_inspection_enabled, run_live_inspection
 from execution_worker.project_cache import cleanup_project_dir, project_dir_for
 
 logger = logging.getLogger(__name__)
@@ -226,6 +228,17 @@ def _rebuild_project_dir_sync(test_run_id: uuid.UUID, application_id: uuid.UUID)
             inputs.login_evidence,
         )
     _install_project(dest_dir)
+    # This function only runs when the project dir was missing (evicted
+    # from local disk mid-TestRun, e.g. by a worker restart) — a rebuild
+    # must recreate .auth/state.json too when the app needs one, exactly
+    # like PrepareTestRunActivity's own initial assembly does below (same
+    # condition). Previously this rebuild path skipped it entirely: any
+    # `@auth` test executed after such an eviction — including a HealTest-
+    # Activity retry, which only ever calls _ensure_project_dir, never
+    # PrepareTestRunActivity — failed with "ENOENT .auth/state.json" no
+    # matter how many heal attempts remained.
+    if inputs.login_evidence is not None:
+        _run_auth_setup_once(dest_dir, application)
 
 
 @activity.defn(name="PrepareTestRunActivity")
@@ -862,6 +875,37 @@ def _is_infra_failure(status: str, error_message: str | None) -> bool:
     return any(sig in lowered for sig in _INFRA_ERROR_SIGNATURES)
 
 
+# Deterministic trigger for live inspection (heal_test_activity's loop,
+# below) — mirrors _is_infra_failure's style. Only ever checked AFTER
+# _is_infra_failure has already had first say (the loop's own infra break
+# runs before this), so an infra-classified failure never reaches this
+# classifier at all: infra failures must never consume a heal attempt OR
+# trigger a live-browser inspection over the same root cause. These four
+# patterns map to the four categories a stale/broken locator actually shows
+# up as: a locator Playwright waited for and never found, a locator that now
+# matches more than one element (UI changed shape), an element that's been
+# removed from the DOM since the test was written, and a plain
+# not-found/no-match message for dynamic content that hasn't rendered (yet,
+# or ever, if the app changed).
+_LOCATOR_FAILURE_PATTERNS = (
+    re.compile(r"waiting for (?:locator|selector)", re.IGNORECASE),
+    re.compile(r"strict mode violation.*resolved to \d+ elements", re.IGNORECASE),
+    re.compile(r"element is not attached to (?:the )?dom", re.IGNORECASE),
+    re.compile(r"no elements? found for selector|element(?:s)? not found", re.IGNORECASE),
+)
+
+
+def _is_locator_failure(status: str, error_message: str | None) -> bool:
+    """Deterministic — never left to AI judgment alone. True only for a
+    failure that looks like a stale/invalid locator, changed UI, a missing
+    element, or unrendered dynamic content; used to gate whether
+    heal_test_activity's loop launches a live Playwright inspection before
+    asking the AI for a fix."""
+    if not error_message:
+        return False
+    return any(pattern.search(error_message) for pattern in _LOCATOR_FAILURE_PATTERNS)
+
+
 async def _run_playwright_with_infra_retry(
     project_dir: Path, spec_path: str, env: dict, timeout_seconds: float, test_result_id: str
 ) -> dict:
@@ -935,6 +979,12 @@ class _HealContext:
     scenario: Scenario
     known_pages: list[dict[str, str]]
     known_locators: list[dict[str, str]]
+    # Resolved once per HealTestActivity invocation (same lifecycle as
+    # known_pages/known_locators above), supplied on every AI call within
+    # the loop — the same numeric-vs-string field hint original generation
+    # already gives the model, missing here before was a real cause of
+    # heal repeatedly regenerating the same TS2345 type mismatch.
+    field_input_types: dict[str, str]
     spec_path: str
     max_heal_attempts: int
 
@@ -969,7 +1019,15 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
         ).one()
         journey = session.exec(select(Journey).where(Journey.id == test_suite.journey_id)).one()
         scenario = session.exec(select(Scenario).where(Scenario.id == test_asset.scenario_id)).one()
-        known_pages, known_locators, _, _ = resolve_known_application_model_sync(session, journey.id)
+        known_pages, known_locators, _, known_page_ids = resolve_known_application_model_sync(
+            session, journey.id
+        )
+        # Same mechanism original generation uses (generation_worker/
+        # activities.py) — the real captured HTML input_type per field name,
+        # so the AI can tell a numeric field from a text one instead of
+        # guessing (the "wrap it in Number(...)" prompt rule needs this
+        # concrete signal to actually fire).
+        field_input_types = spec_linter.field_input_types_for_pages(session, known_page_ids)
         spec_path_by_asset_id = compute_spec_paths(
             test_suites=[test_suite],
             journeys_by_id={journey.id: journey},
@@ -982,6 +1040,7 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
             scenario=scenario,
             known_pages=known_pages,
             known_locators=known_locators,
+            field_input_types=field_input_types,
             spec_path=spec_path_by_asset_id[test_asset.id],
             max_heal_attempts=discovery_settings.max_heal_attempts,
         )
@@ -1147,6 +1206,23 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
                 return
 
         # Step 3 — the bounded, iterative heal loop.
+        # Bounded AI-requested live-inspection fallback (see
+        # _PLAYWRIGHT_FAILURE_CONTEXT's own closing instruction): the
+        # deterministic classifier below is the primary trigger; this flag
+        # carries the *previous* iteration's AI response into the *next*
+        # iteration's decision — never a same-iteration round-trip, and
+        # fully overwritten every iteration right after that iteration's own
+        # AI call, so it never accumulates across more than one attempt.
+        ai_requested_live_inspection = False
+        # Carries the immediately-previous typecheck-failed candidate + its
+        # exact tsc diagnostics into the next attempt (generate_playwright's
+        # existing repair mechanism, the same one generation-worker's own
+        # original-generation retry loop already uses) — reassigned, never
+        # accumulated, so it always holds only the LAST failed candidate.
+        # previous_code below stays pinned to the current TestAsset the
+        # whole time (untouched by this) — that's the initial baseline;
+        # repair is the separate "fix this specific broken draft" turn.
+        repair: tuple[str, list[str]] | None = None
         while True:
             state = await asyncio.to_thread(
                 _load_heal_loop_state_sync, ctx.test_result_pk, ctx.scenario.id
@@ -1162,18 +1238,40 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
             pre_attempt_signature = _normalize_failure_signature(state.error_message)
             screenshot_png = await asyncio.to_thread(_fetch_latest_screenshot_sync, ctx.test_result_pk)
 
+            # Targeted live inspection — deterministic primary trigger
+            # (_is_locator_failure), bounded AI-requested fallback, gated by
+            # the operational kill switch. Never a full crawl: one page,
+            # the most specific one known for this scenario (its
+            # journey's own last known page) falling back to the bare
+            # application URL only when no known page exists, reusing this
+            # TestRun's own auth session — never a fresh login.
+            live_inspection_result = None
+            if _live_inspection_enabled() and (
+                _is_locator_failure(state.status, state.error_message)
+                or ai_requested_live_inspection
+            ):
+                target_url = ctx.known_pages[-1]["url"] if ctx.known_pages else ctx.application.url
+                live_inspection_result = await run_live_inspection(
+                    project_dir=project_dir, target_url=target_url
+                )
+
             try:
                 code_result = await HostedAIProvider().generate_playwright(
                     ctx.scenario,
                     ctx.known_pages,
                     ctx.known_locators,
                     requires_auth=state.test_asset.requires_auth,
+                    field_input_types=ctx.field_input_types,
+                    repair=repair,
                     previous_code=state.test_asset.code,
                     failure_error_message=state.error_message,
                     failure_stack_trace=state.stack_trace,
                     failure_console_output=state.console_output,
                     target_url=ctx.application.url,
                     failure_screenshot_png=screenshot_png,
+                    live_inspection_locators=(
+                        live_inspection_result.locator_candidates if live_inspection_result else None
+                    ),
                 )
             except Exception:
                 logger.exception(
@@ -1183,13 +1281,27 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
                 )
                 break
 
+            ai_requested_live_inspection = code_result.requests_live_inspection
+
             tsc_errors = await typecheck_playwright_code(code_result.code)
             if tsc_errors:
                 # An attempt is "an AI generation call was made" — already
                 # counted here regardless of what typecheck does with it.
+                # The candidate itself is NOT promoted to the current
+                # TestAsset (only a typecheck-passing one is, below) — but
+                # it and its exact diagnostics carry forward as `repair` so
+                # the next attempt sees precisely what it wrote and why it
+                # broke, instead of blindly retrying from the same original
+                # baseline with only a summarized error string.
                 await asyncio.to_thread(_record_typecheck_failure_sync, ctx.test_result_pk, tsc_errors)
+                repair = (code_result.code, tsc_errors)
                 continue
 
+            # Typecheck passed — this candidate becomes the new baseline.
+            # Clear any in-flight repair turn: a subsequent failure (if any)
+            # will be a real runtime failure against this new current
+            # TestAsset, not another compile-fix retry of a discarded draft.
+            repair = None
             await asyncio.to_thread(
                 _record_heal_supersede_sync, ctx.test_result_pk, state.test_asset.id, code_result.code
             )

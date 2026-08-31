@@ -248,7 +248,7 @@ substring of a longer one on the same page (e.g. "New password" vs. "Confirm new
 "Amount" vs. "Loan Amount") resolves to BOTH elements and fails with a strict-mode violation \
 instead of the one you meant. `page.getByLabel("New password", {{ exact: true }})` — never a \
 bare `page.getByLabel("New password")` — is what actually isolates the field you want.
-{known_locators_listing}{failure_context}"""
+{known_locators_listing}{failure_context}{live_inspection_context}"""
 
 _PLAYWRIGHT_FAILURE_CONTEXT = """
 
@@ -266,7 +266,29 @@ except where the failure requires changing them.
 --- stack trace ---
 {failure_stack_trace}
 --- console output ---
-{failure_console_output}"""
+{failure_console_output}
+
+If, after all of the above, you still cannot confidently identify the
+correct current locator or root cause (the evidence doesn't tell you what
+changed on the page), respond with the single line `NEEDS_LIVE_INSPECTION`
+as the very first line of your response, then your best-effort fix below
+it as normal. A real browser will inspect the current page and you will
+get another attempt with that fresh evidence — use this sparingly, only
+when you are genuinely blocked, not as a default reflex."""
+
+# Only ever populated during a heal attempt (previous_code is not None) AND
+# only when a live inspection actually ran for this attempt — most heal
+# attempts never trigger one (the deterministic locator-failure classifier
+# in execution_worker gates it), so this is usually "".
+_PLAYWRIGHT_LIVE_INSPECTION_CONTEXT = """
+
+## Live Page Inspection (current DOM state, captured just now)
+A real browser was launched and navigated to the failing page using this
+test's own authenticated session. These locator candidates were observed
+on the page at the time of this heal attempt — more reliable than the
+possibly-stale known locators above when they disagree:
+
+{live_locator_listing}"""
 
 _PLAYWRIGHT_PROMPT_SYSTEM = """You are converting one integration test Scenario into a single, \
 executable Playwright (TypeScript, @playwright/test) test.
@@ -710,6 +732,23 @@ def _describe_known_locators(known_locators: list[dict[str, str]] | None) -> str
     return "\n".join(_describe_one(loc) for loc in known_locators)
 
 
+def _describe_live_locators(locator_candidates: list[dict] | None) -> str:
+    """Live-inspection candidates (`locator_capture.extract_page_locator_
+    snapshot`'s shape: strategy/value/fragile/element_tag) are structurally
+    different from `known_locators` above (Discovery's named Components) —
+    no stage_label/component_name, since these came from a bare page probe,
+    not a captured, named Component."""
+    if not locator_candidates:
+        return "(none)"
+
+    def _describe_one(loc: dict) -> str:
+        if loc.get("strategy") == "label":
+            return f'- <{loc["element_tag"]}> -> getByLabel("{loc["value"]}")'
+        return f"- <{loc['element_tag']}> -> {loc['value']}"
+
+    return "\n".join(_describe_one(loc) for loc in locator_candidates)
+
+
 # Story 2.10 AC 3: a short, plain-language (not JSON) opinion — this is
 # supporting evidence recorded in diagnostics, never a structured decision
 # the caller branches on, so there's nothing here worth a schema for.
@@ -966,6 +1005,7 @@ class HostedAIProvider:
         failure_console_output: str | None = None,
         target_url: str | None = None,
         failure_screenshot_png: bytes | None = None,
+        live_inspection_locators: list[dict] | None = None,
     ) -> TestAssetCode:
         step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
         base_url = getattr(scenario, "base_url", None) or ""
@@ -1017,6 +1057,13 @@ class HostedAIProvider:
             if previous_code is not None
             else ""
         )
+        live_inspection_context = (
+            _PLAYWRIGHT_LIVE_INSPECTION_CONTEXT.format(
+                live_locator_listing=_describe_live_locators(live_inspection_locators)
+            )
+            if live_inspection_locators
+            else ""
+        )
         system_message = {
             "role": "system",
             "content": _PLAYWRIGHT_PROMPT_SYSTEM.format(
@@ -1035,6 +1082,7 @@ class HostedAIProvider:
             known_pages_listing=_describe_known_pages(known_pages),
             known_locators_listing=_describe_known_locators(known_locators),
             failure_context=failure_context,
+            live_inspection_context=live_inspection_context,
         )
         messages: list[dict[str, Any]] = [
             system_message,
@@ -1104,9 +1152,16 @@ class HostedAIProvider:
         # stripping defensively, since raw TypeScript code has no equivalent
         # structured-output guarantee to lean on.
         code = content.strip()
+        # The bounded, AI-requested live-inspection fallback (see
+        # _PLAYWRIGHT_FAILURE_CONTEXT's own closing instruction) — a literal
+        # sentinel first line, since this response is plain TypeScript with
+        # no structured-output channel to carry a real boolean flag.
+        requests_live_inspection = code.startswith("NEEDS_LIVE_INSPECTION")
+        if requests_live_inspection:
+            code = code.split("\n", 1)[1].strip() if "\n" in code else ""
         if code.startswith("```"):
             code = code.split("\n", 1)[1] if "\n" in code else code
             if code.endswith("```"):
                 code = code.rsplit("```", 1)[0]
             code = code.removeprefix("typescript\n").removeprefix("ts\n").strip()
-        return TestAssetCode(code=code)
+        return TestAssetCode(code=code, requests_live_inspection=requests_live_inspection)

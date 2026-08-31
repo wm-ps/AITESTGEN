@@ -13,6 +13,7 @@ members = [
     "packages/object_store",
     "packages/test_suite_assembler",
     "packages/safety_classifier",
+    "packages/locator_capture",
 ]
 
 [dependency-groups]
@@ -54,4 +55,5 @@ include = [
     "packages/object_store",
     "packages/test_suite_assembler",
     "packages/safety_classifier",
+    "packages/locator_capture",
 ]
