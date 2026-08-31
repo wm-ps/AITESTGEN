@@ -36,6 +36,7 @@ from sqlmodel import Session, select
 from workflows import (
     ExecuteTestActivityInput,
     FinalizeTestRunActivityInput,
+    ForceCompleteTestRunActivityInput,
     PrepareTestRunActivityInput,
 )
 
@@ -182,6 +183,37 @@ def test_prepare_runs_destructive_and_unknown_scenarios_unconditionally(
             select(TestResult).where(TestResult.test_run_id == test_run.id)
         ).all()
         assert all(r.status == "pending" for r in results)
+
+
+def test_prepare_force_closes_run_when_assembly_inputs_crash_before_any_test_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A crash in `_load_assembly_inputs_sync` happens before any TestResult
+    row exists — this must still mark the TestRun "completed" instead of
+    leaving it stuck "running" with zero TestResults (the earlier, narrower
+    try/except only covered the assemble/install/auth step, not this one)."""
+    init_db()
+    application = _seed_application()
+    _seed_test_asset(application, safety_classification="SAFE")
+
+    def _always_fails(*_a, **_k):
+        raise RuntimeError("simulated assembly-inputs failure")
+
+    monkeypatch.setattr(activities_module, "_load_assembly_inputs_sync", _always_fails)
+
+    result = activities_module._prepare_test_run_sync(
+        PrepareTestRunActivityInput(application_id=str(application.external_id))
+    )
+
+    assert result.blocked is False
+    assert result.executable == []
+    with Session(engine) as session:
+        test_run = session.exec(
+            select(TestRun).where(TestRun.external_id == uuid.UUID(result.test_run_id))
+        ).one()
+        assert test_run.status == "completed"
+        assert test_run.total_count == 0
+        assert test_run.errored_count == 0
 
 
 def test_prepare_logs_in_once_when_login_evidence_exists(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -575,3 +607,42 @@ def test_finalize_marks_leftover_pending_results_as_errored() -> None:
         assert result.status == "errored"
         assert result.error_message is not None
         assert result.completed_at is not None
+
+
+def test_force_complete_falls_back_to_bare_status_flip_when_finalize_itself_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ForceCompleteTestRunActivity is the workflow's last-resort call when
+    FinalizeTestRunActivity exhausted its own retries — it must still close
+    the TestRun even if the real finalize logic (re-tried here first) fails
+    again for the same reason."""
+    init_db()
+    application = _seed_application()
+
+    with Session(engine) as session:
+        test_run = TestRun(
+            application_id=application.id,
+            status="running",
+            environment_snapshot=application.environment,
+            target_base_url_snapshot=application.url,
+        )
+        session.add(test_run)
+        session.commit()
+        session.refresh(test_run)
+        test_run_external_id = test_run.external_id
+
+    def _always_fails(_input: FinalizeTestRunActivityInput) -> None:
+        raise RuntimeError("simulated finalize failure")
+
+    monkeypatch.setattr(activities_module, "_finalize_test_run_sync", _always_fails)
+
+    activities_module._force_complete_test_run_sync(
+        ForceCompleteTestRunActivityInput(test_run_id=str(test_run_external_id))
+    )
+
+    with Session(engine) as session:
+        test_run = session.exec(
+            select(TestRun).where(TestRun.external_id == test_run_external_id)
+        ).one()
+        assert test_run.status == "completed"
+        assert test_run.completed_at is not None
