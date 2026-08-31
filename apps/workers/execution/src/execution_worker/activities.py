@@ -66,6 +66,7 @@ from workflows import (
     ExecutableTest,
     ExecuteTestActivityInput,
     FinalizeTestRunActivityInput,
+    ForceCompleteTestRunActivityInput,
     HealTestActivityInput,
     PrepareTestRunActivityInput,
     PrepareTestRunActivityResult,
@@ -278,41 +279,47 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
         session.commit()
         session.refresh(test_run)
 
-        inputs = _load_assembly_inputs_sync(session, application)
-        test_assets = inputs.test_assets
-        assets_by_suite = inputs.assets_by_suite
-        scenario_name_by_asset_id = inputs.scenario_name_by_asset_id
-
-        # Per-test-result rows first — every TestAsset gets a row before any
-        # project assembly/install so a slow npm install never delays the
-        # "why is my count already showing" moment for the poller. Every
-        # TestAsset is executable unconditionally (see this function's own
-        # ponytail note above).
+        # Everything below can throw before a single TestResult exists (a
+        # bad query in _load_assembly_inputs_sync) or mid-loop (partway
+        # through creating rows) — all of it is inside one try/except so any
+        # failure here still force-closes the TestRun instead of leaving it
+        # stuck "running" with an inconsistent set of TestResult rows.
         executable: list[ExecutableTest] = []
+        pending_assets: list = []
         test_results_by_asset_id: dict[uuid.UUID, TestResult] = {}
-        for asset in test_assets:
-            test_result = TestResult(
-                test_run_id=test_run.id,
-                test_asset_id=asset.id,
-                scenario_id=asset.scenario_id,
-                status="pending",
-            )
-            session.add(test_result)
-            session.flush()
-            test_results_by_asset_id[asset.id] = test_result
-
-        test_run.total_count = len(test_assets)
-        session.add(test_run)
-        session.commit()
-
-        pending_assets = test_assets
-        if not pending_assets:
-            return PrepareTestRunActivityResult(
-                test_run_id=str(test_run.external_id), blocked=False, executable=[]
-            )
-
-        dest_dir = project_dir_for(test_run.external_id)
         try:
+            inputs = _load_assembly_inputs_sync(session, application)
+            test_assets = inputs.test_assets
+            assets_by_suite = inputs.assets_by_suite
+            scenario_name_by_asset_id = inputs.scenario_name_by_asset_id
+
+            # Per-test-result rows first — every TestAsset gets a row before
+            # any project assembly/install so a slow npm install never
+            # delays the "why is my count already showing" moment for the
+            # poller. Every TestAsset is executable unconditionally (see
+            # this function's own ponytail note above).
+            for asset in test_assets:
+                test_result = TestResult(
+                    test_run_id=test_run.id,
+                    test_asset_id=asset.id,
+                    scenario_id=asset.scenario_id,
+                    status="pending",
+                )
+                session.add(test_result)
+                session.flush()
+                test_results_by_asset_id[asset.id] = test_result
+
+            test_run.total_count = len(test_assets)
+            session.add(test_run)
+            session.commit()
+
+            pending_assets = test_assets
+            if not pending_assets:
+                return PrepareTestRunActivityResult(
+                    test_run_id=str(test_run.external_id), blocked=False, executable=[]
+                )
+
+            dest_dir = project_dir_for(test_run.external_id)
             assemble_test_suite_project_to_dir(
                 dest_dir,
                 application,
@@ -326,13 +333,13 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
             if inputs.login_evidence is not None:
                 _run_auth_setup_once(dest_dir, application)
         except Exception as exc:  # noqa: BLE001 — infra failure, not a test outcome
-            for asset in pending_assets:
-                test_result = test_results_by_asset_id[asset.id]
+            for test_result in test_results_by_asset_id.values():
                 test_result.status = "errored"
                 test_result.error_message = f"failed to prepare the test project: {exc}"
                 test_result.completed_at = datetime.now(UTC)
                 session.add(test_result)
-            test_run.errored_count = len(pending_assets)
+            test_run.total_count = len(test_results_by_asset_id)
+            test_run.errored_count = len(test_results_by_asset_id)
             test_run.status = "completed"
             test_run.completed_at = datetime.now(UTC)
             session.add(test_run)
@@ -1404,3 +1411,41 @@ def _finalize_test_run_sync(input: FinalizeTestRunActivityInput) -> None:
         )
 
     cleanup_project_dir(external_id)
+
+
+@activity.defn(name="ForceCompleteTestRunActivity")
+async def force_complete_test_run_activity(input: ForceCompleteTestRunActivityInput) -> None:
+    await asyncio.to_thread(_force_complete_test_run_sync, input)
+
+
+def _force_complete_test_run_sync(input: ForceCompleteTestRunActivityInput) -> None:
+    # Last-resort safety net, called only when FinalizeTestRunActivity itself
+    # exhausted its retries — must never itself raise past the workflow, or
+    # TestRun.status is stuck at "running" forever (no reconciliation job
+    # exists to catch this later). Try the real finalize logic first (proper
+    # counts), then fall back to a bare status flip if even that fails.
+    try:
+        _finalize_test_run_sync(FinalizeTestRunActivityInput(test_run_id=input.test_run_id))
+        return
+    except Exception:
+        logger.exception(
+            "ForceCompleteTestRunActivity: full finalize failed for test_run_id=%s, "
+            "falling back to a bare status flip",
+            input.test_run_id,
+        )
+
+    try:
+        with Session(engine) as session:
+            test_run = session.exec(
+                select(TestRun).where(TestRun.external_id == uuid.UUID(input.test_run_id))
+            ).one_or_none()
+            if test_run is not None and test_run.status != "completed":
+                test_run.status = "completed"
+                test_run.completed_at = datetime.now(UTC)
+                session.add(test_run)
+                session.commit()
+    except Exception:
+        logger.exception(
+            "ForceCompleteTestRunActivity: bare status flip also failed for test_run_id=%s",
+            input.test_run_id,
+        )

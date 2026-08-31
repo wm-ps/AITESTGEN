@@ -41,6 +41,7 @@ EXECUTION_TASK_QUEUE = "execution-task-queue"
 PREPARE_TEST_RUN_ACTIVITY_NAME = "PrepareTestRunActivity"
 EXECUTE_TEST_ACTIVITY_NAME = "ExecuteTestActivity"
 FINALIZE_TEST_RUN_ACTIVITY_NAME = "FinalizeTestRunActivity"
+FORCE_COMPLETE_TEST_RUN_ACTIVITY_NAME = "ForceCompleteTestRunActivity"
 HEAL_TEST_ACTIVITY_NAME = "HealTestActivity"
 
 DEFAULT_MAX_CONCURRENCY = 5
@@ -96,6 +97,11 @@ class ExecuteTestActivityInput:
 
 @dataclass
 class FinalizeTestRunActivityInput:
+    test_run_id: str
+
+
+@dataclass
+class ForceCompleteTestRunActivityInput:
     test_run_id: str
 
 
@@ -178,12 +184,26 @@ class ApplicationTestExecutionWorkflow:
                 *[run_one(item) for item in prep.executable], return_exceptions=True
             )
 
-        await workflow.execute_activity(
-            FINALIZE_TEST_RUN_ACTIVITY_NAME,
-            FinalizeTestRunActivityInput(test_run_id=prep.test_run_id),
-            start_to_close_timeout=timedelta(minutes=1),
-            retry_policy=RetryPolicy(maximum_attempts=3),
-        )
+        try:
+            await workflow.execute_activity(
+                FINALIZE_TEST_RUN_ACTIVITY_NAME,
+                FinalizeTestRunActivityInput(test_run_id=prep.test_run_id),
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+        except Exception:
+            # FinalizeTestRunActivity exhausted its retries — every
+            # TestResult may already be terminal, but TestRun.status would
+            # otherwise stay "running" forever (no reconciliation job exists
+            # to catch this later). Force-close it, then re-raise so the
+            # workflow still shows Failed in Temporal for observability.
+            await workflow.execute_activity(
+                FORCE_COMPLETE_TEST_RUN_ACTIVITY_NAME,
+                ForceCompleteTestRunActivityInput(test_run_id=prep.test_run_id),
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=2),
+            )
+            raise
         return prep.test_run_id
 
 

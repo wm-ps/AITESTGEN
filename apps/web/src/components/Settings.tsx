@@ -217,6 +217,11 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
                       {n} sec
                     </option>
                   ))}
+                  {[120, 180, 240, 300].map((n) => (
+                    <option key={n} value={n}>
+                      {n / 60} min
+                    </option>
+                  ))}
                 </select>
               </label>
 
