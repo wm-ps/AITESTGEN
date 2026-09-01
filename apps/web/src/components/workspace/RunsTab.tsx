@@ -18,9 +18,7 @@ const RUNS_PER_PAGE = 10
 const RESULTS_PER_PAGE = 10
 
 // Same arrow-left glyph as TopBar's own back button, not a text "←" glyph.
-// Exported so Workspace can render it next to the page title (single
-// "Test Runs" heading, not one there and a duplicate here).
-export function BackIcon() {
+function BackIcon() {
   return (
     <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M19 12H5M12 19l-7-7 7-7" />
@@ -226,9 +224,10 @@ const RESULT_GRID_TEMPLATE = '50% 1fr 1fr'
 // Runs table columns (RunListHeader/RunListRow) use percentages, not px —
 // `table-layout: fixed` + `width: 100%` on `.data-table` means these scale
 // with the table instead of leaving it stuck at a fixed pixel sum. Date &
-// Time gets the biggest share (30%); the rest split what's left, and Status
+// Time gets the biggest share (22%); the rest split what's left, and Status
 // stays unwidthed so it alone absorbs any remainder.
-const DATE_COL_WIDTH = '30%'
+const RUN_NUMBER_COL_WIDTH = '8%'
+const DATE_COL_WIDTH = '22%'
 const TRIGGERED_BY_COL_WIDTH = '16%'
 const PASS_RATE_COL_WIDTH = '10%'
 const PASSED_COL_WIDTH = '12%'
@@ -660,10 +659,12 @@ function RunDetail({
   applicationId,
   run,
   executionUnavailable,
+  onBack,
 }: {
   applicationId: string
   run: TestRunRead
   executionUnavailable: boolean
+  onBack: () => void
 }) {
   const isRunning = run.status === 'pending' || run.status === 'running'
   const [resultsPage, setResultsPage] = useState(0)
@@ -694,7 +695,19 @@ function RunDetail({
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-        <StatusPill status={run.status} label={testRunStatusLabel(run.status)} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={onBack}
+            aria-label="Back to Test Runs"
+            style={{ display: 'inline-flex', alignItems: 'center', padding: 8 }}
+          >
+            <BackIcon />
+          </button>
+          <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)' }}>Run #{run.run_number}</span>
+          <StatusPill status={run.status} label={testRunStatusLabel(run.status)} />
+        </div>
         <span className="caption" style={{ fontSize: 12.5 }}>
           {run.trigger} · {formatDateTime(run.created_at)}
         </span>
@@ -831,6 +844,7 @@ function RunListHeader({
   return (
     <thead>
       <tr>
+        <th style={{ ...columnHeaderLabelStyle, width: RUN_NUMBER_COL_WIDTH }}>Run</th>
         <SortableTh label="Date & Time" sortKey="date" activeKey={sortKey} dir={sortDir} onSort={onSort} width={DATE_COL_WIDTH} />
         <SortableTh
           label="Triggered By"
@@ -894,6 +908,7 @@ function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
         if (e.key === 'Enter' || e.key === ' ') onOpen()
       }}
     >
+      <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>#{run.run_number}</td>
       <td style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>
         {formatDateTimeWithZone(run.created_at)}
       </td>
@@ -930,9 +945,10 @@ export function RunsTab({
   // away and back with no fresh run triggered) would re-arm auto-select
   // and hijack a deliberate return to the run list.
   onAutoSelectConsumed?: () => void
-  // Workspace renders the back button next to its own page-title `<h1>`
-  // (one "Test Runs" heading, not a second one in here) — so it needs a
-  // way back into the list, not just a boolean for "currently in detail".
+  // RunDetail renders its own back button next to "Run #<n>" — Workspace
+  // only needs to know whether detail view is active, to hide its own
+  // page-title `<h1>` while it's showing, not a way to trigger the back
+  // navigation itself.
   onDetailChange?: (onBack: (() => void) | null) => void
 }) {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
@@ -1073,7 +1089,12 @@ export function RunsTab({
 
   if (selectedRunId) {
     return selectedRun ? (
-      <RunDetail applicationId={applicationId} run={selectedRun} executionUnavailable={executionUnavailable} />
+      <RunDetail
+        applicationId={applicationId}
+        run={selectedRun}
+        executionUnavailable={executionUnavailable}
+        onBack={() => setSelectedRunId(null)}
+      />
     ) : (
       <p className="caption" style={{ fontSize: 12.5 }}>
         Loading run…

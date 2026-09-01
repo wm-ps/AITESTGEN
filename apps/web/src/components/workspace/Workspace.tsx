@@ -6,7 +6,7 @@ import { AuthoringTab } from './AuthoringTab'
 import { CredentialsTab } from './CredentialsTab'
 import { OverviewTab } from './OverviewTab'
 import { TestSuiteTab } from './TestSuiteTab'
-import { BackIcon, RunsTab } from './RunsTab'
+import { RunsTab } from './RunsTab'
 
 type WorkspaceTab = 'overview' | 'suite' | 'runs' | 'author' | 'credentials'
 
@@ -265,20 +265,15 @@ export function Workspace({
         <div style={{ maxWidth: 'var(--content-max-wide)', margin: '0 auto' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              {activeTab === 'runs' && runsBack && (
-                <button
-                  type="button"
-                  className="button-secondary"
-                  onClick={runsBack}
-                  aria-label="Back to Test Runs"
-                  style={{ display: 'inline-flex', alignItems: 'center', padding: 8 }}
-                >
-                  <BackIcon />
-                </button>
+              {/* Hidden while a run is expanded — RunDetail renders its own
+                  back button next to "Run #<n>" instead, so the run's
+                  identity replaces this generic tab title rather than
+                  sitting above a second, redundant one. */}
+              {!(activeTab === 'runs' && runsBack) && (
+                <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
+                  {TABS.find((tab) => tab.key === activeTab)?.heading}
+                </h1>
               )}
-              <h1 style={{ fontSize: 20, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>
-                {TABS.find((tab) => tab.key === activeTab)?.heading}
-              </h1>
             </div>
             {activeTab === 'runs' && (
               <button

@@ -87,6 +87,7 @@ export type TestResultRead = {
 export type TestRunStatus = 'pending' | 'running' | 'completed' | 'blocked'
 export type TestRunRead = {
   id: string
+  run_number: number
   status: TestRunStatus
   trigger: string
   pass_rate: number | null

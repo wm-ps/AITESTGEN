@@ -98,6 +98,7 @@ def _seed_application(*, deleted_at: datetime | None) -> Application:
 
         test_run = TestRun(
             application_id=application.id,
+            run_number=1,
             status="complete",
             environment_snapshot="staging",
             target_base_url_snapshot="https://app.example.com",

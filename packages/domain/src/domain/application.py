@@ -18,7 +18,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import Column, DateTime, ForeignKey, text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -80,6 +80,14 @@ class Application(SQLModel, table=True):
     # — not a detection of where the crawler is actually running (Dev
     # Notes: never conflate the two). Backend/config only in V1, no UI field.
     safety_posture: str = Field(default="non_production")
+    # Run All Tests feature: the next per-Application TestRun.run_number to
+    # hand out. Claimed via an atomic UPDATE...RETURNING in
+    # `_prepare_test_run_sync` — that row lock, not this field's default, is
+    # what makes concurrent "Run All Tests" clicks race-safe.
+    next_test_run_number: int = Field(
+        default=1,
+        sa_column=Column(Integer, nullable=False, server_default=text("1")),
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

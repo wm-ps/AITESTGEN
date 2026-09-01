@@ -27,7 +27,7 @@ from domain import (
     TestSuite,
 )
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
@@ -132,9 +132,19 @@ def _seed_test_asset(
 
 
 def _seed_test_run(application_id: uuid.UUID, **overrides) -> TestRun:
+    """Bypasses `_prepare_test_run_sync`'s atomic counter claim entirely
+    (this seeds a row directly, not through the activity), so `run_number`
+    must be assigned here — counting existing rows for this
+    `application_id` mimics what the real claim would have handed out, and
+    satisfies the `uq_test_run_application_id_run_number` constraint when
+    a test calls this helper more than once per application."""
     with Session(engine) as session:
+        existing_count = session.exec(
+            select(func.count()).where(TestRun.application_id == application_id)
+        ).one()
         defaults = dict(
             application_id=application_id,
+            run_number=existing_count + 1,
             status="completed",
             environment_snapshot="staging",
             target_base_url_snapshot="https://staging.example.com",
@@ -286,6 +296,19 @@ class TestListTestRuns:
 
         assert body["items"][0]["trigger"] == "Manual run"
 
+    def test_run_number_reflects_per_application_creation_order(self) -> None:
+        init_db()
+        client, _ = _signed_in_client("Org Run Number")
+        application = _create_application(client, "Run Number App")
+        app_id, _ = _seed_test_asset(application)
+        _seed_test_run(app_id)
+        _seed_test_run(app_id)
+
+        body = client.get(f"/applications/{application['id']}/test-runs").json()
+
+        # Newest first (list order) with run_number assigned in creation order.
+        assert [item["run_number"] for item in body["items"]] == [2, 1]
+
 
 class TestGetTestRun:
     def test_detail_includes_results(self) -> None:
@@ -311,6 +334,7 @@ class TestGetTestRun:
 
         assert response.status_code == 200
         body = response.json()
+        assert body["run_number"] == 1
         assert len(body["results"]) == 1
         assert body["results"][0]["scenario_name"] == "Guest checkout"
 
@@ -428,6 +452,7 @@ class TestGetOverview:
 
             test_run = TestRun(
                 application_id=app_id,
+                run_number=1,
                 status="completed",
                 environment_snapshot="staging",
                 target_base_url_snapshot="https://staging.example.com",

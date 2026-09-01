@@ -31,7 +31,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import Column, DateTime, ForeignKey, text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -59,6 +59,13 @@ class TestRun(SQLModel, table=True):
             PGUUID(as_uuid=True), ForeignKey("application.id"), nullable=False, index=True
         ),
     )
+    # Sequential display number, scoped per Application (restarts at 1 for
+    # each Application — not a global counter). Assigned once, atomically,
+    # by `_prepare_test_run_sync` against `Application.next_test_run_number`;
+    # never recomputed later. No default: every creation path must supply it
+    # explicitly rather than risk two rows silently both getting 0 and
+    # tripping the (application_id, run_number) unique constraint.
+    run_number: int = Field(sa_column=Column(Integer, nullable=False))
     status: str = Field(default="pending")
     execution_policy_id: uuid.UUID | None = Field(
         default=None,

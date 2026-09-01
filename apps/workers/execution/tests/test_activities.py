@@ -147,6 +147,47 @@ def test_prepare_runs_unconditionally_with_no_execution_policy(
         assert test_run.execution_policy_id is None
 
 
+def test_prepare_assigns_unique_sequential_run_numbers_under_concurrency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`trigger_test_run` starts each run as an independently-uuid4()-keyed
+    Temporal workflow with no idempotency key (api/main.py), so two "Run All
+    Tests" clicks for the same Application can race — each with its own
+    `_prepare_test_run_sync` call and its own DB session, just like the
+    `ThreadPoolExecutor` below simulates. `run_number` must still come out
+    unique and contiguous (1..N), which only holds if the
+    `Application.next_test_run_number` claim is actually atomic."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    init_db()
+    application = _seed_application()
+    _seed_test_asset(application, safety_classification="SAFE")
+
+    monkeypatch.setattr(
+        activities_module, "assemble_test_suite_project_to_dir", lambda *a, **k: None
+    )
+    monkeypatch.setattr(activities_module, "_install_project", lambda *a, **k: None)
+
+    def _prepare(_: int) -> str:
+        return activities_module._prepare_test_run_sync(
+            PrepareTestRunActivityInput(application_id=str(application.external_id))
+        ).test_run_id
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        test_run_ids = list(pool.map(_prepare, range(8)))
+
+    with Session(engine) as session:
+        run_numbers = [
+            session.exec(
+                select(TestRun).where(TestRun.external_id == uuid.UUID(test_run_id))
+            )
+            .one()
+            .run_number
+            for test_run_id in test_run_ids
+        ]
+    assert sorted(run_numbers) == list(range(1, 9))
+
+
 def test_prepare_runs_destructive_and_unknown_scenarios_unconditionally(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -310,6 +351,7 @@ async def test_execute_test_retries_once_after_session_invalidation(
     with Session(engine) as session:
         test_run = TestRun(
             application_id=application.id,
+            run_number=1,
             status="running",
             environment_snapshot="staging",
             target_base_url_snapshot=application.url,
@@ -393,6 +435,7 @@ async def test_execute_test_does_not_retry_an_unrelated_failure(
     with Session(engine) as session:
         test_run = TestRun(
             application_id=application.id,
+            run_number=1,
             status="running",
             environment_snapshot="staging",
             target_base_url_snapshot=application.url,
@@ -463,6 +506,7 @@ def test_finalize_aggregates_counts_and_marks_completed() -> None:
     with Session(engine) as session:
         test_run = TestRun(
             application_id=application.id,
+            run_number=1,
             status="running",
             environment_snapshot=application.environment,
             target_base_url_snapshot=application.url,
@@ -515,6 +559,7 @@ def test_persist_result_updates_live_counts_before_run_finishes() -> None:
     with Session(engine) as session:
         test_run = TestRun(
             application_id=application.id,
+            run_number=1,
             status="running",
             environment_snapshot=application.environment,
             target_base_url_snapshot=application.url,
@@ -571,6 +616,7 @@ def test_finalize_marks_leftover_pending_results_as_errored() -> None:
     with Session(engine) as session:
         test_run = TestRun(
             application_id=application.id,
+            run_number=1,
             status="running",
             environment_snapshot=application.environment,
             target_base_url_snapshot=application.url,
@@ -622,6 +668,7 @@ def test_force_complete_falls_back_to_bare_status_flip_when_finalize_itself_fail
     with Session(engine) as session:
         test_run = TestRun(
             application_id=application.id,
+            run_number=1,
             status="running",
             environment_snapshot=application.environment,
             target_base_url_snapshot=application.url,

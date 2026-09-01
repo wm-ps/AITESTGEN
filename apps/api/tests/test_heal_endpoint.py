@@ -119,6 +119,7 @@ def _seed_test_result(application: dict, **overrides) -> TestResult:
         session.flush()
         test_run = TestRun(
             application_id=discovery_run.application_id,
+            run_number=1,
             status="completed",
             environment_snapshot="staging",
             target_base_url_snapshot="https://staging.example.com",

@@ -2175,6 +2175,7 @@ class TestResultRead(BaseModel):
 
 class TestRunRead(BaseModel):
     id: uuid.UUID
+    run_number: int
     status: str
     trigger: str
     pass_rate: float | None
@@ -2213,6 +2214,7 @@ def _to_test_run_read(
     )
     return TestRunRead(
         id=test_run.external_id,
+        run_number=test_run.run_number,
         status=test_run.status,
         trigger=(
             f"Manual run by {test_run.triggered_by_name}"

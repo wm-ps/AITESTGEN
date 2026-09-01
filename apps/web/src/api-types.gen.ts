@@ -1491,6 +1491,8 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Run Number */
+            run_number: number;
             /** Status */
             status: string;
             /** Trigger */

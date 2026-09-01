@@ -106,6 +106,7 @@ def _seed_test_asset_and_result(
 
         test_run = TestRun(
             application_id=application.id,
+            run_number=1,
             status="completed",
             environment_snapshot=application.environment,
             target_base_url_snapshot=application.url,

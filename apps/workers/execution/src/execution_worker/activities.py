@@ -267,8 +267,22 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
             select(Application).where(Application.external_id == uuid.UUID(input.application_id))
         ).one()
 
+        # Claim this Application's next run_number atomically before
+        # inserting the TestRun row, in the same transaction/commit below.
+        # Postgres's row lock on this UPDATE (held until commit) is what
+        # makes two concurrent "Run All Tests" clicks for the same
+        # Application race-safe — same `update(...).where(...).values(...)`
+        # idiom as `_claim_heal_sync` below, with `.returning()` added.
+        run_number = session.execute(
+            update(Application)
+            .where(Application.id == application.id)  # type: ignore[arg-type]
+            .values(next_test_run_number=Application.next_test_run_number + 1)
+            .returning(Application.next_test_run_number - 1)  # type: ignore[arg-type]
+        ).scalar_one()
+
         test_run = TestRun(
             application_id=application.id,
+            run_number=run_number,
             status="running",
             environment_snapshot=application.environment,
             target_base_url_snapshot=application.url,

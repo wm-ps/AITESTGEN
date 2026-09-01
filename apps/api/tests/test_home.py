@@ -15,7 +15,7 @@ from domain import Application, DiscoveryRun, Journey, Scenario, TestRun, TestSu
 from fastapi.testclient import TestClient
 from hvac.exceptions import VaultError
 from secrets_client.vault_client import VAULT_ADDR, VAULT_TOKEN
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
@@ -133,9 +133,13 @@ def _add_test_run(application: dict, passed_count: int, total_count: int) -> Non
         app_row = session.exec(
             select(Application).where(Application.external_id == uuid.UUID(application["id"]))
         ).one()
+        existing_count = session.exec(
+            select(func.count()).where(TestRun.application_id == app_row.id)
+        ).one()
         session.add(
             TestRun(
                 application_id=app_row.id,
+                run_number=existing_count + 1,
                 status="completed",
                 environment_snapshot=application["environment"],
                 target_base_url_snapshot=application["url"],
