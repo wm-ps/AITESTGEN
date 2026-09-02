@@ -65,6 +65,14 @@ export type TestCaseGenerationResultRead = {
   // True when this Scenario already existed and was matched/reused as-is —
   // never (re)generated or re-run.
   already_existed: boolean
+  // True only for a genuinely new Journey this request created.
+  is_new_journey: boolean
+  // True for a brand-new Scenario (existing Journey or one just created for
+  // it); false for a genuine reuse_scenario match. Meaningless once
+  // already_existed or is_new_journey is true.
+  is_new_scenario: boolean
+  // Set only when status is 'failed' — which step actually blocked creation.
+  stage: string | null
 }
 export type TestCaseRequestStatusRead = {
   request_id: string

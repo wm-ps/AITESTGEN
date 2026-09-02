@@ -1739,6 +1739,18 @@ class TestCaseGenerationResultRead(BaseModel):
     # never (re)generated or re-run. Lets the UI distinguish "matched to an
     # existing test case" from "newly generated".
     already_existed: bool = False
+    # True only for a genuinely new Journey this request created — lets the
+    # UI say which Journey was newly created, not just name it like any
+    # other (New Journey grouping is a success, never a failure by itself).
+    is_new_journey: bool = False
+    # NLM Matching and Creation Rules — True for a brand-new Scenario
+    # (existing Journey or one just created for it); False for a genuine
+    # `reuse_scenario` match. Meaningless once `already_existed` or
+    # `is_new_journey` is True — the UI checks those first.
+    is_new_scenario: bool = False
+    # Set only for `status="failed"` — names which step actually blocked
+    # creation (e.g. "Scenario match", "Code generation").
+    stage: str | None = None
 
 
 class TestCaseRequestStatusRead(BaseModel):
@@ -1843,6 +1855,9 @@ async def get_test_case_request(
                     test_result_status=r.test_result_status,
                     error_message=r.error_message,
                     already_existed=r.already_existed,
+                    is_new_journey=r.is_new_journey,
+                    is_new_scenario=r.is_new_scenario,
+                    stage=r.stage,
                 )
                 for r in result.results
             ],
