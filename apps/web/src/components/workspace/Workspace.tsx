@@ -100,6 +100,10 @@ export function Workspace({
   isAdmin?: boolean
 }) {
   const [activeTab, setActiveTab] = useState<WorkspaceTab>(initialTab)
+  // Add Test Case Tab: the 'author' tab only shows once the project has at
+  // least one generated TestSuite — `null` (not yet known) renders as hidden
+  // the same as `false`, so there's no flash of the tab before this settles.
+  const [hasTestSuite, setHasTestSuite] = useState(false)
   // Set once, the moment "Run Suite"/"Run All Tests" switches to the Runs
   // tab — consumed by RunsTab's own auto-select-newest-run poll, then never
   // re-armed just by switching tabs again.
@@ -152,6 +156,26 @@ export function Workspace({
     return () => {
       cancelled = true
       clearInterval(interval)
+    }
+  }, [applicationId])
+
+  // Add Test Case Tab: same "has a suite" check `App.tsx`'s own
+  // `handleResumeApplication` already uses (`suites.length > 0`) — checked
+  // once per Workspace mount, not polled, since a project that has zero
+  // TestSuites gains the tab back the moment it navigates here again after
+  // its first Generate Suite completes.
+  useEffect(() => {
+    let cancelled = false
+    api
+      .listTestSuites(applicationId)
+      .then((suites) => {
+        if (!cancelled) setHasTestSuite(suites.length > 0)
+      })
+      .catch(() => {
+        // best-effort — a transient failure just leaves the tab hidden
+      })
+    return () => {
+      cancelled = true
     }
   }, [applicationId])
 
@@ -215,7 +239,9 @@ export function Workspace({
           alignSelf: 'flex-start',
         }}
       >
-        {TABS.filter((tab) => tab.key !== 'credentials' || isAdmin).map((tab) => {
+        {TABS.filter(
+          (tab) => (tab.key !== 'credentials' || isAdmin) && (tab.key !== 'author' || hasTestSuite),
+        ).map((tab) => {
           const active = activeTab === tab.key
           const Icon = tab.icon
           return (
@@ -303,7 +329,7 @@ export function Workspace({
             <OverviewTab applicationId={applicationId} onRunSuite={handleRunSuite} running={running} />
           )}
           {activeTab === 'suite' && <TestSuiteTab applicationId={applicationId} />}
-          {activeTab === 'author' && <AuthoringTab />}
+          {activeTab === 'author' && <AuthoringTab applicationId={applicationId} />}
           {activeTab === 'credentials' && isAdmin && <CredentialsTab applicationId={applicationId} />}
           {activeTab === 'runs' && (
             <RunsTab

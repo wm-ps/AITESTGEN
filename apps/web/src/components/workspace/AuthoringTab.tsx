@@ -1,3 +1,6 @@
+import { useState } from 'react'
+import { AddTestCasePanel } from './AddTestCasePanel'
+
 function ChatIcon() {
   return (
     <svg width={22} height={22} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -49,15 +52,29 @@ function AuthoringTile({
   icon,
   title,
   description,
+  onClick,
 }: {
   icon: React.JSX.Element
   title: string
   description: string
+  // Present only for a tile that's actually wired up — "Record & Play"
+  // still has none, so it stays a preview-only "coming soon" card.
+  onClick?: () => void
 }) {
+  const clickable = onClick != null
   return (
     <div
-      // No onClick, no cursor: pointer, no hover class — this tile is a
-      // preview only, not a control.
+      onClick={onClick}
+      role={clickable ? 'button' : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onKeyDown={
+        clickable
+          ? (event) => {
+              if (event.key === 'Enter' || event.key === ' ') onClick?.()
+            }
+          : undefined
+      }
+      className={clickable ? 'card-clickable' : undefined}
       style={{
         position: 'relative',
         overflow: 'hidden',
@@ -65,9 +82,10 @@ function AuthoringTile({
         borderRadius: 'var(--radius-xl)',
         boxShadow: 'var(--shadow-card)',
         padding: '28px 24px',
+        cursor: clickable ? 'pointer' : undefined,
       }}
     >
-      <ComingSoonBadge />
+      {!clickable && <ComingSoonBadge />}
       <div
         aria-hidden="true"
         style={{
@@ -90,13 +108,20 @@ function AuthoringTile({
   )
 }
 
-export function AuthoringTab() {
+export function AuthoringTab({ applicationId }: { applicationId: string }) {
+  const [nlmOpen, setNlmOpen] = useState(false)
+
+  if (nlmOpen) {
+    return <AddTestCasePanel applicationId={applicationId} onClose={() => setNlmOpen(false)} />
+  }
+
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, paddingTop: 8 }}>
       <AuthoringTile
         icon={<ChatIcon />}
         title="Natural Language"
         description="Describe a test case in plain English and have it turned into a ready-to-run scenario — no steps to script by hand."
+        onClick={() => setNlmOpen(true)}
       />
       <AuthoringTile
         icon={<RecordIcon />}

@@ -504,6 +504,40 @@ export interface paths {
         patch: operations["update_scenario_test_data_scenarios__external_id__test_data_patch"];
         trace?: never;
     };
+    "/applications/{external_id}/test-cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Test Case */
+        post: operations["create_test_case_applications__external_id__test_cases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/test-cases/requests/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Test Case Request */
+        get: operations["get_test_case_request_applications__external_id__test_cases_requests__request_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications/{external_id}/generate-suite": {
         parameters: {
             query?: never;
@@ -1369,6 +1403,35 @@ export interface components {
             error_message: string | null;
             /** Latest Test Result Id */
             latest_test_result_id: string | null;
+            /** Source */
+            source: string;
+        };
+        /** TestCaseCreate */
+        TestCaseCreate: {
+            /** Prompt */
+            prompt: string;
+        };
+        /**
+         * TestCaseGenerationResultRead
+         * @description One Scenario's own outcome — a single prompt can decompose into
+         *     several (Multiple Test Cases), each independently PASS/FAIL.
+         */
+        TestCaseGenerationResultRead: {
+            /** Status */
+            status: string;
+            /** Journey Name */
+            journey_name?: string | null;
+            /** Scenario Name */
+            scenario_name?: string | null;
+            /** Test Result Status */
+            test_result_status?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /**
+             * Already Existed
+             * @default false
+             */
+            already_existed: boolean;
         };
         /** TestCaseRead */
         TestCaseRead: {
@@ -1385,6 +1448,31 @@ export interface components {
             description: string;
             /** Code */
             code: string;
+            /** Source */
+            source: string;
+        };
+        /** TestCaseRequestStatusRead */
+        TestCaseRequestStatusRead: {
+            /** Request Id */
+            request_id: string;
+            /** Status */
+            status: string;
+            /**
+             * Functionality Summary
+             * @default
+             */
+            functionality_summary: string;
+            /** Rejection Reason */
+            rejection_reason?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /**
+             * Scenario Count
+             * @default 0
+             */
+            scenario_count: number;
+            /** Results */
+            results?: components["schemas"]["TestCaseGenerationResultRead"][];
         };
         /** TestDataEntryCreate */
         TestDataEntryCreate: {
@@ -2750,6 +2838,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScenarioRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_test_case_applications__external_id__test_cases_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestCaseCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_test_case_request_applications__external_id__test_cases_requests__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+                request_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestCaseRequestStatusRead"];
                 };
             };
             /** @description Validation Error */

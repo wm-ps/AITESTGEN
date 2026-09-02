@@ -15,13 +15,24 @@ import os
 
 from temporalio.client import Client
 from temporalio.worker import Worker
-from workflows import GENERATION_TASK_QUEUE, GenerationWorkflow, SuiteGenerationWorkflow
+from workflows import (
+    GENERATION_TASK_QUEUE,
+    AddTestCaseWorkflow,
+    GenerationWorkflow,
+    SuiteGenerationWorkflow,
+)
 
 from generation_worker.activities import (
     ensure_test_suite_activity,
     finalize_suite_generation_activity,
     playwright_generation_activity,
     scenario_generation_activity,
+)
+from generation_worker.add_test_case_activities import (
+    analyze_prompt_activity,
+    create_journey_activity,
+    create_scenario_activity,
+    identify_scenarios_activity,
 )
 
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
@@ -34,12 +45,17 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=GENERATION_TASK_QUEUE,
-        workflows=[GenerationWorkflow, SuiteGenerationWorkflow],
+        workflows=[GenerationWorkflow, SuiteGenerationWorkflow, AddTestCaseWorkflow],
         activities=[
             scenario_generation_activity,
             ensure_test_suite_activity,
             playwright_generation_activity,
             finalize_suite_generation_activity,
+            # NLM "Add Test Case" feature.
+            analyze_prompt_activity,
+            identify_scenarios_activity,
+            create_journey_activity,
+            create_scenario_activity,
         ],
         max_concurrent_activities=MAX_CONCURRENT_ACTIVITIES,
     )
