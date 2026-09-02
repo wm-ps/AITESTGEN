@@ -560,7 +560,7 @@ export function DiscoverJourneys({
                 ))}
                 {pagedJourneys.length === 0 && (
                   <p className="caption" style={{ textAlign: 'center', padding: '40px 14px', fontSize: 12.5 }}>
-                    No matches.
+                    No journeys match these filters.
                   </p>
                 )}
               </ul>

@@ -172,7 +172,7 @@ export function GenerateSuite({
                 <div style={{ textAlign: 'center', padding: '12px 6px', background: 'var(--accent-wash-soft)', borderRadius: 10 }}>
                   <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--ink)' }}>{suiteCount}</div>
                   <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 2 }}>
-                    Test Suite{suiteCount === 1 ? '' : 's'}
+                    Journey{suiteCount === 1 ? '' : 's'} Covered
                   </div>
                 </div>
                 <div style={{ textAlign: 'center', padding: '12px 6px', background: 'var(--accent-wash-soft)', borderRadius: 10 }}>

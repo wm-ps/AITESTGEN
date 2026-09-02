@@ -101,7 +101,7 @@ describe('TestSuiteResults', () => {
     render(<TestSuiteResults furthestCount={4}applicationId="app-1" onRunTests={() => {}} />)
 
     await waitFor(() => {
-      expect(screen.getByText('Test cases')).toBeTruthy()
+      expect(screen.getByText('Test Cases')).toBeTruthy()
     })
     expect(screen.getByText('Incomplete')).toBeTruthy()
   })
@@ -179,12 +179,12 @@ describe('TestSuiteResults', () => {
     expect(screen.queryByText('Checkout')).toBeNull()
   })
 
-  it('calls onRunTests when the Run Tests button is clicked', async () => {
+  it('calls onRunTests when the Run Suite button is clicked', async () => {
     stubFetch()
     const onRunTests = vi.fn()
     render(<TestSuiteResults furthestCount={4} applicationId="app-1" onRunTests={onRunTests} />)
 
-    const button = await screen.findByRole('button', { name: 'Run Tests' })
+    const button = await screen.findByRole('button', { name: 'Run Suite' })
     fireEvent.click(button)
 
     expect(onRunTests).toHaveBeenCalledOnce()

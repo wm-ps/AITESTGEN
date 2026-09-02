@@ -314,7 +314,7 @@ export function TestSuiteTab({ applicationId }: { applicationId: string }) {
     <div>
       {assets.length === 0 ? (
         <p className="caption" style={{ fontSize: 13 }}>
-          No tests generated yet.
+          No test cases generated yet.
         </p>
       ) : (
         <div className="card-panel" style={{ overflow: 'hidden' }}>

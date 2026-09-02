@@ -246,7 +246,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
           <SettingsSection title="Limits">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 'var(--space-7)' }}>
               <label className="field">
-                <FieldLabel>Max journeys</FieldLabel>
+                <FieldLabel>Maximum journeys</FieldLabel>
                 <input
                   type="number"
                   min={1}
@@ -262,7 +262,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
               </label>
 
               <label className="field">
-                <FieldLabel>Max scenarios / journey</FieldLabel>
+                <FieldLabel>Maximum scenarios / journey</FieldLabel>
                 <input
                   type="number"
                   min={1}
@@ -278,7 +278,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
               </label>
 
               <label className="field">
-                <FieldLabel>Max test cases / application</FieldLabel>
+                <FieldLabel>Maximum test cases / application</FieldLabel>
                 <input
                   type="number"
                   min={1}
@@ -301,7 +301,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
           <SettingsSection title="Others">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
               <label className="field">
-                <FieldLabel>Delete project after</FieldLabel>
+                <FieldLabel>Delete application after</FieldLabel>
                 <select
                   value={settings.delete_project_after}
                   onChange={(e) =>
@@ -315,7 +315,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
               </label>
 
               <label className="field">
-                <FieldLabel>Max self-heal attempts</FieldLabel>
+                <FieldLabel>Maximum self-heal attempts</FieldLabel>
                 <select
                   value={settings.max_heal_attempts}
                   onChange={(e) =>
