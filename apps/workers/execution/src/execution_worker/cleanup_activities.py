@@ -20,6 +20,13 @@ it — the setting or the row could have changed between the two Activity
 calls, and an irreversible bulk delete must never skip that re-check. Every
 delete is a `WHERE`-scoped bulk statement (not fetch-then-delete-by-id), so a
 Temporal retry of an already-purged Application is a safe no-op.
+
+Schedules feature: `schedule` rows are deleted after `test_run` (the FK
+runs `test_run.schedule_id -> schedule.id`, so the referencing rows must go
+first). The live Temporal Schedule objects are not reachable from this sync
+activity — they're already paused by `delete_application` (apps/api) at
+soft-delete time, so a leftover Temporal object here is inert, and
+`purge_orphan_schedules.py` sweeps it later.
 """
 
 import logging
@@ -49,6 +56,7 @@ from domain import (
     Page,
     PageTransition,
     Scenario,
+    Schedule,
     SyntheticDataEntry,
     TestAsset,
     TestDataEntry,
@@ -234,6 +242,14 @@ def _delete_dependent_rows(session: Session, application_id: uuid.UUID, ids: _Pu
     _run(delete(DiscoveryError).where(_eq(DiscoveryError.application_id, application_id)))
     _run(delete(TestDataEntry).where(_eq(TestDataEntry.application_id, application_id)))
     _run(delete(TestRun).where(_eq(TestRun.application_id, application_id)))
+    # Schedules feature: schedule rows are referenced by test_run.schedule_id
+    # (no FK has ondelete=CASCADE in this schema), so this must come after
+    # TestRun is gone above, not before. The live Temporal Schedule objects
+    # themselves are NOT reachable from here (this is a sync activity, no
+    # Temporal client) — they're already paused (Application soft-delete
+    # pauses every one, see delete_application in apps/api), so a leftover
+    # Temporal object is inert; purge_orphan_schedules.py sweeps it later.
+    _run(delete(Schedule).where(_eq(Schedule.application_id, application_id)))
     _run(delete(Journey).where(_eq(Journey.application_id, application_id)))
     _run(delete(Capability).where(_eq(Capability.application_id, application_id)))
     if ids.discovery_run_ids:

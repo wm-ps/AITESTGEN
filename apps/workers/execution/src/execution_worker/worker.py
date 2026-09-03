@@ -11,7 +11,10 @@ Also registers `CleanupWorkflow` and its two Activities (deleted-project
 purge, AD-2) on the same task queue — that job is light (DB deletes plus a
 handful of Vault/S3 calls) and needs every dependency this worker already
 has (`secrets-client`, `object-store`, `sqlmodel`/`psycopg`), so it doesn't
-warrant its own deployment.
+warrant its own deployment. Same reasoning for `ScheduledExecutionWorkflow`
+and `CheckScheduleGateActivity` (Schedules feature) — the gate is two
+indexed DB reads, light enough to ride along here rather than get its own
+deployment.
 
 `max_workers` on the activity executor doubles as this worker's
 cross-TestRun concurrency ceiling (decision: bounded independently of the
@@ -36,6 +39,7 @@ from workflows import (
     ApplicationTestExecutionWorkflow,
     CleanupWorkflow,
     HealTestExecutionWorkflow,
+    ScheduledExecutionWorkflow,
 )
 
 from execution_worker.activities import (
@@ -50,6 +54,7 @@ from execution_worker.cleanup_activities import (
     purge_application_activity,
 )
 from execution_worker.project_cache import sweep_stale_project_dirs
+from execution_worker.schedule_activities import check_schedule_gate_activity
 
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 MAX_CONCURRENT_ACTIVITIES = int(os.environ.get("EXECUTION_WORKER_MAX_CONCURRENT_ACTIVITIES", "20"))
@@ -65,7 +70,12 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=EXECUTION_TASK_QUEUE,
-        workflows=[ApplicationTestExecutionWorkflow, HealTestExecutionWorkflow, CleanupWorkflow],
+        workflows=[
+            ApplicationTestExecutionWorkflow,
+            HealTestExecutionWorkflow,
+            CleanupWorkflow,
+            ScheduledExecutionWorkflow,
+        ],
         activities=[
             prepare_test_run_activity,
             execute_test_activity,
@@ -74,10 +84,12 @@ async def main() -> None:
             force_complete_test_run_activity,
             find_purge_candidates_activity,
             purge_application_activity,
+            check_schedule_gate_activity,
         ],
-        # find_purge_candidates_activity/purge_application_activity are sync
-        # (plain `def`, not `async def`) — Temporal requires an explicit
-        # activity_executor to run any non-async activity in a thread.
+        # find_purge_candidates_activity/purge_application_activity/
+        # check_schedule_gate_activity are sync (plain `def`, not
+        # `async def`) — Temporal requires an explicit activity_executor to
+        # run any non-async activity in a thread.
         activity_executor=ThreadPoolExecutor(max_workers=MAX_CONCURRENT_ACTIVITIES),
         max_concurrent_activities=MAX_CONCURRENT_ACTIVITIES,
     )

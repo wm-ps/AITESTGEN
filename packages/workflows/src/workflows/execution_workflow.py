@@ -66,12 +66,18 @@ class ExecutionWorkflowInput:
     application_id: str
     max_concurrency: int = DEFAULT_MAX_CONCURRENCY
     triggered_by_name: str | None = None
+    # Schedules feature: `Schedule.external_id` when this run was started by
+    # a Temporal Schedule (via ScheduledExecutionWorkflow), None for every
+    # manual run. Defaulted so `trigger_test_run` is untouched — it simply
+    # doesn't pass it, and every existing call site stays byte-identical.
+    schedule_id: str | None = None
 
 
 @dataclass
 class PrepareTestRunActivityInput:
     application_id: str
     triggered_by_name: str | None = None
+    schedule_id: str | None = None
 
 
 @dataclass
@@ -121,6 +127,7 @@ class ApplicationTestExecutionWorkflow:
             PrepareTestRunActivityInput(
                 application_id=input.application_id,
                 triggered_by_name=input.triggered_by_name,
+                schedule_id=input.schedule_id,
             ),
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=RetryPolicy(maximum_attempts=3),

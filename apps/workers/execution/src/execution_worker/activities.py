@@ -37,6 +37,7 @@ from domain import (
     Application,
     DiscoverySettings,
     Journey,
+    Schedule,
     Scenario,
     TestAsset,
     TestResult,
@@ -280,9 +281,23 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
             .returning(Application.next_test_run_number - 1)  # type: ignore[arg-type]
         ).scalar_one()
 
+        # Schedules feature: resolve the (external) schedule id the
+        # workflow was handed into this Schedule's PK. `.first()`, not
+        # `.one()`, and deliberately no `deleted_at IS NULL` filter (unlike
+        # every other Schedule lookup in this codebase) — a schedule
+        # soft-deleted in the window since the fire-time gate check must
+        # still resolve correctly so this TestRun keeps its FK, not sink
+        # the run.
+        schedule_pk: uuid.UUID | None = None
+        if input.schedule_id is not None:
+            schedule_pk = session.exec(
+                select(Schedule.id).where(Schedule.external_id == uuid.UUID(input.schedule_id))
+            ).first()
+
         test_run = TestRun(
             application_id=application.id,
             run_number=run_number,
+            schedule_id=schedule_pk,
             status="running",
             environment_snapshot=application.environment,
             target_base_url_snapshot=application.url,

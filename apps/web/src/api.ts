@@ -163,6 +163,36 @@ export type OverviewRead = {
   last_discovery_started_at: string | null
   journey_count: number
 }
+// Schedules feature — not in api-types.gen.ts yet, added by hand per the
+// same convention as the types above.
+export type ScheduleCadenceType = 'daily' | 'weekly' | 'monthly' | 'custom_cron'
+export type ScheduleRead = {
+  id: string
+  name: string
+  cadence_type: ScheduleCadenceType
+  hour: number | null
+  minute: number | null
+  days_of_week: number[]
+  day_of_month: number | null
+  cron_expression: string | null
+  time_zone: string
+  enabled: boolean
+  cadence_label: string
+  next_run_at: string | null
+  created_by_name: string | null
+  created_at: string
+}
+export type ScheduleCreate = {
+  name: string
+  cadence_type: ScheduleCadenceType
+  hour?: number | null
+  minute?: number | null
+  days_of_week?: number[]
+  day_of_month?: number | null
+  cron_expression?: string | null
+  time_zone: string
+}
+export type ScheduleUpdate = Partial<ScheduleCreate>
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
@@ -282,6 +312,26 @@ export const api = {
     ),
   getExecutionStatus: (applicationId: string) =>
     request<{ available: boolean }>(`/applications/${applicationId}/execution-status`),
+  listSchedules: (applicationId: string) =>
+    request<ScheduleRead[]>(`/applications/${applicationId}/schedules`),
+  createSchedule: (applicationId: string, payload: ScheduleCreate) =>
+    request<ScheduleRead>(`/applications/${applicationId}/schedules`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateSchedule: (scheduleId: string, payload: ScheduleUpdate) =>
+    request<ScheduleRead>(`/schedules/${scheduleId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  deleteSchedule: (scheduleId: string) =>
+    request<undefined>(`/schedules/${scheduleId}`, { method: 'DELETE' }),
+  enableSchedule: (scheduleId: string) =>
+    request<ScheduleRead>(`/schedules/${scheduleId}/enable`, { method: 'POST' }),
+  disableSchedule: (scheduleId: string) =>
+    request<ScheduleRead>(`/schedules/${scheduleId}/disable`, { method: 'POST' }),
+  runScheduleNow: (scheduleId: string) =>
+    request<{ started: boolean }>(`/schedules/${scheduleId}/run-now`, { method: 'POST' }),
   getSettings: () => request<SettingsRead>('/settings'),
   updateSettings: (payload: SettingsUpdate) =>
     request<SettingsRead>('/settings', { method: 'PATCH', body: JSON.stringify(payload) }),

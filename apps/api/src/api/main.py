@@ -6,6 +6,7 @@ Story 1.3 adds Application onboarding.
 """
 
 import json
+import logging
 import os
 import uuid
 from datetime import UTC, datetime
@@ -30,6 +31,7 @@ from domain import (
     PlatformUser,
     RetentionPeriod,
     Scenario,
+    Schedule,
     TestAsset,
     TestDataEntry,
     TestResult,
@@ -46,8 +48,16 @@ from secrets_client import SecretRef, VaultSecretsClient
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
+from temporalio.client import Client as TemporalClient
+from temporalio.client import Schedule as TemporalSchedule
+from temporalio.client import (
+    ScheduleActionStartWorkflow,
+    ScheduleUpdateInput,
+)
+from temporalio.client import ScheduleUpdate as TemporalScheduleUpdate
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
+from temporalio.service import RPCError, RPCStatusCode
 from workflows import (
     DISCOVERY_TASK_QUEUE,
     EXECUTION_TASK_QUEUE,
@@ -60,6 +70,8 @@ from workflows import (
     GenerationWorkflow,
     HealTestActivityInput,
     HealTestExecutionWorkflow,
+    ScheduledExecutionWorkflow,
+    ScheduledExecutionWorkflowInput,
     SuiteGenerationWorkflow,
 )
 
@@ -81,6 +93,13 @@ from api.password_reset import (
     request_password_reset,
     reset_password,
 )
+from api.schedule_spec import (
+    ScheduleSpecError,
+    build_cadence_label,
+    build_schedule_policy,
+    build_schedule_spec,
+    validate_cadence,
+)
 from api.temporal_client import get_temporal_client, has_pollers
 from api.test_suite_export import (
     TestSuiteExportError,
@@ -88,6 +107,8 @@ from api.test_suite_export import (
     find_login_page_evidence,
     sanitize_slug,
 )
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Application Intelligence Platform API")
 
@@ -854,7 +875,7 @@ def update_application_credentials(
 
 
 @app.delete("/applications/{external_id}", status_code=204)
-def delete_application(
+async def delete_application(
     external_id: uuid.UUID,
     session: SessionDep,
     _admin: CurrentAdminDep,
@@ -864,13 +885,50 @@ def delete_application(
     journey, page, ...) and the Vault secret are deliberately left behind;
     nothing purges them yet. Blocked while discovery is running so a live
     crawler doesn't keep writing rows for an application that just
-    disappeared from Home."""
+    disappeared from Home.
+
+    Schedules feature: also pauses every live Temporal Schedule for this
+    Application, so no future scheduled occurrence gets created. Best
+    effort — a soft-delete must never be blocked by Temporal being
+    unreachable, and `check_schedule_gate_activity`'s own
+    Application-active check is the backstop that makes a missed pause
+    harmless (see that activity's docstring). In-progress executions this
+    schedule already fired are deliberately NOT cancelled."""
     application = _get_org_application(session, organization_id, external_id)
     discovery_run = _latest_discovery_run(session, application.id)
     if discovery_run is not None and discovery_run.status == "running":
         raise HTTPException(status_code=409, detail="discovery run is still in progress")
     application.deleted_at = datetime.now(UTC)
     session.add(application)
+
+    schedules = session.exec(
+        select(Schedule).where(
+            Schedule.application_id == application.id,
+            Schedule.deleted_at.is_(None),  # type: ignore[attr-defined]
+        )
+    ).all()
+    if schedules:
+        try:
+            client = await get_temporal_client()
+            for schedule in schedules:
+                try:
+                    await client.get_schedule_handle(schedule.temporal_schedule_id).pause(
+                        note="application deleted"
+                    )
+                    schedule.enabled = False
+                    session.add(schedule)
+                except RPCError as exc:
+                    if exc.status != RPCStatusCode.NOT_FOUND:
+                        logger.warning(
+                            "could not pause Temporal schedule %s during application delete",
+                            schedule.temporal_schedule_id,
+                        )
+        except RuntimeError:
+            logger.warning(
+                "Temporal unreachable during application delete — schedules left unpaused; "
+                "the fire-time gate will skip them via the Application-active check"
+            )
+
     session.commit()
 
 
@@ -2206,6 +2264,23 @@ class TestResultArtifactRead(BaseModel):
     url: str
 
 
+def _trigger_label(test_run: TestRun) -> str:
+    """One formatted "trigger" string, shared by `TestRunRead.trigger` and
+    the Overview tab's `LatestRunSummaryRead.trigger` (see that field's own
+    docstring) — one place that knows the format, not two drifting copies.
+
+    Schedules feature: `schedule_id is not None` means this run was started
+    by `ScheduledExecutionWorkflow`, not a human click — `triggered_by_name`
+    already holds the schedule's *name at fire time* in that case (a
+    snapshot, same principle as `environment_snapshot`), so no join is
+    needed here."""
+    if test_run.schedule_id is not None and test_run.triggered_by_name:
+        return f"Scheduled run — {test_run.triggered_by_name}"
+    if test_run.triggered_by_name:
+        return f"Manual run by {test_run.triggered_by_name}"
+    return "Manual run"
+
+
 def _to_test_run_read(
     test_run: TestRun, *, results: list[TestResultRead] | None
 ) -> TestRunRead:
@@ -2216,11 +2291,7 @@ def _to_test_run_read(
         id=test_run.external_id,
         run_number=test_run.run_number,
         status=test_run.status,
-        trigger=(
-            f"Manual run by {test_run.triggered_by_name}"
-            if test_run.triggered_by_name
-            else "Manual run"
-        ),
+        trigger=_trigger_label(test_run),
         pass_rate=pass_rate,
         health=_health_tier(pass_rate),
         total_count=test_run.total_count,
@@ -2311,6 +2382,643 @@ async def execution_status(
     _get_org_application(session, organization_id, external_id)
     client = await get_temporal_client()
     return {"available": await has_pollers(client, EXECUTION_TASK_QUEUE)}
+
+
+# --------------------------------------------------------------------------
+# Schedules feature — user-created recurring triggers for "Run All Tests".
+#
+# Source of truth split: Postgres owns what the user authored (name,
+# cadence fields); Temporal owns whether it's firing (`Schedule.enabled` is
+# a cached projection of `ScheduleState.paused`). Every mutation calls
+# Temporal first, then commits Postgres — an ahead-of-Temporal-only residue
+# is a harmless no-op (the fire-time gate returns `schedule_unavailable`);
+# the reverse order's residue would be an invisible, permanently-non-firing
+# DB row. See `list_schedules` (below) for the reconciliation read and
+# `create_schedule`/`update_schedule` for the compensating actions on a
+# post-Temporal-success Postgres commit failure.
+#
+# Accepted v1 limitation: no custom worker-down timeout is set on the
+# Schedule's action (`_build_schedule_action`) — if the execution worker is
+# offline at fire time, Temporal creates the workflow and its first task
+# simply stays pending until a worker polls it. Because the schedule's own
+# `overlap=SKIP` policy treats that stuck-open occurrence as "still
+# running," every occurrence that would fire during the outage is skipped,
+# not queued or backfired — only the first occurrence that fired at
+# outage-start ever actually runs, once a worker returns. See
+# `schedule_spec.build_schedule_policy`'s docstring for the full mechanism.
+# --------------------------------------------------------------------------
+
+
+class ScheduleCreate(BaseModel):
+    name: str
+    cadence_type: str
+    hour: int | None = None
+    minute: int | None = None
+    days_of_week: list[int] = []
+    day_of_month: int | None = None
+    cron_expression: str | None = None
+    time_zone: str
+
+
+class ScheduleUpdate(BaseModel):
+    """Every field optional — PATCH-merge, only non-None values applied,
+    same convention as TestDataEntryUpdate. The merged result is then
+    re-validated as a whole by `validate_cadence` (never just the supplied
+    fields), so switching cadence_type without supplying the fields the new
+    cadence needs is a clean 422 rather than a half-migrated row. No
+    optimistic concurrency control (no version/ETag) — concurrent PATCHes
+    are last-`commit()`-wins, an accepted low-severity v1 race."""
+
+    name: str | None = None
+    cadence_type: str | None = None
+    hour: int | None = None
+    minute: int | None = None
+    days_of_week: list[int] | None = None
+    day_of_month: int | None = None
+    cron_expression: str | None = None
+    time_zone: str | None = None
+
+
+class ScheduleRead(BaseModel):
+    id: uuid.UUID
+    name: str
+    cadence_type: str
+    hour: int | None
+    minute: int | None
+    days_of_week: list[int]
+    day_of_month: int | None
+    cron_expression: str | None
+    time_zone: str
+    enabled: bool
+    cadence_label: str
+    next_run_at: datetime | None
+    created_by_name: str | None
+    created_at: datetime
+
+
+def _to_schedule_read(
+    schedule: Schedule, *, enabled: bool, next_run_at: datetime | None
+) -> ScheduleRead:
+    return ScheduleRead(
+        id=schedule.external_id,
+        name=schedule.name,
+        cadence_type=schedule.cadence_type,
+        hour=schedule.hour,
+        minute=schedule.minute,
+        days_of_week=schedule.days_of_week,
+        day_of_month=schedule.day_of_month,
+        cron_expression=schedule.cron_expression,
+        time_zone=schedule.time_zone,
+        enabled=enabled,
+        cadence_label=build_cadence_label(schedule),
+        next_run_at=next_run_at,
+        created_by_name=schedule.created_by_name,
+        created_at=schedule.created_at,
+    )
+
+
+def _get_org_schedule(
+    session: Session, organization_id: uuid.UUID, external_id: uuid.UUID
+) -> Schedule:
+    """Same two-hop org check `_get_org_application`'s siblings use for a
+    child row that carries no organization_id of its own."""
+    schedule = session.exec(
+        select(Schedule).where(
+            Schedule.external_id == external_id,
+            Schedule.deleted_at.is_(None),  # type: ignore[attr-defined]
+        )
+    ).first()
+    application = session.get(Application, schedule.application_id) if schedule else None
+    if (
+        schedule is None
+        or application is None
+        or application.organization_id != organization_id
+        or application.deleted_at is not None
+    ):
+        raise HTTPException(status_code=404, detail="schedule not found")
+    return schedule
+
+
+def _build_schedule_action(
+    schedule: Schedule, application_external_id: uuid.UUID
+) -> ScheduleActionStartWorkflow:
+    """The Temporal action for a schedule. Rebuilt on every update, not
+    just create — the workflow args carry the schedule's *name*, which
+    becomes the run's `triggered_by_name` snapshot, so a rename has to
+    propagate. No execution_timeout/run_timeout set — see this module's own
+    accepted-limitation note above."""
+    return ScheduleActionStartWorkflow(
+        ScheduledExecutionWorkflow.run,
+        ScheduledExecutionWorkflowInput(
+            application_id=str(application_external_id),
+            schedule_id=str(schedule.external_id),
+            schedule_name=schedule.name,
+        ),
+        # Temporal appends the scheduled time to this id, so each occurrence
+        # gets a distinct, meaningful workflow id without a uuid here.
+        id=f"scheduled-execution-{schedule.external_id}",
+        task_queue=EXECUTION_TASK_QUEUE,
+    )
+
+
+async def _list_temporal_schedule_states(
+    client: TemporalClient,
+) -> dict[str, tuple[bool, datetime | None] | None] | None:
+    """{temporal_schedule_id: (enabled, next_run_at)} for every schedule
+    Temporal knows about, via one `list_schedules()` call — confirmed
+    working on this deployment (verified directly: `ScheduleListInfo.
+    next_action_times` and `ScheduleListSchedule.state.paused` both come
+    back fully populated), so this is a single RPC rather than one
+    `describe()` per row.
+
+    A value of `None` for a *present* key means the schedule exists but its
+    `info`/`schedule` sub-objects came back empty (the SDK types both
+    optional, for servers without advanced visibility) — deliberately NOT
+    the same as the key being *absent* entirely, which is what the caller's
+    NOT_FOUND-as-proof-of-deletion logic keys off. Conflating the two would
+    auto-delete a schedule that still exists just because one round of
+    visibility data happened to be incomplete for it.
+
+    Returns `None` (the whole dict) if Temporal itself is unreachable, so
+    the caller can degrade the entire response to cached values instead of
+    500ing."""
+    try:
+        states: dict[str, tuple[bool, datetime | None] | None] = {}
+        async for entry in await client.list_schedules():
+            if entry.info is None or entry.schedule is None:
+                states[entry.id] = None
+                continue
+            next_times = entry.info.next_action_times
+            states[entry.id] = (
+                not entry.schedule.state.paused,
+                next_times[0] if next_times else None,
+            )
+        return states
+    except (RPCError, RuntimeError):
+        logger.warning("could not list Temporal schedules — falling back to cached values")
+        return None
+
+
+async def _describe_schedule_state(
+    client: TemporalClient, schedule: Schedule
+) -> tuple[bool, datetime | None]:
+    """(enabled, next_run_at) straight from Temporal for a single schedule
+    — used right after create/update/enable/disable, where only one row is
+    affected so a single `describe()` RPC is cheap (the list endpoint above
+    uses `list_schedules()` instead, precisely to avoid N of these).
+    Degrades to the cached column rather than failing the whole response;
+    the fallback value is never written back to the DB."""
+    try:
+        description = await client.get_schedule_handle(schedule.temporal_schedule_id).describe()
+    except (RPCError, RuntimeError):
+        logger.warning(
+            "could not describe Temporal schedule %s — falling back to the cached "
+            "`enabled` value",
+            schedule.temporal_schedule_id,
+        )
+        return schedule.enabled, None
+    next_times = description.info.next_action_times
+    return (not description.schedule.state.paused), (next_times[0] if next_times else None)
+
+
+@app.get("/applications/{external_id}/schedules", response_model=list[ScheduleRead])
+async def list_schedules(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[ScheduleRead]:
+    application = _get_org_application(session, organization_id, external_id)
+    schedules = session.exec(
+        select(Schedule)
+        .where(
+            Schedule.application_id == application.id,
+            Schedule.deleted_at.is_(None),  # type: ignore[attr-defined]
+        )
+        .order_by(Schedule.created_at.desc())  # type: ignore[arg-type]
+    ).all()
+    if not schedules:
+        return []
+
+    client = await get_temporal_client()
+    states = await _list_temporal_schedule_states(client)
+
+    results: list[ScheduleRead] = []
+    dirty = False
+    for schedule in schedules:
+        if states is None:
+            results.append(_to_schedule_read(schedule, enabled=schedule.enabled, next_run_at=None))
+            continue
+        if schedule.temporal_schedule_id not in states:
+            # NOT_FOUND-as-proof-of-deletion: the *key itself* is absent,
+            # meaning Temporal genuinely has no schedule with this id
+            # (deleted directly in Temporal, or residue from a failed
+            # Delete's Postgres commit) — soft-delete it as a side effect
+            # of observing this, same unified policy every mutation
+            # endpoint below uses. Not the same as the key being present
+            # with a `None` value (see `_list_temporal_schedule_states`).
+            schedule.deleted_at = datetime.now(UTC)
+            session.add(schedule)
+            dirty = True
+            continue
+        state = states[schedule.temporal_schedule_id]
+        if state is None:
+            # Exists, but this round's visibility data was incomplete —
+            # degrade this one row to its cached value, not a deletion.
+            results.append(_to_schedule_read(schedule, enabled=schedule.enabled, next_run_at=None))
+            continue
+        enabled, next_run_at = state
+        if schedule.enabled != enabled:
+            schedule.enabled = enabled
+            session.add(schedule)
+            dirty = True
+        results.append(_to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at))
+    if dirty:
+        session.commit()
+    return results
+
+
+@app.post(
+    "/applications/{external_id}/schedules", response_model=ScheduleRead, status_code=201
+)
+async def create_schedule(
+    external_id: uuid.UUID,
+    payload: ScheduleCreate,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
+) -> ScheduleRead:
+    """Deliberately does NOT `has_pollers` check (unlike `trigger_test_run`/
+    `trigger_schedule_now`): a schedule created now to fire at 2am has no
+    business failing because the execution worker happens to be restarting
+    right now — see this module's accepted-limitation note above."""
+    application = _get_org_application(session, organization_id, external_id)
+
+    try:
+        validate_cadence(
+            cadence_type=payload.cadence_type,
+            hour=payload.hour,
+            minute=payload.minute,
+            days_of_week=payload.days_of_week,
+            day_of_month=payload.day_of_month,
+            cron_expression=payload.cron_expression,
+            time_zone=payload.time_zone,
+        )
+    except ScheduleSpecError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    schedule = Schedule(
+        application_id=application.id,
+        name=payload.name,
+        cadence_type=payload.cadence_type,
+        hour=payload.hour,
+        minute=payload.minute,
+        days_of_week=payload.days_of_week,
+        day_of_month=payload.day_of_month,
+        cron_expression=payload.cron_expression,
+        time_zone=payload.time_zone,
+        enabled=True,
+        temporal_schedule_id="",  # set below, derived from external_id
+        created_by_name=user.name,
+    )
+    schedule.temporal_schedule_id = f"app-schedule-{schedule.external_id}"
+    session.add(schedule)
+    try:
+        # Flush (not commit): surfaces the partial-unique-index violation on
+        # (application_id, name) before anything is created in Temporal.
+        # Postgres's row lock on the pending insert is also what makes two
+        # concurrent same-name creates safe — the second request blocks
+        # here, before it ever reaches `create_schedule` below, so no
+        # duplicate Temporal Schedule can be created this way.
+        session.flush()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=409, detail="a schedule with this name already exists"
+        ) from None
+
+    client = await get_temporal_client()
+    try:
+        await client.create_schedule(
+            schedule.temporal_schedule_id,
+            TemporalSchedule(
+                action=_build_schedule_action(schedule, application.external_id),
+                spec=build_schedule_spec(schedule),
+                policy=build_schedule_policy(),
+            ),
+        )
+    except (RPCError, RuntimeError) as exc:
+        session.rollback()
+        raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
+
+    try:
+        session.commit()
+    except Exception:
+        # Temporal succeeded but the Postgres commit failed — best-effort
+        # compensating cleanup using the deterministic id (no ambiguity
+        # about which Temporal object to remove). If this also fails, the
+        # orphan is swept later by `purge_orphan_schedules.py` (confirmed
+        # viable — see the migration/spike notes); the log line is the
+        # immediate operator-visible signal either way.
+        try:
+            await client.get_schedule_handle(schedule.temporal_schedule_id).delete()
+        except (RPCError, RuntimeError):
+            logger.error(
+                "orphaned Temporal schedule %s: create's Postgres commit failed and "
+                "the compensating delete also failed",
+                schedule.temporal_schedule_id,
+            )
+        raise
+
+    session.refresh(schedule)
+    enabled, next_run_at = await _describe_schedule_state(client, schedule)
+    return _to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at)
+
+
+@app.patch("/schedules/{external_id}", response_model=ScheduleRead)
+async def update_schedule(
+    external_id: uuid.UUID,
+    payload: ScheduleUpdate,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> ScheduleRead:
+    schedule = _get_org_schedule(session, organization_id, external_id)
+    application = session.get(Application, schedule.application_id)
+    assert application is not None
+
+    # Captured before mutating — needed to revert Temporal if the Postgres
+    # commit below fails after Temporal already accepted the new spec.
+    previous_action = _build_schedule_action(schedule, application.external_id)
+    previous_spec = build_schedule_spec(schedule)
+    previous_policy = build_schedule_policy()
+
+    for field_name in (
+        "name",
+        "cadence_type",
+        "hour",
+        "minute",
+        "days_of_week",
+        "day_of_month",
+        "cron_expression",
+        "time_zone",
+    ):
+        value = getattr(payload, field_name)
+        if value is not None:
+            setattr(schedule, field_name, value)
+    # Clear the fields the (possibly new) cadence type doesn't use, so a
+    # daily schedule edited from a weekly one doesn't keep stale days.
+    if schedule.cadence_type != "weekly":
+        schedule.days_of_week = []
+    if schedule.cadence_type != "monthly":
+        schedule.day_of_month = None
+    if schedule.cadence_type != "custom_cron":
+        schedule.cron_expression = None
+    else:
+        schedule.hour = None
+        schedule.minute = None
+
+    try:
+        # Validates the *merged* row, never just the supplied fields — see
+        # ScheduleUpdate's own docstring.
+        validate_cadence(
+            cadence_type=schedule.cadence_type,
+            hour=schedule.hour,
+            minute=schedule.minute,
+            days_of_week=schedule.days_of_week,
+            day_of_month=schedule.day_of_month,
+            cron_expression=schedule.cron_expression,
+            time_zone=schedule.time_zone,
+        )
+    except ScheduleSpecError as exc:
+        session.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+
+    schedule.updated_at = datetime.now(UTC)
+    session.add(schedule)
+    try:
+        session.flush()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=409, detail="a schedule with this name already exists"
+        ) from None
+
+    new_action = _build_schedule_action(schedule, application.external_id)
+    new_spec = build_schedule_spec(schedule)
+    new_policy = build_schedule_policy()
+
+    def _updater(input: ScheduleUpdateInput) -> TemporalScheduleUpdate:
+        # `state` is carried over from Temporal's *live* description at the
+        # moment this callback runs, never rebuilt — Temporal owns
+        # paused-ness (see this module's source-of-truth note), so editing a
+        # disabled schedule's time must not silently re-enable it. This also
+        # means a concurrent enable/disable can never be undone by a racing
+        # PATCH: whichever pause state is current when this callback
+        # executes is what gets preserved.
+        return TemporalScheduleUpdate(
+            schedule=TemporalSchedule(
+                action=new_action,
+                spec=new_spec,
+                policy=new_policy,
+                state=input.description.schedule.state,
+            )
+        )
+
+    client = await get_temporal_client()
+    try:
+        await client.get_schedule_handle(schedule.temporal_schedule_id).update(_updater)
+    except RPCError as exc:
+        session.rollback()
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            # Disappeared between read and write (raced with a DELETE) —
+            # soft-delete the row as a side effect of observing this, same
+            # unified NOT_FOUND policy as the GET reconciliation above.
+            schedule.deleted_at = datetime.now(UTC)
+            session.add(schedule)
+            session.commit()
+            raise HTTPException(status_code=404, detail="schedule not found") from None
+        raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
+    except RuntimeError as exc:
+        session.rollback()
+        raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
+
+    try:
+        session.commit()
+    except Exception:
+        try:
+
+            def _revert(input: ScheduleUpdateInput) -> TemporalScheduleUpdate:
+                return TemporalScheduleUpdate(
+                    schedule=TemporalSchedule(
+                        action=previous_action,
+                        spec=previous_spec,
+                        policy=previous_policy,
+                        state=input.description.schedule.state,
+                    )
+                )
+
+            await client.get_schedule_handle(schedule.temporal_schedule_id).update(_revert)
+        except (RPCError, RuntimeError):
+            logger.error(
+                "Temporal schedule %s diverged from Postgres: update's Postgres commit "
+                "failed and the compensating revert also failed — needs manual "
+                "reconciliation",
+                schedule.temporal_schedule_id,
+            )
+        raise
+
+    session.refresh(schedule)
+    enabled, next_run_at = await _describe_schedule_state(client, schedule)
+    return _to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at)
+
+
+@app.delete("/schedules/{external_id}", status_code=204)
+async def delete_schedule(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> None:
+    """Idempotent: a second DELETE against an already-deleted (or
+    already-auto-healed) schedule still returns 204 — `RPCError` NOT_FOUND
+    from `handle.delete()` is treated the same as success, not an error
+    (mirrors `create_cleanup_schedule.py`'s ALREADY_EXISTS tolerance for
+    create). This is what makes retrying a timed-out DELETE actually safe.
+
+    Hard-deletes the *Temporal* Schedule (it's the live object, nothing
+    historical about it) while soft-deleting the Postgres row (history — a
+    TestRun.schedule_id FK may point here). An in-progress execution that
+    this schedule already fired is untouched either way — it's a fully
+    decoupled child workflow by the time it's running."""
+    schedule = _get_org_schedule(session, organization_id, external_id)
+
+    client = await get_temporal_client()
+    try:
+        await client.get_schedule_handle(schedule.temporal_schedule_id).delete()
+    except RPCError as exc:
+        if exc.status != RPCStatusCode.NOT_FOUND:
+            raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
+
+    schedule.deleted_at = datetime.now(UTC)
+    session.add(schedule)
+    session.commit()
+
+
+@app.post("/schedules/{external_id}/enable", response_model=ScheduleRead)
+async def enable_schedule(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> ScheduleRead:
+    schedule = _get_org_schedule(session, organization_id, external_id)
+    client = await get_temporal_client()
+    try:
+        await client.get_schedule_handle(schedule.temporal_schedule_id).unpause()
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            schedule.deleted_at = datetime.now(UTC)
+            session.add(schedule)
+            session.commit()
+            raise HTTPException(status_code=404, detail="schedule not found") from None
+        raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
+
+    schedule.enabled = True
+    session.add(schedule)
+    # If this commit fails, the next GET's list_schedules() reconciliation
+    # self-heals the cached column back to the true (now unpaused) state.
+    session.commit()
+    session.refresh(schedule)
+    enabled, next_run_at = await _describe_schedule_state(client, schedule)
+    return _to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at)
+
+
+@app.post("/schedules/{external_id}/disable", response_model=ScheduleRead)
+async def disable_schedule(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> ScheduleRead:
+    schedule = _get_org_schedule(session, organization_id, external_id)
+    client = await get_temporal_client()
+    try:
+        await client.get_schedule_handle(schedule.temporal_schedule_id).pause()
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            schedule.deleted_at = datetime.now(UTC)
+            session.add(schedule)
+            session.commit()
+            raise HTTPException(status_code=404, detail="schedule not found") from None
+        raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
+
+    schedule.enabled = False
+    session.add(schedule)
+    session.commit()
+    session.refresh(schedule)
+    enabled, next_run_at = await _describe_schedule_state(client, schedule)
+    return _to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at)
+
+
+# The statuses that mean "an execution is in flight for this Application" —
+# same vocabulary check_schedule_gate_activity uses.
+#
+# ponytail: duplicated here rather than imported, since the gate lives in
+# the execution worker (apps/workers/execution), which this API process
+# doesn't depend on. A fuller version would move this tuple + the query
+# into packages/domain and have both call it.
+_IN_PROGRESS_TEST_RUN_STATUSES = ("pending", "running")
+
+
+@app.post("/schedules/{external_id}/run-now", status_code=202)
+async def trigger_schedule_now(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> dict[str, bool]:
+    """Goes through `handle.trigger()`, not `client.start_workflow` — so a
+    "Run now" takes the exact same gated path a real occurrence takes, gets
+    counted in the schedule's own recent_actions, and obeys the same SKIP
+    overlap policy. One path, not two.
+
+    A `202` here is never a guarantee an execution actually starts:
+    `ScheduledExecutionWorkflow`'s own fire-time gate is the sole authority,
+    and it runs *after* this returns. The in-progress check below is
+    advisory UX only (so the button doesn't silently no-op when the
+    Application is already busy) — another execution can start in the
+    window between this check and the gate's own re-check, in which case
+    the gate skips it, same as any other scheduled-vs-manual overlap."""
+    schedule = _get_org_schedule(session, organization_id, external_id)
+    active = session.exec(
+        select(TestRun.id)
+        .where(
+            TestRun.application_id == schedule.application_id,
+            TestRun.status.in_(_IN_PROGRESS_TEST_RUN_STATUSES),  # type: ignore[attr-defined]
+        )
+        .limit(1)
+    ).first()
+    if active is not None:
+        raise HTTPException(status_code=409, detail="EXECUTION_IN_PROGRESS")
+
+    client = await get_temporal_client()
+    if not await has_pollers(client, EXECUTION_TASK_QUEUE):
+        raise HTTPException(status_code=503, detail="EXECUTION_UNAVAILABLE")
+
+    try:
+        await client.get_schedule_handle(schedule.temporal_schedule_id).trigger()
+    except RPCError as exc:
+        if exc.status == RPCStatusCode.NOT_FOUND:
+            schedule.deleted_at = datetime.now(UTC)
+            session.add(schedule)
+            session.commit()
+            raise HTTPException(status_code=404, detail="schedule not found") from None
+        raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
+
+    return {"started": True}
 
 
 class TestRunCursorPageRead(BaseModel):
@@ -2744,10 +3452,10 @@ class LatestRunSummaryRead(BaseModel):
     failed_count: int
     blocked_count: int
     duration_ms: int | None
-    # Same "Manual run" / "Manual run by {name}" format as TestRunRead.trigger
-    # (see `_to_test_run_read`) — kept as one formatted string rather than a
-    # separate `triggered_by_name` field so the frontend has one parser
-    # (`parseTrigger`) for both the Runs tab and this Overview tile.
+    # Same format as TestRunRead.trigger (both built by `_trigger_label`) —
+    # kept as one formatted string rather than a separate `triggered_by_name`
+    # field so the frontend has one parser (`parseTrigger`) for both the
+    # Runs tab and this Overview tile.
     trigger: str
 
 
@@ -2827,11 +3535,7 @@ def get_overview(
             failed_count=latest.failed_count,
             blocked_count=latest.blocked_count,
             duration_ms=duration_ms,
-            trigger=(
-                f"Manual run by {latest.triggered_by_name}"
-                if latest.triggered_by_name
-                else "Manual run"
-            ),
+            trigger=_trigger_label(latest),
         )
 
     discovery_run = _latest_discovery_run(session, application.id)

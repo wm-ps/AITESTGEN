@@ -1,5 +1,5 @@
 import { StrictMode } from 'react'
-import { render, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Workspace } from './Workspace'
 
@@ -35,5 +35,26 @@ describe('Workspace', () => {
     // before asserting it didn't.
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(triggerCalls).toBe(1)
+  })
+
+  it('renders the Schedules tab and fetches from the schedules endpoint', async () => {
+    let hitSchedules = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/schedules')) {
+          hitSchedules = true
+          return { ok: true, status: 200, json: async () => [] }
+        }
+        return { ok: true, status: 200, json: async () => [] }
+      }),
+    )
+
+    render(<Workspace applicationId="app-1" initialTab="schedules" />)
+
+    // Both the nav rail label and the page heading read "Schedules" —
+    // disambiguate to the heading specifically.
+    await waitFor(() => expect(screen.getByText('Schedules', { selector: 'h1' })).toBeInTheDocument())
+    await waitFor(() => expect(hitSchedules).toBe(true))
   })
 })

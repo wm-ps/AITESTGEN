@@ -54,6 +54,13 @@ from workflows.generation_workflow import (
     GenerationWorkflow,
     ScenarioGenerationActivityInput,
 )
+from workflows.scheduled_execution_workflow import (
+    CHECK_SCHEDULE_GATE_ACTIVITY_NAME,
+    ScheduledExecutionWorkflow,
+    ScheduledExecutionWorkflowInput,
+    ScheduleGateActivityInput,
+    ScheduleGateActivityResult,
+)
 from workflows.suite_generation_workflow import (
     ENSURE_TEST_SUITE_ACTIVITY_NAME,
     FINALIZE_SUITE_GENERATION_ACTIVITY_NAME,
@@ -67,6 +74,7 @@ from workflows.suite_generation_workflow import (
 
 __all__ = [
     "APPLICATION_MODEL_BUILDER_ACTIVITY_NAME",
+    "CHECK_SCHEDULE_GATE_ACTIVITY_NAME",
     "DEFAULT_MAX_CONCURRENCY",
     "DISCOVERY_ACTIVITY_NAME",
     "DISCOVERY_TASK_QUEUE",
@@ -114,5 +122,9 @@ __all__ = [
     "PurgeApplicationInput",
     "PurgeApplicationResult",
     "ScenarioGenerationActivityInput",
+    "ScheduleGateActivityInput",
+    "ScheduleGateActivityResult",
+    "ScheduledExecutionWorkflow",
+    "ScheduledExecutionWorkflowInput",
     "SuiteGenerationWorkflow",
 ]

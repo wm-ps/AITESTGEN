@@ -17,7 +17,9 @@ observability through. The Run All Tests feature adds `ExecutionPolicy`
 (per-Application execution allowlist/toggle), `TestRun`/`TestResult`
 (one execution attempt and its per-`TestAsset` outcomes), and
 `TestResultArtifact` (object-storage pointers for failure screenshots/
-traces) — and adds `Scenario.safety_classification`.
+traces) — and adds `Scenario.safety_classification`. The Schedules feature
+adds `Schedule` (a user-created recurring cadence, backed by a Temporal
+Schedule) and `TestRun.schedule_id`.
 """
 
 from domain.action import Action
@@ -46,6 +48,7 @@ from domain.page_transition import PageTransition
 from domain.password_reset import PasswordReset
 from domain.platform_user import PlatformUser
 from domain.scenario import Scenario, ScenarioType
+from domain.schedule import Schedule, ScheduleCadenceType
 from domain.synthetic_data_entry import SyntheticDataEntry
 from domain.test_asset import TestAsset
 from domain.test_data_entry import TestDataEntry
@@ -90,6 +93,8 @@ __all__ = [
     "PlatformUser",
     "Scenario",
     "ScenarioType",
+    "Schedule",
+    "ScheduleCadenceType",
     "SyntheticDataEntry",
     "ArtifactType",
     "TestAsset",

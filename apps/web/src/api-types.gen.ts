@@ -195,6 +195,14 @@ export interface paths {
          *     nothing purges them yet. Blocked while discovery is running so a live
          *     crawler doesn't keep writing rows for an application that just
          *     disappeared from Home.
+         *
+         *     Schedules feature: also pauses every live Temporal Schedule for this
+         *     Application, so no future scheduled occurrence gets created. Best
+         *     effort — a soft-delete must never be blocked by Temporal being
+         *     unreachable, and `check_schedule_gate_activity`'s own
+         *     Application-active check is the backstop that makes a missed pause
+         *     harmless (see that activity's docstring). In-progress executions this
+         *     schedule already fired are deliberately NOT cancelled.
          */
         delete: operations["delete_application_applications__external_id__delete"];
         options?: never;
@@ -704,6 +712,126 @@ export interface paths {
         get: operations["execution_status_applications__external_id__execution_status_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Schedules */
+        get: operations["list_schedules_applications__external_id__schedules_get"];
+        put?: never;
+        /**
+         * Create Schedule
+         * @description Deliberately does NOT `has_pollers` check (unlike `trigger_test_run`/
+         *     `trigger_schedule_now`): a schedule created now to fire at 2am has no
+         *     business failing because the execution worker happens to be restarting
+         *     right now — see this module's accepted-limitation note above.
+         */
+        post: operations["create_schedule_applications__external_id__schedules_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{external_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Schedule
+         * @description Idempotent: a second DELETE against an already-deleted (or
+         *     already-auto-healed) schedule still returns 204 — `RPCError` NOT_FOUND
+         *     from `handle.delete()` is treated the same as success, not an error
+         *     (mirrors `create_cleanup_schedule.py`'s ALREADY_EXISTS tolerance for
+         *     create). This is what makes retrying a timed-out DELETE actually safe.
+         *
+         *     Hard-deletes the *Temporal* Schedule (it's the live object, nothing
+         *     historical about it) while soft-deleting the Postgres row (history — a
+         *     TestRun.schedule_id FK may point here). An in-progress execution that
+         *     this schedule already fired is untouched either way — it's a fully
+         *     decoupled child workflow by the time it's running.
+         */
+        delete: operations["delete_schedule_schedules__external_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Schedule */
+        patch: operations["update_schedule_schedules__external_id__patch"];
+        trace?: never;
+    };
+    "/schedules/{external_id}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Enable Schedule */
+        post: operations["enable_schedule_schedules__external_id__enable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{external_id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disable Schedule */
+        post: operations["disable_schedule_schedules__external_id__disable_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/schedules/{external_id}/run-now": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger Schedule Now
+         * @description Goes through `handle.trigger()`, not `client.start_workflow` — so a
+         *     "Run now" takes the exact same gated path a real occurrence takes, gets
+         *     counted in the schedule's own recent_actions, and obeys the same SKIP
+         *     overlap policy. One path, not two.
+         *
+         *     A `202` here is never a guarantee an execution actually starts:
+         *     `ScheduledExecutionWorkflow`'s own fire-time gate is the sole authority,
+         *     and it runs *after* this returns. The in-progress check below is
+         *     advisory UX only (so the button doesn't silently no-op when the
+         *     Application is already busy) — another execution can start in the
+         *     window between this check and the gate's own re-check, in which case
+         *     the gate skips it, same as any other scheduled-vs-manual overlap.
+         */
+        post: operations["trigger_schedule_now_schedules__external_id__run_now_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1269,6 +1397,93 @@ export interface components {
             name: string;
             /** Value */
             value: string;
+        };
+        /** ScheduleCreate */
+        ScheduleCreate: {
+            /** Name */
+            name: string;
+            /** Cadence Type */
+            cadence_type: string;
+            /** Hour */
+            hour?: number | null;
+            /** Minute */
+            minute?: number | null;
+            /**
+             * Days Of Week
+             * @default []
+             */
+            days_of_week: number[];
+            /** Day Of Month */
+            day_of_month?: number | null;
+            /** Cron Expression */
+            cron_expression?: string | null;
+            /** Time Zone */
+            time_zone: string;
+        };
+        /** ScheduleRead */
+        ScheduleRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Cadence Type */
+            cadence_type: string;
+            /** Hour */
+            hour: number | null;
+            /** Minute */
+            minute: number | null;
+            /** Days Of Week */
+            days_of_week: number[];
+            /** Day Of Month */
+            day_of_month: number | null;
+            /** Cron Expression */
+            cron_expression: string | null;
+            /** Time Zone */
+            time_zone: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Cadence Label */
+            cadence_label: string;
+            /** Next Run At */
+            next_run_at: string | null;
+            /** Created By Name */
+            created_by_name: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+        };
+        /**
+         * ScheduleUpdate
+         * @description Every field optional — PATCH-merge, only non-None values applied,
+         *     same convention as TestDataEntryUpdate. The merged result is then
+         *     re-validated as a whole by `validate_cadence` (never just the supplied
+         *     fields), so switching cadence_type without supplying the fields the new
+         *     cadence needs is a clean 422 rather than a half-migrated row. No
+         *     optimistic concurrency control (no version/ETag) — concurrent PATCHes
+         *     are last-`commit()`-wins, an accepted low-severity v1 race.
+         */
+        ScheduleUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Cadence Type */
+            cadence_type?: string | null;
+            /** Hour */
+            hour?: number | null;
+            /** Minute */
+            minute?: number | null;
+            /** Days Of Week */
+            days_of_week?: number[] | null;
+            /** Day Of Month */
+            day_of_month?: number | null;
+            /** Cron Expression */
+            cron_expression?: string | null;
+            /** Time Zone */
+            time_zone?: string | null;
         };
         /** SettingsRead */
         SettingsRead: {
@@ -3122,6 +3337,245 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_schedules_applications__external_id__schedules_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_schedule_applications__external_id__schedules_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_schedule_schedules__external_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_schedule_schedules__external_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScheduleUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enable_schedule_schedules__external_id__enable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disable_schedule_schedules__external_id__disable_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScheduleRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trigger_schedule_now_schedules__external_id__run_now_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };

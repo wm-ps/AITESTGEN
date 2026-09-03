@@ -5,10 +5,11 @@ import { Toast } from '../Toast'
 import { AuthoringTab } from './AuthoringTab'
 import { CredentialsTab } from './CredentialsTab'
 import { OverviewTab } from './OverviewTab'
+import { SchedulesTab } from './SchedulesTab'
 import { TestSuiteTab } from './TestSuiteTab'
 import { RunsTab } from './RunsTab'
 
-type WorkspaceTab = 'overview' | 'suite' | 'runs' | 'author' | 'credentials'
+type WorkspaceTab = 'overview' | 'suite' | 'runs' | 'schedules' | 'author' | 'credentials'
 
 function OverviewIcon() {
   return (
@@ -38,6 +39,18 @@ function RunsIcon() {
     <svg width={19} height={19} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <circle cx="12" cy="12" r="8.5" />
       <path d="M10.3 8.7 15 12l-4.7 3.3V8.7Z" fill="currentColor" stroke="none" />
+    </svg>
+  )
+}
+
+// Clock face + a small recurrence arrow — reads as "recurring schedule",
+// distinct from RunsIcon's single play-triangle-in-a-circle.
+function SchedulesIcon() {
+  return (
+    <svg width={19} height={19} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12.5" r="7.5" />
+      <path d="M12 8.5v4.2l3 1.8" />
+      <path d="M4.5 5.2A9 9 0 0 1 8 3.2" />
     </svg>
   )
 }
@@ -80,6 +93,7 @@ const TABS: { key: WorkspaceTab; label: string; heading: string; icon: () => Rea
   { key: 'overview', label: 'Overview', heading: 'Test Overview', icon: OverviewIcon },
   { key: 'suite', label: 'Suite', heading: 'Test Suite', icon: SuiteIcon },
   { key: 'runs', label: 'Runs', heading: 'Test Runs', icon: RunsIcon },
+  { key: 'schedules', label: 'Schedules', heading: 'Schedules', icon: SchedulesIcon },
   { key: 'author', label: 'Author', heading: 'Add Test Cases', icon: AuthorIcon },
   { key: 'credentials', label: 'Credentials', heading: 'Application Credentials', icon: CredentialsIcon },
 ]
@@ -303,6 +317,7 @@ export function Workspace({
             <OverviewTab applicationId={applicationId} onRunSuite={handleRunSuite} running={running} />
           )}
           {activeTab === 'suite' && <TestSuiteTab applicationId={applicationId} />}
+          {activeTab === 'schedules' && <SchedulesTab applicationId={applicationId} />}
           {activeTab === 'author' && <AuthoringTab />}
           {activeTab === 'credentials' && isAdmin && <CredentialsTab applicationId={applicationId} />}
           {activeTab === 'runs' && (

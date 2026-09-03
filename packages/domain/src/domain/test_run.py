@@ -20,11 +20,14 @@ but the column/status value isn't removed; the Application Workspace UI
 relabels a nonzero `blocked_count` as "Skipped" rather than adding a new
 column for it.
 
-`triggered_by_name` (Application Workspace feature) is who clicked "Run All
-Tests"/"Run Suite" — this app has no scheduling/CI, only manual runs, so
-this is the whole "trigger" concept; nullable because a run started outside
-the API (e.g. directly via Temporal CLI, as this feature's own manual
-verification step already does) has no user to attribute.
+`triggered_by_name` is who clicked "Run All Tests"/"Run Suite" for a manual
+run, or the triggering `Schedule`'s *name at fire time* for a scheduled one
+(Schedules feature) — a name snapshot, same principle as
+`environment_snapshot`, so a later schedule rename never rewrites what a
+past run's audit trail says triggered it, and the Runs tab needs no join to
+render "Scheduled run — <name>". `schedule_id` disambiguates which case
+applies; nullable because a manual run started outside the API (e.g.
+directly via Temporal CLI) has no user and no schedule to attribute.
 """
 
 import uuid
@@ -77,6 +80,17 @@ class TestRun(SQLModel, table=True):
     environment_snapshot: str
     target_base_url_snapshot: str
     triggered_by_name: str | None = Field(default=None)
+    # Traceability for a scheduled run (Schedules feature). Nullable: a
+    # manual run has no schedule, and `Schedule` rows are soft-deleted
+    # rather than removed precisely so this FK never dangles. Deliberately
+    # resolved without a `deleted_at IS NULL` filter in
+    # `_prepare_test_run_sync` (unlike every other Schedule lookup in this
+    # feature) — a schedule soft-deleted mid-execution must still resolve
+    # its FK correctly for the TestRun being created.
+    schedule_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("schedule.id"), nullable=True, index=True),
+    )
     blocked_reason: str | None = Field(default=None)
     total_count: int = Field(default=0)
     passed_count: int = Field(default=0)
