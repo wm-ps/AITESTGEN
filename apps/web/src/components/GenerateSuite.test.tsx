@@ -67,14 +67,14 @@ describe('GenerateSuite', () => {
       expect(screen.getByText('1')).toBeTruthy()
     })
     expect(screen.getByText('2')).toBeTruthy()
-    expect(screen.getByText('Test Suite')).toBeTruthy()
+    expect(screen.getByText('Journey Covered')).toBeTruthy()
     expect(screen.getByText('Test Cases')).toBeTruthy()
   })
 
   it('has no suite-name input field — naming is automatic (AC 2)', async () => {
     stubFetch()
     render(<GenerateSuite furthestCount={3}applicationId="app-1" onGenerated={() => {}} />)
-    await waitFor(() => screen.getByText('Test Suite'))
+    await waitFor(() => screen.getByText('Journey Covered'))
     expect(screen.queryByLabelText(/suite name/i)).toBeNull()
   })
 
@@ -84,7 +84,7 @@ describe('GenerateSuite', () => {
     const onGenerated = vi.fn()
     render(<GenerateSuite furthestCount={3}applicationId="app-1" onGenerated={onGenerated} />)
 
-    await waitFor(() => screen.getByText('Test Suite'))
+    await waitFor(() => screen.getByText('Journey Covered'))
     fireEvent.click(screen.getByRole('button', { name: /Generate Test Suite/ }))
 
     await waitFor(() => {

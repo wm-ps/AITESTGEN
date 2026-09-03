@@ -55,6 +55,7 @@ from temporalio.client import (
     ScheduleUpdateInput,
 )
 from temporalio.client import ScheduleUpdate as TemporalScheduleUpdate
+from temporalio.client import WorkflowExecutionStatus
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
@@ -64,6 +65,8 @@ from workflows import (
     GENERATION_TASK_QUEUE,
     HEAL_CLAIM_STALE_AFTER,
     HEALABLE_STATUSES,
+    AddTestCaseWorkflow,
+    AddTestCaseWorkflowInput,
     ApplicationTestExecutionWorkflow,
     CleanupWorkflow,
     ExecutionWorkflowInput,
@@ -1756,6 +1759,11 @@ class TestCaseRead(BaseModel):
     type: str
     description: str
     code: str
+    # NLM "Add Test Case" feature — 'discovery' (normal Discovery -> Journey
+    # -> Scenario pipeline) or 'nlm' (created ad hoc from a plain-English
+    # request). Every pre-existing Scenario is 'discovery' (migration
+    # 584191e291e5's server_default) — never relabeled.
+    source: str
 
 
 class TestSuiteRead(BaseModel):
@@ -1764,6 +1772,165 @@ class TestSuiteRead(BaseModel):
     journey_name: str
     status: str
     test_cases: list[TestCaseRead]
+
+
+class TestCaseCreate(BaseModel):
+    # Everything is prompt-based — no separate test-data field. Any concrete
+    # value the user wants used (e.g. "using promo code EXPIRED10") is
+    # extracted from `prompt` itself by AnalyzePromptActivity; anything not
+    # mentioned is resolved from the existing Test Data Pool or synthesized
+    # by PlaywrightGenerationActivity's own existing default-value logic,
+    # exactly like every normal-flow Scenario.
+    prompt: str
+
+
+class TestCaseGenerationResultRead(BaseModel):
+    """One Scenario's own outcome — a single prompt can decompose into
+    several (Multiple Test Cases), each independently PASS/FAIL."""
+
+    status: str  # complete | failed
+    journey_name: str | None = None
+    scenario_name: str | None = None
+    test_result_status: str | None = None
+    error_message: str | None = None
+    # True when this Scenario already existed and was matched/reused as-is —
+    # never (re)generated or re-run. Lets the UI distinguish "matched to an
+    # existing test case" from "newly generated".
+    already_existed: bool = False
+    # True only for a genuinely new Journey this request created — lets the
+    # UI say which Journey was newly created, not just name it like any
+    # other (New Journey grouping is a success, never a failure by itself).
+    is_new_journey: bool = False
+    # NLM Matching and Creation Rules — True for a brand-new Scenario
+    # (existing Journey or one just created for it); False for a genuine
+    # `reuse_scenario` match. Meaningless once `already_existed` or
+    # `is_new_journey` is True — the UI checks those first.
+    is_new_scenario: bool = False
+    # Set only for `status="failed"` — names which step actually blocked
+    # creation (e.g. "Scenario match", "Code generation").
+    stage: str | None = None
+
+
+class TestCaseRequestStatusRead(BaseModel):
+    request_id: str
+    status: str  # analyzing | generating | complete | failed | rejected — overall
+    functionality_summary: str = ""
+    rejection_reason: str | None = None
+    error_message: str | None = None
+    # How many Scenarios were identified once analysis finishes — lets the UI
+    # say "Building 3 test cases…" instead of looking identical to a
+    # single-Scenario request while it runs.
+    scenario_count: int = 0
+    results: list[TestCaseGenerationResultRead] = Field(default_factory=list)
+
+
+def _add_test_case_workflow_id(application_external_id: uuid.UUID, request_id: uuid.UUID) -> str:
+    return f"add-test-case-{application_external_id}-{request_id}"
+
+
+# NLM "Add Test Case" feature — no DB table backs the request itself (see
+# `AddTestCaseWorkflow`'s own docstring): the workflow's `@workflow.query`
+# ("still running") and its own return value (`.result()`, once terminal) are
+# the only record of a request's status. `request_id` is a fresh `uuid4()`
+# minted here, not a DB id.
+@app.post("/applications/{external_id}/test-cases", status_code=202)
+async def create_test_case(
+    external_id: uuid.UUID,
+    payload: TestCaseCreate,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> dict[str, str]:
+    application = _get_org_application(session, organization_id, external_id)
+
+    # Add Test Case Tab: server-side mirror of the frontend's own "show only
+    # once a TestSuite exists" gate.
+    has_suite = session.exec(
+        select(TestSuite)
+        .join(Journey, Journey.id == TestSuite.journey_id)  # type: ignore[arg-type]
+        .where(Journey.application_id == application.id)
+        .limit(1)
+    ).first()
+    if has_suite is None:
+        raise HTTPException(status_code=400, detail="NO_TEST_SUITE")
+
+    client = await get_temporal_client()
+    if not await has_pollers(client, GENERATION_TASK_QUEUE):
+        raise HTTPException(status_code=503, detail="GENERATION_UNAVAILABLE")
+
+    request_id = uuid.uuid4()
+    await client.start_workflow(
+        AddTestCaseWorkflow.run,
+        AddTestCaseWorkflowInput(
+            application_id=str(external_id),
+            prompt=payload.prompt,
+        ),
+        id=_add_test_case_workflow_id(external_id, request_id),
+        task_queue=GENERATION_TASK_QUEUE,
+    )
+    return {"request_id": str(request_id)}
+
+
+@app.get("/applications/{external_id}/test-cases/requests/{request_id}")
+async def get_test_case_request(
+    external_id: uuid.UUID,
+    request_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> TestCaseRequestStatusRead:
+    _get_org_application(session, organization_id, external_id)
+    client = await get_temporal_client()
+    handle = client.get_workflow_handle_for(
+        AddTestCaseWorkflow.run, _add_test_case_workflow_id(external_id, request_id)
+    )
+    try:
+        desc = await handle.describe()
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="TEST_CASE_REQUEST_NOT_FOUND") from exc
+
+    if desc.status == WorkflowExecutionStatus.RUNNING:
+        status = await handle.query(AddTestCaseWorkflow.get_status)
+        return TestCaseRequestStatusRead(
+            request_id=str(request_id),
+            status=status.status,
+            functionality_summary=status.functionality_summary,
+            rejection_reason=status.rejection_reason,
+            scenario_count=status.scenario_count,
+        )
+
+    if desc.status == WorkflowExecutionStatus.COMPLETED:
+        result = await handle.result()
+        return TestCaseRequestStatusRead(
+            request_id=str(request_id),
+            status=result.status,
+            rejection_reason=result.rejection_reason,
+            error_message=result.error_message,
+            scenario_count=len(result.results),
+            results=[
+                TestCaseGenerationResultRead(
+                    status=r.status,
+                    journey_name=r.journey_name,
+                    scenario_name=r.scenario_name,
+                    test_result_status=r.test_result_status,
+                    error_message=r.error_message,
+                    already_existed=r.already_existed,
+                    is_new_journey=r.is_new_journey,
+                    is_new_scenario=r.is_new_scenario,
+                    stage=r.stage,
+                )
+                for r in result.results
+            ],
+        )
+
+    # A genuine Temporal-level failure (exhausted an Activity's own retries
+    # past what the workflow itself catches, worker crash mid-execution,
+    # etc.) — the workflow's own try/except already turns ordinary Activity
+    # failures into a `status="failed"` *result* (still COMPLETED above);
+    # only reaching here means something the workflow couldn't catch at all.
+    return TestCaseRequestStatusRead(
+        request_id=str(request_id),
+        status="failed",
+        error_message=f"the request did not finish normally (workflow status: {desc.status.name})",
+    )
 
 
 @app.post("/applications/{external_id}/generate-suite", status_code=202)
@@ -1964,6 +2131,7 @@ def list_test_suites(
                     type=scenario.type,
                     description=scenario.expected_result,
                     code=asset.code,
+                    source=scenario.source,
                 )
             )
         result.append(
@@ -2017,6 +2185,7 @@ def terminate_test_suite(
             type=scenario.type,
             description=scenario.expected_result,
             code=asset.code,
+            source=scenario.source,
         )
         for asset in session.exec(
             select(TestAsset).where(
@@ -3366,6 +3535,8 @@ class TestAssetStatusRead(BaseModel):
     duration_ms: int | None
     error_message: str | None
     latest_test_result_id: uuid.UUID | None
+    # NLM "Add Test Case" feature — see TestCaseRead's own comment.
+    source: str
 
 
 class TestAssetStatusPageRead(BaseModel):
@@ -3419,6 +3590,7 @@ def get_test_suite_status(
                 duration_ms=result.duration_ms if result else None,
                 error_message=result.error_message if result else None,
                 latest_test_result_id=result.external_id if result else None,
+                source=scenario.source if scenario else "discovery",
             )
         )
     return TestAssetStatusPageRead(items=items, page=page, page_size=page_size, total=total)

@@ -601,7 +601,7 @@ export function TestSuiteResults({
                     cursor: 'pointer',
                   }}
                 >
-                  Run Tests
+                  Run Suite
                 </button>
               </div>
 
@@ -648,7 +648,7 @@ export function TestSuiteResults({
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, marginBottom: 16 }}>
-            <StatTile icon={<ClipboardCheckIcon />} value={testCaseCount} label="Test cases" />
+            <StatTile icon={<ClipboardCheckIcon />} value={testCaseCount} label="Test Cases" />
             <StatTile icon={<JourneysIcon />} value={suites.length} label="Journeys covered" />
             <StatTile icon={<ClockIcon />} value={`${estRuntimeMin} min`} label="Est. runtime" />
           </div>
@@ -684,7 +684,7 @@ export function TestSuiteResults({
                 <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)' }}>Generated Tests</div>
                 {testCaseCount === 0 && (
                   <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2 }}>
-                    No tests generated
+                    No test cases generated
                   </div>
                 )}
               </div>
@@ -875,6 +875,18 @@ export function TestSuiteResults({
                                   >
                                     {testCase.name}
                                   </span>
+                                  {/* NLM Test Case Label — only a test case genuinely
+                                      created via the NLM "Add Test Case" flow carries
+                                      source:'nlm'; every existing test case defaults to
+                                      'discovery' and never shows this. */}
+                                  {testCase.source === 'nlm' && (
+                                    <span
+                                      className="badge"
+                                      style={{ background: 'var(--accent-wash)', color: 'var(--accent)', flexShrink: 0 }}
+                                    >
+                                      NLM Test Case
+                                    </span>
+                                  )}
                                 </div>
                                 {testCase.description && (
                                   <p

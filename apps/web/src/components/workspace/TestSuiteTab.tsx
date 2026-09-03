@@ -215,6 +215,17 @@ function AssetRow({ asset }: { asset: TestAssetStatusRead }) {
           >
             {asset.name}
           </span>
+          {/* NLM Test Case Label — only a test case genuinely created via the
+              NLM "Add Test Case" flow carries source:'nlm'; every existing
+              test case defaults to 'discovery' and never shows this. */}
+          {asset.source === 'nlm' && (
+            <span
+              className="badge"
+              style={{ background: 'var(--accent-wash)', color: 'var(--accent)', flexShrink: 0 }}
+            >
+              NLM Test Case
+            </span>
+          )}
         </div>
         <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>
           {formatLastRun(asset.last_run_at)}
@@ -314,7 +325,7 @@ export function TestSuiteTab({ applicationId }: { applicationId: string }) {
     <div>
       {assets.length === 0 ? (
         <p className="caption" style={{ fontSize: 13 }}>
-          No tests generated yet.
+          No test cases generated yet.
         </p>
       ) : (
         <div className="card-panel" style={{ overflow: 'hidden' }}>

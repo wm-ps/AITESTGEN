@@ -47,7 +47,7 @@ from domain.page import Page
 from domain.page_transition import PageTransition
 from domain.password_reset import PasswordReset
 from domain.platform_user import PlatformUser
-from domain.scenario import Scenario, ScenarioType
+from domain.scenario import Scenario, ScenarioSource, ScenarioType
 from domain.schedule import Schedule, ScheduleCadenceType
 from domain.synthetic_data_entry import SyntheticDataEntry
 from domain.test_asset import TestAsset
@@ -92,6 +92,7 @@ __all__ = [
     "PasswordReset",
     "PlatformUser",
     "Scenario",
+    "ScenarioSource",
     "ScenarioType",
     "Schedule",
     "ScheduleCadenceType",

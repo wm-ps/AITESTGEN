@@ -49,6 +49,11 @@ from execution_worker.activities import (
     heal_test_activity,
     prepare_test_run_activity,
 )
+from execution_worker.add_test_case_activities import (
+    prepare_single_test_run_activity,
+    read_latest_test_result_activity,
+    read_test_result_status_activity,
+)
 from execution_worker.cleanup_activities import (
     find_purge_candidates_activity,
     purge_application_activity,
@@ -85,6 +90,13 @@ async def main() -> None:
             find_purge_candidates_activity,
             purge_application_activity,
             check_schedule_gate_activity,
+            # NLM "Add Test Case" feature — `AddTestCaseWorkflow` itself runs
+            # on GENERATION_TASK_QUEUE (see generation_worker/worker.py), but
+            # dispatches these Activities here with an explicit
+            # task_queue=EXECUTION_TASK_QUEUE override.
+            prepare_single_test_run_activity,
+            read_test_result_status_activity,
+            read_latest_test_result_activity,
         ],
         # find_purge_candidates_activity/purge_application_activity/
         # check_schedule_gate_activity are sync (plain `def`, not

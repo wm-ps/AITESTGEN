@@ -716,7 +716,7 @@ function RunDetail({
       {run.status === 'blocked' && (
         <div className="card-panel" style={{ padding: '16px 20px', marginBottom: 20 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--warn-strong)', marginBottom: 4 }}>
-            Execution blocked
+            Skipped
           </div>
           <div style={{ fontSize: 13, color: 'var(--ink-secondary)' }}>{run.blocked_reason}</div>
         </div>
@@ -908,8 +908,8 @@ function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
         if (e.key === 'Enter' || e.key === ' ') onOpen()
       }}
     >
-      <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>#{run.run_number}</td>
-      <td style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>
+      <td style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>#{run.run_number}</td>
+      <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>
         {formatDateTimeWithZone(run.created_at)}
       </td>
       <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>{by}</td>

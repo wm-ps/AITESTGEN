@@ -24,6 +24,16 @@ against every step in `steps` and keeping the most severe verdict —
 unlike `test_data_complete`) because classification only needs the AI/
 pattern-matched output once; execution-time gating then trusts this stored
 value as authoritative rather than reclassifying on every run.
+
+`source` (NLM "Add Test Case" feature) distinguishes a Scenario created
+through the normal Discovery -> Journey -> Scenario pipeline
+(`ScenarioGenerationActivity`) from one created ad hoc from a user's
+plain-English request (`CreateScenarioActivity`, `add_test_case_activities.py`)
+— the frontend labels only the latter "NLM Test Case". Every pre-existing row
+gets `'discovery'` via the column's `server_default`, so a migration adding
+this column never relabels a test case that predates the feature. Reusing an
+existing Scenario through the NLM matching flow does not change its
+`source` — only genuinely new rows are ever written as `'nlm'`.
 """
 
 import uuid
@@ -36,6 +46,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
 ScenarioType = Literal["happy", "negative", "edge"]
+ScenarioSource = Literal["discovery", "nlm"]
 
 
 class Scenario(SQLModel, table=True):
@@ -72,6 +83,10 @@ class Scenario(SQLModel, table=True):
         sa_column=Column(String, server_default=text("'UNKNOWN'"), nullable=False),
     )
     safety_classification_reason: str | None = Field(default=None)
+    source: str = Field(
+        default="discovery",
+        sa_column=Column(String, server_default=text("'discovery'"), nullable=False),
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

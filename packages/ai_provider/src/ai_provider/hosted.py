@@ -31,8 +31,11 @@ import httpx
 from domain import Journey, Page, Scenario
 
 from ai_provider.journey_candidate import JourneyCandidate, JourneyCandidateStep
+from ai_provider.journey_plan_candidate import JourneyPlanCandidate, JourneyPlanStep
 from ai_provider.scenario_candidate import ScenarioCandidate, TestDataFieldCandidate
+from ai_provider.scenario_match_candidate import ScenarioMatchCandidate
 from ai_provider.test_asset_code import TestAssetCode
+from ai_provider.test_case_prompt_candidate import TestCasePromptCandidate
 
 AI_MODEL = os.environ.get("AI_MODEL", "anthropic/claude-sonnet-5")
 LITELLM_BASE_URL = os.environ.get("LITELLM_BASE_URL", "")
@@ -749,6 +752,138 @@ def _describe_live_locators(locator_candidates: list[dict] | None) -> str:
     return "\n".join(_describe_one(loc) for loc in locator_candidates)
 
 
+# --- NLM "Add Test Case" feature: Prompt Analysis / Existing Scenario
+# Matching / ad-hoc Scenario generation agents. Each follows the same
+# one-call-per-stage convention as the Discovery/Generation prompts above.
+# Test-data *values* are never invented here — `generate_scenario_from_prompt`
+# below names required fields exactly like `generate_scenarios` already does;
+# `CreateScenarioActivity` (generation_worker/add_test_case_activities.py)
+# resolves values from user-supplied data or the existing Test Data Pool, and
+# leaves anything still unresolved for `PlaywrightGenerationActivity`'s own
+# existing default-value synthesis (`_resolve_scenario_defaults_sync`) to
+# fill in exactly as it already does for every normal-flow Scenario — no
+# separate "ask the user" step.
+
+_TEST_CASE_PROMPT_SYSTEM = """A user of a QA automation tool has described, in plain English, a \
+test case they want added for a specific web application. Determine whether this is a genuine \
+request to test that application's functionality, and if so extract what it's actually asking for.
+
+Reject (is_relevant=false) anything that isn't a request to test this application's own \
+functionality — small talk, requests unrelated to this application, or requests to do something \
+other than describe a test case (e.g. "write me a poem", "what's the weather", "delete all my \
+data"). A short or informally worded request is still relevant if it's clearly describing \
+application behavior to test.
+
+Also extract any concrete test-data VALUE the user stated literally in their own words (e.g. \
+"using promo code EXPIRED10", "with the email jane@example.com", "search for laptop") into \
+"provided_test_data" as {{"<field name>": "<the exact value they gave>"}}. Only include a value \
+the user actually wrote — never invent, guess, or fill in a value they didn't state. Most \
+requests give none at all; an empty object is the normal case.
+
+Respond with ONLY a JSON object of this shape, no prose: \
+{{"is_relevant": true, "functionality_summary": "one sentence describing the feature/flow under \
+test", "actions": ["ordered, plain-language user actions, e.g. \\"open the cart\\", \\"apply a \
+promo code\\""], "expected_result": "what should happen if the test passes", \
+"provided_test_data": {{}}, "rejection_reason": null}} — or, when not relevant: \
+{{"is_relevant": false, "functionality_summary": "", "actions": [], "expected_result": "", \
+"provided_test_data": {{}}, "rejection_reason": "one sentence explaining why this isn't a \
+testable request for this application"}}"""
+
+_TEST_CASE_PROMPT_USER = """User's request: "{prompt}\""""
+
+_SCENARIO_MATCH_PROMPT_SYSTEM = """You are decomposing a QA engineer's requested test case(s) \
+into one or more concrete Scenarios and matching each against an application's existing Journeys \
+(business workflows) and Scenarios (individual test cases already written for a Journey), to \
+avoid creating unnecessary duplicates.
+
+A single request can require ONE test case or SEVERAL — split it into every distinct testable \
+Scenario it actually implies (e.g. "test that login and logout both work" is two Scenarios; a \
+single specific condition like "an expired promo code is rejected at checkout" is one). Each \
+Scenario needs its own "functionality_summary"/"actions"/"expected_result" specific to just that \
+one Scenario — never the whole original request repeated verbatim for every entry.
+
+For each Scenario, identify which Journey it belongs to (a single request can span multiple \
+Journeys) and decide exactly one of:
+- "reuse_scenario": an existing Scenario already covers this exact Scenario — reuse it as-is \
+(set "scenario_id" and its parent "journey_id").
+- "new_scenario": an existing Journey covers the right business workflow, but no Scenario under \
+it covers this Scenario — add one (set "journey_id", leave "scenario_id" null).
+- "new_journey": no existing Journey covers this workflow at all — a new one is needed (leave \
+both ids null).
+
+Only choose "reuse_scenario" for a genuine match — same functionality and expected result, not \
+just a similar-sounding name. Prefer "new_scenario" over "new_journey" whenever any existing \
+Journey's business workflow already covers a Scenario's general area. Two Scenarios that both \
+need a brand-new Journey and belong to the same workflow must share the exact same \
+"proposed_journey_name" so they land under one Journey, not two.
+
+Respond with ONLY a JSON object of this shape, no prose: {{"scenarios": [{{"mode": \
+"reuse_scenario", "journey_id": "...", "scenario_id": "...", "proposed_journey_name": null, \
+"proposed_capability_name": null, "proposed_scenario_name": "...", "functionality_summary": \
+"...", "actions": ["..."], "expected_result": "...", "rationale": "one sentence"}}, ...]}}"""
+
+_SCENARIO_MATCH_PROMPT_USER = """User's original request: "{prompt}"
+
+Overall understanding:
+- Functionality: {functionality_summary}
+- Actions: {actions}
+- Expected result: {expected_result}
+
+Existing Journeys and their Scenarios:
+{journey_listing}"""
+
+_JOURNEY_PLAN_PROMPT_SYSTEM = """You are grounding a QA engineer's requested test case in a \
+specific web application's actually-discovered pages — no existing Journey covers this request, \
+so a new one is needed. Pick and order ONLY the pages (from the indexed list given) a user would \
+actually visit to carry out the requested actions, exactly like the existing Journey inference \
+this application was originally built from.
+
+Respond with ONLY a JSON object of this shape, no prose: {{"steps": [{{"page_index": 0, \
+"stage_label": "short business-language stage name, e.g. \\"Login\\""}}, ...]}}, one entry per \
+page actually needed, in the order a user visits them."""
+
+_JOURNEY_PLAN_PROMPT_USER = """Requested test case:
+- Functionality: {functionality_summary}
+- Actions: {actions}
+- Expected result: {expected_result}
+
+Pages (indexed):
+{page_listing}"""
+
+_ADHOC_SCENARIO_PROMPT_SYSTEM = """You are writing ONE integration test Scenario for a specific \
+business Journey, from a QA engineer's own plain-English request rather than open-ended \
+exploration — follow their requested functionality and expected result exactly, grounded in the \
+Journey's actual captured pages/forms/API calls below. The Scenario needs:
+- "name": a short business-language name for this exact test case
+- "type": one of "happy", "negative", "edge" — whichever the request actually describes
+- "steps": an ordered list of plain-language test steps a QA engineer would follow
+- "expected_result": what should happen if the Scenario passes — matching the user's own stated \
+expected result unless it's inconsistent with the captured application behavior
+- "test_data": a list of {{"name": "<field name, e.g. \\"promo code\\">", "mandatory": <bool>}} \
+— the input values a human tester (or this system, automatically) must supply to run this \
+Scenario. Do NOT include a value — only the field name and whether it's required, same as every \
+other Scenario this system generates. Exception: never include a field for the account's own \
+existing login username/password — that value always comes from the credentials already \
+configured for this Application, never from a Scenario's test_data.
+
+Grounded-outcome rule — describe outcomes in application-agnostic terms (what changes or becomes \
+visible), never inventing a specific UI mechanism (table/modal/toast) not evidenced by the \
+captured pages below.
+
+Respond with ONLY a JSON object of this shape, no prose: {{"name": "...", "type": "happy", \
+"steps": ["...", "..."], "expected_result": "...", \
+"test_data": [{{"name": "...", "mandatory": true}}]}}"""
+
+_ADHOC_SCENARIO_PROMPT_USER = """Journey: "{journey_name}"
+
+Requested test case:
+- Functionality: {functionality_summary}
+- Actions: {actions}
+- Expected result: {expected_result}
+
+Journey pages (in order):
+{page_listing}"""
+
 # Story 2.10 AC 3: a short, plain-language (not JSON) opinion — this is
 # supporting evidence recorded in diagnostics, never a structured decision
 # the caller branches on, so there's nothing here worth a schema for.
@@ -956,6 +1091,161 @@ class HostedAIProvider:
                 f"HostedAIProvider: all scenario types failed for journey {journey.name!r}: {failures}"
             )
         return candidates
+
+    # --- NLM "Add Test Case" feature (Prompt Analysis / Existing Scenario
+    # Matching / ad-hoc Scenario generation agents).
+
+    async def analyze_test_case_prompt(self, prompt: str) -> TestCasePromptCandidate:
+        content = await _chat_completion(
+            [
+                {"role": "system", "content": _TEST_CASE_PROMPT_SYSTEM},
+                {"role": "user", "content": _TEST_CASE_PROMPT_USER.format(prompt=prompt)},
+            ],
+            response_format={"type": "json_object"},
+            timeout=60,
+        )
+        raw = json.loads(content)
+        provided_test_data = raw.get("provided_test_data") or {}
+        return TestCasePromptCandidate(
+            is_relevant=bool(raw["is_relevant"]),
+            functionality_summary=raw.get("functionality_summary") or "",
+            actions=list(raw.get("actions") or []),
+            expected_result=raw.get("expected_result") or "",
+            rejection_reason=raw.get("rejection_reason"),
+            # Hallucination guard, same spirit as elsewhere in this file — a
+            # non-string value (the model returning a number/bool/nested
+            # object instead of the literal text it was given) is dropped
+            # rather than trusted, since a malformed value here would flow
+            # straight into a Scenario's test_data.
+            provided_test_data={
+                str(k): str(v)
+                for k, v in provided_test_data.items()
+                if isinstance(v, str) and v.strip()
+            }
+            if isinstance(provided_test_data, dict)
+            else {},
+        )
+
+    async def match_test_case_scenarios(
+        self,
+        prompt: str,
+        prompt_candidate: TestCasePromptCandidate,
+        journeys_with_scenarios: list[dict],
+    ) -> list[ScenarioMatchCandidate]:
+        listing = "\n".join(json.dumps(j) for j in journeys_with_scenarios) or "(none yet)"
+        content = await _chat_completion(
+            [
+                {"role": "system", "content": _SCENARIO_MATCH_PROMPT_SYSTEM},
+                {
+                    "role": "user",
+                    "content": _SCENARIO_MATCH_PROMPT_USER.format(
+                        prompt=prompt,
+                        functionality_summary=prompt_candidate.functionality_summary,
+                        actions=prompt_candidate.actions,
+                        expected_result=prompt_candidate.expected_result,
+                        journey_listing=listing,
+                    ),
+                },
+            ],
+            response_format={"type": "json_object"},
+            timeout=180,
+            max_tokens=8000,
+        )
+        raw_scenarios = json.loads(content).get("scenarios") or []
+        candidates = []
+        for raw in raw_scenarios:
+            mode = raw.get("mode")
+            if mode not in ("reuse_scenario", "new_scenario", "new_journey"):
+                # Hallucination guard, same spirit as `_ROUTE_SHAPED_NAME`/the
+                # `page_index` bounds check above — an unrecognized mode
+                # defaults to the safest fallback (start a new Journey)
+                # rather than crashing the Activity on a bad literal.
+                mode = "new_journey"
+            candidates.append(
+                ScenarioMatchCandidate(
+                    mode=mode,
+                    journey_id=raw.get("journey_id") if mode != "new_journey" else None,
+                    scenario_id=raw.get("scenario_id") if mode == "reuse_scenario" else None,
+                    proposed_journey_name=raw.get("proposed_journey_name"),
+                    proposed_capability_name=raw.get("proposed_capability_name"),
+                    proposed_scenario_name=raw.get("proposed_scenario_name") or "",
+                    functionality_summary=raw.get("functionality_summary") or "",
+                    actions=list(raw.get("actions") or []),
+                    expected_result=raw.get("expected_result") or "",
+                    rationale=raw.get("rationale") or "",
+                )
+            )
+        return candidates
+
+    async def plan_new_journey(
+        self, prompt_candidate: TestCasePromptCandidate, pages: list[Page]
+    ) -> JourneyPlanCandidate:
+        listing = "\n".join(f"{i}: {_describe_page(p)}" for i, p in enumerate(pages))
+        content = await _chat_completion(
+            [
+                {"role": "system", "content": _JOURNEY_PLAN_PROMPT_SYSTEM},
+                {
+                    "role": "user",
+                    "content": _JOURNEY_PLAN_PROMPT_USER.format(
+                        functionality_summary=prompt_candidate.functionality_summary,
+                        actions=prompt_candidate.actions,
+                        expected_result=prompt_candidate.expected_result,
+                        page_listing=listing,
+                    ),
+                },
+            ],
+            response_format={"type": "json_object"},
+            timeout=120,
+        )
+        raw_steps = json.loads(content)["steps"]
+        steps = []
+        for raw_step in raw_steps:
+            index = raw_step["page_index"]
+            if not (0 <= index < len(pages)):
+                logger.warning(
+                    "HostedAIProvider: plan_new_journey dropped hallucinated page_index %r", index
+                )
+                continue
+            steps.append(
+                JourneyPlanStep(page_id=str(pages[index].id), stage_label=raw_step["stage_label"])
+            )
+        return JourneyPlanCandidate(steps=steps)
+
+    async def generate_scenario_from_prompt(
+        self,
+        journey: Journey,
+        prompt_candidate: TestCasePromptCandidate,
+        known_pages: list[dict[str, str]] | None = None,
+    ) -> ScenarioCandidate:
+        content = await _chat_completion(
+            [
+                {"role": "system", "content": _ADHOC_SCENARIO_PROMPT_SYSTEM},
+                {
+                    "role": "user",
+                    "content": _ADHOC_SCENARIO_PROMPT_USER.format(
+                        journey_name=journey.name,
+                        functionality_summary=prompt_candidate.functionality_summary,
+                        actions=prompt_candidate.actions,
+                        expected_result=prompt_candidate.expected_result,
+                        page_listing=_describe_known_pages(known_pages),
+                    ),
+                },
+            ],
+            response_format={"type": "json_object"},
+            timeout=180,
+            max_tokens=8000,
+        )
+        raw = json.loads(content)
+        return ScenarioCandidate(
+            name=raw["name"],
+            type=raw.get("type") or "happy",
+            steps=list(raw["steps"]),
+            expected_result=raw["expected_result"],
+            test_data=[
+                TestDataFieldCandidate(name=f["name"], mandatory=bool(f["mandatory"]))
+                for f in raw.get("test_data", [])
+            ],
+        )
 
     async def infer_state_similarity(
         self, heading_a: str, actions_a: list[str], heading_b: str, actions_b: list[str]

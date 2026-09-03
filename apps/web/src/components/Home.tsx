@@ -494,7 +494,7 @@ function ApplicationCard({
       onChanged()
     } catch {
       setNameDraft(application.name)
-      onError('Could not rename project — try again.')
+      onError('Could not rename application — try again.')
     }
   }
 
@@ -504,7 +504,7 @@ function ApplicationCard({
       await api.deleteApplication(application.id)
       onChanged()
     } catch {
-      onError('Could not delete project — try again.')
+      onError('Could not delete application — try again.')
     } finally {
       setDeleting(false)
       setConfirmingDelete(false)
@@ -607,7 +607,7 @@ function ApplicationCard({
     <span style={{ opacity: testCasesComplete ? 1 : 0.45 }}>
       <StatChip
         value={testCasesComplete ? application.test_case_count : '–'}
-        label="Test cases"
+        label="Test Cases"
         icon={<DocumentIcon size={iconSize} />}
         layout={chipLayout}
       />
@@ -639,7 +639,7 @@ function ApplicationCard({
   )
   const executionsChip = (
     <span style={{ opacity: testCasesComplete ? 1 : 0.45 }}>
-      <StatChip value={application.test_run_count} label="Executions" icon={<RunsIcon size={iconSize} />} layout={chipLayout} />
+      <StatChip value={application.test_run_count} label="Test Runs" icon={<RunsIcon size={iconSize} />} layout={chipLayout} />
     </span>
   )
   // Trend column hidden for now — <MiniBarChart values={application.recent_pass_rates} />
@@ -721,7 +721,7 @@ function ApplicationCard({
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Delete project"
+          aria-label="Delete application"
           onClick={(e) => {
             e.stopPropagation()
             if (!deleting) setConfirmingDelete(false)
@@ -764,7 +764,7 @@ function ApplicationCard({
                   Delete &ldquo;{application.name}&rdquo;?
                 </div>
                 <p className="caption" style={{ margin: 0, lineHeight: 1.5 }}>
-                  This removes the project from your workspace. This can&apos;t be undone from here.
+                  This removes the application from your workspace. This can&apos;t be undone from here.
                 </p>
               </div>
             </div>
@@ -991,12 +991,12 @@ export function Home({
             >
               Welcome, {firstName}
             </div>
-            <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', margin: 0 }}>Projects</h1>
+            <h1 style={{ fontSize: 26, fontWeight: 700, letterSpacing: '-0.02em', margin: 0 }}>Applications</h1>
           </div>
           <div style={{ display: 'flex', gap: 'var(--space-4)', flexShrink: 0, alignItems: 'center' }}>
             <div
               role="group"
-              aria-label="Choose project view"
+              aria-label="Choose application view"
               style={{
                 display: 'flex',
                 border: '1px solid var(--border)',
@@ -1063,7 +1063,7 @@ export function Home({
                 disabled={applications.length >= MAX_ACTIVE_PROJECTS}
                 title={
                   applications.length >= MAX_ACTIVE_PROJECTS
-                    ? `Maximum of ${MAX_ACTIVE_PROJECTS} active projects reached — delete one before adding another.`
+                    ? `Maximum of ${MAX_ACTIVE_PROJECTS} active applications reached — delete one before adding another.`
                     : undefined
                 }
                 onClick={onConnectApp}
@@ -1073,7 +1073,7 @@ export function Home({
                   cursor: applications.length >= MAX_ACTIVE_PROJECTS ? 'not-allowed' : 'pointer',
                 }}
               >
-                + New Project
+                + New Application
               </button>
             )}
           </div>
@@ -1161,13 +1161,13 @@ export function Home({
             >
               <FolderIcon size={24} />
             </span>
-            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 'var(--space-3)' }}>No projects yet</div>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 'var(--space-3)' }}>No applications yet</div>
             <p className="caption" style={{ fontSize: 14, margin: '0 0 var(--space-8)', maxWidth: 420, lineHeight: 1.5 }}>
               Connect your first application to start discovering journeys and generating tests — no
               scripts required.
             </p>
             <button type="button" className="button-primary" onClick={onConnectApp} style={{ padding: '10px 20px' }}>
-              + Create New Project
+              + Create New Application
             </button>
           </div>
         )}

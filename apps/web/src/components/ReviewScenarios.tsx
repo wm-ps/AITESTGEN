@@ -437,7 +437,7 @@ export function ReviewScenarios({
   }
 
   async function handleDelete(id: string) {
-    if (!window.confirm('Remove this Scenario?')) return
+    if (!window.confirm('Delete this Scenario?')) return
     await api.deleteScenario(id)
     setScenarios((rows) => rows.filter((s) => s.id !== id))
     setSelectedId((current) => (current === id ? null : current))
