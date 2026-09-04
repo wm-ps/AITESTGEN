@@ -60,6 +60,7 @@ from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
 from workflows import (
+    AUTO_HEAL_ATTEMPT_CAP,
     DISCOVERY_TASK_QUEUE,
     EXECUTION_TASK_QUEUE,
     GENERATION_TASK_QUEUE,
@@ -2391,8 +2392,15 @@ class TestResultRead(BaseModel):
     error_message: str | None
     stack_trace: str | None
     blocked_reason: str | None
-    heal_attempt_count: int
+    # Two independent budgets, never combined — see TestResult's own
+    # comment (packages/domain/src/domain/test_result.py). auto_* is spent
+    # only by automatic healing, capped at auto_heal_attempt_cap (the fixed
+    # AUTO_HEAL_ATTEMPT_CAP constant); manual_* is spent only by the
+    # "Retry with self-healing" endpoint, capped at max_heal_attempts.
+    auto_heal_attempt_count: int
+    manual_heal_attempt_count: int
     healed_test_asset_id: uuid.UUID | None
+    auto_heal_attempt_cap: int
     # The current DiscoverySettings.max_heal_attempts, read alongside every
     # TestResult rather than requiring a second call to admin-only
     # GET /settings — RunsTab (any authenticated org member) needs this to
@@ -3276,8 +3284,10 @@ def get_test_run(
             error_message=r.error_message,
             stack_trace=r.stack_trace,
             blocked_reason=r.blocked_reason,
-            heal_attempt_count=r.heal_attempt_count,
+            auto_heal_attempt_count=r.auto_heal_attempt_count,
+            manual_heal_attempt_count=r.manual_heal_attempt_count,
             healed_test_asset_id=r.healed_test_asset_id,
+            auto_heal_attempt_cap=AUTO_HEAL_ATTEMPT_CAP,
             max_heal_attempts=max_heal_attempts,
         )
         for r in results
@@ -3342,10 +3352,13 @@ async def heal_test_result(
 ) -> dict[str, bool]:
     """Manual "Retry with self-heal" — starts the same HealTestActivity the
     automatic path runs (inside ApplicationTestExecutionWorkflow.run_one),
-    via HealTestExecutionWorkflow, drawing from the exact same shared
-    attempt budget. The eligibility checks below mirror
-    `heal_test_activity`'s own no-op condition and claim guard exactly (same
-    HEALABLE_STATUSES, same DiscoverySettings.max_heal_attempts, same
+    via HealTestExecutionWorkflow with triggered_manually=True, drawing from
+    its own independent manual_heal_attempt_count budget — entirely
+    unaffected by how many automatic attempts (auto_heal_attempt_count)
+    already ran against this same TestResult. The eligibility checks below
+    mirror `heal_test_activity`'s own no-op condition and claim guard
+    exactly (same HEALABLE_STATUSES, same DiscoverySettings.max_heal_attempts
+    against manual_heal_attempt_count specifically, same
     HEAL_CLAIM_STALE_AFTER staleness window) so this endpoint's 409s and the
     activity's own behavior never disagree."""
     test_result = session.exec(
@@ -3368,7 +3381,7 @@ async def heal_test_result(
     discovery_settings = session.exec(select(DiscoverySettings)).one()
     if test_result.status not in HEALABLE_STATUSES:
         raise HTTPException(status_code=409, detail="test result is not in a healable state")
-    if test_result.heal_attempt_count >= discovery_settings.max_heal_attempts:
+    if test_result.manual_heal_attempt_count >= discovery_settings.max_heal_attempts:
         raise HTTPException(status_code=409, detail="self-heal attempt budget already spent")
     if (
         test_result.heal_started_at is not None
@@ -3386,6 +3399,7 @@ async def heal_test_result(
                 application_id=str(application.external_id),
                 test_run_id=str(test_run.external_id),
                 test_result_id=str(test_result.external_id),
+                triggered_manually=True,
             ),
             # Deterministic — a duplicate/rapid double-click naturally
             # rejects via WorkflowAlreadyStartedError below, same

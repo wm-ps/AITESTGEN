@@ -928,10 +928,13 @@ export interface paths {
          * Heal Test Result
          * @description Manual "Retry with self-heal" — starts the same HealTestActivity the
          *     automatic path runs (inside ApplicationTestExecutionWorkflow.run_one),
-         *     via HealTestExecutionWorkflow, drawing from the exact same shared
-         *     attempt budget. The eligibility checks below mirror
-         *     `heal_test_activity`'s own no-op condition and claim guard exactly (same
-         *     HEALABLE_STATUSES, same DiscoverySettings.max_heal_attempts, same
+         *     via HealTestExecutionWorkflow with triggered_manually=True, drawing from
+         *     its own independent manual_heal_attempt_count budget — entirely
+         *     unaffected by how many automatic attempts (auto_heal_attempt_count)
+         *     already ran against this same TestResult. The eligibility checks below
+         *     mirror `heal_test_activity`'s own no-op condition and claim guard
+         *     exactly (same HEALABLE_STATUSES, same DiscoverySettings.max_heal_attempts
+         *     against manual_heal_attempt_count specifically, same
          *     HEAL_CLAIM_STALE_AFTER staleness window) so this endpoint's 409s and the
          *     activity's own behavior never disagree.
          */
@@ -1647,6 +1650,18 @@ export interface components {
              * @default false
              */
             already_existed: boolean;
+            /**
+             * Is New Journey
+             * @default false
+             */
+            is_new_journey: boolean;
+            /**
+             * Is New Scenario
+             * @default false
+             */
+            is_new_scenario: boolean;
+            /** Stage */
+            stage?: string | null;
         };
         /** TestCaseRead */
         TestCaseRead: {
@@ -1773,10 +1788,14 @@ export interface components {
             stack_trace: string | null;
             /** Blocked Reason */
             blocked_reason: string | null;
-            /** Heal Attempt Count */
-            heal_attempt_count: number;
+            /** Auto Heal Attempt Count */
+            auto_heal_attempt_count: number;
+            /** Manual Heal Attempt Count */
+            manual_heal_attempt_count: number;
             /** Healed Test Asset Id */
             healed_test_asset_id: string | null;
+            /** Auto Heal Attempt Cap */
+            auto_heal_attempt_cap: number;
             /** Max Heal Attempts */
             max_heal_attempts: number;
         };

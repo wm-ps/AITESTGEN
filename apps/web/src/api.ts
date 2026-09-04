@@ -118,8 +118,14 @@ export type TestResultRead = {
   error_message: string | null
   stack_trace: string | null
   blocked_reason: string | null
-  heal_attempt_count: number
+  // Two independent budgets, never combined — see TestResultRead in
+  // apps/api/src/api/main.py. auto_* is spent only by automatic healing,
+  // capped at auto_heal_attempt_cap; manual_* is spent only by "Retry with
+  // self-healing", capped at max_heal_attempts.
+  auto_heal_attempt_count: number
+  manual_heal_attempt_count: number
   healed_test_asset_id: string | null
+  auto_heal_attempt_cap: number
   // The current DiscoverySettings.max_heal_attempts, read alongside every
   // result rather than a second admin-only GET /settings call — see
   // TestResultRead in apps/api/src/api/main.py.

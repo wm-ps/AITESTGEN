@@ -154,8 +154,10 @@ function assetToTestResult(asset: TestAssetStatusRead): TestResultRead | null {
     // TestResult row) used only for the artifacts modal here — self-heal
     // has no meaning in the Test Suite tab, so max_heal_attempts: 0 keeps
     // any heal UI a caller might add from ever appearing for it.
-    heal_attempt_count: 0,
+    auto_heal_attempt_count: 0,
+    manual_heal_attempt_count: 0,
     healed_test_asset_id: null,
+    auto_heal_attempt_cap: 0,
     max_heal_attempts: 0,
   }
 }

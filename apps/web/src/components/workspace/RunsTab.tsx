@@ -357,7 +357,10 @@ function TestResultRow({
         const updated = detail.results?.find((r) => r.id === result.id)
         if (!updated) return
         setLiveResult(updated)
-        if (updated.status === 'passed' || updated.heal_attempt_count >= updated.max_heal_attempts) {
+        // This poll only ever runs while a *manual* heal we started is
+        // in flight (see the effect above) — stop against the manual
+        // budget specifically, not the independent automatic one.
+        if (updated.status === 'passed' || updated.manual_heal_attempt_count >= updated.max_heal_attempts) {
           setHealing(false)
         }
       } catch {
@@ -392,12 +395,21 @@ function TestResultRow({
     }
   }, [expanded, canShowArtifacts, artifacts, liveResult.id])
 
+  // Manual eligibility is independent of automatic's own state — a test
+  // whose automatic healing already used its fixed 2 attempts still offers
+  // a manual retry, as long as manual's own separate budget isn't spent.
   const canRetryHeal =
-    NON_PASSED_STATUSES.has(liveResult.status) && liveResult.heal_attempt_count < liveResult.max_heal_attempts
+    NON_PASSED_STATUSES.has(liveResult.status) &&
+    liveResult.manual_heal_attempt_count < liveResult.max_heal_attempts
+  // "Exhausted, manual triage required" is keyed on the manual budget
+  // alone. Automatic healing using up its 2 attempts is never, by itself,
+  // an exhausted state — it's an ordinary failed result with a manual
+  // retry still available, same as a test that was never auto-healed at
+  // all. Only the manual loop reaching max_heal_attempts is exhaustion.
   const healExhausted =
     liveResult.max_heal_attempts > 0 &&
     NON_PASSED_STATUSES.has(liveResult.status) &&
-    liveResult.heal_attempt_count >= liveResult.max_heal_attempts
+    liveResult.manual_heal_attempt_count >= liveResult.max_heal_attempts
   const wasAutoHealed = liveResult.healed_test_asset_id != null && liveResult.status === 'passed'
 
   async function handleHeal() {
@@ -493,7 +505,7 @@ function TestResultRow({
           )}
           {healing && (
             <span
-              title={`Self-healing in progress — remediation attempt ${liveResult.heal_attempt_count + 1} of ${liveResult.max_heal_attempts}`}
+              title={`Self-healing in progress — manual remediation attempt ${liveResult.manual_heal_attempt_count + 1} of ${liveResult.max_heal_attempts}`}
               aria-label="Self-healing in progress"
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, flexShrink: 0, color: 'var(--accent)' }}
             >
@@ -508,7 +520,7 @@ function TestResultRow({
               above. */}
           {!healing && healExhausted && (
             <span
-              title={`Self-healing remediation exhausted after ${liveResult.max_heal_attempts} attempts — manual triage required.`}
+              title={`Self-healing remediation exhausted after ${liveResult.max_heal_attempts} manual attempts — manual triage required.`}
               aria-label="Self-healing exhausted — manual triage required"
               style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, flexShrink: 0, color: 'var(--warn-strong)' }}
             >

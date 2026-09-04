@@ -71,11 +71,15 @@ class TestResult(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
-    # Self-healing (HealTestActivity). Single counter shared by automatic
-    # healing (run right after ExecuteTestActivity) and the manual retry
-    # endpoint alike — never a separate budget for either, capped at the
-    # admin-configurable DiscoverySettings.max_heal_attempts.
-    heal_attempt_count: int = Field(default=0)
+    # Self-healing (HealTestActivity) — two independent budgets, never
+    # combined. auto_heal_attempt_count is spent by the automatic path (run
+    # right after ExecuteTestActivity), capped at the fixed
+    # AUTO_HEAL_ATTEMPT_CAP (see execution_workflow.py). manual_heal_attempt_count
+    # is spent only by the manual "Retry with self-healing" endpoint, capped
+    # at the admin-configurable DiscoverySettings.max_heal_attempts. Either
+    # can be exhausted while the other still has budget.
+    auto_heal_attempt_count: int = Field(default=0)
+    manual_heal_attempt_count: int = Field(default=0)
     # The *latest* TestAsset a heal attempt produced (set on every attempt
     # that passes typecheck, whether or not that version then passes
     # execution) — combined with `status`, distinguishes "healed and now

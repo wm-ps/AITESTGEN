@@ -1,5 +1,5 @@
 """`heal_test_activity`'s full loop, with live inspection wired in — proves
-the new capability is additive: `heal_attempt_count`/`healed_test_asset_id`
+the new capability is additive: `auto_heal_attempt_count`/`healed_test_asset_id`
 semantics are exactly what they were before this feature existed, live
 inspection never consumes an attempt on its own, and its output actually
 reaches the AI call. Real AI/subprocess/typecheck/browser calls are all
@@ -227,7 +227,7 @@ async def test_live_inspection_runs_and_heal_attempt_count_increments_exactly_on
         ).one()
         # Exactly one attempt — live inspection is a sub-step within the
         # attempt, never a second one of its own.
-        assert refreshed_result.heal_attempt_count == 1
+        assert refreshed_result.auto_heal_attempt_count == 1
         assert refreshed_result.status == "passed"
 
         new_asset = session.exec(
@@ -293,7 +293,7 @@ async def test_no_progress_guard_still_stops_the_loop_when_inspection_ran(
         refreshed_result = session.exec(
             select(TestResult).where(TestResult.id == test_result.id)
         ).one()
-        # Stopped after exactly one attempt, not the full budget of 3 —
-        # proving the no-progress guard fired.
-        assert refreshed_result.heal_attempt_count == 1
+        # Stopped after exactly one attempt, not the full automatic budget
+        # of AUTO_HEAL_ATTEMPT_CAP (2) — proving the no-progress guard fired.
+        assert refreshed_result.auto_heal_attempt_count == 1
         assert refreshed_result.status == "failed"

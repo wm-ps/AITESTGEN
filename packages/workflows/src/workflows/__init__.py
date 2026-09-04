@@ -55,6 +55,7 @@ from workflows.discovery_workflow import (
     MarkDiscoveryRunFailedActivityInput,
 )
 from workflows.execution_workflow import (
+    AUTO_HEAL_ATTEMPT_CAP,
     DEFAULT_MAX_CONCURRENCY,
     EXECUTE_TEST_ACTIVITY_NAME,
     EXECUTION_TASK_QUEUE,
@@ -102,6 +103,7 @@ from workflows.suite_generation_workflow import (
 __all__ = [
     "ANALYZE_PROMPT_ACTIVITY_NAME",
     "APPLICATION_MODEL_BUILDER_ACTIVITY_NAME",
+    "AUTO_HEAL_ATTEMPT_CAP",
     "CHECK_SCHEDULE_GATE_ACTIVITY_NAME",
     "CREATE_JOURNEY_ACTIVITY_NAME",
     "CREATE_SCENARIO_ACTIVITY_NAME",

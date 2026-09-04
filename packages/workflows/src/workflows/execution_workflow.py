@@ -50,6 +50,12 @@ DEFAULT_MAX_CONCURRENCY = 5
 # excluded — a safety-policy gate, not a code defect, never healable.
 HEALABLE_STATUSES = {"failed", "timed_out", "errored"}
 
+# ponytail: fixed cap, not admin-configurable like DiscoverySettings.
+# max_heal_attempts — automatic healing must never be able to spend the
+# user's own configured manual budget. Revisit if a real need emerges for
+# per-org tuning of the automatic cap specifically.
+AUTO_HEAL_ATTEMPT_CAP = 2
+
 # Generous margin over HealTestActivity's own 28-minute
 # start_to_close_timeout below — a TestResult.heal_started_at claim older
 # than this is a crashed/abandoned attempt, not a real in-progress one.
@@ -116,6 +122,12 @@ class HealTestActivityInput:
     application_id: str
     test_run_id: str
     test_result_id: str
+    # Selects which of TestResult's two independent budgets/counters this
+    # invocation reads and increments — False (every automatic call below)
+    # means auto_heal_attempt_count/AUTO_HEAL_ATTEMPT_CAP; True (set only by
+    # the manual "Retry with self-healing" endpoint) means
+    # manual_heal_attempt_count/DiscoverySettings.max_heal_attempts.
+    triggered_manually: bool = False
 
 
 @workflow.defn(name="ApplicationTestExecutionWorkflow")
@@ -164,8 +176,13 @@ class ApplicationTestExecutionWorkflow:
                     )
                     # Always called — HealTestActivity itself no-ops for
                     # passed/blocked/budget-exhausted results (see its own
-                    # docstring), so no branching is needed here. A "Run All
-                    # Tests" click can now take up to max_heal_attempts×
+                    # docstring), so no branching is needed here.
+                    # triggered_manually defaults to False: this automatic
+                    # call spends only auto_heal_attempt_count, capped at the
+                    # fixed AUTO_HEAL_ATTEMPT_CAP — it can never consume the
+                    # separate manual_heal_attempt_count budget the "Retry
+                    # with self-healing" endpoint draws from. A "Run All
+                    # Tests" click can now take up to AUTO_HEAL_ATTEMPT_CAP×
                     # longer per failing test while this runs.
                     await workflow.execute_activity(
                         HEAL_TEST_ACTIVITY_NAME,
@@ -174,12 +191,11 @@ class ApplicationTestExecutionWorkflow:
                             test_run_id=prep.test_run_id,
                             test_result_id=result_id,
                         ),
-                        # Up to max_heal_attempts (default 3) attempts x (AI
-                        # call + typecheck + ~8min run) + the bounded infra
+                        # Up to AUTO_HEAL_ATTEMPT_CAP (2) attempts x (AI call
+                        # + typecheck + ~8min run) + the bounded infra
                         # retries. +3 min over the original 25 for self-heal's
                         # targeted live inspection (its own ~45s budget,
-                        # gated to at most once per attempt — ~150s worst
-                        # case across 3 attempts, well inside this margin).
+                        # gated to at most once per attempt).
                         start_to_close_timeout=timedelta(minutes=28),
                         # Infra-failure retries at the Temporal level only,
                         # same convention as ExecuteTestActivity above.
@@ -219,7 +235,12 @@ class HealTestExecutionWorkflow:
     """Thin one-activity workflow for the manual "Retry with self-heal"
     path — same HealTestActivity, same logic, as the automatic path inside
     ApplicationTestExecutionWorkflow.run_one above; there is exactly one
-    implementation of "heal a test," never two.
+    implementation of "heal a test," never two. It always passes
+    `triggered_manually=True` (set by the manual-retry endpoint in
+    apps/api), so this invocation spends only manual_heal_attempt_count,
+    against DiscoverySettings.max_heal_attempts — entirely independent of
+    whatever the automatic path already did to auto_heal_attempt_count on
+    the same TestResult.
 
     Started with a deterministic workflow id (`heal-{test_result_external_id}`,
     no random suffix — see the manual-retry endpoint in apps/api) so a
@@ -237,14 +258,20 @@ class HealTestExecutionWorkflow:
         await workflow.execute_activity(
             HEAL_TEST_ACTIVITY_NAME,
             input,
-            # Kept identical to the automatic path's own HealTestActivity
-            # timeout above — same activity, same logic, same budget.
+            # ponytail: sized for the historical default of 3 manual
+            # attempts (same margin the automatic path's own timeout above
+            # was originally justified against), not independently resized
+            # for manual_heal_attempt_count's now fully-separate ceiling —
+            # DiscoverySettings.max_heal_attempts can be configured up to
+            # 10. Revisit if a manual retry against a high configured max
+            # is observed timing out before exhausting its own budget.
             start_to_close_timeout=timedelta(minutes=28),
             retry_policy=RetryPolicy(maximum_attempts=2),
         )
 
 
 __all__ = [
+    "AUTO_HEAL_ATTEMPT_CAP",
     "DEFAULT_MAX_CONCURRENCY",
     "EXECUTE_TEST_ACTIVITY_NAME",
     "EXECUTION_TASK_QUEUE",

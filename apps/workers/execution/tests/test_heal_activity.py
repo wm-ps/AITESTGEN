@@ -227,15 +227,18 @@ def test_load_heal_context_is_none_for_passed_result() -> None:
     assert ctx is None
 
 
-def test_load_heal_context_is_none_once_budget_is_spent() -> None:
+def test_load_heal_context_is_none_for_automatic_once_auto_cap_spent() -> None:
+    """Automatic healing is capped at the fixed AUTO_HEAL_ATTEMPT_CAP (2),
+    never DiscoverySettings.max_heal_attempts — even when the admin-configured
+    manual budget is higher, automatic still stops at 2."""
     init_db()
-    _set_max_heal_attempts(3)
+    _set_max_heal_attempts(5)
     application = _seed_application()
     asset = _seed_test_asset(application)
     result = _seed_test_result(application, asset, status="failed")
     with Session(engine) as session:
         spent = session.exec(select(TestResult).where(TestResult.id == result.id)).one()
-        spent.heal_attempt_count = 3
+        spent.auto_heal_attempt_count = activities_module.AUTO_HEAL_ATTEMPT_CAP
         session.add(spent)
         session.commit()
 
@@ -248,6 +251,85 @@ def test_load_heal_context_is_none_once_budget_is_spent() -> None:
     )
 
     assert ctx is None
+
+
+def test_load_heal_context_is_none_for_manual_once_manual_budget_spent() -> None:
+    init_db()
+    _set_max_heal_attempts(3)
+    application = _seed_application()
+    asset = _seed_test_asset(application)
+    result = _seed_test_result(application, asset, status="failed")
+    with Session(engine) as session:
+        spent = session.exec(select(TestResult).where(TestResult.id == result.id)).one()
+        spent.manual_heal_attempt_count = 3
+        session.add(spent)
+        session.commit()
+
+    ctx = activities_module._load_heal_context_sync(
+        activities_module.HealTestActivityInput(
+            application_id=str(application.external_id),
+            test_run_id="irrelevant",
+            test_result_id=str(result.external_id),
+            triggered_manually=True,
+        )
+    )
+
+    assert ctx is None
+
+
+def test_load_heal_context_still_populated_for_manual_when_auto_is_exhausted() -> None:
+    """The core behavior this feature exists for: automatic having used its
+    full budget must never block a manual retry."""
+    init_db()
+    _set_max_heal_attempts(3)
+    application = _seed_application()
+    asset = _seed_test_asset(application)
+    result = _seed_test_result(application, asset, status="failed")
+    with Session(engine) as session:
+        spent = session.exec(select(TestResult).where(TestResult.id == result.id)).one()
+        spent.auto_heal_attempt_count = activities_module.AUTO_HEAL_ATTEMPT_CAP
+        session.add(spent)
+        session.commit()
+
+    ctx = activities_module._load_heal_context_sync(
+        activities_module.HealTestActivityInput(
+            application_id=str(application.external_id),
+            test_run_id="irrelevant",
+            test_result_id=str(result.external_id),
+            triggered_manually=True,
+        )
+    )
+
+    assert ctx is not None
+    assert ctx.attempt_cap == 3
+
+
+def test_load_heal_context_still_populated_for_automatic_when_manual_is_exhausted() -> None:
+    """The reverse direction: a fully-spent manual budget must never block
+    the next automatic attempt on this row (e.g. a subsequent Run All
+    Tests click creates a fresh TestResult anyway, but this proves the
+    query itself is origin-scoped, not accidentally coupled)."""
+    init_db()
+    _set_max_heal_attempts(3)
+    application = _seed_application()
+    asset = _seed_test_asset(application)
+    result = _seed_test_result(application, asset, status="failed")
+    with Session(engine) as session:
+        spent = session.exec(select(TestResult).where(TestResult.id == result.id)).one()
+        spent.manual_heal_attempt_count = 3
+        session.add(spent)
+        session.commit()
+
+    ctx = activities_module._load_heal_context_sync(
+        activities_module.HealTestActivityInput(
+            application_id=str(application.external_id),
+            test_run_id="irrelevant",
+            test_result_id=str(result.external_id),
+        )
+    )
+
+    assert ctx is not None
+    assert ctx.attempt_cap == activities_module.AUTO_HEAL_ATTEMPT_CAP
 
 
 def test_load_heal_context_populated_for_eligible_failed_result() -> None:
@@ -266,24 +348,48 @@ def test_load_heal_context_populated_for_eligible_failed_result() -> None:
     )
 
     assert ctx is not None
-    assert ctx.max_heal_attempts == 3
+    assert ctx.attempt_cap == activities_module.AUTO_HEAL_ATTEMPT_CAP
+    assert ctx.scenario.id == asset.scenario_id
+
+
+def test_load_heal_context_populated_for_eligible_manual_retry() -> None:
+    init_db()
+    _set_max_heal_attempts(3)
+    application = _seed_application()
+    asset = _seed_test_asset(application)
+    result = _seed_test_result(application, asset, status="failed")
+
+    ctx = activities_module._load_heal_context_sync(
+        activities_module.HealTestActivityInput(
+            application_id=str(application.external_id),
+            test_run_id="irrelevant",
+            test_result_id=str(result.external_id),
+            triggered_manually=True,
+        )
+    )
+
+    assert ctx is not None
+    assert ctx.attempt_cap == 3
     assert ctx.scenario.id == asset.scenario_id
 
 
 # --- Loop-iteration outcomes -------------------------------------------------
 
 
-def test_record_typecheck_failure_increments_count_and_sets_error() -> None:
+def test_record_typecheck_failure_increments_auto_count_and_sets_error() -> None:
     init_db()
     application = _seed_application()
     asset = _seed_test_asset(application)
     result = _seed_test_result(application, asset, status="failed")
 
-    activities_module._record_typecheck_failure_sync(result.id, ["error TS2304: Cannot find name 'foo'."])
+    activities_module._record_typecheck_failure_sync(
+        result.id, ["error TS2304: Cannot find name 'foo'."], False
+    )
 
     with Session(engine) as session:
         refreshed = session.exec(select(TestResult).where(TestResult.id == result.id)).one()
-        assert refreshed.heal_attempt_count == 1
+        assert refreshed.auto_heal_attempt_count == 1
+        assert refreshed.manual_heal_attempt_count == 0
         assert "TS2304" in (refreshed.error_message or "")
         # The TestAsset itself is untouched — a typecheck failure never
         # gets promoted.
@@ -292,6 +398,22 @@ def test_record_typecheck_failure_increments_count_and_sets_error() -> None:
         ).one()
         assert current_asset.current is True
         assert current_asset.code == "// original spec\n"
+
+
+def test_record_typecheck_failure_increments_manual_count_when_triggered_manually() -> None:
+    init_db()
+    application = _seed_application()
+    asset = _seed_test_asset(application)
+    result = _seed_test_result(application, asset, status="failed")
+
+    activities_module._record_typecheck_failure_sync(
+        result.id, ["error TS2304: Cannot find name 'foo'."], True
+    )
+
+    with Session(engine) as session:
+        refreshed = session.exec(select(TestResult).where(TestResult.id == result.id)).one()
+        assert refreshed.manual_heal_attempt_count == 1
+        assert refreshed.auto_heal_attempt_count == 0
 
 
 def test_record_heal_supersede_promotes_new_asset_and_flips_prior() -> None:
@@ -303,7 +425,7 @@ def test_record_heal_supersede_promotes_new_asset_and_flips_prior() -> None:
     asset = _seed_test_asset(application)
     result = _seed_test_result(application, asset, status="failed")
 
-    activities_module._record_heal_supersede_sync(result.id, asset.id, "// healed spec\n")
+    activities_module._record_heal_supersede_sync(result.id, asset.id, "// healed spec\n", False)
 
     with Session(engine) as session:
         prior = session.exec(select(TestAsset).where(TestAsset.id == asset.id)).one()
@@ -319,5 +441,20 @@ def test_record_heal_supersede_promotes_new_asset_and_flips_prior() -> None:
         assert new_asset.code == "// healed spec\n"
 
         refreshed_result = session.exec(select(TestResult).where(TestResult.id == result.id)).one()
-        assert refreshed_result.heal_attempt_count == 1
+        assert refreshed_result.auto_heal_attempt_count == 1
+        assert refreshed_result.manual_heal_attempt_count == 0
         assert refreshed_result.healed_test_asset_id == new_asset.id
+
+
+def test_record_heal_supersede_increments_manual_count_when_triggered_manually() -> None:
+    init_db()
+    application = _seed_application()
+    asset = _seed_test_asset(application)
+    result = _seed_test_result(application, asset, status="failed")
+
+    activities_module._record_heal_supersede_sync(result.id, asset.id, "// healed spec\n", True)
+
+    with Session(engine) as session:
+        refreshed_result = session.exec(select(TestResult).where(TestResult.id == result.id)).one()
+        assert refreshed_result.manual_heal_attempt_count == 1
+        assert refreshed_result.auto_heal_attempt_count == 0

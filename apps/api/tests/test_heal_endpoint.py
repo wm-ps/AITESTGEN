@@ -189,11 +189,26 @@ def test_heal_returns_409_when_attempt_budget_already_spent() -> None:
     _set_max_heal_attempts(3)
     client = _signed_in_client("Org Heal Exhausted")
     application = _create_application(client, "Exhausted App")
-    result = _seed_test_result(application, status="failed", heal_attempt_count=3)
+    result = _seed_test_result(application, status="failed", manual_heal_attempt_count=3)
 
     response = client.post(f"/test-results/{result.external_id}/heal")
 
     assert response.status_code == 409
+
+
+def test_heal_succeeds_when_only_automatic_budget_is_spent() -> None:
+    """The behavior this feature exists for: automatic healing having
+    already used its own (independent) budget must never block a manual
+    retry — the manual endpoint checks manual_heal_attempt_count only."""
+    init_db()
+    _set_max_heal_attempts(3)
+    client = _signed_in_client("Org Heal Auto Exhausted")
+    application = _create_application(client, "Auto Exhausted App")
+    result = _seed_test_result(application, status="failed", auto_heal_attempt_count=2)
+
+    response = client.post(f"/test-results/{result.external_id}/heal")
+
+    assert response.status_code != 409
 
 
 def test_heal_returns_409_when_a_heal_is_already_in_progress() -> None:

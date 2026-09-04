@@ -62,6 +62,7 @@ from test_suite_assembler import (
     find_login_page_evidence,
 )
 from workflows import (
+    AUTO_HEAL_ATTEMPT_CAP,
     HEAL_CLAIM_STALE_AFTER,
     HEALABLE_STATUSES,
     ExecutableTest,
@@ -886,7 +887,7 @@ def _persist_test_result_sync(test_run_id: str, context: _ExecutionContext, outc
 # A same-code, no-AI-call rerun when the *current* failure is infra, not a
 # code defect — bounds a persistently-down target application to one extra
 # rerun per check rather than spinning this activity forever. Never
-# increments TestResult.heal_attempt_count.
+# increments either of TestResult's auto_/manual_heal_attempt_count.
 MAX_INFRA_RETRIES_PER_CALL = 1
 
 _INFRA_ERROR_SIGNATURES = (
@@ -1022,7 +1023,10 @@ class _HealContext:
     # heal repeatedly regenerating the same TS2345 type mismatch.
     field_input_types: dict[str, str]
     spec_path: str
-    max_heal_attempts: int
+    # The resolved cap for *this* invocation's origin — AUTO_HEAL_ATTEMPT_CAP
+    # for automatic (input.triggered_manually=False), or
+    # DiscoverySettings.max_heal_attempts for manual. Never a shared value.
+    attempt_cap: int
 
 
 def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None:
@@ -1031,14 +1035,17 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
             select(TestResult).where(TestResult.external_id == uuid.UUID(input.test_result_id))
         ).one()
         discovery_settings = session.exec(select(DiscoverySettings)).one()
-        if (
-            test_result.status not in HEALABLE_STATUSES
-            or test_result.heal_attempt_count >= discovery_settings.max_heal_attempts
-        ):
-            # Not eligible — already passed/blocked, or the shared budget is
-            # already spent. Safe no-op: this is what lets HealTestActivity
-            # be called unconditionally after every ExecuteTestActivity with
-            # no branching in workflow code.
+        if input.triggered_manually:
+            current_count = test_result.manual_heal_attempt_count
+            attempt_cap = discovery_settings.max_heal_attempts
+        else:
+            current_count = test_result.auto_heal_attempt_count
+            attempt_cap = AUTO_HEAL_ATTEMPT_CAP
+        if test_result.status not in HEALABLE_STATUSES or current_count >= attempt_cap:
+            # Not eligible — already passed/blocked, or this origin's own
+            # budget is already spent. Safe no-op: this is what lets
+            # HealTestActivity be called unconditionally after every
+            # ExecuteTestActivity with no branching in workflow code.
             return None
 
         application = session.exec(
@@ -1078,7 +1085,7 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
             known_locators=known_locators,
             field_input_types=field_input_types,
             spec_path=spec_path_by_asset_id[test_asset.id],
-            max_heal_attempts=discovery_settings.max_heal_attempts,
+            attempt_cap=attempt_cap,
         )
 
 
@@ -1092,7 +1099,9 @@ class _HealLoopState:
     test_asset: TestAsset
 
 
-def _load_heal_loop_state_sync(test_result_pk: uuid.UUID, scenario_id: uuid.UUID) -> _HealLoopState:
+def _load_heal_loop_state_sync(
+    test_result_pk: uuid.UUID, scenario_id: uuid.UUID, triggered_manually: bool
+) -> _HealLoopState:
     """Reloaded fresh at the top of every loop iteration (rather than
     threading a stale in-memory TestAsset/TestResult across iterations) —
     each attempt's `supersede_test_asset`/typecheck-failure write commits in
@@ -1115,7 +1124,11 @@ def _load_heal_loop_state_sync(test_result_pk: uuid.UUID, scenario_id: uuid.UUID
             error_message=test_result.error_message,
             stack_trace=test_result.stack_trace,
             console_output=test_result.console_output,
-            heal_attempt_count=test_result.heal_attempt_count,
+            heal_attempt_count=(
+                test_result.manual_heal_attempt_count
+                if triggered_manually
+                else test_result.auto_heal_attempt_count
+            ),
             test_asset=test_asset,
         )
 
@@ -1144,16 +1157,23 @@ def _fetch_latest_screenshot_sync(test_result_pk: uuid.UUID) -> bytes | None:
         return None
 
 
-def _record_typecheck_failure_sync(test_result_pk: uuid.UUID, tsc_errors: list[str]) -> None:
+def _record_typecheck_failure_sync(
+    test_result_pk: uuid.UUID, tsc_errors: list[str], triggered_manually: bool
+) -> None:
     with Session(engine) as session:
         test_result = session.exec(select(TestResult).where(TestResult.id == test_result_pk)).one()
-        test_result.heal_attempt_count += 1
+        if triggered_manually:
+            test_result.manual_heal_attempt_count += 1
+        else:
+            test_result.auto_heal_attempt_count += 1
         test_result.error_message = "generated fix failed typecheck: " + "; ".join(tsc_errors[:5])
         session.add(test_result)
         session.commit()
 
 
-def _record_heal_supersede_sync(test_result_pk: uuid.UUID, prior_test_asset_id: uuid.UUID, code: str) -> None:
+def _record_heal_supersede_sync(
+    test_result_pk: uuid.UUID, prior_test_asset_id: uuid.UUID, code: str, triggered_manually: bool
+) -> None:
     """Typecheck passed — promote immediately (a healed candidate becomes
     `current` the moment it typechecks clean, regardless of what the
     subsequent real run does) and record it as this attempt's
@@ -1174,7 +1194,10 @@ def _record_heal_supersede_sync(test_result_pk: uuid.UUID, prior_test_asset_id: 
         )
         session.flush()
         test_result = session.exec(select(TestResult).where(TestResult.id == test_result_pk)).one()
-        test_result.heal_attempt_count += 1
+        if triggered_manually:
+            test_result.manual_heal_attempt_count += 1
+        else:
+            test_result.auto_heal_attempt_count += 1
         test_result.healed_test_asset_id = new_asset.id
         session.add(test_result)
         session.commit()
@@ -1190,11 +1213,19 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
     failure here (subprocess couldn't start, DB write failed) is what
     Temporal's own retry_policy on this activity call handles.
 
+    input.triggered_manually selects which of TestResult's two independent
+    budgets this invocation reads and increments: False (automatic)
+    spends only auto_heal_attempt_count, capped at the fixed
+    AUTO_HEAL_ATTEMPT_CAP; True (manual) spends only
+    manual_heal_attempt_count, capped at the admin-configurable
+    DiscoverySettings.max_heal_attempts. Neither origin can ever consume
+    the other's budget.
+
     The heal loop, one iteration:
       real execution -> failure evidence -> AI diagnosis -> targeted edit ->
       typecheck -> update current TestAsset -> real re-execution -> new
       failure evidence -> (pass | no-progress stop | loop again), bounded by
-      the configurable DiscoverySettings.max_heal_attempts.
+      this invocation's own attempt_cap.
     """
     claimed = await asyncio.to_thread(_claim_heal_sync, input.test_result_id)
     if not claimed:
@@ -1223,10 +1254,10 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
         # Step 2 — infra check on the failure that triggered healing, before
         # any AI call or attempt is spent. A same-code, no-AI-call rerun;
         # still infra after that one bounded retry stops here entirely,
-        # leaving heal_attempt_count untouched for a later trigger once the
-        # environment issue clears.
+        # leaving this origin's attempt count untouched for a later trigger
+        # once the environment issue clears.
         initial_state = await asyncio.to_thread(
-            _load_heal_loop_state_sync, ctx.test_result_pk, ctx.scenario.id
+            _load_heal_loop_state_sync, ctx.test_result_pk, ctx.scenario.id, input.triggered_manually
         )
         if _is_infra_failure(initial_state.status, initial_state.error_message):
             outcome = await _run_playwright_with_infra_retry(
@@ -1261,9 +1292,9 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
         repair: tuple[str, list[str]] | None = None
         while True:
             state = await asyncio.to_thread(
-                _load_heal_loop_state_sync, ctx.test_result_pk, ctx.scenario.id
+                _load_heal_loop_state_sync, ctx.test_result_pk, ctx.scenario.id, input.triggered_manually
             )
-            if state.status not in HEALABLE_STATUSES or state.heal_attempt_count >= ctx.max_heal_attempts:
+            if state.status not in HEALABLE_STATUSES or state.heal_attempt_count >= ctx.attempt_cap:
                 break
             if _is_infra_failure(state.status, state.error_message):
                 # Already resolved by the step-2 pre-check above; landing
@@ -1329,7 +1360,9 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
                 # the next attempt sees precisely what it wrote and why it
                 # broke, instead of blindly retrying from the same original
                 # baseline with only a summarized error string.
-                await asyncio.to_thread(_record_typecheck_failure_sync, ctx.test_result_pk, tsc_errors)
+                await asyncio.to_thread(
+                    _record_typecheck_failure_sync, ctx.test_result_pk, tsc_errors, input.triggered_manually
+                )
                 repair = (code_result.code, tsc_errors)
                 continue
 
@@ -1339,7 +1372,11 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
             # TestAsset, not another compile-fix retry of a discarded draft.
             repair = None
             await asyncio.to_thread(
-                _record_heal_supersede_sync, ctx.test_result_pk, state.test_asset.id, code_result.code
+                _record_heal_supersede_sync,
+                ctx.test_result_pk,
+                state.test_asset.id,
+                code_result.code,
+                input.triggered_manually,
             )
 
             spec_file = project_dir / ctx.spec_path

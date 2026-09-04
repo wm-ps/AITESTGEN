@@ -261,7 +261,7 @@ async def test_failed_candidate_and_diagnostics_carry_forward_as_repair(
         ).one()
         # Both the typecheck-failed attempt and the typecheck-passed
         # attempt each consumed exactly one heal attempt — 2 total, not 1.
-        assert refreshed_result.heal_attempt_count == 2
+        assert refreshed_result.auto_heal_attempt_count == 2
         assert refreshed_result.status == "passed"
 
         new_asset = session.exec(
