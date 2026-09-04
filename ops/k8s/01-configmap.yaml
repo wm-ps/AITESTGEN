@@ -33,4 +33,5 @@ data:
   SMTP_HOST: "smtp.gmail.com"
   SMTP_PORT: "587"
   SMTP_USER: "ps-tools@wavemaker.com"
-  SMTP_FROM: "ps-tools@wavemaker.com"  
+  SMTP_FROM: "ps-tools@wavemaker.com"
+  SCHEDULE_DEFAULT_TIME_ZONE: "Asia/Kolkata"
