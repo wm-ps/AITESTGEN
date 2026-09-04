@@ -19,6 +19,7 @@ function StepPreview({ kind }: { kind: (typeof WIZARD_STEPS)[number]['kind'] }) 
   if (kind === 'scan') {
     return (
       <div
+        className="stat-tile-hover"
         style={{
           background: 'var(--canvas)',
           border: '1px solid rgba(15,23,42,0.08)',
@@ -73,6 +74,7 @@ function StepPreview({ kind }: { kind: (typeof WIZARD_STEPS)[number]['kind'] }) 
   if (kind === 'discover' || kind === 'generate') {
     return (
       <div
+        className="stat-tile-hover"
         style={{
           background: 'var(--canvas)',
           border: '1px solid rgba(15,23,42,0.08)',
@@ -88,6 +90,7 @@ function StepPreview({ kind }: { kind: (typeof WIZARD_STEPS)[number]['kind'] }) 
         {JOURNEY_ROWS.map((name, i) => (
           <div
             key={name}
+            className="stat-tile-hover"
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -152,6 +155,7 @@ function StepPreview({ kind }: { kind: (typeof WIZARD_STEPS)[number]['kind'] }) 
 
   return (
     <div
+      className="stat-tile-hover"
       style={{
         background: 'var(--canvas)',
         border: '1px solid rgba(15,23,42,0.08)',
@@ -169,11 +173,11 @@ function StepPreview({ kind }: { kind: (typeof WIZARD_STEPS)[number]['kind'] }) 
         <div style={{ height: '100%', background: 'var(--good)', borderRadius: 999, animation: 'aitg-bar-fill 1.1s ease-out both' }} />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <div style={{ background: 'var(--canvas-wash)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '6px 10px' }}>
+        <div className="stat-tile-hover" style={{ background: 'var(--canvas-wash)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '6px 10px' }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)' }}>15</div>
           <div style={{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 2 }}>Journeys mapped</div>
         </div>
-        <div style={{ background: 'var(--canvas-wash)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '6px 10px' }}>
+        <div className="stat-tile-hover" style={{ background: 'var(--canvas-wash)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '6px 10px' }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)' }}>312</div>
           <div style={{ fontSize: 11.5, color: 'var(--ink-muted)', marginTop: 2 }}>Tests generated</div>
         </div>
@@ -242,7 +246,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
     >
       <section
         style={{
-          flex: '0 1 62%',
+          flex: '0 1 58%',
           minWidth: 0,
           height: '100%',
           position: 'relative',
@@ -250,7 +254,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'flex-start',
-          padding: '64px 24px 18px 40px',
+          padding: '24px 40px 18px 32px',
           boxSizing: 'border-box',
           background: 'linear-gradient(165deg, #FFFFFF 0%, #F4F6FA 45%, #ECEFF5 100%)',
         }}
@@ -289,13 +293,13 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
             display: 'flex',
             alignItems: 'center',
             gap: 10,
-            marginBottom: 6,
+            marginBottom: 18,
             flexShrink: 0,
             cursor: DEV_LOGIN_ENABLED ? 'pointer' : undefined,
             animation: 'aitg-materialize 0.6s ease-out both',
           }}
         >
-          <VantageBrand markSize={32} />
+          <VantageBrand markSize={24} />
         </div>
 
         <h1
@@ -311,7 +315,9 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
             animation: 'aitg-materialize 0.6s ease-out 0.08s both',
           }}
         >
-          Point it at your app. <span style={{ color: 'var(--accent)' }}>Get a production-ready test suite back.</span>
+          Point it at your app.
+          <br />
+          <span style={{ color: 'var(--accent)' }}>Get a production-ready test suite back.</span>
         </h1>
         <div
           style={{
@@ -330,52 +336,66 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
 
         <div
           style={{
-            position: 'relative',
             maxWidth: '100%',
-            paddingLeft: 32,
             paddingRight: 8,
             animation: 'aitg-materialize 0.7s ease-out 0.22s both',
           }}
         >
-          <div style={{ position: 'absolute', left: 11, top: 8, bottom: 16, width: 1.5, background: 'var(--border)' }} />
-
           {WIZARD_STEPS.map((step, i) => {
             const completed = i < activeStep
             const active = i === activeStep
+            const isLast = i === WIZARD_STEPS.length - 1
             return (
-              <div
-                key={step.label}
-                onClick={() => setActiveStep(i)}
-                style={{ position: 'relative', marginBottom: 8, cursor: 'pointer' }}
-              >
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: -32,
-                    top: 0,
-                    width: 26,
-                    height: 26,
-                    borderRadius: 'var(--radius-full)',
-                    background: completed ? 'var(--good-wash)' : active ? 'var(--accent-wash)' : 'var(--canvas-wash-alt)',
-                    color: completed ? 'var(--good)' : active ? 'var(--accent)' : 'var(--ink-muted)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 12,
-                    fontWeight: 700,
-                    transition: 'background-color 0.25s ease, color 0.25s ease',
-                  }}
-                >
-                  {completed ? <span style={{ animation: 'aitg-check-pop 0.3s ease-out both' }}>✓</span> : i + 1}
-                </div>
-                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--ink)', marginBottom: 4 }}>{step.label}</div>
-                <div style={{ fontSize: 13.5, color: 'var(--ink-muted)', marginBottom: active ? 5 : 0 }}>{step.desc}</div>
-
-                {active && (
-                  <div style={{ height: 166, overflow: 'hidden', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-                    <StepPreview kind={step.kind} />
+              <div key={step.label} onClick={() => setActiveStep(i)} style={{ display: 'flex', cursor: 'pointer' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: 26, flexShrink: 0, marginRight: 14 }}>
+                  <div
+                    style={{
+                      width: 26,
+                      height: 26,
+                      flexShrink: 0,
+                      borderRadius: 'var(--radius-full)',
+                      background: completed
+                        ? 'linear-gradient(var(--good-wash), var(--good-wash)), var(--canvas)'
+                        : active
+                          ? 'linear-gradient(var(--accent-wash), var(--accent-wash)), var(--canvas)'
+                          : 'var(--canvas-wash-alt)',
+                      color: completed ? 'var(--good)' : active ? 'var(--accent)' : 'var(--ink-secondary)',
+                      border: `1.5px solid ${completed ? 'var(--good)' : active ? 'var(--accent)' : 'var(--border-strong)'}`,
+                      boxShadow: active ? '0 0 0 4px var(--accent-wash)' : 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 12,
+                      fontWeight: 700,
+                      transition: 'background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease',
+                    }}
+                  >
+                    {completed ? <span style={{ animation: 'aitg-check-pop 0.3s ease-out both' }}>✓</span> : i + 1}
                   </div>
-                )}
+                  {!isLast && (
+                    <div
+                      style={{
+                        flex: 1,
+                        width: 1.5,
+                        marginTop: 2,
+                        background:
+                          'linear-gradient(180deg, transparent, var(--accent) 45%, transparent 90%), var(--border)',
+                        backgroundSize: '100% 200%, 100% 100%',
+                        animation: 'aitg-line-flow 3s linear infinite',
+                      }}
+                    />
+                  )}
+                </div>
+                <div style={{ flex: 1, paddingBottom: 8 }}>
+                  <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--ink)', marginBottom: 4 }}>{step.label}</div>
+                  <div style={{ fontSize: 13.5, color: 'var(--ink-muted)', marginBottom: active ? 5 : 0 }}>{step.desc}</div>
+
+                  {active && (
+                    <div style={{ height: 166, overflow: 'hidden', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                      <StepPreview kind={step.kind} />
+                    </div>
+                  )}
+                </div>
               </div>
             )
           })}
@@ -384,7 +404,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
 
       <section
         style={{
-          flex: '0 1 38%',
+          flex: '0 1 42%',
           minWidth: 0,
           height: '100%',
           position: 'relative',
@@ -392,7 +412,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
           flexDirection: 'column',
           alignItems: 'center',
           justifyContent: 'center',
-          padding: '40px',
+          padding: '40px 56px',
           boxSizing: 'border-box',
           overflowY: 'auto',
           background: '#fff',
