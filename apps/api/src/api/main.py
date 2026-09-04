@@ -52,6 +52,7 @@ from temporalio.client import Client as TemporalClient
 from temporalio.client import Schedule as TemporalSchedule
 from temporalio.client import (
     ScheduleActionStartWorkflow,
+    ScheduleState,
     ScheduleUpdateInput,
 )
 from temporalio.client import ScheduleUpdate as TemporalScheduleUpdate
@@ -128,6 +129,16 @@ _allowed_origins = [
     for origin in os.environ.get("CORS_ALLOWED_ORIGINS", _default_origins).split(",")
     if origin.strip()
 ]
+
+# IANA zone every new Schedule gets (auto-seeded defaults and manually
+# created ones alike — there's no create-time user input for this anymore).
+# Overridable per-environment via SCHEDULE_DEFAULT_TIME_ZONE, same pattern
+# as CORS_ALLOWED_ORIGINS above. Defaults to UTC: a valid IANA zone with no
+# DST to get wrong, and this backend has no reliable way to auto-detect the
+# host OS's own zone as an IANA name (no tzlocal dependency, and the stdlib
+# only exposes a display name like "India Standard Time", which
+# `validate_time_zone` would reject outright).
+SCHEDULE_DEFAULT_TIME_ZONE = os.environ.get("SCHEDULE_DEFAULT_TIME_ZONE", "UTC")
 
 app.add_middleware(
     CORSMiddleware,
@@ -570,6 +581,10 @@ async def create_application(
     # the same request — no separate "start discovery" action (AC 4). The
     # DiscoveryRun-creation logic itself is Story 2.1's (api.discovery).
     discovery_run = await start_discovery_run(session, application)
+
+    # Three ready-made-but-disabled schedules so a team can flip one on
+    # instead of hand-configuring cadence from a blank dialog.
+    await _seed_default_schedules(session, application)
 
     return _to_application_read(session, application, discovery_run)
 
@@ -2587,6 +2602,11 @@ async def execution_status(
 
 
 class ScheduleCreate(BaseModel):
+    """No `time_zone` — every new schedule (manual or auto-seeded) gets
+    `SCHEDULE_DEFAULT_TIME_ZONE` unconditionally, see `create_schedule`
+    below. `ScheduleUpdate.time_zone` still exists for an explicit PATCH
+    override; there is just no create-time input for it anymore."""
+
     name: str
     cadence_type: str
     hour: int | None = None
@@ -2594,7 +2614,6 @@ class ScheduleCreate(BaseModel):
     days_of_week: list[int] = []
     day_of_month: int | None = None
     cron_expression: str | None = None
-    time_zone: str
 
 
 class ScheduleUpdate(BaseModel):
@@ -2814,48 +2833,49 @@ async def list_schedules(
     return results
 
 
-@app.post(
-    "/applications/{external_id}/schedules", response_model=ScheduleRead, status_code=201
-)
-async def create_schedule(
-    external_id: uuid.UUID,
-    payload: ScheduleCreate,
-    session: SessionDep,
-    organization_id: CurrentOrgIdDep,
-    user: CurrentUserDep,
-) -> ScheduleRead:
-    """Deliberately does NOT `has_pollers` check (unlike `trigger_test_run`/
-    `trigger_schedule_now`): a schedule created now to fire at 2am has no
-    business failing because the execution worker happens to be restarting
-    right now — see this module's accepted-limitation note above."""
-    application = _get_org_application(session, organization_id, external_id)
-
-    try:
-        validate_cadence(
-            cadence_type=payload.cadence_type,
-            hour=payload.hour,
-            minute=payload.minute,
-            days_of_week=payload.days_of_week,
-            day_of_month=payload.day_of_month,
-            cron_expression=payload.cron_expression,
-            time_zone=payload.time_zone,
-        )
-    except ScheduleSpecError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from None
+async def _create_schedule_row(
+    session: Session,
+    application: Application,
+    *,
+    name: str,
+    cadence_type: str,
+    hour: int | None,
+    minute: int | None,
+    days_of_week: list[int],
+    day_of_month: int | None,
+    cron_expression: str | None,
+    time_zone: str,
+    enabled: bool,
+    created_by_name: str | None,
+) -> Schedule:
+    """Row + matching Temporal Schedule, shared by the user-triggered
+    `create_schedule` endpoint and default-schedule seeding at Application
+    creation time. Raises `ScheduleSpecError` / `IntegrityError` /
+    `RPCError`|`RuntimeError` on failure — callers decide how to react (HTTP
+    error for the endpoint, best-effort skip for default seeding)."""
+    validate_cadence(
+        cadence_type=cadence_type,
+        hour=hour,
+        minute=minute,
+        days_of_week=days_of_week,
+        day_of_month=day_of_month,
+        cron_expression=cron_expression,
+        time_zone=time_zone,
+    )
 
     schedule = Schedule(
         application_id=application.id,
-        name=payload.name,
-        cadence_type=payload.cadence_type,
-        hour=payload.hour,
-        minute=payload.minute,
-        days_of_week=payload.days_of_week,
-        day_of_month=payload.day_of_month,
-        cron_expression=payload.cron_expression,
-        time_zone=payload.time_zone,
-        enabled=True,
+        name=name,
+        cadence_type=cadence_type,
+        hour=hour,
+        minute=minute,
+        days_of_week=days_of_week,
+        day_of_month=day_of_month,
+        cron_expression=cron_expression,
+        time_zone=time_zone,
+        enabled=enabled,
         temporal_schedule_id="",  # set below, derived from external_id
-        created_by_name=user.name,
+        created_by_name=created_by_name,
     )
     schedule.temporal_schedule_id = f"app-schedule-{schedule.external_id}"
     session.add(schedule)
@@ -2869,9 +2889,7 @@ async def create_schedule(
         session.flush()
     except IntegrityError:
         session.rollback()
-        raise HTTPException(
-            status_code=409, detail="a schedule with this name already exists"
-        ) from None
+        raise
 
     client = await get_temporal_client()
     try:
@@ -2881,11 +2899,12 @@ async def create_schedule(
                 action=_build_schedule_action(schedule, application.external_id),
                 spec=build_schedule_spec(schedule),
                 policy=build_schedule_policy(),
+                state=ScheduleState(paused=not enabled),
             ),
         )
-    except (RPCError, RuntimeError) as exc:
+    except (RPCError, RuntimeError):
         session.rollback()
-        raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
+        raise
 
     try:
         session.commit()
@@ -2907,6 +2926,106 @@ async def create_schedule(
         raise
 
     session.refresh(schedule)
+    return schedule
+
+
+_DEFAULT_SCHEDULE_SPECS: list[dict[str, object]] = [
+    {
+        "name": "Nightly Regression",
+        "cadence_type": "daily",
+        "hour": 2,
+        "minute": 0,
+        "days_of_week": [],
+        "day_of_month": None,
+        "cron_expression": None,
+    },
+    {
+        "name": "Weekly Regression",
+        "cadence_type": "weekly",
+        "hour": 2,
+        "minute": 0,
+        "days_of_week": [1],  # Monday — Schedule's own 0=Sun..6=Sat numbering
+        "day_of_month": None,
+        "cron_expression": None,
+    },
+    {
+        "name": "Monthly Regression",
+        "cadence_type": "monthly",
+        "hour": 2,
+        "minute": 0,
+        "days_of_week": [],
+        "day_of_month": 1,
+        "cron_expression": None,
+    },
+]
+
+
+async def _seed_default_schedules(session: Session, application: Application) -> None:
+    """Three ready-made-but-disabled schedules on every new Application, so
+    a team can flip one on immediately without hand-configuring cadence.
+    Best-effort per schedule — same "must never block the primary action"
+    philosophy as delete_application's own pause-on-delete: a Temporal
+    hiccup here must not fail Application creation, which the user is
+    actively waiting on."""
+    for spec in _DEFAULT_SCHEDULE_SPECS:
+        try:
+            await _create_schedule_row(
+                session,
+                application,
+                time_zone=SCHEDULE_DEFAULT_TIME_ZONE,
+                enabled=False,
+                created_by_name=None,
+                **spec,  # type: ignore[arg-type]
+            )
+        except (ScheduleSpecError, IntegrityError, RPCError, RuntimeError):
+            logger.warning(
+                "could not seed default schedule %r for application %s",
+                spec["name"],
+                application.external_id,
+            )
+
+
+@app.post(
+    "/applications/{external_id}/schedules", response_model=ScheduleRead, status_code=201
+)
+async def create_schedule(
+    external_id: uuid.UUID,
+    payload: ScheduleCreate,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
+) -> ScheduleRead:
+    """Deliberately does NOT `has_pollers` check (unlike `trigger_test_run`/
+    `trigger_schedule_now`): a schedule created now to fire at 2am has no
+    business failing because the execution worker happens to be restarting
+    right now — see this module's accepted-limitation note above."""
+    application = _get_org_application(session, organization_id, external_id)
+
+    try:
+        schedule = await _create_schedule_row(
+            session,
+            application,
+            name=payload.name,
+            cadence_type=payload.cadence_type,
+            hour=payload.hour,
+            minute=payload.minute,
+            days_of_week=payload.days_of_week,
+            day_of_month=payload.day_of_month,
+            cron_expression=payload.cron_expression,
+            time_zone=SCHEDULE_DEFAULT_TIME_ZONE,
+            enabled=True,
+            created_by_name=user.name,
+        )
+    except ScheduleSpecError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    except IntegrityError:
+        raise HTTPException(
+            status_code=409, detail="a schedule with this name already exists"
+        ) from None
+    except (RPCError, RuntimeError) as exc:
+        raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
+
+    client = await get_temporal_client()
     enabled, next_run_at = await _describe_schedule_state(client, schedule)
     return _to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at)
 

@@ -239,7 +239,6 @@ export type ScheduleCreate = {
   days_of_week?: number[]
   day_of_month?: number | null
   cron_expression?: string | null
-  time_zone: string
 }
 export type ScheduleUpdate = Partial<ScheduleCreate>
 

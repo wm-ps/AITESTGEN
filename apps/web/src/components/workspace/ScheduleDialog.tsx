@@ -34,14 +34,6 @@ const MINUTES = [0, 15, 30, 45]
 // months.
 const DAYS_OF_MONTH = Array.from({ length: 28 }, (_, i) => i + 1)
 
-// Intl.supportedValuesOf is available in every browser this app targets;
-// the short fallback list exists only so jsdom (vitest) renders something.
-const TIME_ZONES: string[] =
-  (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf?.(
-    'timeZone',
-  ) ?? ['UTC', 'Asia/Kolkata', 'America/New_York', 'Europe/London']
-const BROWSER_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone
-
 type FormState = {
   name: string
   cadenceType: ScheduleCadenceType
@@ -50,7 +42,6 @@ type FormState = {
   daysOfWeek: Set<number>
   dayOfMonth: number
   cronExpression: string
-  timeZone: string
 }
 
 function blankForm(): FormState {
@@ -62,7 +53,6 @@ function blankForm(): FormState {
     daysOfWeek: new Set([1]), // Monday
     dayOfMonth: 1,
     cronExpression: '',
-    timeZone: TIME_ZONES.includes(BROWSER_TIME_ZONE) ? BROWSER_TIME_ZONE : 'UTC',
   }
 }
 
@@ -75,12 +65,14 @@ function formFromSchedule(schedule: ScheduleRead): FormState {
     daysOfWeek: new Set(schedule.days_of_week),
     dayOfMonth: schedule.day_of_month ?? 1,
     cronExpression: schedule.cron_expression ?? '',
-    timeZone: schedule.time_zone,
   }
 }
 
 function toPayload(form: FormState): ScheduleCreate {
-  const base = { name: form.name.trim(), cadence_type: form.cadenceType, time_zone: form.timeZone }
+  // No time_zone — the server stamps every new schedule with its own
+  // configured default (SCHEDULE_DEFAULT_TIME_ZONE); there's nothing for
+  // this dialog to send.
+  const base = { name: form.name.trim(), cadence_type: form.cadenceType }
   if (form.cadenceType === 'custom_cron') {
     return { ...base, cron_expression: form.cronExpression.trim() }
   }
@@ -248,8 +240,8 @@ export function ScheduleDialog({
                   onChange={(e) => setForm({ ...form, cronExpression: e.target.value })}
                 />
                 <span className="caption" style={{ fontSize: 12 }}>
-                  Five fields: minute hour day-of-month month day-of-week. Interpreted in the time
-                  zone below.
+                  Five fields: minute hour day-of-month month day-of-week. Interpreted in this
+                  server's configured time zone.
                 </span>
               </label>
             ) : (
@@ -276,20 +268,6 @@ export function ScheduleDialog({
                 </label>
               </div>
             )}
-
-            <label className="field">
-              <FieldLabel>Time zone</FieldLabel>
-              {/* Explicit IANA zone, never a UTC offset — mirrors this
-                  feature's backend Schedule.time_zone, which avoids DST
-                  bugs by construction. */}
-              <select value={form.timeZone} onChange={(e) => setForm({ ...form, timeZone: e.target.value })}>
-                {TIME_ZONES.map((tz) => (
-                  <option key={tz} value={tz}>
-                    {tz}
-                  </option>
-                ))}
-              </select>
-            </label>
 
             <p
               className="caption"

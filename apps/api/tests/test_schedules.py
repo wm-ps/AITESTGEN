@@ -7,6 +7,15 @@ a test creates must be explicitly torn down or it leaks into every
 subsequent run (and keeps firing against a database that no longer has the
 Application/data it was pointed at). `temporal_schedule_cleanup` tracks and
 deletes every schedule id created by a test.
+
+Every Application now gets 3 auto-seeded, disabled default schedules
+("Nightly Regression", "Weekly Regression", "Monthly Regression") at
+creation time — see `_seed_default_schedules` in `api.main`.
+`_create_application` below tracks those for cleanup too, and
+`_create_schedule`'s own default test-schedule name is deliberately NOT
+"Nightly Regression" (or any of the other two default names), since that
+would collide with the auto-seeded row of the same name on every fresh
+Application.
 """
 
 import asyncio
@@ -28,6 +37,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 from temporalio.client import ScheduleActionStartWorkflow, ScheduleOverlapPolicy
 from temporalio.service import RPCError, RPCStatusCode
+
+DEFAULT_SCHEDULE_NAMES = {"Nightly Regression", "Weekly Regression", "Monthly Regression"}
 
 
 def _db_available() -> bool:
@@ -71,7 +82,10 @@ def _signed_in_client(org_name: str) -> TestClient:
     return client
 
 
-def _create_application(client: TestClient, name: str) -> dict:
+def _create_application(client: TestClient, name: str, tracked: list[str]) -> dict:
+    """Also registers the 3 auto-seeded default schedules' Temporal ids into
+    `tracked`, so `temporal_schedule_cleanup` tears them down too — every
+    call site must pass its `temporal_schedule_cleanup` fixture list."""
     response = client.post(
         "/applications",
         json={
@@ -84,7 +98,10 @@ def _create_application(client: TestClient, name: str) -> dict:
         },
     )
     assert response.status_code == 201
-    return response.json()
+    body = response.json()
+    for schedule in client.get(f"/applications/{body['id']}/schedules").json():
+        tracked.append(f"app-schedule-{schedule['id']}")
+    return body
 
 
 @pytest.fixture
@@ -109,12 +126,14 @@ def temporal_schedule_cleanup():
 def _create_schedule(
     client: TestClient, application_id: str, tracked: list[str], **overrides
 ) -> dict:
+    # Deliberately not any of DEFAULT_SCHEDULE_NAMES — every Application
+    # already has those 3 (disabled) from creation, so reusing one here
+    # would 409 on the partial-unique-index instead of creating a new row.
     payload = dict(
-        name="Nightly Regression",
+        name="Ad Hoc Regression",
         cadence_type="daily",
         hour=2,
         minute=30,
-        time_zone="Asia/Kolkata",
     )
     payload.update(overrides)
     response = client.post(f"/applications/{application_id}/schedules", json=payload)
@@ -128,31 +147,70 @@ async def _describe(temporal_schedule_id: str):
     return await client.get_schedule_handle(temporal_schedule_id).describe()
 
 
+class TestDefaultSchedules:
+    def test_new_application_gets_three_disabled_defaults(
+        self, temporal_schedule_cleanup: list[str]
+    ) -> None:
+        init_db()
+        client = _signed_in_client("Org Schedule Defaults")
+        application = _create_application(client, "Schedule Defaults App", temporal_schedule_cleanup)
+
+        body = client.get(f"/applications/{application['id']}/schedules").json()
+        by_name = {s["name"]: s for s in body}
+
+        assert set(by_name) == DEFAULT_SCHEDULE_NAMES
+        assert all(s["enabled"] is False for s in by_name.values())
+        assert all(s["time_zone"] == "UTC" for s in by_name.values())
+
+        nightly = by_name["Nightly Regression"]
+        assert nightly["cadence_type"] == "daily"
+        assert (nightly["hour"], nightly["minute"]) == (2, 0)
+        assert nightly["cadence_label"] == "Every day at 02:00"
+
+        weekly = by_name["Weekly Regression"]
+        assert weekly["cadence_type"] == "weekly"
+        assert weekly["days_of_week"] == [1]  # Monday
+        assert weekly["cadence_label"] == "Every Mon at 02:00"
+
+        monthly = by_name["Monthly Regression"]
+        assert monthly["cadence_type"] == "monthly"
+        assert monthly["day_of_month"] == 1
+        assert monthly["cadence_label"] == "Day 1 of every month at 02:00"
+
+        # Each default is a real, independently paused Temporal Schedule,
+        # not just a DB row claiming enabled=False.
+        for schedule in by_name.values():
+            description = asyncio.run(_describe(f"app-schedule-{schedule['id']}"))
+            assert description.schedule.state.paused is True
+
+
 class TestCreateSchedule:
     def test_create_daily_schedule(self, temporal_schedule_cleanup: list[str]) -> None:
         init_db()
         client = _signed_in_client("Org Schedule Create")
-        application = _create_application(client, "Schedule Create App")
+        application = _create_application(client, "Schedule Create App", temporal_schedule_cleanup)
 
         response = client.post(
             f"/applications/{application['id']}/schedules",
             json={
-                "name": "Nightly Regression",
+                "name": "Custom Nightly",
                 "cadence_type": "daily",
                 "hour": 2,
                 "minute": 30,
-                "time_zone": "Asia/Kolkata",
             },
         )
 
         assert response.status_code == 201
         body = response.json()
         temporal_schedule_cleanup.append(f"app-schedule-{body['id']}")
-        assert body["name"] == "Nightly Regression"
+        assert body["name"] == "Custom Nightly"
         assert body["cadence_type"] == "daily"
         assert body["enabled"] is True
-        assert body["cadence_label"] == "Every day at 02:30 (Asia/Kolkata)"
+        assert body["cadence_label"] == "Every day at 02:30"
         assert body["next_run_at"] is not None
+        # No time_zone in the request — the server stamps its own default
+        # unconditionally, same as the auto-seeded schedules.
+        assert body["time_zone"] == "UTC"
 
         description = asyncio.run(_describe(f"app-schedule-{body['id']}"))
         assert description.schedule.policy.overlap is ScheduleOverlapPolicy.SKIP
@@ -166,7 +224,7 @@ class TestCreateSchedule:
     ) -> None:
         init_db()
         client = _signed_in_client("Org Schedule Weekly")
-        application = _create_application(client, "Schedule Weekly App")
+        application = _create_application(client, "Schedule Weekly App", temporal_schedule_cleanup)
 
         body = _create_schedule(
             client,
@@ -194,7 +252,7 @@ class TestCreateSchedule:
         custom-cron schedule; this test checks what actually comes back."""
         init_db()
         client = _signed_in_client("Org Schedule Cron")
-        application = _create_application(client, "Schedule Cron App")
+        application = _create_application(client, "Schedule Cron App", temporal_schedule_cleanup)
 
         body = _create_schedule(
             client,
@@ -213,10 +271,12 @@ class TestCreateSchedule:
         assert calendar.hour == (ScheduleRange(2),)
         assert calendar.day_of_week == (ScheduleRange(1, 5),)
 
-    def test_invalid_cron_is_rejected_before_any_side_effect(self) -> None:
+    def test_invalid_cron_is_rejected_before_any_side_effect(
+        self, temporal_schedule_cleanup: list[str]
+    ) -> None:
         init_db()
         client = _signed_in_client("Org Schedule Bad Cron")
-        application = _create_application(client, "Schedule Bad Cron App")
+        application = _create_application(client, "Schedule Bad Cron App", temporal_schedule_cleanup)
 
         response = client.post(
             f"/applications/{application['id']}/schedules",
@@ -224,7 +284,6 @@ class TestCreateSchedule:
                 "name": "Bad Cron",
                 "cadence_type": "custom_cron",
                 "cron_expression": "not a cron",
-                "time_zone": "UTC",
             },
         )
 
@@ -237,22 +296,24 @@ class TestCreateSchedule:
             schedules = session.exec(
                 select(Schedule).where(Schedule.application_id == app_row.id)
             ).all()
-            assert schedules == []
+            # Only the 3 auto-seeded defaults exist — the rejected "Bad
+            # Cron" attempt left no trace among them.
+            assert {s.name for s in schedules} == DEFAULT_SCHEDULE_NAMES
 
-    def test_invalid_time_zone_is_rejected(self) -> None:
+    def test_invalid_time_zone_is_rejected_on_patch(
+        self, temporal_schedule_cleanup: list[str]
+    ) -> None:
+        """`create_schedule` no longer takes a `time_zone` from the client at
+        all (every new schedule gets SCHEDULE_DEFAULT_TIME_ZONE
+        unconditionally) — `validate_time_zone`'s HTTP-layer coverage moves
+        to the one remaining place a client can still supply one: PATCH."""
         init_db()
         client = _signed_in_client("Org Schedule Bad TZ")
-        application = _create_application(client, "Schedule Bad TZ App")
+        application = _create_application(client, "Schedule Bad TZ App", temporal_schedule_cleanup)
+        created = _create_schedule(client, application["id"], temporal_schedule_cleanup)
 
-        response = client.post(
-            f"/applications/{application['id']}/schedules",
-            json={
-                "name": "Bad TZ",
-                "cadence_type": "daily",
-                "hour": 2,
-                "minute": 0,
-                "time_zone": "Mars/Olympus",
-            },
+        response = client.patch(
+            f"/schedules/{created['id']}", json={"time_zone": "Mars/Olympus"}
         )
 
         assert response.status_code == 422
@@ -260,17 +321,16 @@ class TestCreateSchedule:
     def test_duplicate_name_is_rejected(self, temporal_schedule_cleanup: list[str]) -> None:
         init_db()
         client = _signed_in_client("Org Schedule Dup")
-        application = _create_application(client, "Schedule Dup App")
+        application = _create_application(client, "Schedule Dup App", temporal_schedule_cleanup)
         _create_schedule(client, application["id"], temporal_schedule_cleanup)
 
         response = client.post(
             f"/applications/{application['id']}/schedules",
             json={
-                "name": "Nightly Regression",
+                "name": "Ad Hoc Regression",
                 "cadence_type": "daily",
                 "hour": 3,
                 "minute": 0,
-                "time_zone": "UTC",
             },
         )
 
@@ -279,7 +339,7 @@ class TestCreateSchedule:
     def test_name_reusable_after_delete(self, temporal_schedule_cleanup: list[str]) -> None:
         init_db()
         client = _signed_in_client("Org Schedule Reuse Name")
-        application = _create_application(client, "Schedule Reuse Name App")
+        application = _create_application(client, "Schedule Reuse Name App", temporal_schedule_cleanup)
         first = _create_schedule(client, application["id"], temporal_schedule_cleanup)
 
         client.delete(f"/schedules/{first['id']}")
@@ -292,15 +352,22 @@ class TestListSchedules:
     def test_list_returns_created_schedules(self, temporal_schedule_cleanup: list[str]) -> None:
         init_db()
         client = _signed_in_client("Org Schedule List")
-        application = _create_application(client, "Schedule List App")
+        application = _create_application(client, "Schedule List App", temporal_schedule_cleanup)
         _create_schedule(client, application["id"], temporal_schedule_cleanup, name="A")
         _create_schedule(client, application["id"], temporal_schedule_cleanup, name="B")
 
         body = client.get(f"/applications/{application['id']}/schedules").json()
+        by_name = {s["name"]: s for s in body}
 
-        assert {s["name"] for s in body} == {"A", "B"}
-        assert all(s["enabled"] is True for s in body)
-        assert all(s["next_run_at"] is not None for s in body)
+        # The 3 auto-seeded defaults are present alongside the 2 explicitly
+        # created schedules — disabled vs. enabled distinguishes them.
+        assert set(by_name) == DEFAULT_SCHEDULE_NAMES | {"A", "B"}
+        assert by_name["A"]["enabled"] is True
+        assert by_name["B"]["enabled"] is True
+        assert by_name["A"]["next_run_at"] is not None
+        assert by_name["B"]["next_run_at"] is not None
+        for default_name in DEFAULT_SCHEDULE_NAMES:
+            assert by_name[default_name]["enabled"] is False
 
 
 class TestUpdateSchedule:
@@ -309,7 +376,7 @@ class TestUpdateSchedule:
     ) -> None:
         init_db()
         client = _signed_in_client("Org Schedule Patch")
-        application = _create_application(client, "Schedule Patch App")
+        application = _create_application(client, "Schedule Patch App", temporal_schedule_cleanup)
         created = _create_schedule(client, application["id"], temporal_schedule_cleanup)
 
         response = client.patch(
@@ -343,7 +410,7 @@ class TestUpdateSchedule:
         paused schedule's cadence must not silently re-enable it."""
         init_db()
         client = _signed_in_client("Org Schedule Patch Disabled")
-        application = _create_application(client, "Schedule Patch Disabled App")
+        application = _create_application(client, "Schedule Patch Disabled App", temporal_schedule_cleanup)
         created = _create_schedule(client, application["id"], temporal_schedule_cleanup)
         client.post(f"/schedules/{created['id']}/disable")
 
@@ -359,7 +426,7 @@ class TestUpdateSchedule:
     ) -> None:
         init_db()
         client = _signed_in_client("Org Schedule Patch Deleted")
-        application = _create_application(client, "Schedule Patch Deleted App")
+        application = _create_application(client, "Schedule Patch Deleted App", temporal_schedule_cleanup)
         created = _create_schedule(client, application["id"], temporal_schedule_cleanup)
         assert client.delete(f"/schedules/{created['id']}").status_code == 204
 
@@ -372,7 +439,7 @@ class TestEnableDisableSchedule:
     def test_disable_then_enable_round_trip(self, temporal_schedule_cleanup: list[str]) -> None:
         init_db()
         client = _signed_in_client("Org Schedule Enable Disable")
-        application = _create_application(client, "Schedule Enable Disable App")
+        application = _create_application(client, "Schedule Enable Disable App", temporal_schedule_cleanup)
         created = _create_schedule(client, application["id"], temporal_schedule_cleanup)
 
         disabled = client.post(f"/schedules/{created['id']}/disable")
@@ -394,13 +461,14 @@ class TestDeleteSchedule:
     ) -> None:
         init_db()
         client = _signed_in_client("Org Schedule Delete")
-        application = _create_application(client, "Schedule Delete App")
+        application = _create_application(client, "Schedule Delete App", temporal_schedule_cleanup)
         created = _create_schedule(client, application["id"], temporal_schedule_cleanup)
 
         response = client.delete(f"/schedules/{created['id']}")
 
         assert response.status_code == 204
-        assert client.get(f"/applications/{application['id']}/schedules").json() == []
+        remaining = {s["name"] for s in client.get(f"/applications/{application['id']}/schedules").json()}
+        assert remaining == DEFAULT_SCHEDULE_NAMES
         with pytest.raises(RPCError) as exc_info:
             asyncio.run(_describe(f"app-schedule-{created['id']}"))
         assert exc_info.value.status == RPCStatusCode.NOT_FOUND
@@ -428,7 +496,7 @@ class TestDeleteSchedule:
         that's already gone from this API's perspective.)"""
         init_db()
         client = _signed_in_client("Org Schedule Delete Temporal Gone")
-        application = _create_application(client, "Schedule Delete Temporal Gone App")
+        application = _create_application(client, "Schedule Delete Temporal Gone App", temporal_schedule_cleanup)
         created = _create_schedule(client, application["id"], temporal_schedule_cleanup)
 
         async def _delete_in_temporal_only() -> None:
@@ -455,7 +523,7 @@ class TestApplicationDeletePausesSchedules:
     ) -> None:
         init_db()
         client = _signed_in_client("Org App Delete Pauses Schedules")
-        application = _create_application(client, "App Delete Pauses Schedules App")
+        application = _create_application(client, "App Delete Pauses Schedules App", temporal_schedule_cleanup)
         first = _create_schedule(client, application["id"], temporal_schedule_cleanup, name="A")
         second = _create_schedule(client, application["id"], temporal_schedule_cleanup, name="B")
 
@@ -500,7 +568,7 @@ class TestRunScheduleNow:
     ) -> None:
         init_db()
         client = _signed_in_client("Org Schedule Run Now Conflict")
-        application = _create_application(client, "Schedule Run Now Conflict App")
+        application = _create_application(client, "Schedule Run Now Conflict App", temporal_schedule_cleanup)
         created = _create_schedule(client, application["id"], temporal_schedule_cleanup)
 
         with Session(engine) as session:
@@ -525,10 +593,12 @@ class TestRunScheduleNow:
 
 
 class TestScheduleOrgScoping:
-    def test_other_org_cannot_list_or_create_against_this_application(self) -> None:
+    def test_other_org_cannot_list_or_create_against_this_application(
+        self, temporal_schedule_cleanup: list[str]
+    ) -> None:
         init_db()
         owner_client = _signed_in_client("Org Schedule Scope Owner")
-        owner_app = _create_application(owner_client, "Scope Owner App")
+        owner_app = _create_application(owner_client, "Scope Owner App", temporal_schedule_cleanup)
         other_client = _signed_in_client("Org Schedule Scope Other")
 
         assert other_client.get(f"/applications/{owner_app['id']}/schedules").status_code == 404
@@ -540,7 +610,6 @@ class TestScheduleOrgScoping:
                     "cadence_type": "daily",
                     "hour": 2,
                     "minute": 0,
-                    "time_zone": "UTC",
                 },
             ).status_code
             == 404
@@ -551,7 +620,7 @@ class TestScheduleOrgScoping:
     ) -> None:
         init_db()
         owner_client = _signed_in_client("Org Schedule Scope Owner 2")
-        owner_app = _create_application(owner_client, "Scope Owner App 2")
+        owner_app = _create_application(owner_client, "Scope Owner App 2", temporal_schedule_cleanup)
         created = _create_schedule(owner_client, owner_app["id"], temporal_schedule_cleanup)
         other_client = _signed_in_client("Org Schedule Scope Other 2")
 

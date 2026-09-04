@@ -239,12 +239,12 @@ def build_cadence_label(schedule: Schedule) -> str:
     convention as `TestRunRead.trigger` being one pre-formatted string
     (see `_to_test_run_read`): one formatter, not one per client."""
     if schedule.cadence_type == "custom_cron":
-        return f"Cron `{schedule.cron_expression}` ({schedule.time_zone})"
+        return f"Cron `{schedule.cron_expression}`"
     assert schedule.hour is not None and schedule.minute is not None
     at = f"{schedule.hour:02d}:{schedule.minute:02d}"
     if schedule.cadence_type == "daily":
-        return f"Every day at {at} ({schedule.time_zone})"
+        return f"Every day at {at}"
     if schedule.cadence_type == "weekly":
         days = ", ".join(DAY_OF_WEEK_LABELS[d] for d in sorted(schedule.days_of_week))
-        return f"Every {days} at {at} ({schedule.time_zone})"
-    return f"Day {schedule.day_of_month} of every month at {at} ({schedule.time_zone})"
+        return f"Every {days} at {at}"
+    return f"Day {schedule.day_of_month} of every month at {at}"

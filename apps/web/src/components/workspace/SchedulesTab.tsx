@@ -2,16 +2,12 @@ import { useCallback, useEffect, useState } from 'react'
 import { ApiError, api, type ScheduleRead } from '../../api'
 import { ScheduleDialog } from './ScheduleDialog'
 
-// Same "Date & Time" formatting convention as RunsTab's own
-// formatDateTimeWithZone — a bare "6:42 AM" is ambiguous once the viewer
-// isn't in the same zone as the schedule.
-function formatDateTimeWithZone(iso: string): string {
+function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
-    timeZoneName: 'short',
   })
 }
 
@@ -317,7 +313,7 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
                 <td style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{schedule.name}</td>
                 <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>{schedule.cadence_label}</td>
                 <td className="caption" style={{ fontSize: 12 }}>
-                  {schedule.next_run_at ? formatDateTimeWithZone(schedule.next_run_at) : '—'}
+                  {schedule.next_run_at ? formatDateTime(schedule.next_run_at) : '—'}
                 </td>
                 <td>
                   <ToggleSwitch

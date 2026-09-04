@@ -236,22 +236,22 @@ class TestValidateCadence:
 class TestBuildCadenceLabel:
     def test_daily(self) -> None:
         label = build_cadence_label(_schedule(cadence_type="daily", hour=2, minute=30))
-        assert label == "Every day at 02:30 (Asia/Kolkata)"
+        assert label == "Every day at 02:30"
 
     def test_weekly(self) -> None:
         label = build_cadence_label(
             _schedule(cadence_type="weekly", hour=2, minute=30, days_of_week=[4, 1])
         )
-        assert label == "Every Mon, Thu at 02:30 (Asia/Kolkata)"
+        assert label == "Every Mon, Thu at 02:30"
 
     def test_monthly(self) -> None:
         label = build_cadence_label(
             _schedule(cadence_type="monthly", hour=2, minute=30, day_of_month=15)
         )
-        assert label == "Day 15 of every month at 02:30 (Asia/Kolkata)"
+        assert label == "Day 15 of every month at 02:30"
 
     def test_custom_cron(self) -> None:
         label = build_cadence_label(
             _schedule(cadence_type="custom_cron", cron_expression="0 2 * * 1-5", hour=None, minute=None)
         )
-        assert label == "Cron `0 2 * * 1-5` (Asia/Kolkata)"
+        assert label == "Cron `0 2 * * 1-5`"
