@@ -440,6 +440,15 @@ textarea:focus-visible,
   }
 }
 
+@keyframes aitg-line-flow {
+  0% {
+    background-position: 0 -100%;
+  }
+  100% {
+    background-position: 0 100%;
+  }
+}
+
 @keyframes aitg-ribbon-shimmer {
   0% {
     background-position: -60px 0;
