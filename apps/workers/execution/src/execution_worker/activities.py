@@ -37,8 +37,8 @@ from domain import (
     Application,
     DiscoverySettings,
     Journey,
-    Schedule,
     Scenario,
+    Schedule,
     TestAsset,
     TestResult,
     TestResultArtifact,
@@ -943,18 +943,23 @@ def _is_infra_failure(status: str, error_message: str | None) -> bool:
 # _is_infra_failure has already had first say (the loop's own infra break
 # runs before this), so an infra-classified failure never reaches this
 # classifier at all: infra failures must never consume a heal attempt OR
-# trigger a live-browser inspection over the same root cause. These four
-# patterns map to the four categories a stale/broken locator actually shows
+# trigger a live-browser inspection over the same root cause. These five
+# patterns map to the five categories a stale/broken locator actually shows
 # up as: a locator Playwright waited for and never found, a locator that now
 # matches more than one element (UI changed shape), an element that's been
-# removed from the DOM since the test was written, and a plain
-# not-found/no-match message for dynamic content that hasn't rendered (yet,
-# or ever, if the app changed).
+# removed from the DOM since the test was written, a plain not-found/no-match
+# message for dynamic content that hasn't rendered (yet, or ever, if the app
+# changed), and the shared `ensureVisible` helper's own custom error (a
+# locator that resolved but never became visible even after an explicit
+# scroll-into-view — the same stale/wrong-locator or changed-UI root cause
+# as the other four, just worded by this project's own helper instead of by
+# Playwright itself).
 _LOCATOR_FAILURE_PATTERNS = (
     re.compile(r"waiting for (?:locator|selector)", re.IGNORECASE),
     re.compile(r"strict mode violation.*resolved to \d+ elements", re.IGNORECASE),
     re.compile(r"element is not attached to (?:the )?dom", re.IGNORECASE),
     re.compile(r"no elements? found for selector|element(?:s)? not found", re.IGNORECASE),
+    re.compile(r"is not visible even after scrolling", re.IGNORECASE),
 )
 
 
@@ -1339,11 +1344,17 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
             # application URL only when no known page exists, reusing this
             # TestRun's own auth session — never a fresh login.
             live_inspection_result = None
+            locator_failure_matched = _is_locator_failure(state.status, state.error_message)
             if _live_inspection_enabled() and (
-                _is_locator_failure(state.status, state.error_message)
-                or ai_requested_live_inspection
+                locator_failure_matched or ai_requested_live_inspection
             ):
                 target_url = ctx.known_pages[-1]["url"] if ctx.known_pages else ctx.application.url
+                logger.info(
+                    "HealTestActivity: test_result_id=%s triggering live inspection "
+                    "(reason=%s)",
+                    input.test_result_id,
+                    "locator_failure_classifier" if locator_failure_matched else "ai_requested",
+                )
                 live_inspection_result = await run_live_inspection(
                     project_dir=project_dir, target_url=target_url
                 )

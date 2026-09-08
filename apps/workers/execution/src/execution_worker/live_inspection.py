@@ -16,9 +16,10 @@ it, exactly like a failed screenshot fetch already does).
 import asyncio
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
+from ai_provider.hosted import _describe_live_locators
 from locator_capture import extract_page_locator_snapshot
 from playwright.async_api import async_playwright
 
@@ -35,9 +36,23 @@ _NAVIGATION_TIMEOUT_MS = 20_000
 
 @dataclass
 class LiveInspectionResult:
+    # The *resolved* page.url() after navigation settles — not simply an
+    # echo of the requested target_url. They can legitimately differ (a
+    # redirect to a login/error page, or the target itself being the wrong
+    # page for this failure), and that difference is exactly what the log
+    # evidence below exists to surface.
     url: str
     locator_candidates: list[dict]
     page_title: str | None
+    # Main frame + any child frames' (url, name) — best-effort log context;
+    # empty for a single-frame page (the common case).
+    frames: list[dict] = field(default_factory=list)
+    # Playwright's own `[ref=eN]`-annotated accessibility tree
+    # (`Locator.aria_snapshot(mode="ai")`, verified directly — "ai" mode is
+    # what actually adds the `[ref=...]` markers; "default" mode omits
+    # them) — real Playwright output, never touched by the LLM. `None` only
+    # if the page itself couldn't be snapshotted at all.
+    aria_snapshot: str | None = None
 
 
 def _live_inspection_enabled() -> bool:
@@ -71,8 +86,24 @@ async def _run_live_inspection(
                 )
                 candidates = await extract_page_locator_snapshot(page)
                 title = await page.title()
+                # Best-effort: frame enumeration and the aria snapshot are
+                # log context, never load-bearing — either failing just
+                # means that piece of evidence is unavailable, same
+                # tolerance as this whole function's own outer best-effort.
+                try:
+                    frames = [{"url": f.url, "name": f.name} for f in page.frames]
+                except Exception:  # noqa: BLE001 — see module docstring's tolerance
+                    frames = []
+                try:
+                    aria_snapshot = await page.locator("html").aria_snapshot(mode="ai")
+                except Exception:  # noqa: BLE001 — see module docstring's tolerance
+                    aria_snapshot = None
                 return LiveInspectionResult(
-                    url=target_url, locator_candidates=candidates, page_title=title
+                    url=page.url,
+                    locator_candidates=candidates,
+                    page_title=title,
+                    frames=frames,
+                    aria_snapshot=aria_snapshot,
                 )
             finally:
                 await context.close()
@@ -96,8 +127,9 @@ async def run_live_inspection(
     attempt it was meant to help — same tolerance as
     `_fetch_latest_screenshot_sync` in `activities.py`."""
     auth_state_path = project_dir / ".auth" / "state.json"
+    logger.info("HealTestActivity: live inspection starting: requested_url=%s", target_url)
     try:
-        return await asyncio.wait_for(
+        result = await asyncio.wait_for(
             _run_live_inspection(
                 target_url=target_url,
                 auth_state_path=auth_state_path if auth_state_path.exists() else None,
@@ -112,3 +144,37 @@ async def run_live_inspection(
             exc_info=True,
         )
         return None
+    if result is None:
+        return None
+
+    # Every field logged below comes from `result` (this call's own
+    # LiveInspectionResult) or the `target_url` parameter above — never
+    # Discovery's cached known_pages/known_locators, which this function
+    # has no access to at all (it only ever takes project_dir/target_url).
+    logger.info(
+        "HealTestActivity: live inspection landed: requested_url=%s resolved_url=%s match=%s",
+        target_url,
+        result.url,
+        result.url == target_url,
+    )
+    logger.info(
+        "HealTestActivity: live inspection page_title=%r, %d frame(s)",
+        result.page_title,
+        len(result.frames),
+    )
+    logger.info(
+        "HealTestActivity: live inspection observed %d locator candidate(s) on the live page:\n%s",
+        len(result.locator_candidates),
+        _describe_live_locators(result.locator_candidates),
+    )
+    if result.aria_snapshot:
+        logger.info(
+            "HealTestActivity: live inspection captured real Playwright "
+            "aria_snapshot(mode='ai') for the live page:\n%s",
+            result.aria_snapshot,
+        )
+    else:
+        logger.info(
+            "HealTestActivity: live inspection aria_snapshot unavailable for this page"
+        )
+    return result
