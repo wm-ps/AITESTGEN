@@ -64,15 +64,15 @@ function addedDisplay(result: TestCaseGenerationResultRead): { headline: string;
       headline: 'Test case created',
       details: [
         result.journey_name
-          ? `New Scenario created under Journey: ${result.journey_name}`
-          : 'New Scenario created',
+          ? `New test case created under Journey: ${result.journey_name}`
+          : 'New test case created',
       ],
     }
   }
   return {
     headline: 'Test case created',
     details: [
-      ...(result.scenario_name ? [`Matched Scenario: ${result.scenario_name}`] : []),
+      ...(result.scenario_name ? [`Matched test case: ${result.scenario_name}`] : []),
       ...(result.journey_name ? [`Journey: ${result.journey_name}`] : []),
     ],
   }

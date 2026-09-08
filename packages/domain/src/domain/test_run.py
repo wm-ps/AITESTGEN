@@ -92,6 +92,10 @@ class TestRun(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("schedule.id"), nullable=True, index=True),
     )
     blocked_reason: str | None = Field(default=None)
+    # Run Suite Flow: set for a "Run Journey(s)" run (the user-entered Suite
+    # Name); null for a Full Suite run, which derives its "Full Suite Run"
+    # label at read time instead (see `_to_test_run_read`).
+    suite_name: str | None = Field(default=None)
     total_count: int = Field(default=0)
     passed_count: int = Field(default=0)
     failed_count: int = Field(default=0)

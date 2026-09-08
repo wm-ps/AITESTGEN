@@ -1,7 +1,7 @@
 const STEPS = [
   { key: 'connect-app', label: 'Connect App' },
   { key: 'discover', label: 'Discover Journeys' },
-  { key: 'review', label: 'Review Scenarios' },
+  { key: 'review', label: 'Review Test Cases' },
   { key: 'generate', label: 'Generate Suite' },
 ] as const
 

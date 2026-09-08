@@ -1793,6 +1793,7 @@ async def _click_standalone_buttons(
     data_resolver: planner.SpecialistFn | None = None,
     loop_guard_state: planner.LoopGuardState | None = None,
     interaction_level: planner.SpecialistFn | None = None,
+    deadline: float | None = None,
 ) -> list[str]:
     """Clicks every distinct-labeled standalone button — page-body content
     tried before nav/header/footer chrome, no numeric cap on either (see the
@@ -1886,6 +1887,18 @@ async def _click_standalone_buttons(
         ):
             in_landmark = group_name != "body"
             while True:
+                # Settings page's Max Discovery Duration — this loop has no
+                # numeric cap by design (see the docstring above), so a
+                # button-heavy page can otherwise run past the deadline on
+                # its own; the outer BFS loop in run_discovery_crawl only
+                # checks between pages, too late to bound a single page.
+                if deadline is not None and time.monotonic() >= deadline:
+                    logger.info(
+                        "  %s: max_discovery_duration reached mid-page, stopping button "
+                        "exploration",
+                        before_url,
+                    )
+                    return discovered
                 buttons = page.locator(group_selector)
                 button_count = await buttons.count()
                 # Batched: one round trip for every label/role instead of one
@@ -3197,6 +3210,12 @@ async def run_discovery_crawl(
             len(page_queue),
         )
         for form_index in range(form_count):
+            if deadline is not None and time.monotonic() >= deadline:
+                logger.info(
+                    "  %s: max_discovery_duration reached mid-page, stopping form loop",
+                    current_url,
+                )
+                break
             form_key = f"{_page_fingerprint(page.url)}#form-{form_index}"
             if form_key in visited_forms:
                 continue
@@ -3303,6 +3322,7 @@ async def run_discovery_crawl(
             loop_guard_state=loop_guard_state,
             safety=safety,
             interaction_level=interaction_level_gate,
+            deadline=deadline,
         ):
             _maybe_enqueue(discovered_url, current_url)
 

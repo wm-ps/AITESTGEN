@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type JourneyRead, type ScenarioRead } from '../api'
+import { api, formatTestCaseNumber, type JourneyRead, type ScenarioRead } from '../api'
 import { Stepper, type StepKey } from './Stepper'
 import { GenerationLoader } from './GenerationLoader'
 import { ServiceErrorNote } from './ServiceError'
@@ -42,7 +42,7 @@ function ScenarioRenameInput({
     <input
       autoFocus
       value={value}
-      aria-label="Scenario name"
+      aria-label="Test case name"
       onChange={(e) => setValue(e.target.value)}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
@@ -262,7 +262,7 @@ function ScenarioRowMenu({ onRename, onDelete }: { onRename: () => void; onDelet
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Scenario actions"
+        aria-label="Test case actions"
         onClick={() => setOpen((o) => !o)}
         style={{
           width: 26,
@@ -437,7 +437,7 @@ export function ReviewScenarios({
   }
 
   async function handleDelete(id: string) {
-    if (!window.confirm('Delete this Scenario?')) return
+    if (!window.confirm('Delete this test case?')) return
     await api.deleteScenario(id)
     setScenarios((rows) => rows.filter((s) => s.id !== id))
     setSelectedId((current) => (current === id ? null : current))
@@ -456,14 +456,18 @@ export function ReviewScenarios({
   const canContinue = scenarios.length > 0
   const searchLower = search.trim().toLowerCase()
   const visibleScenarios = scenarios.filter((s) => {
-    if (!(s.name ?? '').toLowerCase().includes(searchLower)) return false
+    const matchesSearch =
+      (s.name ?? '').toLowerCase().includes(searchLower) ||
+      (s.journey_name ?? '').toLowerCase().includes(searchLower) ||
+      formatTestCaseNumber(s.test_case_number).toLowerCase().includes(searchLower)
+    if (!matchesSearch) return false
     if (journeyFilter.size > 0 && !journeyFilter.has(s.journey_id)) return false
     if (readinessFilter === 'Ready') return s.test_data_complete
     if (readinessFilter === 'Needs data') return !s.test_data_complete
     return true
   })
   const headerSub =
-    scenarios.length === 0 ? '' : `${scenarios.length} scenario${scenarios.length === 1 ? '' : 's'} generated.`
+    scenarios.length === 0 ? '' : `${scenarios.length} test case${scenarios.length === 1 ? '' : 's'} generated.`
   const totalPages = Math.max(1, Math.ceil(visibleScenarios.length / SCENARIOS_PER_PAGE))
   const pageClamped = Math.min(page, totalPages - 1)
   const pagedScenarios = visibleScenarios.slice(
@@ -497,7 +501,7 @@ export function ReviewScenarios({
           }}
         >
           <div>
-            <h2 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>Review Scenarios</h2>
+            <h2 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>Review Test Cases</h2>
             {headerSub && (
               <div className="caption" style={{ fontSize: 13, marginTop: 3, maxWidth: 520 }}>
                 {headerSub}
@@ -526,8 +530,8 @@ export function ReviewScenarios({
                   />
                   <input
                     type="text"
-                    placeholder="Search scenarios"
-                    aria-label="Search scenarios"
+                    placeholder="Search test cases"
+                    aria-label="Search test cases"
                     value={search}
                     onChange={(e) => {
                       setSearch(e.target.value)
@@ -572,8 +576,8 @@ export function ReviewScenarios({
         {scenarios.length === 0 && hadScenariosRef.current ? (
           <EmptyState
             illustration={<ScenariosIllustration />}
-            title="No scenarios remain"
-            subtitle="Add journeys back to generate new scenarios."
+            title="No test cases remain"
+            subtitle="Add journeys back to generate new test cases."
           />
         ) : !isComplete && generationUnavailable ? (
           <div
@@ -610,7 +614,7 @@ export function ReviewScenarios({
             }}
           >
             <GenerationLoader
-              title="Generating scenarios"
+              title="Generating test cases"
               caption={
                 <p className="caption" style={{ margin: 0, fontSize: 12.5 }}>
                   {journeysCovered}/{journeys.length || '…'} journeys covered
@@ -679,6 +683,9 @@ export function ReviewScenarios({
                               color: selectedId === scenario.id ? 'var(--accent)' : 'var(--ink)',
                             }}
                           >
+                            <span className="caption" style={{ fontWeight: 700, marginRight: 6 }}>
+                              {formatTestCaseNumber(scenario.test_case_number)}
+                            </span>
                             {scenario.name}
                           </div>
                           <div
@@ -708,7 +715,7 @@ export function ReviewScenarios({
                 {pagedScenarios.length === 0 && (
                   <EmptyState
                     illustration={<ScenariosIllustration />}
-                    title="No scenarios match these filters"
+                    title="No test cases match these filters"
                     subtitle="Try clearing a filter or the search term."
                   />
                 )}
@@ -795,7 +802,7 @@ export function ReviewScenarios({
                         }}
                       >
                         Test data required — fill in the highlighted fields below to mark this
-                        scenario Ready.
+                        test case Ready.
                       </p>
                     )}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
@@ -845,7 +852,7 @@ export function ReviewScenarios({
                 </div>
               ) : (
                 <p className="caption" style={{ margin: 0 }}>
-                  Select a Scenario to see its Test steps, Test data, and Expected result.
+                  Select a test case to see its Test steps, Test data, and Expected result.
                 </p>
               )}
             </div>

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ApiError, api, type TestAssetStatusRead, type TestResultRead } from '../../api'
+import { ApiError, api, formatTestCaseNumber, type TestAssetStatusRead, type TestResultRead } from '../../api'
 import { CodeModal } from '../TestSuiteResults'
 import { StatusPill } from '../StatusPill'
 import { ArtifactsModal } from './RunsTab'
@@ -26,12 +26,12 @@ export function ChevronIcon({ open }: { open: boolean }) {
   )
 }
 
-// First column (Test Case name) gets 45% of the row; the rest — Last Run,
-// Duration, Status — split the remaining width evenly. Same template on the
-// header and every row keeps the columns lined up.
-const ASSET_GRID_TEMPLATE = '45% 1fr 1fr 1fr'
+// Number is a fixed narrow column; Test Case and Journey split most of the
+// rest; Last Run, Duration, Status split what's left evenly. Same template
+// on the header and every row keeps the columns lined up.
+const ASSET_GRID_TEMPLATE = '24px 70px 32% 18% 1fr 1fr 1fr'
 
-type AssetSortKey = 'name' | 'lastRun' | 'duration' | 'status'
+type AssetSortKey = 'number' | 'name' | 'journey' | 'lastRun' | 'duration' | 'status'
 
 function ColumnHeaderLabel({
   children,
@@ -77,8 +77,12 @@ function formatLastRun(iso: string | null): string {
 
 function assetSortValue(asset: TestAssetStatusRead, key: AssetSortKey): string | number {
   switch (key) {
+    case 'number':
+      return asset.test_case_number
     case 'name':
       return asset.name.toLowerCase()
+    case 'journey':
+      return asset.journey_name.toLowerCase()
     case 'lastRun':
       return asset.last_run_at ?? ''
     case 'duration':
@@ -121,12 +125,16 @@ function AssetListHeader({
         background: 'var(--canvas-wash-alt)',
       }}
     >
-      {/* 24px = chevron (14) + its gap (10) in each row below, so the label lines up over the row's text, not its icon. */}
-      <div style={{ paddingLeft: 24, minWidth: 0 }}>
-        <ColumnHeaderLabel sortKey="name" activeKey={sortKey} dir={sortDir} onSort={onSort}>
-          Test Case
-        </ColumnHeaderLabel>
-      </div>
+      <span />
+      <ColumnHeaderLabel sortKey="number" activeKey={sortKey} dir={sortDir} onSort={onSort}>
+        #
+      </ColumnHeaderLabel>
+      <ColumnHeaderLabel sortKey="name" activeKey={sortKey} dir={sortDir} onSort={onSort}>
+        Test Case
+      </ColumnHeaderLabel>
+      <ColumnHeaderLabel sortKey="journey" activeKey={sortKey} dir={sortDir} onSort={onSort}>
+        Journey
+      </ColumnHeaderLabel>
       <ColumnHeaderLabel sortKey="lastRun" activeKey={sortKey} dir={sortDir} onSort={onSort}>
         Last Run
       </ColumnHeaderLabel>
@@ -145,6 +153,7 @@ function assetToTestResult(asset: TestAssetStatusRead): TestResultRead | null {
   return {
     id: asset.latest_test_result_id,
     scenario_name: asset.name,
+    test_case_number: asset.test_case_number,
     status: 'failed',
     duration_ms: asset.duration_ms,
     error_message: asset.error_message,
@@ -204,8 +213,11 @@ function AssetRow({ asset }: { asset: TestAssetStatusRead }) {
           cursor: 'pointer',
         }}
       >
+        <ChevronIcon open={expanded} />
+        <span className="caption" style={{ fontSize: 11.5, fontWeight: 600, whiteSpace: 'nowrap' }}>
+          {formatTestCaseNumber(asset.test_case_number)}
+        </span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-          <ChevronIcon open={expanded} />
           <span
             style={{
               fontSize: 13,
@@ -229,6 +241,12 @@ function AssetRow({ asset }: { asset: TestAssetStatusRead }) {
             </span>
           )}
         </div>
+        <span
+          className="caption"
+          style={{ fontSize: 11.5, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
+        >
+          {asset.journey_name}
+        </span>
         <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>
           {formatLastRun(asset.last_run_at)}
         </span>
@@ -297,6 +315,7 @@ export function TestSuiteTab({ applicationId }: { applicationId: string }) {
   const [assets, setAssets] = useState<TestAssetStatusRead[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
+  const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<AssetSortKey | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const totalPages = Math.max(1, Math.ceil(total / ASSETS_PER_PAGE))
@@ -312,7 +331,7 @@ export function TestSuiteTab({ applicationId }: { applicationId: string }) {
 
   useEffect(() => {
     let cancelled = false
-    api.getTestSuiteStatus(applicationId, page + 1, ASSETS_PER_PAGE).then((body) => {
+    api.getTestSuiteStatus(applicationId, page + 1, ASSETS_PER_PAGE, search).then((body) => {
       if (!cancelled) {
         setAssets(body.items)
         setTotal(body.total)
@@ -321,13 +340,47 @@ export function TestSuiteTab({ applicationId }: { applicationId: string }) {
     return () => {
       cancelled = true
     }
-  }, [applicationId, page])
+  }, [applicationId, page, search])
 
   return (
     <div>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 'var(--space-3)',
+        }}
+      >
+        <label htmlFor="test-suite-search" className="caption" style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>
+          Search
+        </label>
+        <input
+          id="test-suite-search"
+          type="text"
+          placeholder="Search by Test Case #, name, or Journey"
+          value={search}
+          onChange={(e) => {
+            setSearch(e.target.value)
+            setPage(0)
+          }}
+          style={{
+            width: 320,
+            maxWidth: '100%',
+            boxSizing: 'border-box',
+            padding: '8px 12px',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)',
+            fontSize: 13,
+            fontFamily: 'inherit',
+            color: 'var(--ink)',
+          }}
+        />
+      </div>
       {assets.length === 0 ? (
         <p className="caption" style={{ fontSize: 13 }}>
-          No test cases generated yet.
+          {search ? 'No test cases match this search.' : 'No test cases generated yet.'}
         </p>
       ) : (
         <div className="card-panel" style={{ overflow: 'hidden' }}>

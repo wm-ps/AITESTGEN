@@ -40,7 +40,7 @@ from domain import (
     ValidationRule,
 )
 from safety_classifier import classify_scenario_steps
-from sqlalchemy import func
+from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio import activity
@@ -341,6 +341,20 @@ def _scenario_intent_default_value(intent_text: str, field_name: str) -> str | N
     )
 
 
+def _claim_test_case_number_sync(session: Session, application_id: uuid.UUID) -> int:
+    """Claim this Application's next Scenario.test_case_number atomically —
+    same `update(...).where(...).values(...).returning(...)` idiom as
+    `_prepare_test_run_sync`'s run_number claim (execution_worker/activities.py),
+    reused here so two concurrent Scenario-creating activities for the same
+    Application never hand out the same number."""
+    return session.execute(
+        update(Application)
+        .where(Application.id == application_id)  # type: ignore[arg-type]
+        .values(next_test_case_number=Application.next_test_case_number + 1)
+        .returning(Application.next_test_case_number - 1)  # type: ignore[arg-type]
+    ).scalar_one()
+
+
 @activity.defn(name="ScenarioGenerationActivity")
 async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -> list[str]:
     with Session(engine) as session:
@@ -491,6 +505,7 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
                     if not _is_existing_credential_field(f.name)
                 ],
                 generation_run_id=journey.attempt,
+                test_case_number=_claim_test_case_number_sync(session, journey.application_id),
                 current=True,
                 safety_classification=safety_classification,
                 safety_classification_reason=safety_classification_reason,

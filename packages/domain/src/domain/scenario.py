@@ -40,7 +40,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
@@ -77,6 +77,19 @@ class Scenario(SQLModel, table=True):
         default_factory=list, sa_column=Column(JSONB, nullable=False)
     )
     generation_run_id: int
+    # Test Case Number feature: persistent, sequential, per-Application
+    # display id (TC-001, TC-002, ...) — assigned once via an atomic claim
+    # against Application.next_test_case_number at Scenario creation and
+    # never reassigned, so it survives renames/test-data edits/executions
+    # and TestAsset supersession (heal, suite regen) which all keep the
+    # same scenario_id. ponytail: default 0 exists only so the ~14
+    # pre-existing test fixtures that construct Scenario(...) directly
+    # (without exercising this feature) keep working — every real row
+    # gets a real value >=1 from the two creation activities.
+    test_case_number: int = Field(
+        default=0,
+        sa_column=Column(Integer, nullable=False, server_default=text("0")),
+    )
     current: bool = Field(default=True)
     safety_classification: str = Field(
         default="UNKNOWN",

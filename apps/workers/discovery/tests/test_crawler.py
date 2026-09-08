@@ -40,7 +40,7 @@ class FakeObjectStore:
         return self.stored[key]
 
 
-async def _crawl(target_app_url: str, on_diagnostic=None):
+async def _crawl(target_app_url: str, on_diagnostic=None, max_duration_seconds=None):
     credential = json.dumps({"username": "qa", "password": "qa-pass"}).encode()
     object_store = FakeObjectStore()
 
@@ -63,6 +63,7 @@ async def _crawl(target_app_url: str, on_diagnostic=None):
             auth_method="standard_login",
             credential=credential,
             on_diagnostic=on_diagnostic,
+            max_duration_seconds=max_duration_seconds,
         )
         await context.close()
         await browser.close()
@@ -363,6 +364,20 @@ async def test_crawl_exercises_both_body_and_chrome_buttons(
     dashboard_actions = {a.description for a in result.actions if a.page_url == target_app_url}
     assert {"Wishlist", "Recently viewed"} <= dashboard_actions
     assert "Menu" in dashboard_actions
+
+
+@pytest.mark.asyncio
+async def test_crawl_stops_mid_page_once_max_duration_elapses(target_app_url: str) -> None:
+    """Settings page's Max Discovery Duration must bound a single page's
+    button exploration, not just the gap between pages — `_click_standalone_
+    buttons` has no numeric cap by design (see its docstring), so without a
+    mid-page deadline check a button-heavy page like the dashboard fixture
+    (shared with test_crawl_exercises_both_body_and_chrome_buttons above)
+    could run well past the configured duration on its own."""
+    result, _ = await _crawl(target_app_url, max_duration_seconds=0.01)
+
+    dashboard_actions = {a.description for a in result.actions if a.page_url == target_app_url}
+    assert not dashboard_actions
 
 
 @pytest.mark.asyncio

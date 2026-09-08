@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ApiError,
   api,
+  formatTestCaseNumber,
   type TestResultArtifactRead,
   type TestResultRead,
   type TestRunRead,
@@ -226,13 +227,13 @@ const RESULT_GRID_TEMPLATE = '50% 1fr 1fr'
 // with the table instead of leaving it stuck at a fixed pixel sum. Date &
 // Time gets the biggest share (22%); the rest split what's left, and Status
 // stays unwidthed so it alone absorbs any remainder.
-const RUN_NUMBER_COL_WIDTH = '8%'
-const DATE_COL_WIDTH = '22%'
-const TRIGGERED_BY_COL_WIDTH = '16%'
-const PASS_RATE_COL_WIDTH = '10%'
-const PASSED_COL_WIDTH = '12%'
-const FAILED_COL_WIDTH = '12%'
-const RUN_DURATION_COL_WIDTH = '10%'
+const TEST_RUN_COL_WIDTH = '22%'
+const DATE_COL_WIDTH = '18%'
+const TRIGGERED_BY_COL_WIDTH = '13%'
+const PASS_RATE_COL_WIDTH = '9%'
+const PASSED_COL_WIDTH = '10%'
+const FAILED_COL_WIDTH = '10%'
+const RUN_DURATION_COL_WIDTH = '9%'
 
 // Same "Test Case" / "Duration" / "Status" columns as the Test Suite tab's
 // asset list (TestSuiteTab.tsx) — a failing test case reads the same way in
@@ -456,7 +457,7 @@ function TestResultRow({
               flex: '0 1 auto',
             }}
           >
-            {liveResult.scenario_name}
+            {formatTestCaseNumber(liveResult.test_case_number)} — {liveResult.scenario_name}
           </span>
           {/* Self-healing status/action lives right on the test case it
               applies to, not off in its own column — bolt (already
@@ -717,7 +718,7 @@ function RunDetail({
           >
             <BackIcon />
           </button>
-          <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)' }}>Run #{run.run_number}</span>
+          <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)' }}>{run.name}</span>
           <StatusPill status={run.status} label={testRunStatusLabel(run.status)} />
         </div>
         <span className="caption" style={{ fontSize: 12.5 }}>
@@ -776,10 +777,12 @@ export function parseTrigger(trigger: string): { by: string } {
   return { by: match ? match[1] : '—' }
 }
 
-type SortKey = 'date' | 'triggeredBy' | 'passRate' | 'passed' | 'failed' | 'duration' | 'status'
+type SortKey = 'name' | 'date' | 'triggeredBy' | 'passRate' | 'passed' | 'failed' | 'duration' | 'status'
 
 function sortValue(run: TestRunRead, key: SortKey): string | number {
   switch (key) {
+    case 'name':
+      return run.name.toLowerCase()
     case 'date':
       return run.created_at
     case 'triggeredBy':
@@ -856,7 +859,7 @@ function RunListHeader({
   return (
     <thead>
       <tr>
-        <th style={{ ...columnHeaderLabelStyle, width: RUN_NUMBER_COL_WIDTH }}>Run</th>
+        <SortableTh label="Test Run" sortKey="name" activeKey={sortKey} dir={sortDir} onSort={onSort} width={TEST_RUN_COL_WIDTH} />
         <SortableTh label="Date & Time" sortKey="date" activeKey={sortKey} dir={sortDir} onSort={onSort} width={DATE_COL_WIDTH} />
         <SortableTh
           label="Triggered By"
@@ -920,7 +923,19 @@ function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
         if (e.key === 'Enter' || e.key === ' ') onOpen()
       }}
     >
-      <td style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>#{run.run_number}</td>
+      <td
+        style={{
+          fontSize: 13,
+          fontWeight: 700,
+          color: 'var(--ink)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+        title={run.name}
+      >
+        {run.name}
+      </td>
       <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>
         {formatDateTimeWithZone(run.created_at)}
       </td>
@@ -975,6 +990,7 @@ export function RunsTab({
   const [cursors, setCursors] = useState<(string | null)[]>([null])
   const [hasNext, setHasNext] = useState(false)
   const [page, setPage] = useState(0)
+  const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('date')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
   const sortedRuns = useMemo(() => sortRuns(runs, sortKey, sortDir), [runs, sortKey, sortDir])
@@ -1014,7 +1030,7 @@ export function RunsTab({
 
     async function load() {
       try {
-        const body = await api.listTestRuns(applicationId, cursors[page] ?? null, RUNS_PER_PAGE)
+        const body = await api.listTestRuns(applicationId, cursors[page] ?? null, RUNS_PER_PAGE, search)
         if (cancelled) return
         setRuns(body.items)
         setHasNext(body.next_cursor !== null)
@@ -1052,7 +1068,7 @@ export function RunsTab({
       cancelled = true
       clearInterval(interval)
     }
-  }, [applicationId, page, selectedRunId])
+  }, [applicationId, page, search, selectedRunId])
 
   useEffect(() => {
     if (!selectedRunId) {
@@ -1116,12 +1132,53 @@ export function RunsTab({
 
   return (
     <div>
-      {runs.length === 0 ? (
-        <EmptyState
-          illustration={<RunsIllustration />}
-          title="No test runs yet"
-          subtitle={'Use "Run Suite" to start one.'}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          alignItems: 'center',
+          gap: 8,
+          marginBottom: 'var(--space-3)',
+        }}
+      >
+        <label htmlFor="test-runs-search" className="caption" style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>
+          Search
+        </label>
+        <input
+          id="test-runs-search"
+          type="text"
+          placeholder="Search by Test Run or Triggered By"
+          value={search}
+          onChange={(e) => {
+            setSearch(e.target.value)
+            setPage(0)
+            setCursors([null])
+          }}
+          style={{
+            width: 320,
+            maxWidth: '100%',
+            boxSizing: 'border-box',
+            padding: '8px 12px',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)',
+            fontSize: 13,
+            fontFamily: 'inherit',
+            color: 'var(--ink)',
+          }}
         />
+      </div>
+      {runs.length === 0 ? (
+        search ? (
+          <p className="caption" style={{ fontSize: 13 }}>
+            No test runs match this search.
+          </p>
+        ) : (
+          <EmptyState
+            illustration={<RunsIllustration />}
+            title="No test runs yet"
+            subtitle={'Use "Run Suite" to start one.'}
+          />
+        )
       ) : (
         <div
           className="card-panel"

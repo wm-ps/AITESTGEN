@@ -88,6 +88,14 @@ class Application(SQLModel, table=True):
         default=1,
         sa_column=Column(Integer, nullable=False, server_default=text("1")),
     )
+    # Test Case Number feature: the next per-Application Scenario.test_case_number
+    # to hand out. Same atomic UPDATE...RETURNING claim pattern as
+    # next_test_run_number above, run in ScenarioGenerationActivity/
+    # CreateScenarioActivity right before inserting the Scenario row.
+    next_test_case_number: int = Field(
+        default=1,
+        sa_column=Column(Integer, nullable=False, server_default=text("1")),
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

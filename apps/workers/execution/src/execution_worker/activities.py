@@ -127,7 +127,9 @@ class _AssemblyInputs:
     login_evidence: object
 
 
-def _load_assembly_inputs_sync(session: Session, application: Application) -> _AssemblyInputs:
+def _load_assembly_inputs_sync(
+    session: Session, application: Application, test_asset_ids: set[uuid.UUID] | None = None
+) -> _AssemblyInputs:
     journeys = session.exec(
         select(Journey).where(
             Journey.application_id == application.id, Journey.status == "candidate"
@@ -147,16 +149,17 @@ def _load_assembly_inputs_sync(session: Session, application: Application) -> _A
     )
     suite_ids = [ts.id for ts in test_suites]
 
-    test_assets = (
-        session.exec(
-            select(TestAsset).where(
-                TestAsset.test_suite_id.in_(suite_ids),  # type: ignore[attr-defined]
-                TestAsset.current.is_(True),  # type: ignore[attr-defined]
-            )
-        ).all()
-        if suite_ids
-        else []
-    )
+    asset_filters = [
+        TestAsset.test_suite_id.in_(suite_ids),  # type: ignore[attr-defined]
+        TestAsset.current.is_(True),  # type: ignore[attr-defined]
+    ]
+    if test_asset_ids is not None:
+        # Run Suite Flow: a "Run Journey(s)" run (or a rebuild of any run's
+        # project dir — see `_rebuild_project_dir_sync`) restricts to exactly
+        # this set of TestAssets; `None` means unscoped (Full Suite).
+        asset_filters.append(TestAsset.external_id.in_(test_asset_ids))  # type: ignore[attr-defined]
+
+    test_assets = session.exec(select(TestAsset).where(*asset_filters)).all() if suite_ids else []
     assets_by_suite: dict[uuid.UUID, list[TestAsset]] = {}
     for asset in test_assets:
         assets_by_suite.setdefault(asset.test_suite_id, []).append(asset)
@@ -220,7 +223,24 @@ def _rebuild_project_dir_sync(test_run_id: uuid.UUID, application_id: uuid.UUID)
         application = session.exec(
             select(Application).where(Application.external_id == application_id)
         ).one()
-        inputs = _load_assembly_inputs_sync(session, application)
+        # Scope this rebuild to exactly the TestAssets this TestRun's own
+        # TestResult rows already reference — not the Application's current
+        # full scope, which would silently pull in extra (or since-changed)
+        # TestAssets for a "Run Journey(s)" run. Works unmodified for a Full
+        # Suite run too, since its TestResult set already covers every asset.
+        run = session.exec(select(TestRun).where(TestRun.external_id == test_run_id)).one()
+        test_asset_ids = set(
+            session.exec(
+                select(TestAsset.external_id).where(  # type: ignore[arg-type]
+                    TestAsset.id.in_(  # type: ignore[attr-defined]
+                        select(TestResult.test_asset_id).where(
+                            TestResult.test_run_id == run.id  # type: ignore[arg-type]
+                        )
+                    )
+                )
+            ).all()
+        )
+        inputs = _load_assembly_inputs_sync(session, application, test_asset_ids)
         assemble_test_suite_project_to_dir(
             dest_dir,
             application,
@@ -303,6 +323,7 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
             environment_snapshot=application.environment,
             target_base_url_snapshot=application.url,
             triggered_by_name=input.triggered_by_name,
+            suite_name=input.suite_name,
             started_at=datetime.now(UTC),
         )
         session.add(test_run)
@@ -318,7 +339,12 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
         pending_assets: list = []
         test_results_by_asset_id: dict[uuid.UUID, TestResult] = {}
         try:
-            inputs = _load_assembly_inputs_sync(session, application)
+            test_asset_ids = (
+                {uuid.UUID(a) for a in input.test_asset_ids}
+                if input.test_asset_ids is not None
+                else None
+            )
+            inputs = _load_assembly_inputs_sync(session, application, test_asset_ids)
             test_assets = inputs.test_assets
             assets_by_suite = inputs.assets_by_suite
             scenario_name_by_asset_id = inputs.scenario_name_by_asset_id

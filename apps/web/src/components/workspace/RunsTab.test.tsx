@@ -20,6 +20,7 @@ describe('RunsTab', () => {
                 {
                   id: 'run-1',
                   run_number: 3,
+                  name: '#3 - Full Suite Run',
                   status: 'completed',
                   trigger: 'Manual run',
                   pass_rate: 1,

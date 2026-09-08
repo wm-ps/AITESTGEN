@@ -5,6 +5,8 @@ import { Toast } from '../Toast'
 import { AuthoringTab } from './AuthoringTab'
 import { CredentialsTab } from './CredentialsTab'
 import { OverviewTab } from './OverviewTab'
+import { RunJourneysDialog } from './RunJourneysDialog'
+import { RunSuiteButton } from './RunSuiteButton'
 import { SchedulesTab } from './SchedulesTab'
 import { TestSuiteTab } from './TestSuiteTab'
 import { RunsTab } from './RunsTab'
@@ -51,14 +53,6 @@ function SchedulesIcon() {
       <circle cx="12" cy="12.5" r="7.5" />
       <path d="M12 8.5v4.2l3 1.8" />
       <path d="M4.5 5.2A9 9 0 0 1 8 3.2" />
-    </svg>
-  )
-}
-
-function PlayIcon() {
-  return (
-    <svg width={12} height={12} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M6 4.5v15l13-7.5z" />
     </svg>
   )
 }
@@ -130,6 +124,10 @@ export function Workspace({
   // can sit next to this page's own "Test Runs" title instead of RunsTab
   // rendering a second, duplicate heading of its own.
   const [runsBack, setRunsBack] = useState<(() => void) | null>(null)
+  // Run Suite Flow: "Run Journey(s)…" wizard, opened from either
+  // RunSuiteButton instance (this page's toolbar, or OverviewTab's
+  // empty-state action).
+  const [journeysDialogOpen, setJourneysDialogOpen] = useState(false)
   // Snapshotted at mount — App.tsx only ever mounts this component fresh
   // right after a "Run All Tests" click, so the effect below should fire
   // (or not) based on that one moment, not re-run if the prop identity
@@ -193,13 +191,18 @@ export function Workspace({
     }
   }, [applicationId])
 
-  async function handleRunSuite() {
+  async function handleRunSuite(journeyRun?: { suiteName: string; testCaseIds: string[] }) {
     setRunning(true)
     setTriggerError(null)
     setTriggerErrorUnavailable(false)
     setRunToast('Run will initiate in a few seconds, please wait…')
     try {
-      await api.triggerTestRun(applicationId)
+      await api.triggerTestRun(
+        applicationId,
+        journeyRun
+          ? { suite_name: journeyRun.suiteName, test_case_ids: journeyRun.testCaseIds }
+          : undefined,
+      )
       suppressReenableUntilRef.current = Date.now() + 5000
       setAutoSelectLatest(true)
       setActiveTab('runs')
@@ -316,16 +319,11 @@ export function Workspace({
               )}
             </div>
             {activeTab === 'runs' && (
-              <button
-                type="button"
-                className="button-primary"
-                disabled={running}
-                onClick={handleRunSuite}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
-              >
-                <PlayIcon />
-                {running ? 'Running…' : 'Run Suite'}
-              </button>
+              <RunSuiteButton
+                running={running}
+                onFullSuite={() => handleRunSuite()}
+                onOpenJourneysDialog={() => setJourneysDialogOpen(true)}
+              />
             )}
           </div>
           {triggerError && (
@@ -340,7 +338,12 @@ export function Workspace({
           )}
 
           {activeTab === 'overview' && (
-            <OverviewTab applicationId={applicationId} onRunSuite={handleRunSuite} running={running} />
+            <OverviewTab
+              applicationId={applicationId}
+              onRunSuite={() => handleRunSuite()}
+              onOpenJourneysDialog={() => setJourneysDialogOpen(true)}
+              running={running}
+            />
           )}
           {activeTab === 'suite' && <TestSuiteTab applicationId={applicationId} />}
           {activeTab === 'schedules' && <SchedulesTab applicationId={applicationId} />}
@@ -358,6 +361,17 @@ export function Workspace({
       </div>
 
       {runToast && <Toast message={runToast} kind="info" onDismiss={() => setRunToast(null)} />}
+
+      {journeysDialogOpen && (
+        <RunJourneysDialog
+          applicationId={applicationId}
+          onClose={() => setJourneysDialogOpen(false)}
+          onExecute={(suiteName, testCaseIds) => {
+            setJourneysDialogOpen(false)
+            handleRunSuite({ suiteName, testCaseIds })
+          }}
+        />
+      )}
     </main>
   )
 }

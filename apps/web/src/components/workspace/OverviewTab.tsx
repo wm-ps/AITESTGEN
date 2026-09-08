@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { api, type HealthTier, type OverviewRead } from '../../api'
 import { EmptyState, RunsIllustration } from '../EmptyState'
 import { formatDuration, parseTrigger } from './RunsTab'
+import { RunSuiteButton } from './RunSuiteButton'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -408,21 +409,15 @@ function TrendChart({ trend }: { trend: OverviewRead['trend'] }) {
   )
 }
 
-function PlayIcon() {
-  return (
-    <svg width={12} height={12} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M6 4.5v15l13-7.5z" />
-    </svg>
-  )
-}
-
 export function OverviewTab({
   applicationId,
   onRunSuite,
+  onOpenJourneysDialog,
   running,
 }: {
   applicationId: string
   onRunSuite: () => void
+  onOpenJourneysDialog: () => void
   running: boolean
 }) {
   const [overview, setOverview] = useState<OverviewRead | null>(null)
@@ -466,16 +461,7 @@ export function OverviewTab({
           title="No test runs yet"
           subtitle="Health, pass rate, and trend will show up here once your first run finishes."
           action={
-            <button
-              type="button"
-              className="button-primary"
-              disabled={running}
-              onClick={onRunSuite}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
-            >
-              <PlayIcon />
-              {running ? 'Running…' : 'Run Suite'}
-            </button>
+            <RunSuiteButton running={running} onFullSuite={onRunSuite} onOpenJourneysDialog={onOpenJourneysDialog} />
           }
         />
       </div>

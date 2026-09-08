@@ -31,7 +31,10 @@ export type HomeApplicationRead = ApplicationRead & {
 }
 export type JourneyRead = components['schemas']['JourneyRead']
 export type JourneyStepRead = components['schemas']['JourneyStepRead']
-export type ScenarioRead = components['schemas']['ScenarioRead']
+// `test_case_number` isn't in api-types.gen.ts yet (regenerate via `npm run
+// generate:api-types` once the API is running) — added by hand. Test Case
+// Number feature: persistent, sequential, per-Application display id.
+export type ScenarioRead = components['schemas']['ScenarioRead'] & { test_case_number: number }
 // `description` isn't in api-types.gen.ts yet (regenerate via `npm run
 // generate:api-types` once the API is running) — added by hand.
 // NLM "Add Test Case" feature — 'discovery' (normal Discovery -> Journey ->
@@ -41,6 +44,15 @@ export type TestCaseSource = 'discovery' | 'nlm'
 export type TestCaseRead = components['schemas']['TestCaseRead'] & {
   description: string
   source: TestCaseSource
+  // Test Case Number feature — see ScenarioRead's own comment.
+  test_case_number: number
+  journey_name: string
+}
+// Test Case Number feature: `TC-001`, zero-padded to 3 digits. `null`/
+// `undefined` only for a synthesized/placeholder row that has no real
+// Scenario behind it yet.
+export function formatTestCaseNumber(n: number | null | undefined): string {
+  return n == null ? '' : `TC-${String(n).padStart(3, '0')}`
 }
 // `status` isn't in api-types.gen.ts yet (regenerate via `npm run
 // generate:api-types` once the API is running) — added by hand.
@@ -113,6 +125,9 @@ export type TestResultStatus = 'pending' | 'passed' | 'failed' | 'timed_out' | '
 export type TestResultRead = {
   id: string
   scenario_name: string
+  // Test Case Number feature — see ScenarioRead's own comment. null only if
+  // the Scenario itself was hard-deleted since this result ran.
+  test_case_number: number | null
   status: TestResultStatus
   duration_ms: number | null
   error_message: string | null
@@ -135,6 +150,7 @@ export type TestRunStatus = 'pending' | 'running' | 'completed' | 'blocked'
 export type TestRunRead = {
   id: string
   run_number: number
+  name: string
   status: TestRunStatus
   trigger: string
   pass_rate: number | null
@@ -170,7 +186,10 @@ export type TestResultArtifactRead = {
 export type SuiteRowStatus = 'passed' | 'failed' | 'not_run'
 export type TestAssetStatusRead = {
   id: string
+  // Test Case Number feature — see ScenarioRead's own comment.
+  test_case_number: number
   name: string
+  journey_name: string
   type: string
   steps: string[]
   status: SuiteRowStatus
@@ -399,11 +418,19 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
-  triggerTestRun: (applicationId: string) =>
-    request<{ started: boolean }>(`/applications/${applicationId}/test-runs`, { method: 'POST' }),
-  listTestRuns: (applicationId: string, cursor: string | null = null, limit = 10) =>
+  triggerTestRun: (
+    applicationId: string,
+    payload?: { suite_name: string; test_case_ids: string[] },
+  ) =>
+    request<{ started: boolean }>(`/applications/${applicationId}/test-runs`, {
+      method: 'POST',
+      ...(payload ? { body: JSON.stringify(payload) } : {}),
+    }),
+  listTestRuns: (applicationId: string, cursor: string | null = null, limit = 10, q = '') =>
     request<TestRunCursorPageRead>(
-      `/applications/${applicationId}/test-runs?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`,
+      `/applications/${applicationId}/test-runs?limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}${
+        q ? `&q=${encodeURIComponent(q)}` : ''
+      }`,
     ),
   getTestRun: (applicationId: string, testRunId: string) =>
     request<TestRunRead>(`/applications/${applicationId}/test-runs/${testRunId}`),
@@ -411,9 +438,11 @@ export const api = {
     request<TestResultArtifactRead[]>(`/test-results/${testResultId}/artifacts`),
   healTestResult: (testResultId: string) =>
     request<{ started: boolean }>(`/test-results/${testResultId}/heal`, { method: 'POST' }),
-  getTestSuiteStatus: (applicationId: string, page = 1, pageSize = 10) =>
+  getTestSuiteStatus: (applicationId: string, page = 1, pageSize = 10, q = '') =>
     request<TestAssetStatusPageRead>(
-      `/applications/${applicationId}/test-suite-status?page=${page}&page_size=${pageSize}`,
+      `/applications/${applicationId}/test-suite-status?page=${page}&page_size=${pageSize}${
+        q ? `&q=${encodeURIComponent(q)}` : ''
+      }`,
     ),
   getTestAssetCode: (testAssetId: string) =>
     request<TestAssetCodeRead>(`/test-assets/${testAssetId}/code`),

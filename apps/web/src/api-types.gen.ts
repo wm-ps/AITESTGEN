@@ -689,12 +689,14 @@ export interface paths {
         put?: never;
         /**
          * Trigger Test Run
-         * @description No body — every "Run All Tests" click is a fresh, full-scope run
-         *     covering every current TestAsset for the application (no rerun-scoped
-         *     mode). `PrepareTestRunActivity` creates the actual `TestRun` row
-         *     asynchronously, so the very first `GET .../test-runs` poll may briefly
-         *     see nothing yet — the same gap `TestSuiteResults.tsx`'s existing poll
-         *     loop already tolerates for generation.
+         * @description Empty/omitted body is a fresh, full-scope run covering every current
+         *     TestAsset for the application (Full Suite). A body with `test_case_ids`
+         *     set is a "Run Journey(s)" run scoped to just those TestAssets, named
+         *     `suite_name` (Run Suite Flow). `PrepareTestRunActivity` creates the
+         *     actual `TestRun` row asynchronously, so the very first `GET
+         *     .../test-runs` poll may briefly see nothing yet — the same gap
+         *     `TestSuiteResults.tsx`'s existing poll loop already tolerates for
+         *     generation.
          *
          *     ponytail: no `ExecutionPolicy` precondition check here anymore —
          *     removed per explicit request so this never needs setup before it can
@@ -957,6 +959,11 @@ export interface paths {
          * @description Application Workspace's Test Suite tab — one row per current
          *     TestAsset, showing its most recent result (or "not_run" if it's never
          *     been executed) across every TestRun, not just the latest one.
+         *
+         *     `q`, when set, filters (before pagination) by a case-insensitive
+         *     substring match against the Test Case Number (`TC-001`, with or without
+         *     the `TC-`/leading zeros), Test Case Name, or Journey name — Test Case
+         *     Number & Journey feature.
          */
         get: operations["get_test_suite_status_applications__external_id__test_suite_status_get"];
         put?: never;
@@ -1401,6 +1408,8 @@ export interface components {
             journey_id: string;
             /** Journey Name */
             journey_name: string;
+            /** Test Case Number */
+            test_case_number: number;
             /** Type */
             type: string;
             /** Name */
@@ -1435,7 +1444,13 @@ export interface components {
             /** Value */
             value: string;
         };
-        /** ScheduleCreate */
+        /**
+         * ScheduleCreate
+         * @description No `time_zone` — every new schedule (manual or auto-seeded) gets
+         *     `SCHEDULE_DEFAULT_TIME_ZONE` unconditionally, see `create_schedule`
+         *     below. `ScheduleUpdate.time_zone` still exists for an explicit PATCH
+         *     override; there is just no create-time input for it anymore.
+         */
         ScheduleCreate: {
             /** Name */
             name: string;
@@ -1454,8 +1469,6 @@ export interface components {
             day_of_month?: number | null;
             /** Cron Expression */
             cron_expression?: string | null;
-            /** Time Zone */
-            time_zone: string;
         };
         /** ScheduleRead */
         ScheduleRead: {
@@ -1605,8 +1618,12 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Test Case Number */
+            test_case_number: number;
             /** Name */
             name: string;
+            /** Journey Name */
+            journey_name: string;
             /** Type */
             type: string;
             /** Steps */
@@ -1670,8 +1687,12 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Test Case Number */
+            test_case_number: number;
             /** Name */
             name: string;
+            /** Journey Name */
+            journey_name: string;
             /** Type */
             type: string;
             /** Description */
@@ -1778,6 +1799,8 @@ export interface components {
             id: string;
             /** Scenario Name */
             scenario_name: string;
+            /** Test Case Number */
+            test_case_number: number | null;
             /** Status */
             status: string;
             /** Duration Ms */
@@ -1815,6 +1838,8 @@ export interface components {
             id: string;
             /** Run Number */
             run_number: number;
+            /** Name */
+            name: string;
             /** Status */
             status: string;
             /** Trigger */
@@ -1867,6 +1892,13 @@ export interface components {
             status: string;
             /** Test Cases */
             test_cases: components["schemas"]["TestCaseRead"][];
+        };
+        /** TriggerTestRunRequest */
+        TriggerTestRunRequest: {
+            /** Suite Name */
+            suite_name?: string | null;
+            /** Test Case Ids */
+            test_case_ids?: string[] | null;
         };
         /** UserRead */
         UserRead: {
@@ -3445,7 +3477,11 @@ export interface operations {
                 session?: string | null;
             };
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TriggerTestRunRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             202: {
@@ -3883,6 +3919,7 @@ export interface operations {
             query?: {
                 page?: number;
                 page_size?: number;
+                q?: string | null;
             };
             header?: never;
             path: {

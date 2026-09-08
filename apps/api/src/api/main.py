@@ -45,7 +45,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from object_store import ObjectStore
 from pydantic import BaseModel, Field, field_validator, model_validator
 from secrets_client import SecretRef, VaultSecretsClient
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio.client import Client as TemporalClient
@@ -1563,6 +1563,9 @@ class ScenarioRead(BaseModel):
     id: uuid.UUID
     journey_id: uuid.UUID
     journey_name: str
+    # Test Case Number feature: persistent, sequential, per-Application
+    # display id — see Scenario.test_case_number's own docstring.
+    test_case_number: int
     type: str
     name: str
     steps: list[str]
@@ -1587,6 +1590,7 @@ def _to_scenario_read(
         id=scenario.external_id,
         journey_id=journey_external_id,
         journey_name=journey_name,
+        test_case_number=scenario.test_case_number,
         type=scenario.type,
         name=scenario.name,
         steps=scenario.steps,
@@ -1771,7 +1775,11 @@ def update_scenario_test_data(
 
 class TestCaseRead(BaseModel):
     id: uuid.UUID
+    # Test Case Number feature: persistent, sequential, per-Application
+    # display id — see Scenario.test_case_number's own docstring.
+    test_case_number: int
     name: str
+    journey_name: str
     type: str
     description: str
     code: str
@@ -2143,7 +2151,9 @@ def list_test_suites(
             test_cases.append(
                 TestCaseRead(
                     id=asset.external_id,
+                    test_case_number=scenario.test_case_number,
                     name=scenario.name,
+                    journey_name=journey.name,
                     type=scenario.type,
                     description=scenario.expected_result,
                     code=asset.code,
@@ -2197,7 +2207,9 @@ def terminate_test_suite(
     test_cases = [
         TestCaseRead(
             id=asset.external_id,
+            test_case_number=scenario.test_case_number,
             name=scenario.name,
+            journey_name=journey.name,
             type=scenario.type,
             description=scenario.expected_result,
             code=asset.code,
@@ -2402,6 +2414,10 @@ def update_execution_policy(
 class TestResultRead(BaseModel):
     id: uuid.UUID
     scenario_name: str
+    # Test Case Number feature: persistent, sequential, per-Application
+    # display id — None only if the Scenario itself was hard-deleted since
+    # this TestResult ran (scenario_name falls back to "" the same way).
+    test_case_number: int | None
     status: str
     duration_ms: int | None
     error_message: str | None
@@ -2426,6 +2442,7 @@ class TestResultRead(BaseModel):
 class TestRunRead(BaseModel):
     id: uuid.UUID
     run_number: int
+    name: str
     status: str
     trigger: str
     pass_rate: float | None
@@ -2482,6 +2499,7 @@ def _to_test_run_read(
     return TestRunRead(
         id=test_run.external_id,
         run_number=test_run.run_number,
+        name=f"#{test_run.run_number} - {test_run.suite_name or 'Full Suite Run'}",
         status=test_run.status,
         trigger=_trigger_label(test_run),
         pass_rate=pass_rate,
@@ -2502,19 +2520,31 @@ def _to_test_run_read(
     )
 
 
+class TriggerTestRunRequest(BaseModel):
+    # Run Suite Flow: both unset (the default, empty-body request) is a Full
+    # Suite run — unscoped, unchanged behavior. `suite_name` set means a
+    # "Run Journey(s)" run; `test_case_ids` are `TestCaseRead.id` values
+    # (== `TestAsset.external_id`) restricting which tests execute.
+    suite_name: str | None = None
+    test_case_ids: list[uuid.UUID] | None = None
+
+
 @app.post("/applications/{external_id}/test-runs", status_code=202)
 async def trigger_test_run(
     external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
     user: CurrentUserDep,
+    body: TriggerTestRunRequest = TriggerTestRunRequest(),
 ) -> dict[str, bool]:
-    """No body — every "Run All Tests" click is a fresh, full-scope run
-    covering every current TestAsset for the application (no rerun-scoped
-    mode). `PrepareTestRunActivity` creates the actual `TestRun` row
-    asynchronously, so the very first `GET .../test-runs` poll may briefly
-    see nothing yet — the same gap `TestSuiteResults.tsx`'s existing poll
-    loop already tolerates for generation.
+    """Empty/omitted body is a fresh, full-scope run covering every current
+    TestAsset for the application (Full Suite). A body with `test_case_ids`
+    set is a "Run Journey(s)" run scoped to just those TestAssets, named
+    `suite_name` (Run Suite Flow). `PrepareTestRunActivity` creates the
+    actual `TestRun` row asynchronously, so the very first `GET
+    .../test-runs` poll may briefly see nothing yet — the same gap
+    `TestSuiteResults.tsx`'s existing poll loop already tolerates for
+    generation.
 
     ponytail: no `ExecutionPolicy` precondition check here anymore —
     removed per explicit request so this never needs setup before it can
@@ -2530,7 +2560,12 @@ async def trigger_test_run(
     await client.start_workflow(
         ApplicationTestExecutionWorkflow.run,
         ExecutionWorkflowInput(
-            application_id=str(application.external_id), triggered_by_name=user.name
+            application_id=str(application.external_id),
+            triggered_by_name=user.name,
+            suite_name=body.suite_name,
+            test_asset_ids=(
+                [str(x) for x in body.test_case_ids] if body.test_case_ids else None
+            ),
         ),
         # Every run is a genuinely new TestRun (no rerun/idempotency key the
         # way suite-{journey_id}-{attempt} has) — the id only needs to be
@@ -3329,6 +3364,7 @@ def list_test_runs(
     organization_id: CurrentOrgIdDep,
     cursor: uuid.UUID | None = None,
     limit: int = 10,
+    q: str | None = None,
 ) -> TestRunCursorPageRead:
     """Keyset-paginated on the `id` PK (Application Workspace feature's Runs
     tab) — every run for an Application is kept forever (immutable history)
@@ -3340,11 +3376,27 @@ def list_test_runs(
     `TestRun.id`'s `uuidv7()` default) — and unique, so no tiebreaker is
     needed for rows created in the same instant. The frontend keeps its own
     stack of previously-seen cursors for "Previous" rather than this
-    endpoint supporting a reverse direction."""
+    endpoint supporting a reverse direction.
+
+    `q`, when set, filters (before pagination) by a case-insensitive
+    substring match against `suite_name` (the Test Run column) or
+    `triggered_by_name` (the Triggered By column) — same `q` convention as
+    `get_test_suite_status`. ponytail: a Full Suite run's displayed name
+    ("Full Suite Run") is synthesized at read time, not a stored column, so
+    searching that literal text won't match — searching the run number or
+    a custom suite name does."""
     application = _get_org_application(session, organization_id, external_id)
     query = select(TestRun).where(TestRun.application_id == application.id)
     if cursor is not None:
         query = query.where(TestRun.id < cursor)  # type: ignore[arg-type]
+    if q:
+        needle = f"%{q.strip()}%"
+        query = query.where(
+            or_(
+                TestRun.suite_name.ilike(needle),  # type: ignore[union-attr]
+                TestRun.triggered_by_name.ilike(needle),  # type: ignore[union-attr]
+            )
+        )
     test_runs = session.exec(
         query.order_by(TestRun.id.desc()).limit(limit)  # type: ignore[arg-type]
     ).all()
@@ -3398,6 +3450,9 @@ def get_test_run(
             scenario_name=scenarios_by_id[r.scenario_id].name
             if r.scenario_id in scenarios_by_id
             else "",
+            test_case_number=scenarios_by_id[r.scenario_id].test_case_number
+            if r.scenario_id in scenarios_by_id
+            else None,
             status=r.status,
             duration_ms=r.duration_ms,
             error_message=r.error_message,
@@ -3660,7 +3715,11 @@ def _get_org_test_asset(
 
 class TestAssetStatusRead(BaseModel):
     id: uuid.UUID
+    # Test Case Number feature: persistent, sequential, per-Application
+    # display id — see Scenario.test_case_number's own docstring.
+    test_case_number: int
     name: str
+    journey_name: str
     type: str
     steps: list[str]
     status: str
@@ -3689,18 +3748,45 @@ def get_test_suite_status(
     organization_id: CurrentOrgIdDep,
     page: int = 1,
     page_size: int = 10,
+    q: str | None = None,
 ) -> TestAssetStatusPageRead:
     """Application Workspace's Test Suite tab — one row per current
     TestAsset, showing its most recent result (or "not_run" if it's never
-    been executed) across every TestRun, not just the latest one."""
+    been executed) across every TestRun, not just the latest one.
+
+    `q`, when set, filters (before pagination) by a case-insensitive
+    substring match against the Test Case Number (`TC-001`, with or without
+    the `TC-`/leading zeros), Test Case Name, or Journey name — Test Case
+    Number & Journey feature."""
     application = _get_org_application(session, organization_id, external_id)
     test_assets, scenarios_by_id = _current_test_assets_for_application(session, application)
+    journey_names_by_id = {
+        j.id: j.name
+        for j in session.exec(
+            select(Journey).where(Journey.application_id == application.id)
+        ).all()
+    }
 
-    def _scenario_name(asset: TestAsset) -> str:
+    def _journey_name(asset: TestAsset) -> str:
         scenario = scenarios_by_id.get(asset.scenario_id)
-        return scenario.name if scenario else ""
+        return journey_names_by_id.get(scenario.journey_id, "") if scenario else ""
 
-    test_assets = sorted(test_assets, key=_scenario_name)
+    def _matches_query(asset: TestAsset) -> bool:
+        if not q:
+            return True
+        needle = q.strip().lower().removeprefix("tc-").lstrip("0")
+        scenario = scenarios_by_id.get(asset.scenario_id)
+        if scenario is None:
+            return False
+        if needle and needle == str(scenario.test_case_number):
+            return True
+        haystack = q.strip().lower()
+        return haystack in scenario.name.lower() or haystack in _journey_name(asset).lower()
+
+    test_assets = [a for a in test_assets if _matches_query(a)]
+    test_assets = sorted(
+        test_assets, key=lambda a: scenarios_by_id[a.scenario_id].test_case_number
+    )
     total = len(test_assets)
     page_assets = test_assets[(page - 1) * page_size : (page - 1) * page_size + page_size]
 
@@ -3715,7 +3801,9 @@ def get_test_suite_status(
         items.append(
             TestAssetStatusRead(
                 id=asset.external_id,
+                test_case_number=scenario.test_case_number if scenario else 0,
                 name=scenario.name if scenario else "",
+                journey_name=_journey_name(asset),
                 type=scenario.type if scenario else "happy",
                 steps=scenario.steps if scenario else [],
                 status=_collapse_to_suite_row_status(result),

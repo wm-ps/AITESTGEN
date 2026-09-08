@@ -452,7 +452,7 @@ export function DiscoverJourneys({
                 boxShadow: canContinue ? 'var(--shadow-button-primary)' : 'none',
               }}
             >
-              Continue to Scenarios
+              Continue to Test Cases
             </button>
           </div>
         </div>

@@ -77,6 +77,12 @@ class ExecutionWorkflowInput:
     # manual run. Defaulted so `trigger_test_run` is untouched — it simply
     # doesn't pass it, and every existing call site stays byte-identical.
     schedule_id: str | None = None
+    # Run Suite Flow: both None for a Full Suite run (unscoped, unchanged
+    # behavior). `suite_name` is the user-entered name; `test_asset_ids` are
+    # `TestAsset.external_id` values (== `TestCaseRead.id`) restricting which
+    # tests execute — a "Run Journey(s)" run.
+    suite_name: str | None = None
+    test_asset_ids: list[str] | None = None
 
 
 @dataclass
@@ -84,6 +90,8 @@ class PrepareTestRunActivityInput:
     application_id: str
     triggered_by_name: str | None = None
     schedule_id: str | None = None
+    suite_name: str | None = None
+    test_asset_ids: list[str] | None = None
 
 
 @dataclass
@@ -140,6 +148,8 @@ class ApplicationTestExecutionWorkflow:
                 application_id=input.application_id,
                 triggered_by_name=input.triggered_by_name,
                 schedule_id=input.schedule_id,
+                suite_name=input.suite_name,
+                test_asset_ids=input.test_asset_ids,
             ),
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=RetryPolicy(maximum_attempts=3),

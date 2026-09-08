@@ -67,6 +67,7 @@ from workflows import (
 )
 
 from generation_worker.activities import (
+    _claim_test_case_number_sync,
     _is_existing_credential_field,
     resolve_known_application_model_sync,
 )
@@ -563,6 +564,7 @@ def _persist_new_scenario_sync(
                 if not _is_existing_credential_field(f.name)
             ],
             generation_run_id=journey.attempt,
+            test_case_number=_claim_test_case_number_sync(session, journey.application_id),
             current=True,
             safety_classification=safety_classification,
             safety_classification_reason=safety_classification_reason,

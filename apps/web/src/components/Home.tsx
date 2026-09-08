@@ -404,7 +404,7 @@ function ApplicationCard({
   const deleteBlockedReason = isRunning
     ? 'Discovery is still running'
     : scenariosGenerating
-      ? 'Scenario generation is still running'
+      ? 'Test case generation is still running'
       : suiteGenerating
         ? 'Test suite generation is still running'
         : testRunRunning
@@ -1197,7 +1197,7 @@ export function Home({
           >
             <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4 }}>Product demo</div>
             <p className="caption" style={{ margin: '0 0 var(--space-7)' }}>
-              Connect App, Discover Journeys, Review Scenarios, Generate Suite — in a few minutes.
+              Connect App, Discover Journeys, Review Test Cases, Generate Suite — in a few minutes.
             </p>
             <video
               controls
