@@ -614,6 +614,31 @@ async def test_generate_playwright_prompt_requires_exact_true_on_getbylabel(
     assert "strict-mode violation" in content
 
 
+async def test_generate_playwright_prompt_forbids_exact_match_on_icon_buttons(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Real bug this locks in: a button showing a "+" icon and the text "Add
+    connection" has a computed accessible name of "plus Add connection" (the
+    icon's own alt text merges into the button's ONE accessible name) — a
+    real generated test used `getByRole('button', { name: 'Add connection',
+    exact: true })`, which matches ZERO elements against that button.
+    `isVisible()` on a zero-match locator returns `false` rather than
+    raising, so this surfaced as a confusing "element is not visible even
+    after scrolling" failure instead of an obvious "not found" — see
+    HealTestActivity's live-inspection investigation this fix came from."""
+    captured = _monkeypatch_post(monkeypatch, "test('x', async ({ page }) => {})")
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(scenario)
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "plus Add connection" in content
+    assert "getByRole('button', { name: /Add connection/ })" in content
+    # The rule must be phrased broadly (any icon button), not just the one
+    # concrete example used to illustrate it.
+    assert "icon" in content and "button" in content
+
+
 async def test_generate_playwright_degrades_gracefully_with_no_known_locators(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

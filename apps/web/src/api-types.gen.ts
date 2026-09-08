@@ -1435,7 +1435,13 @@ export interface components {
             /** Value */
             value: string;
         };
-        /** ScheduleCreate */
+        /**
+         * ScheduleCreate
+         * @description No `time_zone` — every new schedule (manual or auto-seeded) gets
+         *     `SCHEDULE_DEFAULT_TIME_ZONE` unconditionally, see `create_schedule`
+         *     below. `ScheduleUpdate.time_zone` still exists for an explicit PATCH
+         *     override; there is just no create-time input for it anymore.
+         */
         ScheduleCreate: {
             /** Name */
             name: string;
@@ -1454,8 +1460,6 @@ export interface components {
             day_of_month?: number | null;
             /** Cron Expression */
             cron_expression?: string | null;
-            /** Time Zone */
-            time_zone: string;
         };
         /** ScheduleRead */
         ScheduleRead: {

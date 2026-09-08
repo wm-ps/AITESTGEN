@@ -19,10 +19,19 @@ from execution_worker.live_inspection import (
 )
 
 
+class _FakeLocator:
+    def __init__(self, aria_snapshot: str = "- document [ref=e1]:") -> None:
+        self.aria_snapshot = AsyncMock(return_value=aria_snapshot)
+
+
 class _FakePage:
-    def __init__(self) -> None:
+    def __init__(self, url: str = "https://app.example.com/") -> None:
         self.goto = AsyncMock()
         self.title = AsyncMock(return_value="Checkout")
+        self.url = url
+        self.frames: list[object] = []
+        self._locator = _FakeLocator()
+        self.locator = MagicMock(return_value=self._locator)
 
 
 class _FakeContext:
@@ -69,14 +78,18 @@ async def test_reuses_existing_storage_state_and_never_logs_in(
     state_file = auth_dir / "state.json"
     state_file.write_text('{"cookies": [{"name": "session", "value": "abc"}]}', encoding="utf-8")
 
-    page = _FakePage()
+    page = _FakePage(url="https://app.example.com/checkout")
     context = _FakeContext(page)
     browser = _FakeBrowser(context)
     _install_fake_playwright(monkeypatch, browser)
 
     monkeypatch.setattr(
         "execution_worker.live_inspection.extract_page_locator_snapshot",
-        AsyncMock(return_value=[{"strategy": "testid", "value": '[data-testid="x"]'}]),
+        AsyncMock(
+            return_value=[
+                {"strategy": "testid", "value": '[data-testid="x"]', "element_tag": "button"}
+            ]
+        ),
     )
     result = await run_live_inspection(
         project_dir=tmp_path, target_url="https://app.example.com/checkout"
@@ -172,3 +185,147 @@ def test_kill_switch_can_be_disabled(monkeypatch: pytest.MonkeyPatch, value: str
 def test_live_inspection_result_is_a_plain_dataclass() -> None:
     result = LiveInspectionResult(url="https://x", locator_candidates=[], page_title="X")
     assert result.url == "https://x"
+    assert result.frames == []
+    assert result.aria_snapshot is None
+
+
+class _FakeFrame:
+    def __init__(self, url: str, name: str) -> None:
+        self.url = url
+        self.name = name
+
+
+@pytest.mark.asyncio
+async def test_resolved_url_reflects_a_redirect_not_the_requested_url(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`.url` must be the real, resolved `page.url` — not an echo of
+    `target_url` — so a redirect (or the target simply being the wrong
+    page) is provable from the result alone, and therefore loggable."""
+    page = _FakePage(url="https://app.example.com/login?redirected=1")
+    context = _FakeContext(page)
+    browser = _FakeBrowser(context)
+    _install_fake_playwright(monkeypatch, browser)
+    monkeypatch.setattr(
+        "execution_worker.live_inspection.extract_page_locator_snapshot",
+        AsyncMock(return_value=[]),
+    )
+
+    result = await run_live_inspection(
+        project_dir=tmp_path, target_url="https://app.example.com/checkout"
+    )
+
+    assert result is not None
+    assert result.url == "https://app.example.com/login?redirected=1"
+
+
+@pytest.mark.asyncio
+async def test_captures_frame_info(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    page = _FakePage()
+    page.frames = [
+        _FakeFrame("https://app.example.com/checkout", ""),
+        _FakeFrame("https://payments.example.com/widget", "payment-widget"),
+    ]
+    context = _FakeContext(page)
+    browser = _FakeBrowser(context)
+    _install_fake_playwright(monkeypatch, browser)
+    monkeypatch.setattr(
+        "execution_worker.live_inspection.extract_page_locator_snapshot",
+        AsyncMock(return_value=[]),
+    )
+
+    result = await run_live_inspection(project_dir=tmp_path, target_url="https://app.example.com/")
+
+    assert result is not None
+    assert result.frames == [
+        {"url": "https://app.example.com/checkout", "name": ""},
+        {"url": "https://payments.example.com/widget", "name": "payment-widget"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_captures_real_aria_snapshot_not_from_the_llm(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The accessibility snapshot logged as evidence must come from
+    Playwright's own `aria_snapshot(mode="ai")` — the `[ref=eN]`-annotated
+    tree — never a re-description by the LLM."""
+    page = _FakePage()
+    page._locator.aria_snapshot = AsyncMock(
+        return_value='- button "plus Add connection" [ref=e99]:\n  - img "plus" [ref=e101]'
+    )
+    context = _FakeContext(page)
+    browser = _FakeBrowser(context)
+    _install_fake_playwright(monkeypatch, browser)
+    monkeypatch.setattr(
+        "execution_worker.live_inspection.extract_page_locator_snapshot",
+        AsyncMock(return_value=[]),
+    )
+
+    result = await run_live_inspection(project_dir=tmp_path, target_url="https://app.example.com/")
+
+    assert result is not None
+    assert result.aria_snapshot == (
+        '- button "plus Add connection" [ref=e99]:\n  - img "plus" [ref=e101]'
+    )
+    page.locator.assert_called_once_with("html")
+    page._locator.aria_snapshot.assert_awaited_once_with(mode="ai")
+
+
+@pytest.mark.asyncio
+async def test_aria_snapshot_failure_degrades_to_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    page = _FakePage()
+    page._locator.aria_snapshot = AsyncMock(side_effect=RuntimeError("snapshot failed"))
+    context = _FakeContext(page)
+    browser = _FakeBrowser(context)
+    _install_fake_playwright(monkeypatch, browser)
+    monkeypatch.setattr(
+        "execution_worker.live_inspection.extract_page_locator_snapshot",
+        AsyncMock(return_value=[]),
+    )
+
+    result = await run_live_inspection(project_dir=tmp_path, target_url="https://app.example.com/")
+
+    assert result is not None
+    assert result.aria_snapshot is None
+
+
+@pytest.mark.asyncio
+async def test_logs_requested_and_resolved_url_distinctly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Explicit regression for the exact requirement: the log must name
+    `requested_url` and `resolved_url` separately (not just print one
+    value), and the candidate/aria evidence logged must be this call's own
+    observations, never Discovery's cached known_pages/known_locators
+    (which this function is never even given — it only takes
+    project_dir/target_url)."""
+    import logging
+
+    caplog.set_level(logging.INFO, logger="execution_worker.live_inspection")
+    page = _FakePage(url="https://app.example.com/actual-landing-page")
+    page._locator.aria_snapshot = AsyncMock(return_value='- button "Save" [ref=e1]')
+    context = _FakeContext(page)
+    browser = _FakeBrowser(context)
+    _install_fake_playwright(monkeypatch, browser)
+    monkeypatch.setattr(
+        "execution_worker.live_inspection.extract_page_locator_snapshot",
+        AsyncMock(
+            return_value=[
+                {"strategy": "aria", "value": 'role=button[name="Save"]', "element_tag": "button"}
+            ]
+        ),
+    )
+
+    await run_live_inspection(
+        project_dir=tmp_path, target_url="https://app.example.com/requested-page"
+    )
+
+    combined = "\n".join(caplog.messages)
+    assert "requested_url=https://app.example.com/requested-page" in combined
+    assert "resolved_url=https://app.example.com/actual-landing-page" in combined
+    assert "match=False" in combined
+    assert 'role=button[name="Save"]' in combined
+    assert '"Save" [ref=e1]' in combined

@@ -56,6 +56,20 @@ def test_no_error_message_is_not_a_locator_failure() -> None:
     assert not _is_locator_failure("errored", None)
 
 
+def test_ensure_visible_scroll_failure_is_a_locator_failure() -> None:
+    """The shared `ensureVisible` helper (support/interactions.ts) throws
+    this custom-worded error instead of a raw Playwright timeout — same
+    stale/wrong-locator root cause, different phrasing, must still trigger
+    live inspection."""
+    assert _is_locator_failure(
+        "failed",
+        "Element matched by locator locator('role=button[name=\"Back to tenants\"]') "
+        "is not visible even after scrolling it into view — the locator may be wrong, "
+        "or the element requires a prior action (opening a menu/accordion/tab, waiting "
+        "for content to load) to become visible.",
+    )
+
+
 def test_matching_is_case_insensitive() -> None:
     assert _is_locator_failure("timed_out", "WAITING FOR LOCATOR('#save')")
 

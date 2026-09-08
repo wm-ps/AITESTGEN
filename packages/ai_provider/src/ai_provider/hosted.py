@@ -242,7 +242,15 @@ noise, so an exact match on the full string is guaranteed to break. Instead extr
 stable entity-name fragment and match it with `getByRole(...)` using a partial/regex `name`, \
 e.g. `page.getByRole('link', {{ name: /Health Plan/ }})`. This applies to any card, list item, \
 or dashboard tile whose accessible name mixes an icon/title/dynamic-value/chevron this way — \
-not just this one example.
+not just this one example. It also applies to an ordinary icon button: a leading/trailing \
+icon glyph (e.g. a "+"/plus, pencil, or trash icon rendered as an `<img>`/`<svg>` sibling \
+inside the `<button>`) contributes its own alt text/aria-label to the button's ONE computed \
+accessible name, concatenated with the visible label — a human reading the button only sees \
+the icon and the word "Add connection", but the browser's accessible name is literally "plus \
+Add connection". A known locator captured as `role=button[name="plus Add connection"]` must \
+still be matched with `getByRole('button', {{ name: /Add connection/ }})`, never `{{ name: \
+'Add connection', exact: true }}` (which matches zero elements) or the literal full string \
+with the icon word included (fragile the moment the icon's own alt text changes).
 
 Exception — when calling `getByLabel(...)`/`getByText(...)` with a plain string (no regex), \
 always pass `{{ exact: true }}` as well, unless the step genuinely needs a partial/substring \
@@ -548,6 +556,18 @@ stable entity-name fragment via partial/regex `name`:
 Don't: `page.locator('role=link[name="🏥\nHealth Plan\nFrom ₹ 12,500/yr · Up to ₹50 L cover\n\
 ›"]')`
 Do: `page.getByRole('link', {{ name: /Health Plan/ }})`
+
+This applies just as much to a plain `<button>` with a leading/trailing icon — not just cards \
+and tiles. An icon rendered as an `<img>`/`<svg>` sibling inside the button contributes its own \
+alt text/aria-label to the button's ONE computed accessible name, merged with the visible \
+label: a button showing a "+" icon and the text "Add connection" has the real accessible name \
+"plus Add connection", not "Add connection". `getByRole('button', {{ name: 'Add connection', \
+exact: true }})` matches ZERO elements against that button — `isVisible()` on a zero-match \
+locator returns `false`, not an error, so this fails as a confusing "element not visible" \
+rather than an obvious "not found." Always use a partial/regex `name` for any button whose \
+accessible name might include an icon's own label:
+Don't: `page.getByRole('button', {{ name: 'Add connection', exact: true }})`
+Do: `page.getByRole('button', {{ name: /Add connection/ }})`
 
 Search-submit scoping rule — when a step's intended action is submitting a search (fill a \
 search input, then trigger the search), do not pick the submit control by name-matching \
