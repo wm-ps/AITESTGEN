@@ -95,7 +95,7 @@ export function RunJourneysDialog({
           boxSizing: 'border-box',
         }}
       >
-        <h2 style={{ fontSize: 17, fontWeight: 600, color: 'var(--ink)', margin: '0 0 18px' }}>Run Journey(s)</h2>
+        <h2 style={{ fontSize: 17, fontWeight: 600, color: 'var(--ink)', margin: '0 0 18px' }}>Selective Run</h2>
 
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
           {loadError && (

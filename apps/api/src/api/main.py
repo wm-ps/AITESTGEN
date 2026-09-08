@@ -1698,11 +1698,11 @@ def list_scenarios(
         )
     ).all()
 
-    # Same app-flow order as list_journeys, so scenarios group under login's
-    # journey first, then the next module's, etc. — matching how the user
-    # sees journeys ordered on the previous screen.
-    journey_order = {j.id: i for i, j in enumerate(_order_journeys_by_app_flow(session, journeys))}
-    scenarios = sorted(scenarios, key=lambda s: journey_order.get(s.journey_id, len(journey_order)))
+    # Generation order: `test_case_number` is claimed atomically and
+    # sequentially per Application at Scenario creation, so sorting by it
+    # shows test cases in the order they were actually generated — signin's
+    # Journey is discovered (and so generated) first in the common case.
+    scenarios = sorted(scenarios, key=lambda s: s.test_case_number)
 
     return [
         _to_scenario_read(

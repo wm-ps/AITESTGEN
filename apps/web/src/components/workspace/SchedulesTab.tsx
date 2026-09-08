@@ -297,59 +297,63 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
           recurring cadence.
         </p>
       ) : (
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th style={{ ...columnHeaderLabelStyle, width: '20%' }}>Name</th>
-              <th style={{ ...columnHeaderLabelStyle, width: '32%' }}>Cadence</th>
-              <th style={{ ...columnHeaderLabelStyle, width: '20%' }}>Next run</th>
-              <th style={{ ...columnHeaderLabelStyle, width: '10%' }}>Enabled</th>
-              <th style={{ ...columnHeaderLabelStyle, width: '8%' }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {schedules.map((schedule) => (
-              <tr key={schedule.id}>
-                <td style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{schedule.name}</td>
-                <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>{schedule.cadence_label}</td>
-                <td className="caption" style={{ fontSize: 12 }}>
-                  {schedule.next_run_at ? formatDateTime(schedule.next_run_at) : '—'}
-                </td>
-                <td>
-                  <ToggleSwitch
-                    checked={schedule.enabled}
-                    disabled={pendingAction === schedule.id}
-                    onChange={() => handleToggle(schedule)}
-                  />
-                </td>
-                <td>
-                  <RowMenu
-                    open={openMenuId === schedule.id}
-                    onOpenChange={(open) => setOpenMenuId(open ? schedule.id : null)}
-                    items={[
-                      {
-                        label: 'Run now',
-                        disabled: pendingAction === schedule.id,
-                        onClick: () => handleRunNow(schedule),
-                      },
-                      {
-                        label: 'Edit',
-                        disabled: pendingAction === schedule.id,
-                        onClick: () => setDialog({ edit: schedule }),
-                      },
-                      {
-                        label: 'Delete',
-                        danger: true,
-                        disabled: pendingAction === schedule.id,
-                        onClick: () => handleDelete(schedule),
-                      },
-                    ]}
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="card-panel" style={{ overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th style={{ ...columnHeaderLabelStyle, width: '20%' }}>Name</th>
+                  <th style={{ ...columnHeaderLabelStyle, width: '32%' }}>Cadence</th>
+                  <th style={{ ...columnHeaderLabelStyle, width: '20%' }}>Next run</th>
+                  <th style={{ ...columnHeaderLabelStyle, width: '10%' }}>Enabled</th>
+                  <th style={{ ...columnHeaderLabelStyle, width: '8%' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {schedules.map((schedule) => (
+                  <tr key={schedule.id}>
+                    <td style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{schedule.name}</td>
+                    <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>{schedule.cadence_label}</td>
+                    <td className="caption" style={{ fontSize: 12 }}>
+                      {schedule.next_run_at ? formatDateTime(schedule.next_run_at) : '—'}
+                    </td>
+                    <td>
+                      <ToggleSwitch
+                        checked={schedule.enabled}
+                        disabled={pendingAction === schedule.id}
+                        onChange={() => handleToggle(schedule)}
+                      />
+                    </td>
+                    <td>
+                      <RowMenu
+                        open={openMenuId === schedule.id}
+                        onOpenChange={(open) => setOpenMenuId(open ? schedule.id : null)}
+                        items={[
+                          {
+                            label: 'Run now',
+                            disabled: pendingAction === schedule.id,
+                            onClick: () => handleRunNow(schedule),
+                          },
+                          {
+                            label: 'Edit',
+                            disabled: pendingAction === schedule.id,
+                            onClick: () => setDialog({ edit: schedule }),
+                          },
+                          {
+                            label: 'Delete',
+                            danger: true,
+                            disabled: pendingAction === schedule.id,
+                            onClick: () => handleDelete(schedule),
+                          },
+                        ]}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
       {dialog && (

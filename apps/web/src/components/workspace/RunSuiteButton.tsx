@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { LoadingDots } from '../LoadingDots'
 
 function PlayIcon() {
   return (
@@ -28,14 +29,17 @@ export function RunSuiteButton({
       <button
         type="button"
         className="button-primary"
-        disabled={running}
+        aria-disabled={running}
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+        onClick={() => {
+          if (running) return
+          setOpen((o) => !o)
+        }}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: running ? 'not-allowed' : 'pointer' }}
       >
         <PlayIcon />
-        {running ? 'Running…' : 'Run Suite'}
+        {running ? <LoadingDots label="Running" /> : 'Run Suite'}
       </button>
       {open && (
         <>
@@ -93,7 +97,7 @@ export function RunSuiteButton({
                 fontFamily: 'inherit',
               }}
             >
-              Run Journey(s)…
+              Selective Run…
             </button>
           </div>
         </>
