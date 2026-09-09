@@ -57,6 +57,20 @@ def test_lint_locator_provenance_skips_raw_locator_calls() -> None:
     assert lint_locator_provenance(code, known_locators) == []
 
 
+def test_lint_locator_provenance_recognizes_role_strategy() -> None:
+    """`[FIXED]` live-exploration's full-page sweep only ever produces
+    strategy="role" locators (`get_by_role(role, name="...")`) — a strategy
+    the crawler never produces, so `_known_accessible_names` never had a
+    case for it. Every real, captured live-exploration locator was silently
+    dropped from the known-names set, falsely flagging every locator in a
+    live-exploration-sourced generated spec as invented."""
+    known_locators = [
+        {"strategy": "role", "selector": 'get_by_role("button", name="plus Add connection")'}
+    ]
+    code = "await page.getByRole('button', { name: 'plus Add connection' }).click();\n"
+    assert lint_locator_provenance(code, known_locators) == []
+
+
 def test_lint_required_fields_flags_a_missing_required_field() -> None:
     code = "await page.locator('#username').fill('x');\n"
     warnings = lint_required_fields(code, {"username": True, "password": True})

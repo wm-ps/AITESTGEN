@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AddTestCasePanel } from './AddTestCasePanel'
+import { LiveExplorationPanel } from './LiveExplorationPanel'
 
 function ChatIcon() {
   return (
@@ -109,10 +109,10 @@ function AuthoringTile({
 }
 
 export function AuthoringTab({ applicationId }: { applicationId: string }) {
-  const [nlmOpen, setNlmOpen] = useState(false)
+  const [liveExplorationOpen, setLiveExplorationOpen] = useState(false)
 
-  if (nlmOpen) {
-    return <AddTestCasePanel applicationId={applicationId} onClose={() => setNlmOpen(false)} />
+  if (liveExplorationOpen) {
+    return <LiveExplorationPanel applicationId={applicationId} onClose={() => setLiveExplorationOpen(false)} />
   }
 
   return (
@@ -120,8 +120,8 @@ export function AuthoringTab({ applicationId }: { applicationId: string }) {
       <AuthoringTile
         icon={<ChatIcon />}
         title="Natural Language"
-        description="Describe a test case in plain English and have it turned into a ready-to-run scenario — no steps to script by hand."
-        onClick={() => setNlmOpen(true)}
+        description="Describe a test case in plain English — a live agent explores the real application to build and verify it, no prior discovery data needed."
+        onClick={() => setLiveExplorationOpen(true)}
       />
       <AuthoringTile
         icon={<RecordIcon />}

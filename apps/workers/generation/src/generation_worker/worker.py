@@ -17,8 +17,9 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 from workflows import (
     GENERATION_TASK_QUEUE,
-    AddTestCaseWorkflow,
+    LIVE_EXPLORATION_TASK_QUEUE,
     GenerationWorkflow,
+    LiveExplorationTestWorkflow,
     SuiteGenerationWorkflow,
 )
 
@@ -28,15 +29,19 @@ from generation_worker.activities import (
     playwright_generation_activity,
     scenario_generation_activity,
 )
-from generation_worker.add_test_case_activities import (
-    analyze_prompt_activity,
-    create_journey_activity,
-    create_scenario_activity,
-    identify_scenarios_activity,
-)
+from generation_worker.add_test_case_activities import analyze_prompt_activity
+from generation_worker.live_exploration_activities import live_explore_activity, live_heal_activity
 
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 MAX_CONCURRENT_ACTIVITIES = int(os.environ.get("GENERATION_WORKER_MAX_CONCURRENT_ACTIVITIES", "5"))
+# LiveExploreActivity/LiveHealActivity each spawn a Node/Playwright-MCP
+# subprocess plus a multi-turn LLM loop — a much heavier, longer-running
+# activity than this worker's normal AI-only ones. A separate queue (and its
+# own, smaller concurrency ceiling) keeps a live exploration in flight from
+# starving normal scenario/code generation on the shared queue above.
+LIVE_EXPLORATION_MAX_CONCURRENT_ACTIVITIES = int(
+    os.environ.get("LIVE_EXPLORATION_WORKER_MAX_CONCURRENT_ACTIVITIES", "2")
+)
 
 
 async def main() -> None:
@@ -45,22 +50,36 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=GENERATION_TASK_QUEUE,
-        workflows=[GenerationWorkflow, SuiteGenerationWorkflow, AddTestCaseWorkflow],
+        workflows=[
+            GenerationWorkflow,
+            SuiteGenerationWorkflow,
+            LiveExplorationTestWorkflow,
+        ],
         activities=[
             scenario_generation_activity,
             ensure_test_suite_activity,
             playwright_generation_activity,
             finalize_suite_generation_activity,
-            # NLM "Add Test Case" feature.
+            # Live-exploration NLM feature — prompt classification is a
+            # cheap AI-only call. LiveExploreActivity/LiveHealActivity (the
+            # actual Playwright-MCP browser agent, which also creates the
+            # Journey row itself) run on their own queue below.
             analyze_prompt_activity,
-            identify_scenarios_activity,
-            create_journey_activity,
-            create_scenario_activity,
         ],
         max_concurrent_activities=MAX_CONCURRENT_ACTIVITIES,
     )
+    live_exploration_worker = Worker(
+        client,
+        task_queue=LIVE_EXPLORATION_TASK_QUEUE,
+        activities=[live_explore_activity, live_heal_activity],
+        max_concurrent_activities=LIVE_EXPLORATION_MAX_CONCURRENT_ACTIVITIES,
+    )
     print(f"Generation worker polling task queue '{GENERATION_TASK_QUEUE}' at {TEMPORAL_ADDRESS}")
-    await worker.run()
+    print(
+        f"Live-exploration worker polling task queue '{LIVE_EXPLORATION_TASK_QUEUE}' "
+        f"at {TEMPORAL_ADDRESS}"
+    )
+    await asyncio.gather(worker.run(), live_exploration_worker.run())
 
 
 if __name__ == "__main__":

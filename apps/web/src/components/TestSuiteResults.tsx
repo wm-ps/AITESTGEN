@@ -875,16 +875,16 @@ export function TestSuiteResults({
                                   >
                                     {testCase.name}
                                   </span>
-                                  {/* NLM Test Case Label — only a test case genuinely
-                                      created via the NLM "Add Test Case" flow carries
-                                      source:'nlm'; every existing test case defaults to
+                                  {/* NL Test Case Label — only a test case genuinely
+                                      created via live browser exploration carries
+                                      source:'nl'; every existing test case defaults to
                                       'discovery' and never shows this. */}
-                                  {testCase.source === 'nlm' && (
+                                  {testCase.source === 'nl' && (
                                     <span
                                       className="badge"
                                       style={{ background: 'var(--accent-wash)', color: 'var(--accent)', flexShrink: 0 }}
                                     >
-                                      NLM Test Case
+                                      NL Test Case
                                     </span>
                                   )}
                                 </div>

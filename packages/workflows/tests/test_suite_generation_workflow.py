@@ -14,10 +14,12 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from workflows import (
     ENSURE_TEST_SUITE_ACTIVITY_NAME,
+    FINALIZE_SUITE_GENERATION_ACTIVITY_NAME,
     GENERATION_TASK_QUEUE,
     PLAYWRIGHT_GENERATION_ACTIVITY_NAME,
     EnsureTestSuiteActivityInput,
     EnsureTestSuiteActivityResult,
+    FinalizeSuiteGenerationActivityInput,
     PlaywrightGenerationActivityInput,
     SuiteGenerationWorkflow,
 )
@@ -37,6 +39,11 @@ async def _fake_playwright_generation(input: PlaywrightGenerationActivityInput) 
     return f"test-asset-for-{input.scenario_id}"
 
 
+@activity.defn(name=FINALIZE_SUITE_GENERATION_ACTIVITY_NAME)
+async def _fake_finalize_suite_generation(input: FinalizeSuiteGenerationActivityInput) -> None:
+    pass
+
+
 @pytest.mark.asyncio
 async def test_suite_generation_workflow_fans_out_one_call_per_scenario() -> None:
     async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -44,7 +51,11 @@ async def test_suite_generation_workflow_fans_out_one_call_per_scenario() -> Non
             env.client,
             task_queue=GENERATION_TASK_QUEUE,
             workflows=[SuiteGenerationWorkflow],
-            activities=[_fake_ensure_test_suite, _fake_playwright_generation],
+            activities=[
+                _fake_ensure_test_suite,
+                _fake_playwright_generation,
+                _fake_finalize_suite_generation,
+            ],
         ):
             result = await env.client.execute_workflow(
                 SuiteGenerationWorkflow.run,
@@ -82,7 +93,11 @@ async def test_suite_generation_workflow_recovers_a_scenario_in_a_later_wave() -
             env.client,
             task_queue=GENERATION_TASK_QUEUE,
             workflows=[SuiteGenerationWorkflow],
-            activities=[_fake_ensure_test_suite, _fake_playwright_generation_recovers_later],
+            activities=[
+                _fake_ensure_test_suite,
+                _fake_playwright_generation_recovers_later,
+                _fake_finalize_suite_generation,
+            ],
         ):
             result = await env.client.execute_workflow(
                 SuiteGenerationWorkflow.run,

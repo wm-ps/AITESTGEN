@@ -25,15 +25,14 @@ unlike `test_data_complete`) because classification only needs the AI/
 pattern-matched output once; execution-time gating then trusts this stored
 value as authoritative rather than reclassifying on every run.
 
-`source` (NLM "Add Test Case" feature) distinguishes a Scenario created
-through the normal Discovery -> Journey -> Scenario pipeline
-(`ScenarioGenerationActivity`) from one created ad hoc from a user's
-plain-English request (`CreateScenarioActivity`, `add_test_case_activities.py`)
-— the frontend labels only the latter "NLM Test Case". Every pre-existing row
-gets `'discovery'` via the column's `server_default`, so a migration adding
-this column never relabels a test case that predates the feature. Reusing an
-existing Scenario through the NLM matching flow does not change its
-`source` — only genuinely new rows are ever written as `'nlm'`.
+`source` distinguishes a Scenario created through the normal Discovery ->
+Journey -> Scenario pipeline (`ScenarioGenerationActivity`, called with its
+default `source="discovery"`) from one created via `LiveExplorationTestWorkflow`
+(live browser exploration from a user's plain-English request, see
+`natural_language_flow.png`, which passes `source="nl"` explicitly) — the
+frontend labels only the latter "NL Test Case". Every pre-existing row gets
+`'discovery'` via the column's `server_default`, so a migration adding this
+column never relabels a test case that predates the feature.
 """
 
 import uuid
@@ -46,7 +45,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
 ScenarioType = Literal["happy", "negative", "edge"]
-ScenarioSource = Literal["discovery", "nlm"]
+ScenarioSource = Literal["discovery", "nl"]
 
 
 class Scenario(SQLModel, table=True):

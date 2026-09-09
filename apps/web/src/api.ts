@@ -37,10 +37,10 @@ export type JourneyStepRead = components['schemas']['JourneyStepRead']
 export type ScenarioRead = components['schemas']['ScenarioRead'] & { test_case_number: number }
 // `description` isn't in api-types.gen.ts yet (regenerate via `npm run
 // generate:api-types` once the API is running) — added by hand.
-// NLM "Add Test Case" feature — 'discovery' (normal Discovery -> Journey ->
-// Scenario pipeline) or 'nlm' (created ad hoc from a plain-English request).
+// 'discovery' (normal Discovery -> Journey -> Scenario pipeline) or 'nl'
+// (created via live browser exploration from a plain-English request).
 // Mirrors `Scenario.source`/`TestCaseRead.source` (apps/api/src/api/main.py).
-export type TestCaseSource = 'discovery' | 'nlm'
+export type TestCaseSource = 'discovery' | 'nl'
 export type TestCaseRead = components['schemas']['TestCaseRead'] & {
   description: string
   source: TestCaseSource
@@ -61,39 +61,59 @@ export type TestSuiteRead = Omit<components['schemas']['TestSuiteRead'], 'test_c
   status: TestSuiteStatus
   test_cases: TestCaseRead[]
 }
-// NLM "Add Test Case" feature — not in api-types.gen.ts yet (backend schema
-// is new, regenerate via `npm run generate:api-types` once the API is
-// running) — added by hand. Mirrors `TestCaseRequestStatusRead`
-// (apps/api/src/api/main.py).
-export type TestCaseRequestStatus = 'analyzing' | 'generating' | 'complete' | 'failed' | 'rejected'
-// One Scenario's own outcome — a single prompt can decompose into several
-// (Multiple Test Cases), each independently PASS/FAIL.
-export type TestCaseGenerationResultRead = {
-  status: 'complete' | 'failed'
-  journey_name: string | null
-  scenario_name: string | null
+// Live-exploration NLM feature — not in api-types.gen.ts yet, added by hand.
+// Mirrors `LiveTestCaseRequestStatusRead` (apps/api/src/api/main.py). Works
+// with zero prior discovery data — no `NO_TEST_SUITE` gate on the create
+// call; natural-language test-case creation always goes through live
+// browser exploration (see `natural_language_flow.png`), never a match
+// against a prior crawl.
+export type LiveTestCaseRequestStatus =
+  | 'exploring'
+  | 'generating'
+  | 'running'
+  | 'complete'
+  | 'rejected'
+  | 'failed'
+export type LiveTestCaseScenarioResultRead = {
+  scenario_id: string
   test_result_status: string | null
+  healed: boolean
   error_message: string | null
-  // True when this Scenario already existed and was matched/reused as-is —
-  // never (re)generated or re-run.
-  already_existed: boolean
-  // True only for a genuinely new Journey this request created.
-  is_new_journey: boolean
-  // True for a brand-new Scenario (existing Journey or one just created for
-  // it); false for a genuine reuse_scenario match. Meaningless once
-  // already_existed or is_new_journey is true.
-  is_new_scenario: boolean
-  // Set only when status is 'failed' — which step actually blocked creation.
-  stage: string | null
 }
-export type TestCaseRequestStatusRead = {
+// TEMP DEBUG — mirrors main.py's LiveTestCaseFieldRead/ComponentRead/PageRead,
+// supporting the workflow's temporary exploration-only cutoff. Not permanent.
+export type LiveTestCaseFieldRead = {
+  name: string | null
+  input_type: string
+  required: boolean
+  locator: string | null
+}
+export type LiveTestCaseComponentRead = {
+  name: string
+  type: string
+  locator: string | null
+}
+export type LiveTestCasePageRead = {
+  url: string
+  heading: string | null
+  fields: LiveTestCaseFieldRead[]
+  components: LiveTestCaseComponentRead[]
+}
+export type LiveTestCaseGeneratedTestRead = {
+  scenario_id: string
+  name: string
+  type: string
+  code: string | null
+}
+export type LiveTestCaseRequestStatusRead = {
   request_id: string
-  status: TestCaseRequestStatus
-  functionality_summary: string
+  status: LiveTestCaseRequestStatus
   rejection_reason: string | null
   error_message: string | null
-  scenario_count: number
-  results: TestCaseGenerationResultRead[]
+  journey_name: string | null
+  results: LiveTestCaseScenarioResultRead[]
+  pages: LiveTestCasePageRead[]
+  generated_tests: LiveTestCaseGeneratedTestRead[]
 }
 // Not in api-types.gen.ts yet (backend schema is new, regenerate via
 // `npm run generate:api-types` once the API is running) — added by hand.
@@ -371,14 +391,14 @@ export const api = {
     request<TestSuiteRead>(`/applications/${applicationId}/test-suites/${suiteId}/terminate`, {
       method: 'POST',
     }),
-  createTestCase: (applicationId: string, prompt: string) =>
-    request<{ request_id: string }>(`/applications/${applicationId}/test-cases`, {
+  createLiveTestCase: (applicationId: string, prompt: string) =>
+    request<{ request_id: string }>(`/applications/${applicationId}/live-test-cases`, {
       method: 'POST',
       body: JSON.stringify({ prompt }),
     }),
-  getTestCaseRequest: (applicationId: string, requestId: string) =>
-    request<TestCaseRequestStatusRead>(
-      `/applications/${applicationId}/test-cases/requests/${requestId}`,
+  getLiveTestCaseRequest: (applicationId: string, requestId: string) =>
+    request<LiveTestCaseRequestStatusRead>(
+      `/applications/${applicationId}/live-test-cases/requests/${requestId}`,
     ),
   getGenerationStatus: (applicationId: string) =>
     request<{ available: boolean }>(`/applications/${applicationId}/generation-status`),

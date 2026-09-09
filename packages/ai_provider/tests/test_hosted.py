@@ -306,6 +306,37 @@ async def test_generate_scenarios_batches_by_type_and_forces_type(
     assert [c.type for c in candidates] == ["happy", "negative", "edge"]
 
 
+async def test_generate_scenarios_grounds_prompt_in_journey_description_when_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A live-exploration Journey's `description` is the user's own original
+    request (e.g. an explicit field value, or "cover happy/negative/edge") —
+    the only place that instruction can reach scenario generation, since
+    Discovery never captures form-field validation constraints the way a
+    live MCP session's typed values imply."""
+    captured = _monkeypatch_post(monkeypatch, _scenario_body("Happy scenario"))
+
+    await HostedAIProvider().generate_scenarios(
+        _fake_journey(description="Fill Server type with GIT and Endpoint URL with the repo URL."),
+        [_fake_page("https://a.example.com")],
+        limit=1,
+    )
+
+    assert "Fill Server type with GIT" in captured["json"]["messages"][1]["content"]
+
+
+async def test_generate_scenarios_omits_description_section_when_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(monkeypatch, _scenario_body("Happy scenario"))
+
+    await HostedAIProvider().generate_scenarios(
+        _fake_journey(), [_fake_page("https://a.example.com")], limit=1
+    )
+
+    assert "Additional context" not in captured["json"]["messages"][1]["content"]
+
+
 async def test_generate_scenarios_isolates_a_failed_type_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -386,6 +417,128 @@ async def test_generate_scenarios_prompt_excludes_the_account_own_credential(
     content = "".join(m["content"] for m in captured_calls[0]["messages"])
     assert "login credentials" not in content
     assert "never include a field for the account's own existing login" in content
+
+
+def _scenario_body_multi(names: list[str]) -> str:
+    return json.dumps(
+        {
+            "scenarios": [
+                {
+                    "name": name,
+                    "type": "SOMETHING-THE-MODEL-MADE-UP",
+                    "steps": ["step 1"],
+                    "expected_result": "it works",
+                    "test_data": [],
+                }
+                for name in names
+            ]
+        }
+    )
+
+
+async def test_generate_scenarios_truncates_to_an_exact_requested_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A user's explicit "3 test cases: happy/negative/edge" must never come
+    back as 9 — even if the model over-generates for one type despite being
+    told an exact count, the result is truncated to it, the same way `limit`
+    already truncates."""
+    bodies = iter(
+        [
+            _scenario_body("Happy 1"),
+            _scenario_body_multi(["Negative 1", "Negative 2", "Negative 3"]),
+            _scenario_body("Edge 1"),
+        ]
+    )
+
+    async def fake_post(self, url, *, headers=None, json=None):
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": next(bodies)}}]},
+            request=httpx.Request("POST", "https://fake-proxy.example.com/chat/completions"),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    candidates = await HostedAIProvider().generate_scenarios(
+        _fake_journey(),
+        [_fake_page("https://a.example.com")],
+        requested_counts={"happy": 1, "negative": 1, "edge": 1},
+    )
+
+    assert [c.name for c in candidates] == ["Happy 1", "Negative 1", "Edge 1"]
+
+
+async def test_generate_scenarios_tells_the_model_an_exact_count_when_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured_calls: list[dict] = []
+
+    async def fake_post(self, url, *, headers=None, json=None):
+        captured_calls.append(json)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": _scenario_body("Scenario")}}]},
+            request=httpx.Request("POST", "https://fake-proxy.example.com/chat/completions"),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    await HostedAIProvider().generate_scenarios(
+        _fake_journey(),
+        [_fake_page("https://a.example.com")],
+        requested_counts={"negative": 1},
+    )
+
+    happy_system_prompt = captured_calls[0]["messages"][0]["content"]
+    negative_system_prompt = captured_calls[1]["messages"][0]["content"]
+    assert "EXACTLY 1 Scenario" in negative_system_prompt
+    # A type with no requested count keeps today's free-running guidance.
+    assert "Usually just one" in happy_system_prompt
+
+
+async def test_generate_scenarios_grounds_prompt_in_the_recorded_live_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`Journey.captured_flow` (the literal live-exploration transcript) must
+    reach the scenario prompt verbatim, and the model must be told to ground
+    steps in it — this is what stops an invented "settings button" locator
+    from ever reaching a generated Scenario."""
+    captured = _monkeypatch_post(monkeypatch, _scenario_body("Happy scenario"))
+
+    await HostedAIProvider().generate_scenarios(
+        _fake_journey(
+            captured_flow=[
+                {
+                    "tool_name": "browser_click",
+                    "element_description": "settings icon for the first tenant",
+                    "typed_value": None,
+                    "page_url": "https://a.example.com/tenants/mcp",
+                    "page_heading": "MCP Connections",
+                    "rationale": "open the mcp-connections page",
+                }
+            ]
+        ),
+        [_fake_page("https://a.example.com")],
+        limit=1,
+    )
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "Recorded live browser session" in content
+    assert "settings icon for the first tenant" in content
+    assert "must name only elements/pages/values that appear in it" in content
+
+
+async def test_generate_scenarios_omits_live_session_section_when_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(monkeypatch, _scenario_body("Happy scenario"))
+
+    await HostedAIProvider().generate_scenarios(
+        _fake_journey(), [_fake_page("https://a.example.com")], limit=1
+    )
+
+    assert "Recorded live browser session" not in captured["json"]["messages"][1]["content"]
 
 
 async def test_generate_playwright_returns_code(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -494,6 +647,79 @@ async def test_generate_playwright_prompt_forbids_literal_fill_on_credential_fie
     assert "Never call `.fill(...)` with a literal string on the username field" in content
 
 
+async def test_generate_playwright_prompt_forbids_select_option_on_a_non_native_dropdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[FIXED]` regression: real generated output called `.selectOption(...)`
+    on a `role="combobox"` element built from a non-native dropdown component
+    (Ant Design's `<Select>`, in the observed case) — which always fails with
+    "Element is not a <select> element", since `.selectOption(...)` only ever
+    works on a genuine native HTML `<select>`. The prompt must steer a
+    role="combobox" trigger toward click-open-then-click-option instead."""
+    captured = _monkeypatch_post(monkeypatch, "test('x', async ({ page }) => {})")
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(scenario)
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "only ever works on a genuine native HTML `<select>`" in content
+    assert "never scope the search to inside the trigger element" in content
+
+
+async def test_generate_playwright_prompt_requires_visible_filter_for_ambiguous_option_nodes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[FIXED]` regression, then `[FIXED]` again: live-inspected the real DOM
+    behind a repeatedly failing "not visible" error against a real Ant Design
+    dropdown. First found a `role="option"` hidden accessibility duplicate
+    alongside the real, visible popup — the original fix taught the model to
+    `.filter({ visible: true })`. Later, live-probed with real Playwright
+    directly (not the MCP snapshot) and found the deeper issue: the captured
+    `role="generic"` locator itself matches ZERO elements via real
+    `getByRole()` — "generic" is name-from-content-prohibited in a real
+    accessibility tree, so no amount of `.filter({ visible: true })` can fix
+    it. The prompt must steer the model to `getByText(...)` for a
+    generic-role element instead, and keep the still-valid
+    `.filter({ visible: true })` guidance only for the genuinely-ambiguous
+    `role="option"` hidden-duplicate case."""
+    captured = _monkeypatch_post(monkeypatch, "test('x', async ({ page }) => {})")
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(scenario)
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "is not guaranteed to be unique" in content
+    assert "getByText(name, { exact: true })" in content
+    assert "getByRole('generic', { name })" in content
+    assert "name-from-content-prohibited" in content
+
+
+async def test_generate_playwright_prompt_scopes_popup_option_text_with_last(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[FIXED]` regression: even after switching a popup option to
+    `getByText(...)` (see the generic-role rule above), the fix for one
+    ambiguity (a hidden ARIA duplicate) didn't cover a second, different one
+    — live-diagnosed a real failure and found the real Playwright error was
+    a strict-mode violation: the option's text ALSO matched a status tag
+    already visible elsewhere on the page (real data created by an earlier
+    test run against a real, shared environment), and both matches were
+    genuinely visible, so `.filter({ visible: true })` alone couldn't tell
+    them apart. A portal-rendered popup is appended to the end of the DOM
+    after everything already on the page, so its real option is reliably
+    the LAST match, not the first — the prompt must tell the model to scope
+    with `.last()` in addition to `.filter({ visible: true })`."""
+    captured = _monkeypatch_post(monkeypatch, "test('x', async ({ page }) => {})")
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(scenario)
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "Pre-existing-data ambiguity rule" in content
+    assert "resolved to N elements" in content
+    assert ".filter({ visible: true }).last()" in content
+
+
 async def test_generate_playwright_allows_base_url_visit_when_no_auth_required(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -563,6 +789,77 @@ async def test_generate_playwright_includes_known_locators_in_prompt(
     content = "".join(m["content"] for m in captured["json"]["messages"])
     assert "Known element locators" in content
     assert 'Checkout / button:Save button -> [data-testid="save"]' in content
+
+
+async def test_generate_playwright_includes_ordered_live_action_sequence_in_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """LiveHealActivity's fix: the prerequisite action (opening the
+    dropdown) must reach the prompt alongside the final target locator, in
+    order — not just the final locator on its own."""
+    captured = _monkeypatch_post(
+        monkeypatch, "test('add connection', async ({ page }) => {})"
+    )
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(
+        scenario,
+        live_action_sequence=[
+            {
+                "tool_name": "browser_click",
+                "strategy": "role",
+                "value": 'get_by_role("combobox", name="Server type")',
+                "fragile": False,
+                "element_tag": "combobox",
+            },
+            {
+                "tool_name": "browser_click",
+                "strategy": "role",
+                "value": 'get_by_role("option", name="GIT")',
+                "fragile": False,
+                "element_tag": "option",
+            },
+        ],
+    )
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "Ordered Action Sequence" in content
+    assert '1. browser_click on <combobox> -> get_by_role("combobox", name="Server type")' \
+        in content
+    assert '2. browser_click on <option> -> get_by_role("option", name="GIT")' in content
+
+
+async def test_generate_playwright_prompt_requires_ensure_visible_for_sequence_steps_too(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[FIXED]` regression: real generated output resolved the sequence's
+    final target with a raw `page.getByRole(...)` and called `.hover()`/
+    `.click()` directly on it, skipping `ensureVisible` — the ONE interaction
+    in the whole file that wasn't wrapped, which is exactly why it kept
+    failing "not visible" even after the wait/poll fix. The prompt must say
+    explicitly that a sequence step is not exempt from that rule."""
+    captured = _monkeypatch_post(
+        monkeypatch, "test('add connection', async ({ page }) => {})"
+    )
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(
+        scenario,
+        live_action_sequence=[
+            {
+                "tool_name": "browser_click",
+                "strategy": "role",
+                "value": 'get_by_role("combobox", name="Server type")',
+                "fragile": False,
+                "element_tag": "combobox",
+            },
+        ],
+    )
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "must still be" in content
+    assert "resolved via `page.getByRole(...)`/etc. and routed through `ensureVisible`" in content
+    assert "never a raw, unwrapped" in content
 
 
 async def test_generate_playwright_renders_label_strategy_as_getbylabel(
@@ -654,6 +951,117 @@ async def test_generate_playwright_degrades_gracefully_with_no_known_locators(
     assert "(none)" in content
 
 
+def _test_case_prompt_body(**overrides) -> str:
+    body = {
+        "is_relevant": True,
+        "functionality_summary": "Add a GIT MCP connection",
+        "actions": [],
+        "expected_result": "",
+        "provided_test_data": {},
+        "requested_scenario_counts": {},
+        "rejection_reason": None,
+    }
+    body.update(overrides)
+    return json.dumps(body)
+
+
+async def test_analyze_test_case_prompt_extracts_an_explicit_per_type_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _monkeypatch_post(
+        monkeypatch,
+        _test_case_prompt_body(
+            requested_scenario_counts={"happy": 1, "negative": 1, "edge": 1}
+        ),
+    )
+
+    candidate = await HostedAIProvider().analyze_test_case_prompt(
+        "Create three test cases: happy path, negative path, and edge case."
+    )
+
+    assert candidate.requested_scenario_counts == {"happy": 1, "negative": 1, "edge": 1}
+
+
+async def test_analyze_test_case_prompt_defaults_to_empty_when_no_count_stated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _monkeypatch_post(monkeypatch, _test_case_prompt_body())
+
+    candidate = await HostedAIProvider().analyze_test_case_prompt(
+        "Test that adding a GIT MCP connection works."
+    )
+
+    assert candidate.requested_scenario_counts == {}
+
+
+async def test_analyze_test_case_prompt_drops_an_unknown_category_or_bad_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hallucination guard, same spirit as `provided_test_data` below — a
+    malformed value here would force `generate_scenarios` into an unintended
+    exact count, so an unknown category, a non-int, or a non-positive count
+    is dropped rather than trusted."""
+    _monkeypatch_post(
+        monkeypatch,
+        _test_case_prompt_body(
+            requested_scenario_counts={
+                "happy": 1,
+                "smoke": 2,
+                "negative": "a lot",
+                "edge": 0,
+            }
+        ),
+    )
+
+    candidate = await HostedAIProvider().analyze_test_case_prompt("irrelevant")
+
+    assert candidate.requested_scenario_counts == {"happy": 1}
+
+
+async def test_analyze_test_case_prompt_falls_back_to_regex_when_the_llm_omits_the_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Observed live: the same unambiguous prompt sometimes comes back from
+    the model with an empty `requested_scenario_counts` — the extraction is
+    LLM-based and not 100% reliable turn to turn. The deterministic regex
+    backstop must still produce the right count from the prompt text itself."""
+    _monkeypatch_post(monkeypatch, _test_case_prompt_body(requested_scenario_counts={}))
+
+    candidate = await HostedAIProvider().analyze_test_case_prompt(
+        "Create three test cases to cover the happy path, the negative path, and an edge case."
+    )
+
+    assert candidate.requested_scenario_counts == {"happy": 1, "negative": 1, "edge": 1}
+
+
+async def test_analyze_test_case_prompt_regex_fallback_handles_per_category_counts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _monkeypatch_post(monkeypatch, _test_case_prompt_body(requested_scenario_counts={}))
+
+    candidate = await HostedAIProvider().analyze_test_case_prompt(
+        "Give me 3 negative scenarios and one happy path test case."
+    )
+
+    assert candidate.requested_scenario_counts == {"negative": 3, "happy": 1}
+
+
+async def test_analyze_test_case_prompt_llm_count_wins_over_the_regex_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fallback only fills gaps — when the LLM did return a value for a
+    category, that's what's used, never overridden."""
+    _monkeypatch_post(
+        monkeypatch, _test_case_prompt_body(requested_scenario_counts={"happy": 2})
+    )
+
+    candidate = await HostedAIProvider().analyze_test_case_prompt(
+        "Create three test cases to cover the happy path, the negative path, and an edge case."
+    )
+
+    assert candidate.requested_scenario_counts == {"happy": 2, "negative": 1, "edge": 1}
+
+
 async def test_infer_state_similarity_returns_the_raw_opinion_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -695,3 +1103,135 @@ async def test_classify_action_safety_returns_the_raw_opinion_text(
     assert "Archive" in captured["json"]["messages"][0]["content"]
     assert "Claim Details" in captured["json"]["messages"][0]["content"]
     assert "response_format" not in captured["json"]
+
+
+async def test_decide_live_exploration_action_parses_tool_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_response_body = json.dumps(
+        {
+            "tool_name": "browser_click",
+            "tool_args": {"element": "Create connection button", "ref": "e12"},
+            "rationale": "The MCP Connections page has a visible 'Create' button.",
+            "goal_satisfied": False,
+        }
+    )
+    captured = _monkeypatch_post(monkeypatch, fake_response_body)
+
+    result = await HostedAIProvider().decide_live_exploration_action(
+        requirement="Create a new MCP connection for a tenant.",
+        history=[{"tool_name": "browser_navigate", "tool_args": {"url": "https://app/tenants"}}],
+        snapshot={"role": "main", "children": [{"role": "button", "name": "Create", "ref": "e12"}]},
+    )
+
+    assert result.tool_name == "browser_click"
+    assert result.tool_args == {"element": "Create connection button", "ref": "e12"}
+    assert result.goal_satisfied is False
+    assert captured["json"]["response_format"] == {"type": "json_object"}
+    assert "Create a new MCP connection" in captured["json"]["messages"][1]["content"]
+
+
+async def test_decide_live_exploration_action_uses_heal_prompt_when_healing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_response_body = json.dumps(
+        {
+            "tool_name": "browser_snapshot",
+            "tool_args": {},
+            "rationale": "button, accessible name 'Create connection'",
+            "goal_satisfied": True,
+        }
+    )
+    captured = _monkeypatch_post(monkeypatch, fake_response_body)
+
+    result = await HostedAIProvider().decide_live_exploration_action(
+        requirement="Step 'click Create' failed: locator not found",
+        history=[],
+        snapshot={"role": "main"},
+        is_heal=True,
+    )
+
+    assert result.goal_satisfied is True
+    assert "healing agent" in captured["json"]["messages"][0]["content"]
+
+
+async def test_heal_prompt_requires_a_hover_before_declaring_goal_satisfied(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[FIXED]` regression: the heal agent used to be allowed to declare
+    `goal_satisfied` after merely "observing" an element in a snapshot and
+    reasoning about it in `rationale` — never actually acting on it. Observed
+    live: `live_heal_activity` reads `locator_candidate` off the LAST
+    recorded step, which is only populated by an actual browser_hover/click/
+    type/select_option — a heal that only ever reasoned in prose left that
+    None, silently failing to heal despite correctly identifying the fix."""
+    captured = _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {
+                "tool_name": "browser_hover",
+                "tool_args": {"element": "settings link", "ref": "e1"},
+                "rationale": "hover the candidate element",
+                "goal_satisfied": False,
+            }
+        ),
+    )
+
+    await HostedAIProvider().decide_live_exploration_action(
+        requirement="Step 'click Create' failed: locator not found",
+        history=[],
+        snapshot={"role": "main"},
+        is_heal=True,
+    )
+
+    system_prompt = captured["json"]["messages"][0]["content"]
+    assert "your NEXT turn must be" in system_prompt
+    assert "browser_hover" in system_prompt
+    assert (
+        'Never set "goal_satisfied" in the same turn as that confirming action itself'
+        in system_prompt
+    )
+
+
+async def test_heal_prompt_allows_a_click_to_confirm_a_dropdown_option(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[FIXED]` regression: the heal agent was barred from ever clicking,
+    only hovering, to avoid triggering a real side-effect mid-investigation.
+    That's right for a submit/save/delete button, but for a dropdown/listbox/
+    menu OPTION it left the heal unable to confirm anything beyond "this
+    element exists and is hoverable" — never whether clicking it actually
+    selects the value, and never able to catch a wrong-but-similarly-named
+    element elsewhere on the page (e.g. a status tag reusing the option's
+    text) that only a real click would expose. Observed live: a healed test's
+    regenerated code mirrored the heal's own hover-only evidence into a
+    `.hover()` call on a dropdown option — which can never select anything —
+    while the real, unrelated match a plain text locator also picked up went
+    undetected because the heal never clicked to find out. Selecting an
+    option is not destructive (it only changes a field's value; this heal
+    never submits the form), so the prompt must explicitly allow a click for
+    this one case while still barring it for anything that saves/submits/
+    deletes/navigates."""
+    captured = _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {
+                "tool_name": "browser_click",
+                "tool_args": {"element": "GIT option", "ref": "e7"},
+                "rationale": "click the GIT option to confirm it selects",
+                "goal_satisfied": False,
+            }
+        ),
+    )
+
+    await HostedAIProvider().decide_live_exploration_action(
+        requirement="Step 'select GIT from the Server type dropdown' failed: locator not found",
+        history=[],
+        snapshot={"role": "main"},
+        is_heal=True,
+    )
+
+    system_prompt = captured["json"]["messages"][0]["content"]
+    assert "your NEXT turn must be \"browser_click\"" in system_prompt
+    assert "not destructive" in system_prompt
+    assert "never submits" in system_prompt or "never goes on to submit" in system_prompt

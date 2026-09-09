@@ -52,6 +52,12 @@ class DiscoveryRun(SQLModel, table=True):
     # Story 2.9: per-run override of Application.page_load_timeout_seconds —
     # wins when set. Both null falls back to DEFAULT_PAGE_LOAD_TIMEOUT_SECONDS.
     page_load_timeout_seconds: float | None = Field(default=None)
+    # "crawler" (broad DiscoveryWorkflow crawl) | "live_exploration" (a single
+    # NL-requirement-driven live agent session). Callers that pick "the"
+    # DiscoveryRun for coverage/dashboard/Journey-anchoring purposes must
+    # filter source == "crawler" — a live_exploration run is scoped to one
+    # requirement, not a stand-in for the application's full crawled model.
+    source: str = Field(default="crawler")
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

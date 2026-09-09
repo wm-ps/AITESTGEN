@@ -19,10 +19,12 @@ from domain import (
     Application,
     AuthMethod,
     Component,
+    ComponentLocator,
     DiscoveryRun,
     DiscoverySettings,
     ExecutionPolicy,
     Form,
+    FormField,
     InteractionLevel,
     Invite,
     Journey,
@@ -48,6 +50,7 @@ from secrets_client import SecretRef, VaultSecretsClient
 from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
+from temporalio.api.enums.v1 import TaskQueueType
 from temporalio.client import Client as TemporalClient
 from temporalio.client import Schedule as TemporalSchedule
 from temporalio.client import (
@@ -67,14 +70,15 @@ from workflows import (
     GENERATION_TASK_QUEUE,
     HEAL_CLAIM_STALE_AFTER,
     HEALABLE_STATUSES,
-    AddTestCaseWorkflow,
-    AddTestCaseWorkflowInput,
+    LIVE_EXPLORATION_TASK_QUEUE,
     ApplicationTestExecutionWorkflow,
     CleanupWorkflow,
     ExecutionWorkflowInput,
     GenerationWorkflow,
     HealTestActivityInput,
     HealTestExecutionWorkflow,
+    LiveExplorationTestWorkflow,
+    LiveExplorationWorkflowInput,
     ScheduledExecutionWorkflow,
     ScheduledExecutionWorkflowInput,
     SuiteGenerationWorkflow,
@@ -595,7 +599,10 @@ def _latest_discovery_run(session: Session, application_id: uuid.UUID) -> Discov
     recent, never the DB's arbitrary insertion order."""
     return session.exec(
         select(DiscoveryRun)
-        .where(DiscoveryRun.application_id == application_id)
+        .where(
+            DiscoveryRun.application_id == application_id,
+            DiscoveryRun.source == "crawler",
+        )
         .order_by(DiscoveryRun.created_at.desc())  # type: ignore[arg-type]
     ).first()
 
@@ -672,7 +679,10 @@ def get_home(
     latest_run_by_app: dict[uuid.UUID, DiscoveryRun] = {}
     for run in session.exec(
         select(DiscoveryRun)
-        .where(DiscoveryRun.application_id.in_(app_ids))  # type: ignore[attr-defined]
+        .where(
+            DiscoveryRun.application_id.in_(app_ids),  # type: ignore[attr-defined]
+            DiscoveryRun.source == "crawler",
+        )
         .order_by(DiscoveryRun.created_at.desc())  # type: ignore[arg-type]
     ).all():
         latest_run_by_app.setdefault(run.application_id, run)
@@ -1783,10 +1793,9 @@ class TestCaseRead(BaseModel):
     type: str
     description: str
     code: str
-    # NLM "Add Test Case" feature — 'discovery' (normal Discovery -> Journey
-    # -> Scenario pipeline) or 'nlm' (created ad hoc from a plain-English
-    # request). Every pre-existing Scenario is 'discovery' (migration
-    # 584191e291e5's server_default) — never relabeled.
+    # 'discovery' (normal Discovery -> Journey -> Scenario pipeline) or 'nl'
+    # (created via live browser exploration). Every pre-existing Scenario is
+    # 'discovery' (migration 584191e291e5's server_default) — never relabeled.
     source: str
 
 
@@ -1798,159 +1807,233 @@ class TestSuiteRead(BaseModel):
     test_cases: list[TestCaseRead]
 
 
-class TestCaseCreate(BaseModel):
-    # Everything is prompt-based — no separate test-data field. Any concrete
-    # value the user wants used (e.g. "using promo code EXPIRED10") is
-    # extracted from `prompt` itself by AnalyzePromptActivity; anything not
-    # mentioned is resolved from the existing Test Data Pool or synthesized
-    # by PlaywrightGenerationActivity's own existing default-value logic,
-    # exactly like every normal-flow Scenario.
+class LiveTestCaseCreate(BaseModel):
     prompt: str
 
 
-class TestCaseGenerationResultRead(BaseModel):
-    """One Scenario's own outcome — a single prompt can decompose into
-    several (Multiple Test Cases), each independently PASS/FAIL."""
-
-    status: str  # complete | failed
-    journey_name: str | None = None
-    scenario_name: str | None = None
+class LiveTestCaseScenarioResultRead(BaseModel):
+    scenario_id: str
     test_result_status: str | None = None
+    healed: bool = False
     error_message: str | None = None
-    # True when this Scenario already existed and was matched/reused as-is —
-    # never (re)generated or re-run. Lets the UI distinguish "matched to an
-    # existing test case" from "newly generated".
-    already_existed: bool = False
-    # True only for a genuinely new Journey this request created — lets the
-    # UI say which Journey was newly created, not just name it like any
-    # other (New Journey grouping is a success, never a failure by itself).
-    is_new_journey: bool = False
-    # NLM Matching and Creation Rules — True for a brand-new Scenario
-    # (existing Journey or one just created for it); False for a genuine
-    # `reuse_scenario` match. Meaningless once `already_existed` or
-    # `is_new_journey` is True — the UI checks those first.
-    is_new_scenario: bool = False
-    # Set only for `status="failed"` — names which step actually blocked
-    # creation (e.g. "Scenario match", "Code generation").
-    stage: str | None = None
 
 
-class TestCaseRequestStatusRead(BaseModel):
+# TEMP DEBUG — supports the workflow's temporary exploration-only cutoff
+# (live_exploration_workflow.py). Shows the full-page-sweep data
+# (Form/FormField/Component/ComponentLocator) a live-exploration run
+# actually persisted, so it's reviewable without going further into
+# scenario/code generation. Not a permanent feature.
+class LiveTestCaseFieldRead(BaseModel):
+    name: str | None
+    input_type: str
+    required: bool
+    locator: str | None
+
+
+class LiveTestCaseComponentRead(BaseModel):
+    name: str
+    type: str
+    locator: str | None
+
+
+class LiveTestCasePageRead(BaseModel):
+    url: str
+    heading: str | None
+    fields: list[LiveTestCaseFieldRead] = Field(default_factory=list)
+    components: list[LiveTestCaseComponentRead] = Field(default_factory=list)
+
+
+class LiveTestCaseGeneratedTestRead(BaseModel):
+    scenario_id: str
+    name: str
+    type: str
+    code: str | None
+
+
+class LiveTestCaseRequestStatusRead(BaseModel):
     request_id: str
-    status: str  # analyzing | generating | complete | failed | rejected — overall
-    functionality_summary: str = ""
+    status: str  # exploring | generating | running | complete | rejected | failed
     rejection_reason: str | None = None
     error_message: str | None = None
-    # How many Scenarios were identified once analysis finishes — lets the UI
-    # say "Building 3 test cases…" instead of looking identical to a
-    # single-Scenario request while it runs.
-    scenario_count: int = 0
-    results: list[TestCaseGenerationResultRead] = Field(default_factory=list)
+    journey_name: str | None = None
+    results: list[LiveTestCaseScenarioResultRead] = Field(default_factory=list)
+    pages: list[LiveTestCasePageRead] = Field(default_factory=list)
+    generated_tests: list[LiveTestCaseGeneratedTestRead] = Field(default_factory=list)
 
 
-def _add_test_case_workflow_id(application_external_id: uuid.UUID, request_id: uuid.UUID) -> str:
-    return f"add-test-case-{application_external_id}-{request_id}"
+def _live_exploration_workflow_id(application_external_id: uuid.UUID, request_id: uuid.UUID) -> str:
+    return f"live-exploration-{application_external_id}-{request_id}"
 
 
-# NLM "Add Test Case" feature — no DB table backs the request itself (see
-# `AddTestCaseWorkflow`'s own docstring): the workflow's `@workflow.query`
-# ("still running") and its own return value (`.result()`, once terminal) are
-# the only record of a request's status. `request_id` is a fresh `uuid4()`
-# minted here, not a DB id.
-@app.post("/applications/{external_id}/test-cases", status_code=202)
-async def create_test_case(
+# Live-exploration NLM feature: unlike `/test-cases` above, this never checks
+# for an existing TestSuite (or any prior Discovery data at all) — the live
+# agent explores the real application itself and materializes its own
+# DiscoveryRun/Page/Component set (see `LiveExploreActivity`), so this works
+# on a freshly-onboarded application with zero discovery history.
+@app.post("/applications/{external_id}/live-test-cases", status_code=202)
+async def create_live_test_case(
     external_id: uuid.UUID,
-    payload: TestCaseCreate,
+    payload: LiveTestCaseCreate,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
 ) -> dict[str, str]:
-    application = _get_org_application(session, organization_id, external_id)
-
-    # Add Test Case Tab: server-side mirror of the frontend's own "show only
-    # once a TestSuite exists" gate.
-    has_suite = session.exec(
-        select(TestSuite)
-        .join(Journey, Journey.id == TestSuite.journey_id)  # type: ignore[arg-type]
-        .where(Journey.application_id == application.id)
-        .limit(1)
-    ).first()
-    if has_suite is None:
-        raise HTTPException(status_code=400, detail="NO_TEST_SUITE")
+    _get_org_application(session, organization_id, external_id)
 
     client = await get_temporal_client()
     if not await has_pollers(client, GENERATION_TASK_QUEUE):
         raise HTTPException(status_code=503, detail="GENERATION_UNAVAILABLE")
+    if not await has_pollers(
+        client, LIVE_EXPLORATION_TASK_QUEUE, TaskQueueType.TASK_QUEUE_TYPE_ACTIVITY
+    ):
+        raise HTTPException(status_code=503, detail="LIVE_EXPLORATION_UNAVAILABLE")
 
     request_id = uuid.uuid4()
     await client.start_workflow(
-        AddTestCaseWorkflow.run,
-        AddTestCaseWorkflowInput(
-            application_id=str(external_id),
-            prompt=payload.prompt,
-        ),
-        id=_add_test_case_workflow_id(external_id, request_id),
+        LiveExplorationTestWorkflow.run,
+        LiveExplorationWorkflowInput(application_id=str(external_id), prompt=payload.prompt),
+        id=_live_exploration_workflow_id(external_id, request_id),
         task_queue=GENERATION_TASK_QUEUE,
     )
     return {"request_id": str(request_id)}
 
 
-@app.get("/applications/{external_id}/test-cases/requests/{request_id}")
-async def get_test_case_request(
+# TEMP DEBUG — see LiveTestCasePageRead above.
+def _live_test_case_page_inventory(session: Session, journey_external_id: str) -> list[LiveTestCasePageRead]:
+    journey = session.exec(
+        select(Journey).where(Journey.external_id == uuid.UUID(journey_external_id))
+    ).one_or_none()
+    if journey is None:
+        return []
+    steps = session.exec(
+        select(JourneyStep)
+        .where(JourneyStep.journey_id == journey.id)
+        .order_by(JourneyStep.step_order)  # type: ignore[arg-type]
+    ).all()
+    # Canonical (post-merge) page ids, not `Page.discovery_run_id`-matched
+    # ones — Components/ComponentLocators attach to whichever Page row
+    # survived the merge, which is very often an older one than the fresh
+    # Page row this run itself created. Same resolution
+    # `resolve_known_application_model_sync` already relies on.
+    page_ids = [step.page_id for step in steps if step.page_id]
+    if not page_ids:
+        return []
+    pages = session.exec(select(Page).where(Page.id.in_(page_ids))).all()  # type: ignore[attr-defined]
+
+    result: list[LiveTestCasePageRead] = []
+    for page in pages:
+        forms = session.exec(select(Form).where(Form.page_id == page.id)).all()
+        fields = [
+            LiveTestCaseFieldRead(
+                name=field.name,
+                input_type=field.input_type,
+                required=field.required,
+                locator=field.captured_selector,
+            )
+            for form in forms
+            for field in session.exec(select(FormField).where(FormField.form_id == form.id)).all()
+        ]
+        components = session.exec(select(Component).where(Component.page_id == page.id)).all()
+        component_reads = []
+        for component in components:
+            locator = session.exec(
+                select(ComponentLocator).where(ComponentLocator.component_id == component.id)
+            ).first()
+            component_reads.append(
+                LiveTestCaseComponentRead(
+                    name=component.name, type=component.type, locator=locator.value if locator else None
+                )
+            )
+        result.append(
+            LiveTestCasePageRead(
+                url=page.url, heading=page.heading, fields=fields, components=component_reads
+            )
+        )
+    return result
+
+
+# TEMP DEBUG — see LiveTestCaseGeneratedTestRead above. Scenario + generated
+# Playwright code, grounded in the live-exploration data reviewed at the
+# previous checkpoint — surfaced here so generated-test-case quality can be
+# reviewed before execution is turned back on.
+def _live_test_case_generated_tests(
+    session: Session, journey_external_id: str
+) -> list[LiveTestCaseGeneratedTestRead]:
+    journey = session.exec(
+        select(Journey).where(Journey.external_id == uuid.UUID(journey_external_id))
+    ).one_or_none()
+    if journey is None:
+        return []
+    scenarios = session.exec(
+        select(Scenario).where(
+            Scenario.journey_id == journey.id,
+            Scenario.current.is_(True),  # type: ignore[attr-defined]
+        )
+    ).all()
+    result: list[LiveTestCaseGeneratedTestRead] = []
+    for scenario in scenarios:
+        asset = session.exec(
+            select(TestAsset).where(
+                TestAsset.scenario_id == scenario.id,
+                TestAsset.current.is_(True),  # type: ignore[attr-defined]
+            )
+        ).first()
+        result.append(
+            LiveTestCaseGeneratedTestRead(
+                scenario_id=str(scenario.external_id),
+                name=scenario.name,
+                type=scenario.type,
+                code=asset.code if asset else None,
+            )
+        )
+    return result
+
+
+@app.get("/applications/{external_id}/live-test-cases/requests/{request_id}")
+async def get_live_test_case_request(
     external_id: uuid.UUID,
     request_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
-) -> TestCaseRequestStatusRead:
+) -> LiveTestCaseRequestStatusRead:
     _get_org_application(session, organization_id, external_id)
     client = await get_temporal_client()
     handle = client.get_workflow_handle_for(
-        AddTestCaseWorkflow.run, _add_test_case_workflow_id(external_id, request_id)
+        LiveExplorationTestWorkflow.run, _live_exploration_workflow_id(external_id, request_id)
     )
     try:
         desc = await handle.describe()
     except Exception as exc:
-        raise HTTPException(status_code=404, detail="TEST_CASE_REQUEST_NOT_FOUND") from exc
+        raise HTTPException(status_code=404, detail="LIVE_TEST_CASE_REQUEST_NOT_FOUND") from exc
 
     if desc.status == WorkflowExecutionStatus.RUNNING:
-        status = await handle.query(AddTestCaseWorkflow.get_status)
-        return TestCaseRequestStatusRead(
-            request_id=str(request_id),
-            status=status.status,
-            functionality_summary=status.functionality_summary,
-            rejection_reason=status.rejection_reason,
-            scenario_count=status.scenario_count,
-        )
+        status = await handle.query(LiveExplorationTestWorkflow.get_status)
+        return LiveTestCaseRequestStatusRead(request_id=str(request_id), status=status)
 
     if desc.status == WorkflowExecutionStatus.COMPLETED:
         result = await handle.result()
-        return TestCaseRequestStatusRead(
+        return LiveTestCaseRequestStatusRead(
             request_id=str(request_id),
             status=result.status,
             rejection_reason=result.rejection_reason,
-            error_message=result.error_message,
-            scenario_count=len(result.results),
+            journey_name=result.journey_name,
             results=[
-                TestCaseGenerationResultRead(
-                    status=r.status,
-                    journey_name=r.journey_name,
-                    scenario_name=r.scenario_name,
+                LiveTestCaseScenarioResultRead(
+                    scenario_id=r.scenario_id,
                     test_result_status=r.test_result_status,
+                    healed=r.healed,
                     error_message=r.error_message,
-                    already_existed=r.already_existed,
-                    is_new_journey=r.is_new_journey,
-                    is_new_scenario=r.is_new_scenario,
-                    stage=r.stage,
                 )
-                for r in result.results
+                for r in (result.scenarios or [])
             ],
+            pages=_live_test_case_page_inventory(session, result.journey_id)
+            if result.journey_id
+            else [],
+            generated_tests=_live_test_case_generated_tests(session, result.journey_id)
+            if result.journey_id
+            else [],
         )
 
-    # A genuine Temporal-level failure (exhausted an Activity's own retries
-    # past what the workflow itself catches, worker crash mid-execution,
-    # etc.) — the workflow's own try/except already turns ordinary Activity
-    # failures into a `status="failed"` *result* (still COMPLETED above);
-    # only reaching here means something the workflow couldn't catch at all.
-    return TestCaseRequestStatusRead(
+    return LiveTestCaseRequestStatusRead(
         request_id=str(request_id),
         status="failed",
         error_message=f"the request did not finish normally (workflow status: {desc.status.name})",
@@ -3727,7 +3810,7 @@ class TestAssetStatusRead(BaseModel):
     duration_ms: int | None
     error_message: str | None
     latest_test_result_id: uuid.UUID | None
-    # NLM "Add Test Case" feature — see TestCaseRead's own comment.
+    # See TestCaseRead's own comment.
     source: str
 
 

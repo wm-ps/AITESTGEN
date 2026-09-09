@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from sqlalchemy import Column, DateTime, ForeignKey, UniqueConstraint, inspect, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import validates
 from sqlmodel import Field, SQLModel
@@ -87,6 +88,16 @@ class Journey(SQLModel, table=True):
     # above already indexes.
     identity_key: str
     attempt: int = Field(default=1)
+    # Only populated for a `LiveExplorationTestWorkflow` Journey — the
+    # literal, ordered transcript of what the live-exploration agent
+    # actually clicked/typed/observed (see `LiveFlowModel.steps`), so
+    # `ScenarioGenerationActivity` can ground Scenario steps in the real
+    # session instead of the crawler-shaped Form/Component reinterpretation,
+    # which has no way to represent a plain navigation click. Never set for
+    # a crawler/discovery Journey.
+    captured_flow: list[dict] | None = Field(
+        default=None, sa_column=Column(JSONB, nullable=True)
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

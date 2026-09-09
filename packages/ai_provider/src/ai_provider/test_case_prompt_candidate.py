@@ -29,3 +29,9 @@ class TestCasePromptCandidate:
     expected_result: str = ""
     rejection_reason: str | None = None
     provided_test_data: dict[str, str] = field(default_factory=dict)
+    # Only populated when the user's own prompt states an explicit total or
+    # per-category scenario count (e.g. "three test cases: happy, negative,
+    # edge" -> {"happy": 1, "negative": 1, "edge": 1}) — empty otherwise,
+    # leaving ScenarioGenerationActivity's normal free-running count
+    # untouched. Keys are restricted to "happy"/"negative"/"edge".
+    requested_scenario_counts: dict[str, int] = field(default_factory=dict)

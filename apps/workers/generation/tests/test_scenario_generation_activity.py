@@ -36,7 +36,11 @@ class _FakeAIProvider:
         self._candidates = candidates
 
     async def generate_scenarios(
-        self, journey: Journey, pages: list[Page], limit: int | None = None
+        self,
+        journey: Journey,
+        pages: list[Page],
+        limit: int | None = None,
+        requested_counts: dict[str, int] | None = None,
     ) -> list[ScenarioCandidate]:
         return self._candidates if limit is None else self._candidates[:limit]
 
@@ -150,6 +154,77 @@ def test_scenario_generation_activity_creates_scenarios_with_blank_test_data(
 
         negative = next(s for s in scenarios if s.type == "negative")
         assert negative.name == "Checkout with expired card"
+
+
+def test_scenario_generation_activity_applies_provided_test_data_to_happy_path_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[FIXED]` regression: a user's own literal value stated in their NL
+    prompt (e.g. "fill Server type with GIT") was extracted correctly by
+    AnalyzePromptActivity into `provided_test_data` but never actually
+    reached Scenario.test_data — every field, happy-path included, silently
+    fell back to a generic "Test value" placeholder, which then broke the
+    generated test outright (it tried to select a "Test value" option from a
+    dropdown that only ever offers GIT/SVN/etc). Applies only to the
+    happy-path Scenario — a negative/edge Scenario's whole point is a
+    deliberately different or missing value, so it keeps its own normal
+    intent-based default fill instead."""
+    init_db()
+    journey = _seed_journey()
+
+    candidates = [
+        ScenarioCandidate(
+            name="Add a GIT MCP connection",
+            type="happy",
+            steps=["Open server type dropdown", "Select server type", "Submit"],
+            expected_result="Connection is created",
+            test_data=[
+                TestDataFieldCandidate(name="Server type", mandatory=True),
+                TestDataFieldCandidate(name="Endpoint URL", mandatory=True),
+                TestDataFieldCandidate(name="Personal Access Token (PAT)", mandatory=False),
+            ],
+        ),
+        ScenarioCandidate(
+            name="Add a connection with an empty server type",
+            type="negative",
+            steps=["Open server type dropdown", "Leave it empty", "Submit"],
+            expected_result="A required-field error is shown",
+            test_data=[TestDataFieldCandidate(name="Server type", mandatory=True)],
+        ),
+    ]
+    monkeypatch.setattr(
+        activities_module, "HostedAIProvider", lambda: _FakeAIProvider(candidates)
+    )
+
+    scenario_external_ids = asyncio.run(
+        activities_module.scenario_generation_activity(
+            ScenarioGenerationActivityInput(
+                journey_id=str(journey.external_id),
+                source="nl",
+                provided_test_data={
+                    "server_type": "GIT",
+                    "endpoint_url": "https://github.com/wm-ps/jsp-servlet-ecommerce-website",
+                    "personal_access_token": "fake-test-personal-access-token-value",
+                },
+            )
+        )
+    )
+
+    with Session(engine) as session:
+        scenarios = session.exec(
+            select(Scenario).where(
+                Scenario.external_id.in_([uuid.UUID(i) for i in scenario_external_ids])  # type: ignore[attr-defined]
+            )
+        ).all()
+
+        happy = next(s for s in scenarios if s.type == "happy")
+        by_name = {f["name"]: f["value"] for f in happy.test_data}
+        assert by_name["Server type"] == "GIT"
+        assert by_name["Endpoint URL"] == "https://github.com/wm-ps/jsp-servlet-ecommerce-website"
+        assert by_name["Personal Access Token (PAT)"] == "fake-test-personal-access-token-value"
+
+        negative = next(s for s in scenarios if s.type == "negative")
+        assert negative.test_data == [{"name": "Server type", "mandatory": True, "value": None}]
 
 
 def test_scenario_generation_activity_strips_existing_credential_test_data(

@@ -1,5 +1,12 @@
-"""PrepareSingleTestRunActivity / ReadTestResultStatusActivity /
-ReadLatestTestResultActivity — NLM "Add Test Case" feature.
+"""PrepareSingleTestRunActivity / ReadTestResultStatusActivity — shared NLM
+building blocks, used by `LiveExplorationTestWorkflow` to assemble+execute
+one already-generated TestAsset and read its outcome back.
+
+`[REMOVED]` `ReadLatestTestResultActivity` — the "reuse_scenario matched an
+already-executed TestAsset, report its last result instead of re-running"
+fast path, exclusive to the now-removed `AddTestCaseWorkflow` (which matched
+against already-crawled Journeys/Scenarios). `LiveExplorationTestWorkflow`
+always explores fresh, so this path never applied to it.
 
 `PrepareSingleTestRunActivity` is `_prepare_test_run_sync`'s (`activities.py`)
 single-`TestAsset` sibling — same project-assembly/install/auth-setup calls,
@@ -21,13 +28,13 @@ import uuid
 from datetime import UTC, datetime
 
 from domain import Application, Journey, Scenario, TestAsset, TestResult, TestRun, TestSuite
+from sqlalchemy import update
 from sqlmodel import Session, select
 from temporalio import activity
 from test_suite_assembler import assemble_test_suite_project_to_dir, find_login_page_evidence
 from workflows import (
     PrepareSingleTestRunActivityInput,
     PrepareSingleTestRunActivityResult,
-    ReadLatestTestResultActivityInput,
     ReadTestResultStatusActivityInput,
     ReadTestResultStatusResult,
 )
@@ -80,8 +87,21 @@ def _prepare_single_test_run_sync(
             select(TestAsset).where(TestAsset.external_id == uuid.UUID(input.test_asset_id))
         ).one()
 
+        # Claim this Application's next run_number atomically, same idiom
+        # `_prepare_test_run_sync` (execution_worker/activities.py) uses —
+        # `TestRun.run_number` is NOT NULL with a unique
+        # `(application_id, run_number)` constraint, so a lone "Add Test
+        # Case" TestRun needs one too, not just a "Run All Tests" one.
+        run_number = session.execute(
+            update(Application)
+            .where(Application.id == application.id)  # type: ignore[arg-type]
+            .values(next_test_run_number=Application.next_test_run_number + 1)
+            .returning(Application.next_test_run_number - 1)  # type: ignore[arg-type]
+        ).scalar_one()
+
         test_run = TestRun(
             application_id=application.id,
+            run_number=run_number,
             status="running",
             environment_snapshot=application.environment,
             target_base_url_snapshot=application.url,
@@ -175,38 +195,3 @@ async def read_test_result_status_activity(
     input: ReadTestResultStatusActivityInput,
 ) -> ReadTestResultStatusResult:
     return await asyncio.to_thread(_read_test_result_status_sync, input)
-
-
-def _read_latest_test_result_sync(
-    input: ReadLatestTestResultActivityInput,
-) -> ReadTestResultStatusResult:
-    """Duplicate Prevention fast path — a `reuse_scenario` match whose
-    Scenario already has a current TestAsset is reported using this
-    TestAsset's *most recent* execution result instead of running a new one
-    (see `AddTestCaseWorkflow`'s own docstring on why). `TestResult.id` is a
-    UUIDv7 (time-ordered), the same trick used elsewhere in this codebase to
-    get "most recent" ordering without relying on a specific timestamp
-    column being populated — `started_at`/`completed_at` are nullable and a
-    still-`pending` row would sort ambiguously against them."""
-    with Session(engine) as session:
-        test_asset = session.exec(
-            select(TestAsset).where(TestAsset.external_id == uuid.UUID(input.test_asset_id))
-        ).one()
-        latest = session.exec(
-            select(TestResult)
-            .where(TestResult.test_asset_id == test_asset.id)
-            .order_by(TestResult.id.desc())  # type: ignore[arg-type]
-        ).first()
-        if latest is None:
-            # Attached but genuinely never executed yet (e.g. a Scenario
-            # matched immediately after normal Test Suite generation, before
-            # "Run All Tests" ever ran) — a real, honest status, not an error.
-            return ReadTestResultStatusResult(status="not_run")
-        return ReadTestResultStatusResult(status=latest.status, error_message=latest.error_message)
-
-
-@activity.defn(name="ReadLatestTestResultActivity")
-async def read_latest_test_result_activity(
-    input: ReadLatestTestResultActivityInput,
-) -> ReadTestResultStatusResult:
-    return await asyncio.to_thread(_read_latest_test_result_sync, input)

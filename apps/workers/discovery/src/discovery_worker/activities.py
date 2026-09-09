@@ -1048,7 +1048,7 @@ async def application_model_builder_activity(
         logger.info(
             "ApplicationModelBuilderActivity: discovery_run_id=%s starting", input.discovery_run_id
         )
-        component_count = build_application_model(session, application.id)
+        component_count, _ = build_application_model(session, application.id)
         logger.info(
             "ApplicationModelBuilderActivity: discovery_run_id=%s finished component_count=%d",
             input.discovery_run_id,

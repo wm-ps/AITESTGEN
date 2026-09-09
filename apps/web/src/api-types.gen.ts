@@ -512,7 +512,7 @@ export interface paths {
         patch: operations["update_scenario_test_data_scenarios__external_id__test_data_patch"];
         trace?: never;
     };
-    "/applications/{external_id}/test-cases": {
+    "/applications/{external_id}/live-test-cases": {
         parameters: {
             query?: never;
             header?: never;
@@ -521,23 +521,23 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create Test Case */
-        post: operations["create_test_case_applications__external_id__test_cases_post"];
+        /** Create Live Test Case */
+        post: operations["create_live_test_case_applications__external_id__live_test_cases_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/applications/{external_id}/test-cases/requests/{request_id}": {
+    "/applications/{external_id}/live-test-cases/requests/{request_id}": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get Test Case Request */
-        get: operations["get_test_case_request_applications__external_id__test_cases_requests__request_id__get"];
+        /** Get Live Test Case Request */
+        get: operations["get_live_test_case_request_applications__external_id__live_test_cases_requests__request_id__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1337,6 +1337,40 @@ export interface components {
             /** Trigger */
             trigger: string;
         };
+        /** LiveTestCaseCreate */
+        LiveTestCaseCreate: {
+            /** Prompt */
+            prompt: string;
+        };
+        /** LiveTestCaseRequestStatusRead */
+        LiveTestCaseRequestStatusRead: {
+            /** Request Id */
+            request_id: string;
+            /** Status */
+            status: string;
+            /** Rejection Reason */
+            rejection_reason?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /** Journey Name */
+            journey_name?: string | null;
+            /** Results */
+            results?: components["schemas"]["LiveTestCaseScenarioResultRead"][];
+        };
+        /** LiveTestCaseScenarioResultRead */
+        LiveTestCaseScenarioResultRead: {
+            /** Scenario Id */
+            scenario_id: string;
+            /** Test Result Status */
+            test_result_status?: string | null;
+            /**
+             * Healed
+             * @default false
+             */
+            healed: boolean;
+            /** Error Message */
+            error_message?: string | null;
+        };
         /** LoginRequest */
         LoginRequest: {
             /** Email */
@@ -1641,45 +1675,6 @@ export interface components {
             /** Source */
             source: string;
         };
-        /** TestCaseCreate */
-        TestCaseCreate: {
-            /** Prompt */
-            prompt: string;
-        };
-        /**
-         * TestCaseGenerationResultRead
-         * @description One Scenario's own outcome — a single prompt can decompose into
-         *     several (Multiple Test Cases), each independently PASS/FAIL.
-         */
-        TestCaseGenerationResultRead: {
-            /** Status */
-            status: string;
-            /** Journey Name */
-            journey_name?: string | null;
-            /** Scenario Name */
-            scenario_name?: string | null;
-            /** Test Result Status */
-            test_result_status?: string | null;
-            /** Error Message */
-            error_message?: string | null;
-            /**
-             * Already Existed
-             * @default false
-             */
-            already_existed: boolean;
-            /**
-             * Is New Journey
-             * @default false
-             */
-            is_new_journey: boolean;
-            /**
-             * Is New Scenario
-             * @default false
-             */
-            is_new_scenario: boolean;
-            /** Stage */
-            stage?: string | null;
-        };
         /** TestCaseRead */
         TestCaseRead: {
             /**
@@ -1701,29 +1696,6 @@ export interface components {
             code: string;
             /** Source */
             source: string;
-        };
-        /** TestCaseRequestStatusRead */
-        TestCaseRequestStatusRead: {
-            /** Request Id */
-            request_id: string;
-            /** Status */
-            status: string;
-            /**
-             * Functionality Summary
-             * @default
-             */
-            functionality_summary: string;
-            /** Rejection Reason */
-            rejection_reason?: string | null;
-            /** Error Message */
-            error_message?: string | null;
-            /**
-             * Scenario Count
-             * @default 0
-             */
-            scenario_count: number;
-            /** Results */
-            results?: components["schemas"]["TestCaseGenerationResultRead"][];
         };
         /** TestDataEntryCreate */
         TestDataEntryCreate: {
@@ -3117,7 +3089,7 @@ export interface operations {
             };
         };
     };
-    create_test_case_applications__external_id__test_cases_post: {
+    create_live_test_case_applications__external_id__live_test_cases_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -3130,7 +3102,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TestCaseCreate"];
+                "application/json": components["schemas"]["LiveTestCaseCreate"];
             };
         };
         responses: {
@@ -3156,7 +3128,7 @@ export interface operations {
             };
         };
     };
-    get_test_case_request_applications__external_id__test_cases_requests__request_id__get: {
+    get_live_test_case_request_applications__external_id__live_test_cases_requests__request_id__get: {
         parameters: {
             query?: never;
             header?: never;
@@ -3176,7 +3148,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["TestCaseRequestStatusRead"];
+                    "application/json": components["schemas"]["LiveTestCaseRequestStatusRead"];
                 };
             };
             /** @description Validation Error */

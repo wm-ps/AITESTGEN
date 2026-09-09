@@ -355,6 +355,30 @@ def _claim_test_case_number_sync(session: Session, application_id: uuid.UUID) ->
     ).scalar_one()
 
 
+def _normalize_field_key(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+def _provided_value_for_field(
+    field_name: str, provided_test_data: dict[str, str]
+) -> str | None:
+    """Matches a Scenario's own test_data field name (AI-written,
+    human-readable, e.g. "Personal Access Token (PAT)") against
+    `PromptAnalysisResult.provided_test_data`'s keys (LLM-extracted from the
+    user's own prompt, e.g. "personal_access_token") — normalized and
+    bidirectional-substring, since neither side's naming convention is fixed
+    and one is often an abbreviation/subset of the other. Only ever called
+    for the happy-path Scenario (see caller) — a negative/edge Scenario's
+    whole point is a deliberately different or missing value, so the user's
+    single literal is never a safe default for those."""
+    target = _normalize_field_key(field_name)
+    for key, value in provided_test_data.items():
+        candidate = _normalize_field_key(key)
+        if candidate and (candidate in target or target in candidate):
+            return value
+    return None
+
+
 @activity.defn(name="ScenarioGenerationActivity")
 async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -> list[str]:
     with Session(engine) as session:
@@ -485,7 +509,10 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
 
         settings = session.exec(select(DiscoverySettings)).one()
         candidates = await HostedAIProvider().generate_scenarios(
-            journey, ordered_pages, limit=settings.max_scenarios_per_journey
+            journey,
+            ordered_pages,
+            limit=settings.max_scenarios_per_journey,
+            requested_counts=input.requested_scenario_counts or None,
         )
 
         scenario_external_ids: list[str] = []
@@ -500,7 +527,21 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
                 steps=candidate.steps,
                 expected_result=candidate.expected_result,
                 test_data=[
-                    {"name": f.name, "mandatory": f.mandatory, "value": None}
+                    {
+                        "name": f.name,
+                        "mandatory": f.mandatory,
+                        # The user's own literal value (e.g. "fill Server
+                        # type with GIT") only ever applies to the happy
+                        # path — a negative/edge Scenario's whole point is a
+                        # deliberately different or missing value, so it
+                        # keeps `None` here for the usual intent/pattern
+                        # -based default fill later.
+                        "value": (
+                            _provided_value_for_field(f.name, input.provided_test_data)
+                            if candidate.type == "happy"
+                            else None
+                        ),
+                    }
                     for f in candidate.test_data
                     if not _is_existing_credential_field(f.name)
                 ],
@@ -509,6 +550,7 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
                 current=True,
                 safety_classification=safety_classification,
                 safety_classification_reason=safety_classification_reason,
+                source=input.source,
             )
             session.add(scenario)
             session.flush()
@@ -686,7 +728,22 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
         field_input_types,
         requires_auth,
         primary_page_id,
+        captured_flow,
     ) = await asyncio.to_thread(_resolve_scenario_defaults_sync, input.scenario_id)
+
+    # The proven-working ordered path through the app from live exploration
+    # (only ever set for an "nl"-sourced Journey) — an earlier entry is very
+    # often a prerequisite (opening a dropdown/combobox) a later target only
+    # becomes interactable after. Passing only the flat `known_locators`
+    # list silently drops that ordering, which is exactly what let the first
+    # generation pick a locator for an option inside a still-closed dropdown
+    # (observed live: `getByRole('option', ...)` with no prior click to open
+    # it) — `LiveHealActivity` already avoids this the same way.
+    live_action_sequence = [
+        {"tool_name": step["tool_name"], "element_tag": step.get("element_tag", ""), "value": step["value"]}
+        for step in (captured_flow or [])
+        if step.get("value")
+    ] or None
 
     provider = HostedAIProvider()
     repair = None
@@ -708,6 +765,7 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
             requires_auth=requires_auth,
             field_input_types=field_input_types,
             repair=repair,
+            live_action_sequence=live_action_sequence,
         )
         typecheck_errors = await typecheck_playwright_code(code.code)
         if not typecheck_errors:
@@ -959,6 +1017,7 @@ _ScenarioDefaults = tuple[
     dict[str, str],
     bool,
     uuid.UUID | None,
+    list[dict] | None,
 ]
 
 
@@ -975,13 +1034,15 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
             known_page_ids,
         ) = resolve_known_application_model_sync(session, scenario.journey_id)
 
+        journey = session.get(Journey, scenario.journey_id)
+        captured_flow = journey.captured_flow if journey else None
+
         required_fields: dict[str, bool] = {}
         field_input_types: dict[str, str] = {}
         requires_auth = False
         if primary_page_id is not None:
             required_fields = spec_linter.required_fields_for_pages(session, known_page_ids)
             field_input_types = spec_linter.field_input_types_for_pages(session, known_page_ids)
-            journey = session.get(Journey, scenario.journey_id)
             application = session.get(Application, journey.application_id) if journey else None
             primary_page = session.get(Page, primary_page_id)
             if application is not None:
@@ -1066,6 +1127,7 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
             field_input_types,
             requires_auth,
             primary_page_id,
+            captured_flow,
         )
 
 

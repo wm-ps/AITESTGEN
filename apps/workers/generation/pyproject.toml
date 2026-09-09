@@ -11,6 +11,11 @@ dependencies = [
     "safety-classifier",
     "sqlmodel>=0.0.24",
     "psycopg[binary]>=3.2",
+    "discovery-worker",
+    "secrets-client",
+    "playwright>=1.57",
+    "mcp>=1.2",
+    "langgraph>=0.2",
 ]
 
 [dependency-groups]
@@ -24,6 +29,8 @@ workflows = { workspace = true }
 domain = { workspace = true }
 ai-provider = { workspace = true }
 safety-classifier = { workspace = true }
+discovery-worker = { workspace = true }
+secrets-client = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

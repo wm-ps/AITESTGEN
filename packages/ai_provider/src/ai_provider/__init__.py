@@ -33,6 +33,7 @@ from typing import Protocol
 from domain import Journey, Page, Scenario
 
 from ai_provider.journey_candidate import JourneyCandidate
+from ai_provider.live_exploration_decision import LiveExplorationDecision
 from ai_provider.scenario_candidate import ScenarioCandidate
 from ai_provider.test_asset_code import TestAssetCode
 
@@ -41,7 +42,11 @@ class AIProvider(Protocol):
     async def infer_journeys(self, pages: list[Page]) -> list[JourneyCandidate]: ...
 
     async def generate_scenarios(
-        self, journey: Journey, pages: list[Page]
+        self,
+        journey: Journey,
+        pages: list[Page],
+        limit: int | None = None,
+        requested_counts: dict[str, int] | None = None,
     ) -> list[ScenarioCandidate]: ...
 
     async def generate_playwright(
@@ -60,6 +65,12 @@ class AIProvider(Protocol):
         target_url: str | None = None,
         failure_screenshot_png: bytes | None = None,
         live_inspection_locators: list[dict] | None = None,
+        # `[ADDED live-heal]` `LiveHealActivity`'s full ordered replay — each
+        # entry `{tool_name, strategy, value, fragile, element_tag}` — unlike
+        # `live_inspection_locators`'s flat candidate list, order matters: an
+        # earlier entry can be a prerequisite (opening a dropdown/menu/tab)
+        # the final target only becomes interactable after.
+        live_action_sequence: list[dict] | None = None,
     ) -> TestAssetCode: ...
 
     # Story 2.10 AC 3: called only when the State Identity Engine's score
@@ -76,3 +87,20 @@ class AIProvider(Protocol):
     # evidence recorded in diagnostics, never authoritative; the caller's
     # posture-driven verdict is already decided before this is even awaited.
     async def classify_action_safety(self, label: str, page_context: str) -> str: ...
+
+    # `[ADDED live-exploration]` One turn of the LangGraph live-exploration
+    # agent (both the initial explore-a-requirement flow and the narrower
+    # heal-a-failed-step flow, `is_heal=True`). `history` is the ordered list
+    # of prior turns so far (plain dicts — the same tool_name/tool_args/
+    # rationale/observation shape the caller records into the Live Flow
+    # Model); `snapshot` is the current Playwright MCP `browser_snapshot`
+    # result. This never reads crawler/discovery DB data — the live page
+    # snapshot and the requirement text are the only grounding.
+    async def decide_live_exploration_action(
+        self,
+        requirement: str,
+        history: list[dict],
+        snapshot: dict,
+        *,
+        is_heal: bool = False,
+    ) -> LiveExplorationDecision: ...

@@ -12,6 +12,7 @@ from io import BytesIO
 
 from domain import Application, Journey, TestAsset, TestSuite
 from test_suite_assembler import assemble_test_suite_project, assemble_test_suite_project_to_dir
+from test_suite_assembler.assembler import _build_interactions_helper_script
 
 
 def _application(**overrides) -> Application:
@@ -86,3 +87,21 @@ def test_dir_output_writes_test_case_code(tmp_path) -> None:
     spec_files = list(dest_dir.glob("tests/*/completes-checkout.spec.ts"))
     assert len(spec_files) == 1
     assert spec_files[0].read_text(encoding="utf-8") == "// spec code\n"
+
+
+def test_ensure_visible_surfaces_strict_mode_violation_instead_of_masking_it() -> None:
+    # `[FIXED]` regression: a bare `catch {}` used to discard whatever
+    # Playwright actually threw and always report a generic "not visible"
+    # message — live-diagnosed a repeatedly-failing generated test and found
+    # the real error was a strict-mode violation (the locator matched an
+    # unrelated element elsewhere on the page in addition to the intended
+    # one), not a visibility problem. Waiting/scrolling can never fix that,
+    # so it must be re-thrown immediately, with Playwright's own message.
+    script = _build_interactions_helper_script()
+
+    assert "strict mode violation" in script
+    assert "throw err" in script
+    # Both attempts (the initial wait, and the post-scroll retry) must check
+    # for it — a violation on the second attempt must not fall through to
+    # the generic message either.
+    assert script.count("strict mode violation") == 2

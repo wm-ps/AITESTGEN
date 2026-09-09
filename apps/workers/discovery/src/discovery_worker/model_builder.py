@@ -468,14 +468,24 @@ def _get_or_create_assertion(
     return assertion
 
 
-def build_application_model(session: Session, application_id: uuid.UUID) -> int:
+def build_application_model(
+    session: Session, application_id: uuid.UUID
+) -> tuple[int, dict[uuid.UUID, uuid.UUID]]:
     """Runs the full merge -> derive pipeline for one Application. Returns
-    the number of Component rows that exist after this run (for the
-    Activity's output)."""
+    the number of Component rows that exist after this run (for
+    ApplicationModelBuilderActivity's output) and the page-merge resolution
+    (old/pre-merge page id -> canonical page id this run's Components
+    actually attached to) — `LiveExploreActivity`'s own Journey creation
+    needs this: a JourneyStep still pointing at a page id that got merged
+    away here would find zero Components for a URL Discovery had already
+    seen, even though the real locator was captured and stored correctly
+    just now (`[FIXED]` — observed live: a real captured link locator sat
+    unused because JourneyStep pointed at the pre-merge page)."""
     page_resolution = merge_pages(session, application_id)
     form_resolution = merge_forms(session, application_id, page_resolution)
     merge_api_endpoints(session, application_id)
     dedupe_page_transitions(session, application_id, page_resolution)
-    return derive_components_and_assertions(
+    component_count = derive_components_and_assertions(
         session, application_id, page_resolution, form_resolution
     )
+    return component_count, page_resolution

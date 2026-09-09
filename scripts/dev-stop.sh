@@ -24,7 +24,7 @@ usage() {
 Usage: scripts/dev-stop.sh [options]
 
 Stops the local AITestGen dev stack: web (5173), API (8000), discovery worker,
-generation worker, and the docker compose services.
+generation worker, execution worker, and the docker compose services.
 
 Options:
   --keep-docker   Stop only the app processes; leave Postgres/Temporal/Vault up
@@ -163,6 +163,7 @@ stop_pids "web (5173)"          "$(web_pids)"
 stop_pids "api (8000)"          "$(api_pids)"
 stop_pids "discovery worker"    "$(worker_pids 'discovery_worker\.worker')"
 stop_pids "generation worker"   "$(worker_pids 'generation_worker\.worker')"
+stop_pids "execution worker"    "$(worker_pids 'execution_worker\.worker')"
 
 if [ "$KEEP_DOCKER" = 1 ]; then
   echo "[dev-stop] docker: left running (--keep-docker)"
@@ -189,7 +190,8 @@ fi
 
 leftovers=$(collect $(web_pids) $(api_pids) \
   $(worker_pids 'discovery_worker\.worker') \
-  $(worker_pids 'generation_worker\.worker'))
+  $(worker_pids 'generation_worker\.worker') \
+  $(worker_pids 'execution_worker\.worker'))
 
 if [ -n "${leftovers// /}" ]; then
   echo "[dev-stop] WARNING: still alive after stop:" >&2

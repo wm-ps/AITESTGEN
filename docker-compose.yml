@@ -10,6 +10,13 @@ services:
       POSTGRES_DB: aitestgen
     ports:
       - "5433:5432"
+    # postgres:18+ images store data in a version-specific subdirectory and
+    # expect the volume mounted at the parent /var/lib/postgresql, not the
+    # pre-18 convention of /var/lib/postgresql/data directly (the latter
+    # makes the 18+ entrypoint refuse to start, treating it as an
+    # unsupported legacy layout).
+    volumes:
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -38,3 +45,6 @@ services:
 
   # Object storage (Story 2.2/2.8) points at real AWS S3 even for local dev
   # (AWS_S3_BUCKET/AWS_REGION/AWS creds in .env) — no local MinIO container.
+
+volumes:
+  postgres_data:

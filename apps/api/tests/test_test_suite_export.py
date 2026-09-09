@@ -225,7 +225,11 @@ class TestAssembleTestSuiteProject:
         interactions_helper = zf.read("support/interactions.ts").decode()
         assert "export async function ensureVisible" in interactions_helper
         assert "scrollIntoViewIfNeeded" in interactions_helper
-        assert "isVisible" in interactions_helper
+        # Actually waits/polls for visibility (not a single immediate
+        # isVisible() snapshot) — an element that renders a moment after a
+        # triggering action (e.g. a custom dropdown's option list) must get
+        # real time to appear, not be declared "not visible" on the spot.
+        assert "waitFor({ state: 'visible'" in interactions_helper
 
     def test_generated_specs_transparently_resolve_to_shared_fixtures(self) -> None:
         """`[FIXED]` Playwright's `storageState` never captures `sessionStorage`

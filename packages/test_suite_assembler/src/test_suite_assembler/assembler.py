@@ -662,29 +662,71 @@ def _build_interactions_helper_script() -> str:
     the identifying detail is now unconditional — this single shared
     implementation is also what every already-generated spec's one-arg
     `ensureVisible(locator)` call resolves to at export/run time, so this
-    fix is retroactive without regenerating anything."""
+    fix is retroactive without regenerating anything.
+
+    `[FIXED]` Used to check `locator.isVisible()` — a single, immediate,
+    non-waiting snapshot of current DOM state — before AND after a scroll
+    attempt. That never gives a genuinely-correct locator time to appear at
+    all: any element whose rendering is delayed rather than merely
+    off-screen (e.g. a custom dropdown/combobox's option list, which many
+    real UI component libraries — Ant Design, MUI, Chakra, and others —
+    render asynchronously a moment after the trigger is clicked, not
+    synchronously with it) was reported as "not visible" even though the
+    locator was exactly right and the element would have appeared a moment
+    later. `locator.waitFor({ state: 'visible' })` actually polls up to
+    `timeout` instead of checking once, which is what every caller already
+    assumed this did.
+
+    `[FIXED]` The bare `catch {}` (both attempts) discarded whatever
+    Playwright actually threw and always reported the same generic "not
+    visible" message, regardless of the real cause — live-diagnosed a
+    repeatedly-failing generated test against a real app and found the
+    ACTUAL error was `strict mode violation: ... resolved to 2 elements`
+    (an ambiguous locator matching, e.g., an unrelated status tag elsewhere
+    on the page in addition to the intended one), not a visibility problem
+    at all. Waiting and scrolling can never resolve an ambiguous match — it
+    isn't a timing issue — so that case is now surfaced immediately, with
+    Playwright's own message (which already names every match), instead of
+    wasting a scroll-and-retry cycle before relabeling it as something it
+    never was."""
     return (
         "import type { Locator } from '@playwright/test'\n\n"
         "export async function ensureVisible(\n"
         "  locator: Locator,\n"
         "  timeout = 15000,\n"
         "): Promise<Locator> {\n"
-        "  if (await locator.isVisible().catch(() => false)) {\n"
+        "  try {\n"
+        "    await locator.waitFor({ state: 'visible', timeout })\n"
         "    return locator\n"
+        "  } catch (err) {\n"
+        "    // A strict-mode violation (the locator matched more than one element)\n"
+        "    // can never be fixed by waiting or scrolling — surface it immediately,\n"
+        "    // with Playwright's own message, instead of masking it as a generic\n"
+        "    // visibility failure below.\n"
+        "    if (err instanceof Error && err.message.includes('strict mode violation')) {\n"
+        "      throw err\n"
+        "    }\n"
+        "    // Not yet visible after waiting — it may be off-screen rather than\n"
+        "    // never rendered at all; try scrolling once, then give it one more,\n"
+        "    // shorter chance to appear before giving up.\n"
         "  }\n"
         "  await locator.scrollIntoViewIfNeeded({ timeout }).catch(() => {})\n"
-        "  const visibleAfterScroll = await locator.isVisible().catch(() => false)\n"
-        "  if (!visibleAfterScroll) {\n"
+        "  try {\n"
+        "    await locator.waitFor({ state: 'visible', timeout: 2000 })\n"
+        "    return locator\n"
+        "  } catch (err) {\n"
+        "    if (err instanceof Error && err.message.includes('strict mode violation')) {\n"
+        "      throw err\n"
+        "    }\n"
         "    throw new Error(\n"
         "      `Element matched by locator ${locator.toString()} is not visible even after "
-        "scrolling it into ` +\n"
-        "      'view — the locator may be wrong, or the element requires a prior action '"
-        " +\n"
+        "waiting and ` +\n"
+        "      'scrolling into view — the locator may be wrong, or the element requires a "
+        "prior action ' +\n"
         "      '(opening a menu/accordion/tab, waiting for content to load) to become "
         "visible.',\n"
         "    )\n"
         "  }\n"
-        "  return locator\n"
         "}\n"
     )
 

@@ -54,6 +54,7 @@ class _FakeAIProvider:
         self.calls: list[str] = []
         self.known_pages_calls: list[list[dict]] = []
         self.known_locators_calls: list[list[dict]] = []
+        self.live_action_sequence_calls: list[list[dict] | None] = []
 
     async def generate_playwright(
         self,
@@ -64,14 +65,16 @@ class _FakeAIProvider:
         requires_auth: bool = False,
         field_input_types: dict[str, str] | None = None,
         repair: tuple[str, list[str]] | None = None,
+        live_action_sequence: list[dict] | None = None,
     ) -> TestAssetCode:
         self.calls.append(str(scenario.external_id))
         self.known_pages_calls.append(known_pages or [])
         self.known_locators_calls.append(known_locators or [])
+        self.live_action_sequence_calls.append(live_action_sequence)
         return TestAssetCode(code=self._code)
 
 
-def _seed_journey(name: str = "Checkout") -> Journey:
+def _seed_journey(name: str = "Checkout", captured_flow: list[dict] | None = None) -> Journey:
     with Session(engine) as session:
         org = Organization(name=f"Org {uuid.uuid4()}")
         session.add(org)
@@ -97,6 +100,7 @@ def _seed_journey(name: str = "Checkout") -> Journey:
             discovery_run_id=discovery_run.id,
             name=name,
             identity_key=f"identity-{uuid.uuid4()}",
+            captured_flow=captured_flow,
         )
         session.add(journey)
         session.commit()
@@ -696,6 +700,94 @@ def test_playwright_generation_activity_passes_known_locator_to_ai_provider(
                 "selector": '[data-testid="save"]',
                 "strategy": "testid",
             }
+        ]
+    ]
+
+
+def test_playwright_generation_activity_passes_live_action_sequence_from_captured_flow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[FIXED]` regression: the FIRST generation for an "nl" Scenario used
+    to see only a flat `known_locators` list — no ordering — which is
+    exactly what let it target an element that's only interactable after some
+    prior action (e.g. a menu that must be opened before an item inside it
+    can be clicked). `Journey.captured_flow` (the real, ordered
+    live-exploration transcript) must reach `generate_playwright` as
+    `live_action_sequence`, the same mechanism `LiveHealActivity` already
+    uses, so the FIRST attempt gets the ordering right instead of relying on
+    a heal to catch it after a failure. Deliberately uses a generic
+    menu-then-item pattern here, not any one application's specific UI — the
+    mechanism itself doesn't know or care what the elements are; it just
+    replays whatever the real app's own exploration recorded, in order."""
+    init_db()
+    captured_flow = [
+        {
+            "tool_name": "browser_click",
+            "element_description": "Notifications menu button",
+            "typed_value": None,
+            "page_url": "https://app.example.com/dashboard",
+            "page_heading": "Dashboard",
+            "rationale": "open the notifications menu",
+            "strategy": "role",
+            "value": 'get_by_role("button", name="Notifications")',
+            "fragile": False,
+            "element_tag": "button",
+        },
+        {
+            "tool_name": "browser_click",
+            "element_description": "Mark all as read menu item",
+            "typed_value": None,
+            "page_url": "https://app.example.com/dashboard",
+            "page_heading": "Dashboard",
+            "rationale": "select mark all as read",
+            "strategy": "role",
+            "value": 'get_by_role("menuitem", name="Mark all as read")',
+            "fragile": False,
+            "element_tag": "menuitem",
+        },
+        # A navigate step has no locator_candidate at all — must be skipped,
+        # not passed through with a missing "value".
+        {
+            "tool_name": "browser_navigate",
+            "element_description": None,
+            "typed_value": None,
+            "page_url": "https://app.example.com/dashboard",
+            "page_heading": "Dashboard",
+            "rationale": "open dashboard",
+        },
+    ]
+    journey = _seed_journey(captured_flow=captured_flow)
+    page = _seed_page(journey, url="https://app.example.com/dashboard")
+    _seed_journey_step(journey, page, stage_label="Dashboard")
+    scenario = _seed_scenario(journey)
+    prep = asyncio.run(
+        activities_module.ensure_test_suite_activity(
+            EnsureTestSuiteActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+    fake_provider = _FakeAIProvider()
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    asyncio.run(
+        activities_module.playwright_generation_activity(
+            PlaywrightGenerationActivityInput(
+                scenario_id=str(scenario.external_id), test_suite_id=prep.test_suite_id
+            )
+        )
+    )
+
+    assert fake_provider.live_action_sequence_calls == [
+        [
+            {
+                "tool_name": "browser_click",
+                "element_tag": "button",
+                "value": 'get_by_role("button", name="Notifications")',
+            },
+            {
+                "tool_name": "browser_click",
+                "element_tag": "menuitem",
+                "value": 'get_by_role("menuitem", name="Mark all as read")',
+            },
         ]
     ]
 

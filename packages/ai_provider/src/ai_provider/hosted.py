@@ -31,9 +31,8 @@ import httpx
 from domain import Journey, Page, Scenario
 
 from ai_provider.journey_candidate import JourneyCandidate, JourneyCandidateStep
-from ai_provider.journey_plan_candidate import JourneyPlanCandidate, JourneyPlanStep
+from ai_provider.live_exploration_decision import LiveExplorationDecision
 from ai_provider.scenario_candidate import ScenarioCandidate, TestDataFieldCandidate
-from ai_provider.scenario_match_candidate import ScenarioMatchCandidate
 from ai_provider.test_asset_code import TestAssetCode
 from ai_provider.test_case_prompt_candidate import TestCasePromptCandidate
 
@@ -133,27 +132,57 @@ def _describe_page(page: Page) -> str:
     return json.dumps(description)
 
 
+def _describe_captured_flow(captured_flow: list[dict] | None) -> str:
+    """Renders `Journey.captured_flow` (the literal, ordered live-exploration
+    transcript — see `LiveExploreActivity`) as a numbered listing for
+    `generate_scenarios`'s prompt. Empty for a crawler/discovery Journey,
+    which never sets this column."""
+    if not captured_flow:
+        return ""
+    lines = []
+    for i, step in enumerate(captured_flow):
+        parts = [step.get("tool_name", "")]
+        if step.get("element_description"):
+            parts.append(f'on "{step["element_description"]}"')
+        if step.get("typed_value"):
+            parts.append(f'typed "{step["typed_value"]}"')
+        if step.get("page_url"):
+            parts.append(f'(page: {step.get("page_heading") or step["page_url"]})')
+        if step.get("rationale"):
+            parts.append(f'— {step["rationale"]}')
+        lines.append(f"{i + 1}: {' '.join(parts)}")
+    return "\n".join(lines)
+
+
 # A single "generate everything for this Journey" call let the model's own
 # output budget silently cap the whole response (observed: a large "digital
 # banking" Journey stopped at 40 Scenarios with no error). Splitting by
 # Scenario type bounds each call's output separately and isolates a
 # truncated/failed type instead of losing the whole Journey's Scenarios.
-_SCENARIO_TYPE_INSTRUCTIONS = {
+_SCENARIO_TYPE_DESCRIPTIONS = {
     "happy": "ONLY Happy Path Scenarios — the successful, intended way a user completes this "
-    "Journey. Usually just one; include more only if there are genuinely distinct successful "
-    "paths through this Journey (e.g. two different valid ways to reach the same outcome).",
+    "Journey.",
     "negative": "ONLY Negative Path Scenarios — every validation/error condition a QA engineer "
     "would want covered (e.g. missing required field, invalid format, expired/declined input). "
-    "Cover each meaningfully distinct failure condition implied by the captured forms/fields; "
-    "do not pad with near-duplicate variations of the same condition. When a field lists "
-    "\"validation_rules\" (each a {rule_type, value}), ground that condition's steps/expected_result "
-    "in the actual rule_type and value captured — e.g. quote an \"html5_message\" value verbatim as "
-    "the expected error text — rather than inventing generic wording; only invent wording for a "
-    "condition with no captured rule.",
+    "When a field lists \"validation_rules\" (each a {rule_type, value}), ground that condition's "
+    "steps/expected_result in the actual rule_type and value captured — e.g. quote an "
+    "\"html5_message\" value verbatim as the expected error text — rather than inventing generic "
+    "wording; only invent wording for a condition with no captured rule.",
     "edge": "ONLY Edge Case Scenarios — boundary/unusual-but-valid conditions distinct from "
     "both the happy path and plain validation errors (e.g. a boundary value, a race condition, "
-    "an unusual but legitimate input). Cover each meaningfully distinct edge condition implied "
-    "by the captured forms/fields; do not pad with near-duplicates.",
+    "an unusual but legitimate input).",
+}
+
+# Used only when the user's own prompt didn't state an explicit count for
+# this type (see `TestCasePromptCandidate.requested_scenario_counts`) — an
+# exact count overrides this with "Generate EXACTLY N ..." instead.
+_SCENARIO_TYPE_DEFAULT_COUNT_GUIDANCE = {
+    "happy": "Usually just one; include more only if there are genuinely distinct successful "
+    "paths through this Journey (e.g. two different valid ways to reach the same outcome).",
+    "negative": "Cover each meaningfully distinct failure condition implied by the captured "
+    "forms/fields; do not pad with near-duplicate variations of the same condition.",
+    "edge": "Cover each meaningfully distinct edge condition implied by the captured "
+    "forms/fields; do not pad with near-duplicates.",
 }
 
 _SCENARIO_PROMPT_SYSTEM = """You are writing integration test Scenarios for a specific business \
@@ -177,6 +206,15 @@ never from a Scenario's test_data. A field that is itself a NEW/candidate value 
 (e.g. "new password", "confirm password" on a change-password form) is not covered by this \
 exception and should still be listed normally.
 
+Recorded live session rule — when a "Recorded live browser session" transcript is given below, \
+it is the literal, ground-truth record of what actually happened against the real application \
+for this Journey — every scenario step must name only elements/pages/values that appear in it \
+(or in the Journey's own request text above); never invent a UI element (e.g. a "settings" \
+button, a page, a dialog) that isn't evidenced by either. A negative/edge Scenario may still \
+describe an action the recorded session didn't itself take (e.g. submitting the same form with \
+an invalid value instead of the valid one that was actually typed) — ground the SURROUNDING \
+navigation/element steps in the transcript, only vary the specific input under test.
+
 Grounded-outcome rule — Discovery never captures a page's visual layout or presentation \
 mechanism (whether results render as a table, a list, cards, or plain text; whether an error \
 shows in an alert/toast/modal or as an inline message next to a field) — only its pages, \
@@ -193,10 +231,11 @@ Respond with ONLY a JSON object of this shape, no prose: \
 "expected_result": "...", "test_data": [{{"name": "...", "mandatory": true}}]}}, ...]}}"""
 
 _SCENARIO_PROMPT_USER = """Journey: "{journey_name}"
-
+{journey_description_section}
 Steps (in order — each is a business-language stage of this Journey, with the captured \
 page/form/API/component detail behind it):
-{step_listing}"""
+{step_listing}
+{live_session_section}"""
 
 _PLAYWRIGHT_PROMPT_USER = """Application base URL: {base_url}
 
@@ -259,7 +298,7 @@ substring of a longer one on the same page (e.g. "New password" vs. "Confirm new
 "Amount" vs. "Loan Amount") resolves to BOTH elements and fails with a strict-mode violation \
 instead of the one you meant. `page.getByLabel("New password", {{ exact: true }})` — never a \
 bare `page.getByLabel("New password")` — is what actually isolates the field you want.
-{known_locators_listing}{failure_context}{live_inspection_context}"""
+{known_locators_listing}{failure_context}{live_inspection_context}{live_action_sequence_context}"""
 
 _PLAYWRIGHT_FAILURE_CONTEXT = """
 
@@ -300,6 +339,22 @@ on the page at the time of this heal attempt — more reliable than the
 possibly-stale known locators above when they disagree:
 
 {live_locator_listing}"""
+
+_PLAYWRIGHT_LIVE_ACTION_SEQUENCE_CONTEXT = """
+
+## Live Exploration — Ordered Action Sequence (observed on the real, current application)
+This is the EXACT, ORDERED sequence of interactions actually needed against the real,
+current application — the final entry is the actual target, but an earlier entry is very
+often a PREREQUISITE (opening a dropdown/menu/accordion/tab) that must happen first before
+the target becomes visible or interactable at all. Do not assume the target is directly
+interactable on its own — replicate this ENTIRE sequence, in this exact order, in the
+generated code. This sequence only tells you WHAT to interact with and in what ORDER —
+every one of these interactions, including intermediate/prerequisite ones, must still be
+resolved via `page.getByRole(...)`/etc. and routed through `ensureVisible` exactly like any
+other interaction in this test, never a raw, unwrapped `.hover()`/`.click()`/`.fill()` call
+just because it came from this sequence:
+
+{action_sequence_listing}"""
 
 _PLAYWRIGHT_PROMPT_SYSTEM = """You are converting one integration test Scenario into a single, \
 executable Playwright (TypeScript, @playwright/test) test.
@@ -587,6 +642,64 @@ If no submit control resolves within that same form/container, default to \
 `await searchInput.press('Enter')` on the field itself — the safe generic fallback for a \
 search box — rather than clicking a page-wide name match that may belong to an unrelated form.
 
+Custom dropdown/combobox rule — `.selectOption(...)` only ever works on a genuine native \
+HTML `<select>` element; calling it on anything else fails immediately with "Element is not a \
+<select> element", even when every other part of the interaction (opening it, finding the \
+option) would have worked. Many real applications instead use a non-native dropdown built from \
+a `role="combobox"` trigger (often with `aria-haspopup="listbox"`) plus a separate popup list of \
+options — this is the standard pattern behind popular component libraries (e.g. Ant Design, \
+MUI, Chakra, React-Select) as well as plenty of custom-built ones, and a known/captured locator \
+whose element role is "combobox" (not "select") is your signal that this is what you're dealing \
+with. For one of these: click the combobox trigger to open it, then locate and click the \
+specific option — routed through `ensureVisible` like any other interaction, never \
+`.selectOption(...)`. Only reach for `.selectOption(...)` when you have specific evidence the \
+element really is a native `<select>` (e.g. its known/captured locator or element type says so). \
+When locating the option itself, never scope the search to inside the trigger element — a \
+non-native dropdown's popup content commonly renders elsewhere in the DOM entirely (a portal/ \
+overlay), not nested under the trigger — search the page directly instead, preferring the \
+option's own known/captured locator verbatim if one was given to you above (see the generic-role \
+rule immediately below for why that matters); only build your own locator when none was given, \
+and even then prefer `page.getByText(..., {{ exact: true }})` over `page.getByRole('option', \
+{{ name: ... }})` unless you have specific evidence the option element genuinely carries \
+`role="option"` on the real, visible node (many component libraries keep `role="option"` only on \
+a hidden, zero-size accessibility duplicate — see below).
+
+Generic-role rule — a captured/known locator's element role of "generic" (a plain `<div>`/`<span>` \
+with no real ARIA semantics — the common shape of a custom dropdown/menu/tab option) is a signal \
+to use `page.getByText(name, {{ exact: true }})`, never `page.getByRole('generic', {{ name }})`. \
+This is not a style preference: a real browser's accessibility tree treats "generic" as \
+name-from-content-prohibited, so `getByRole('generic', ...)` can match ZERO elements even when the \
+exact same element is genuinely on screen and clickable — no amount of waiting, scrolling, or \
+`.filter({{ visible: true }})` fixes a locator that structurally cannot match anything. \
+`getByText(..., {{ exact: true }})` is what actually finds it. If the known/captured locator \
+already reads `getByText(...)` for this element, reuse it verbatim — that already reflects this \
+rule; never "upgrade" it back to a `getByRole('generic', ...)` guess of your own.
+
+Duplicate/hidden-option-node rule — a role+name match for a dropdown/listbox/menu option is not \
+guaranteed to be unique, and not guaranteed to be the real one. Some component libraries \
+(e.g. Ant Design's Select) keep a second, permanently hidden, zero-size DOM node with `role="option"` \
+purely for assistive tech, separate from the actual, complete, currently-interactable popup \
+rendered elsewhere (commonly the portal case above) — waiting does not resolve this, a \
+permanently-hidden duplicate never becomes visible no matter how long you wait. If `waitFor`/ \
+`ensureVisible` on a `role="option"` match keeps failing "not visible" for an option you can \
+otherwise confirm exists, that is the signal to stop retrying that locator and switch to matching \
+its visible text directly instead (`page.getByText(name, {{ exact: true }})`) — never assume a \
+bare role+name match is already the single, correct, interactable node for this class of element.
+
+Pre-existing-data ambiguity rule — a bare `page.getByText(name, {{ exact: true }})` for a \
+dropdown/listbox/menu option is not automatically unique either, and this time BOTH matches can \
+be genuinely visible at once: real application data created by an earlier action (in this test or \
+a previous run against a real/shared environment) can already display the same text elsewhere on \
+the page — e.g. a status tag/badge/label in a table row showing a value that happens to match the \
+option's name — and a strict-mode `waitFor`/`ensureVisible` call then fails with a real "resolved \
+to N elements" violation, not a visibility problem at all (see `ensureVisible`'s own handling: it \
+surfaces this error immediately rather than masking it). Since a non-native dropdown's popup is \
+almost always portal-rendered — appended to the end of the DOM, after everything already on the \
+page — its real option is reliably the LAST match in document order, not the first. Scope a \
+popup-option text locator with both `.filter({{ visible: true }})` AND `.last()` together, e.g. \
+`page.getByText(name, {{ exact: true }}).filter({{ visible: true }}).last()`, rather than a bare \
+match with no suffix or an arbitrary `.first()` guess.
+
 Field-level validation rules — when a step checks that a field shows a validation/error \
 state (e.g. "shows required field error", "marks the field invalid"), do NOT search the \
 page for arbitrary validation-message text, and do NOT assume any single mechanism (e.g. \
@@ -772,17 +885,67 @@ def _describe_live_locators(locator_candidates: list[dict] | None) -> str:
     return "\n".join(_describe_one(loc) for loc in locator_candidates)
 
 
-# --- NLM "Add Test Case" feature: Prompt Analysis / Existing Scenario
-# Matching / ad-hoc Scenario generation agents. Each follows the same
-# one-call-per-stage convention as the Discovery/Generation prompts above.
-# Test-data *values* are never invented here — `generate_scenario_from_prompt`
-# below names required fields exactly like `generate_scenarios` already does;
-# `CreateScenarioActivity` (generation_worker/add_test_case_activities.py)
-# resolves values from user-supplied data or the existing Test Data Pool, and
-# leaves anything still unresolved for `PlaywrightGenerationActivity`'s own
-# existing default-value synthesis (`_resolve_scenario_defaults_sync`) to
-# fill in exactly as it already does for every normal-flow Scenario — no
-# separate "ask the user" step.
+def _describe_live_action_sequence(steps: list[dict] | None) -> str:
+    """`LiveHealActivity`'s ordered replay: each entry is one live MCP
+    action (`tool_name` + the same strategy/value/fragile/element_tag shape
+    `_describe_live_locators` uses) — order matters here, unlike
+    `_describe_live_locators`'s flat candidate list, since an earlier entry
+    is often a prerequisite (opening a dropdown/menu/tab) the later target
+    only becomes interactable after."""
+    if not steps:
+        return "(none)"
+
+    def _describe_one(step: dict, index: int) -> str:
+        tool = step.get("tool_name", "?")
+        tag = step.get("element_tag", "")
+        return f"{index}. {tool} on <{tag}> -> {step.get('value', '')}"
+
+    return "\n".join(_describe_one(step, i) for i, step in enumerate(steps, start=1))
+
+
+# --- NLM prompt classification — is this request a genuine, testable
+# description of application behavior, and what does it actually ask for.
+# Shared by `LiveExplorationTestWorkflow`, the only NL entry point (see
+# `analyze_test_case_prompt`'s own section below for what got removed).
+
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+_PER_CATEGORY_COUNT = re.compile(
+    r"\b(?P<count>\d+|one|two|three|four|five)\s+(?P<category>happy|negative|edge)\w*",
+    re.IGNORECASE,
+)
+_TOTAL_TEST_CASE_COUNT = re.compile(
+    r"\b(?P<count>\d+|one|two|three|four|five)\s+test\s+cases?\b", re.IGNORECASE
+)
+
+
+def _fallback_requested_scenario_counts(prompt: str) -> dict[str, int]:
+    """Deterministic backstop for `analyze_test_case_prompt`'s own LLM-based
+    extraction, which — observed live — doesn't reliably populate
+    `requested_scenario_counts` on every call even for an unambiguous prompt
+    like "create three test cases: happy path, negative path, edge case".
+    Only ever used to fill in a category the LLM's own response left out,
+    never to override one it did return (see caller)."""
+    counts = {
+        match.group("category").lower(): (
+            _NUMBER_WORDS.get(match.group("count").lower()) or int(match.group("count"))
+        )
+        for match in _PER_CATEGORY_COUNT.finditer(prompt)
+    }
+    if counts:
+        return counts
+
+    # No per-category number anywhere (e.g. "3 negative scenarios") — the
+    # other common idiom is a bare total plus all three category words
+    # named with no number of their own, which splits 1 each.
+    total_match = _TOTAL_TEST_CASE_COUNT.search(prompt)
+    categories_named = {
+        category
+        for category in ("happy", "negative", "edge")
+        if re.search(category, prompt, re.IGNORECASE)
+    }
+    if total_match and categories_named == {"happy", "negative", "edge"}:
+        return {"happy": 1, "negative": 1, "edge": 1}
+    return {}
 
 _TEST_CASE_PROMPT_SYSTEM = """A user of a QA automation tool has described, in plain English, a \
 test case they want added for a specific web application. Determine whether this is a genuine \
@@ -800,109 +963,27 @@ Also extract any concrete test-data VALUE the user stated literally in their own
 the user actually wrote — never invent, guess, or fill in a value they didn't state. Most \
 requests give none at all; an empty object is the normal case.
 
+Also extract an explicit scenario COUNT if, and only if, the user's own words state one — a \
+total ("create three test cases", "give me 5 test cases") and/or a per-category breakdown \
+("one happy path, one negative, one edge case", "3 negative scenarios"). Put it in \
+"requested_scenario_counts" as {{"happy": <int>, "negative": <int>, "edge": <int>}}, using only \
+the categories the user actually implied a count for — a bare total with the three canonical \
+categories named (happy/negative/edge, or "successful"/"failure"/"boundary" phrasing) splits \
+1 count each; a bare total with no category breakdown at all is not extractable, leave the \
+object empty. Never invent a count the user didn't state or imply — most requests give none; \
+an empty object is the normal case.
+
 Respond with ONLY a JSON object of this shape, no prose: \
 {{"is_relevant": true, "functionality_summary": "one sentence describing the feature/flow under \
 test", "actions": ["ordered, plain-language user actions, e.g. \\"open the cart\\", \\"apply a \
 promo code\\""], "expected_result": "what should happen if the test passes", \
-"provided_test_data": {{}}, "rejection_reason": null}} — or, when not relevant: \
-{{"is_relevant": false, "functionality_summary": "", "actions": [], "expected_result": "", \
-"provided_test_data": {{}}, "rejection_reason": "one sentence explaining why this isn't a \
-testable request for this application"}}"""
+"provided_test_data": {{}}, "requested_scenario_counts": {{}}, "rejection_reason": null}} — or, \
+when not relevant: {{"is_relevant": false, "functionality_summary": "", "actions": [], \
+"expected_result": "", "provided_test_data": {{}}, "requested_scenario_counts": {{}}, \
+"rejection_reason": "one sentence explaining why this isn't a testable request for this \
+application"}}"""
 
 _TEST_CASE_PROMPT_USER = """User's request: "{prompt}\""""
-
-_SCENARIO_MATCH_PROMPT_SYSTEM = """You are decomposing a QA engineer's requested test case(s) \
-into one or more concrete Scenarios and matching each against an application's existing Journeys \
-(business workflows) and Scenarios (individual test cases already written for a Journey), to \
-avoid creating unnecessary duplicates.
-
-A single request can require ONE test case or SEVERAL — split it into every distinct testable \
-Scenario it actually implies (e.g. "test that login and logout both work" is two Scenarios; a \
-single specific condition like "an expired promo code is rejected at checkout" is one). Each \
-Scenario needs its own "functionality_summary"/"actions"/"expected_result" specific to just that \
-one Scenario — never the whole original request repeated verbatim for every entry.
-
-For each Scenario, identify which Journey it belongs to (a single request can span multiple \
-Journeys) and decide exactly one of:
-- "reuse_scenario": an existing Scenario already covers this exact Scenario — reuse it as-is \
-(set "scenario_id" and its parent "journey_id").
-- "new_scenario": an existing Journey covers the right business workflow, but no Scenario under \
-it covers this Scenario — add one (set "journey_id", leave "scenario_id" null).
-- "new_journey": no existing Journey covers this workflow at all — a new one is needed (leave \
-both ids null).
-
-Only choose "reuse_scenario" for a genuine match — same functionality and expected result, not \
-just a similar-sounding name. Prefer "new_scenario" over "new_journey" whenever any existing \
-Journey's business workflow already covers a Scenario's general area. Two Scenarios that both \
-need a brand-new Journey and belong to the same workflow must share the exact same \
-"proposed_journey_name" so they land under one Journey, not two.
-
-Respond with ONLY a JSON object of this shape, no prose: {{"scenarios": [{{"mode": \
-"reuse_scenario", "journey_id": "...", "scenario_id": "...", "proposed_journey_name": null, \
-"proposed_capability_name": null, "proposed_scenario_name": "...", "functionality_summary": \
-"...", "actions": ["..."], "expected_result": "...", "rationale": "one sentence"}}, ...]}}"""
-
-_SCENARIO_MATCH_PROMPT_USER = """User's original request: "{prompt}"
-
-Overall understanding:
-- Functionality: {functionality_summary}
-- Actions: {actions}
-- Expected result: {expected_result}
-
-Existing Journeys and their Scenarios:
-{journey_listing}"""
-
-_JOURNEY_PLAN_PROMPT_SYSTEM = """You are grounding a QA engineer's requested test case in a \
-specific web application's actually-discovered pages — no existing Journey covers this request, \
-so a new one is needed. Pick and order ONLY the pages (from the indexed list given) a user would \
-actually visit to carry out the requested actions, exactly like the existing Journey inference \
-this application was originally built from.
-
-Respond with ONLY a JSON object of this shape, no prose: {{"steps": [{{"page_index": 0, \
-"stage_label": "short business-language stage name, e.g. \\"Login\\""}}, ...]}}, one entry per \
-page actually needed, in the order a user visits them."""
-
-_JOURNEY_PLAN_PROMPT_USER = """Requested test case:
-- Functionality: {functionality_summary}
-- Actions: {actions}
-- Expected result: {expected_result}
-
-Pages (indexed):
-{page_listing}"""
-
-_ADHOC_SCENARIO_PROMPT_SYSTEM = """You are writing ONE integration test Scenario for a specific \
-business Journey, from a QA engineer's own plain-English request rather than open-ended \
-exploration — follow their requested functionality and expected result exactly, grounded in the \
-Journey's actual captured pages/forms/API calls below. The Scenario needs:
-- "name": a short business-language name for this exact test case
-- "type": one of "happy", "negative", "edge" — whichever the request actually describes
-- "steps": an ordered list of plain-language test steps a QA engineer would follow
-- "expected_result": what should happen if the Scenario passes — matching the user's own stated \
-expected result unless it's inconsistent with the captured application behavior
-- "test_data": a list of {{"name": "<field name, e.g. \\"promo code\\">", "mandatory": <bool>}} \
-— the input values a human tester (or this system, automatically) must supply to run this \
-Scenario. Do NOT include a value — only the field name and whether it's required, same as every \
-other Scenario this system generates. Exception: never include a field for the account's own \
-existing login username/password — that value always comes from the credentials already \
-configured for this Application, never from a Scenario's test_data.
-
-Grounded-outcome rule — describe outcomes in application-agnostic terms (what changes or becomes \
-visible), never inventing a specific UI mechanism (table/modal/toast) not evidenced by the \
-captured pages below.
-
-Respond with ONLY a JSON object of this shape, no prose: {{"name": "...", "type": "happy", \
-"steps": ["...", "..."], "expected_result": "...", \
-"test_data": [{{"name": "...", "mandatory": true}}]}}"""
-
-_ADHOC_SCENARIO_PROMPT_USER = """Journey: "{journey_name}"
-
-Requested test case:
-- Functionality: {functionality_summary}
-- Actions: {actions}
-- Expected result: {expected_result}
-
-Journey pages (in order):
-{page_listing}"""
 
 # Story 2.10 AC 3: a short, plain-language (not JSON) opinion — this is
 # supporting evidence recorded in diagnostics, never a structured decision
@@ -931,6 +1012,113 @@ Action label: "{label}"
 Page context: {page_context}
 
 Respond with one word (SAFE, DESTRUCTIVE, or AMBIGUOUS) followed by a one-sentence reason."""
+
+
+# Live-exploration agent (NL requirement -> live browser -> Live Flow Model).
+# Never given crawler/discovery data — the requirement text and the current
+# Playwright MCP `browser_snapshot` are the only grounding, by design. The
+# tool catalog is the real, stable Playwright MCP surface; `element`/`ref`
+# values in a returned `browser_click`/`browser_type`/`browser_select_option`/
+# `browser_hover` call MUST come from a node in the CURRENT snapshot below —
+# never invented, never carried over from an earlier turn's snapshot (the
+# page may have changed since).
+_LIVE_EXPLORATION_PROMPT_SYSTEM = """You are a QA engineer's live-exploration agent. You \
+control a real web browser through the Playwright MCP tools listed below, one call at a \
+time, to accomplish a natural-language testing requirement against a real, unfamiliar \
+web application. You have never seen this application before — you must observe it live \
+and decide each next step from what you actually see, never from assumed navigation or \
+guessed URLs/selectors.
+
+Available tools (call exactly one per turn):
+- browser_navigate({{"url": "..."}})
+- browser_snapshot({{}}) — re-observe the current page; use when unsure what changed
+- browser_click({{"element": "<human description>", "ref": "<ref from the snapshot below>"}})
+- browser_type({{"element": "...", "ref": "...", "text": "...", "submit": false}})
+- browser_select_option({{"element": "...", "ref": "...", "values": ["..."]}})
+- browser_hover({{"element": "...", "ref": "..."}})
+- browser_press_key({{"key": "Enter"}})
+- browser_wait_for({{"text": "..."}}) or ({{"time": <seconds>}})
+- browser_go_back({{}})
+
+Rules:
+- Every "ref" you use must be copied verbatim from a node in the CURRENT snapshot given \
+below — never a ref from an earlier turn, never invented.
+- Prefer the fewest, most direct steps. Do not explore tangential UI.
+- Set "goal_satisfied" to true only once you have observed, in the current snapshot or the \
+result of your last action, direct evidence the requirement is fully met (e.g. the created \
+item visibly appears in a list) — never assume success from an action alone.
+- If a form/dialog appears, fill only the fields necessary to proceed.
+
+Respond with ONLY a JSON object of this shape, no prose: {{"tool_name": "...", "tool_args": \
+{{...}}, "rationale": "<one sentence>", "goal_satisfied": false}}"""
+
+_LIVE_EXPLORATION_PROMPT_USER = """Requirement: {requirement}
+
+Turns so far (oldest first):
+{history}
+
+Current page snapshot:
+{snapshot}
+
+What is the single next tool call?"""
+
+_LIVE_HEAL_PROMPT_SYSTEM = """You are a QA engineer's live-healing agent. A generated \
+Playwright test's step failed because the application's UI has changed since the test was \
+written. You control the real, current application through the Playwright MCP tools listed \
+below. Your only goal is to find the CURRENT correct element for the one failed step \
+described below — never consult or trust the test's old locator, it is exactly what is \
+wrong.
+
+Available tools (call exactly one per turn):
+- browser_navigate({{"url": "..."}})
+- browser_snapshot({{}})
+- browser_click({{"element": "...", "ref": "..."}})
+- browser_type({{"element": "...", "ref": "...", "text": "...", "submit": false}})
+- browser_hover({{"element": "...", "ref": "..."}})
+- browser_wait_for({{"text": "..."}}) or ({{"time": <seconds>}})
+
+Rules:
+- Every "ref" must come from the CURRENT snapshot below, never invented or reused from an \
+earlier turn.
+- You are looking for one element, not completing the whole scenario. Merely seeing it in a \
+snapshot is never enough — identifying it in your own reasoning captures no evidence at all. \
+Once you can identify the element from the current snapshot, confirm it with exactly one \
+action, chosen by what the failed step actually is:
+  - Selecting an option from an already-open dropdown/listbox/menu (the step just chooses a \
+value — it is not a submit, save, delete, create, or navigate) — your NEXT turn must be \
+"browser_click" on that exact "ref". A hover alone can never confirm this: clicking is the only \
+way to tell whether the option genuinely selects when interacted with, and to catch a \
+wrong-but-similarly-named element elsewhere on the page (e.g. an unrelated status tag reusing the \
+same text) that a hover would have silently accepted. Clicking a dropdown/listbox/menu option is \
+not destructive — it only changes which value the field holds, and this heal never goes on to \
+submit that form.
+  - Anything else (a button, link, or any element that creates, deletes, saves, submits, or \
+navigates) — your NEXT turn must be "browser_hover" on that exact "ref" (hover only — never \
+"browser_click"/"browser_type", which could trigger the very change under investigation instead \
+of just confirming it).
+Only in the turn AFTER that confirming click-or-hover has run may you set "goal_satisfied": true, \
+naming the element's current role and accessible name in "rationale" (e.g. "button, accessible \
+name 'Create connection'", or "generic, accessible name 'GIT' — clicking it set the Server type \
+field to GIT"). Never set "goal_satisfied" in the same turn as that confirming action itself, and \
+never set it without having performed the correct one (click for a dropdown/listbox/menu option, \
+hover for everything else) on the exact element first.
+- Do not submit forms, save, delete, or perform any other destructive or navigating action — you \
+are investigating, not executing the rest of the step. Selecting a dropdown/listbox/menu option \
+(see above) is the one confirming action that is not destructive and is always allowed.
+
+Respond with ONLY a JSON object of this shape, no prose: {{"tool_name": "...", "tool_args": \
+{{...}}, "rationale": "<one sentence, or the element identification once goal_satisfied>", \
+"goal_satisfied": false}}"""
+
+_LIVE_HEAL_PROMPT_USER = """Failed step: {requirement}
+
+Turns so far (oldest first):
+{history}
+
+Current page snapshot:
+{snapshot}
+
+What is the single next tool call?"""
 
 
 async def _chat_completion(
@@ -1035,7 +1223,11 @@ class HostedAIProvider:
         return candidates
 
     async def generate_scenarios(
-        self, journey: Journey, pages: list[Page], limit: int | None = None
+        self,
+        journey: Journey,
+        pages: list[Page],
+        limit: int | None = None,
+        requested_counts: dict[str, int] | None = None,
     ) -> list[ScenarioCandidate]:
         # `pages` is already in step order, each carrying a transient
         # `.stage_label` (attached by ScenarioGenerationActivity the same way
@@ -1043,25 +1235,57 @@ class HostedAIProvider:
         # listing below doubles as both the step sequence and the supporting
         # capture detail, no separate steps argument needed.
         listing = "\n".join(f"{i + 1}: {_describe_page(p)}" for i, p in enumerate(pages))
+        # A live-exploration Journey's `description` is the user's own,
+        # original natural-language request — the only place any explicit
+        # instruction (an exact field value, "cover happy/negative/edge",
+        # a specific count) can ground scenario generation, since Discovery
+        # never captures form-field validation constraints the way a live
+        # MCP session's own typed values imply. A crawler-inferred Journey's
+        # `description` is just its own short AI-written summary — safe to
+        # include the same way, never harmful.
+        description_section = (
+            f'\nAdditional context — the request this Journey was created for:\n'
+            f'"{journey.description}"\n'
+            if journey.description
+            else ""
+        )
+        live_session_listing = _describe_captured_flow(getattr(journey, "captured_flow", None))
+        live_session_section = (
+            f"\nRecorded live browser session (ground truth — the literal, ordered actions "
+            f"actually taken against the real application for this Journey):\n{live_session_listing}\n"
+            if live_session_listing
+            else ""
+        )
 
         candidates = []
         failures: list[str] = []
-        for scenario_type, instructions in _SCENARIO_TYPE_INSTRUCTIONS.items():
+        for scenario_type, description in _SCENARIO_TYPE_DESCRIPTIONS.items():
             if limit is not None and len(candidates) >= limit:
                 break
+            exact_count = (requested_counts or {}).get(scenario_type)
+            count_guidance = (
+                f"Generate EXACTLY {exact_count} Scenario{'s' if exact_count != 1 else ''} of "
+                "this type — no more, no fewer, regardless of how many distinct conditions you "
+                "could otherwise think of."
+                if exact_count
+                else _SCENARIO_TYPE_DEFAULT_COUNT_GUIDANCE[scenario_type]
+            )
             try:
                 content = await _chat_completion(
                     [
                         {
                             "role": "system",
                             "content": _SCENARIO_PROMPT_SYSTEM.format(
-                                scenario_type_instructions=instructions
+                                scenario_type_instructions=f"{description} {count_guidance}"
                             ),
                         },
                         {
                             "role": "user",
                             "content": _SCENARIO_PROMPT_USER.format(
-                                journey_name=journey.name, step_listing=listing
+                                journey_name=journey.name,
+                                journey_description_section=description_section,
+                                step_listing=listing,
+                                live_session_section=live_session_section,
                             ),
                         },
                     ],
@@ -1081,8 +1305,15 @@ class HostedAIProvider:
                 failures.append(scenario_type)
                 continue
 
+            added_for_type = 0
             for raw in raw_scenarios:
                 if limit is not None and len(candidates) >= limit:
+                    break
+                # The model is told to generate exactly `exact_count`, but
+                # nothing downstream should ever trust an LLM's own count
+                # discipline over an explicit user request — truncate here
+                # the same way `limit` already does.
+                if exact_count is not None and added_for_type >= exact_count:
                     break
                 candidates.append(
                     ScenarioCandidate(
@@ -1098,6 +1329,7 @@ class HostedAIProvider:
                         ],
                     )
                 )
+                added_for_type += 1
 
         if not candidates and failures:
             # Every scenario-type call errored — nothing was silently "fine",
@@ -1112,8 +1344,12 @@ class HostedAIProvider:
             )
         return candidates
 
-    # --- NLM "Add Test Case" feature (Prompt Analysis / Existing Scenario
-    # Matching / ad-hoc Scenario generation agents).
+    # --- NLM prompt classification, shared by LiveExplorationTestWorkflow.
+    # `[REMOVED]` match_test_case_scenarios/plan_new_journey/
+    # generate_scenario_from_prompt — the "match a prompt against
+    # already-crawled Journeys/Scenarios" agents. Per natural_language_flow.png,
+    # natural-language test-case creation always goes through live browser
+    # exploration, never a match against a prior crawl.
 
     async def analyze_test_case_prompt(self, prompt: str) -> TestCasePromptCandidate:
         content = await _chat_completion(
@@ -1126,6 +1362,7 @@ class HostedAIProvider:
         )
         raw = json.loads(content)
         provided_test_data = raw.get("provided_test_data") or {}
+        requested_scenario_counts = raw.get("requested_scenario_counts") or {}
         return TestCasePromptCandidate(
             is_relevant=bool(raw["is_relevant"]),
             functionality_summary=raw.get("functionality_summary") or "",
@@ -1144,127 +1381,27 @@ class HostedAIProvider:
             }
             if isinstance(provided_test_data, dict)
             else {},
-        )
-
-    async def match_test_case_scenarios(
-        self,
-        prompt: str,
-        prompt_candidate: TestCasePromptCandidate,
-        journeys_with_scenarios: list[dict],
-    ) -> list[ScenarioMatchCandidate]:
-        listing = "\n".join(json.dumps(j) for j in journeys_with_scenarios) or "(none yet)"
-        content = await _chat_completion(
-            [
-                {"role": "system", "content": _SCENARIO_MATCH_PROMPT_SYSTEM},
-                {
-                    "role": "user",
-                    "content": _SCENARIO_MATCH_PROMPT_USER.format(
-                        prompt=prompt,
-                        functionality_summary=prompt_candidate.functionality_summary,
-                        actions=prompt_candidate.actions,
-                        expected_result=prompt_candidate.expected_result,
-                        journey_listing=listing,
-                    ),
-                },
-            ],
-            response_format={"type": "json_object"},
-            timeout=180,
-            max_tokens=8000,
-        )
-        raw_scenarios = json.loads(content).get("scenarios") or []
-        candidates = []
-        for raw in raw_scenarios:
-            mode = raw.get("mode")
-            if mode not in ("reuse_scenario", "new_scenario", "new_journey"):
-                # Hallucination guard, same spirit as `_ROUTE_SHAPED_NAME`/the
-                # `page_index` bounds check above — an unrecognized mode
-                # defaults to the safest fallback (start a new Journey)
-                # rather than crashing the Activity on a bad literal.
-                mode = "new_journey"
-            candidates.append(
-                ScenarioMatchCandidate(
-                    mode=mode,
-                    journey_id=raw.get("journey_id") if mode != "new_journey" else None,
-                    scenario_id=raw.get("scenario_id") if mode == "reuse_scenario" else None,
-                    proposed_journey_name=raw.get("proposed_journey_name"),
-                    proposed_capability_name=raw.get("proposed_capability_name"),
-                    proposed_scenario_name=raw.get("proposed_scenario_name") or "",
-                    functionality_summary=raw.get("functionality_summary") or "",
-                    actions=list(raw.get("actions") or []),
-                    expected_result=raw.get("expected_result") or "",
-                    rationale=raw.get("rationale") or "",
-                )
-            )
-        return candidates
-
-    async def plan_new_journey(
-        self, prompt_candidate: TestCasePromptCandidate, pages: list[Page]
-    ) -> JourneyPlanCandidate:
-        listing = "\n".join(f"{i}: {_describe_page(p)}" for i, p in enumerate(pages))
-        content = await _chat_completion(
-            [
-                {"role": "system", "content": _JOURNEY_PLAN_PROMPT_SYSTEM},
-                {
-                    "role": "user",
-                    "content": _JOURNEY_PLAN_PROMPT_USER.format(
-                        functionality_summary=prompt_candidate.functionality_summary,
-                        actions=prompt_candidate.actions,
-                        expected_result=prompt_candidate.expected_result,
-                        page_listing=listing,
-                    ),
-                },
-            ],
-            response_format={"type": "json_object"},
-            timeout=120,
-        )
-        raw_steps = json.loads(content)["steps"]
-        steps = []
-        for raw_step in raw_steps:
-            index = raw_step["page_index"]
-            if not (0 <= index < len(pages)):
-                logger.warning(
-                    "HostedAIProvider: plan_new_journey dropped hallucinated page_index %r", index
-                )
-                continue
-            steps.append(
-                JourneyPlanStep(page_id=str(pages[index].id), stage_label=raw_step["stage_label"])
-            )
-        return JourneyPlanCandidate(steps=steps)
-
-    async def generate_scenario_from_prompt(
-        self,
-        journey: Journey,
-        prompt_candidate: TestCasePromptCandidate,
-        known_pages: list[dict[str, str]] | None = None,
-    ) -> ScenarioCandidate:
-        content = await _chat_completion(
-            [
-                {"role": "system", "content": _ADHOC_SCENARIO_PROMPT_SYSTEM},
-                {
-                    "role": "user",
-                    "content": _ADHOC_SCENARIO_PROMPT_USER.format(
-                        journey_name=journey.name,
-                        functionality_summary=prompt_candidate.functionality_summary,
-                        actions=prompt_candidate.actions,
-                        expected_result=prompt_candidate.expected_result,
-                        page_listing=_describe_known_pages(known_pages),
-                    ),
-                },
-            ],
-            response_format={"type": "json_object"},
-            timeout=180,
-            max_tokens=8000,
-        )
-        raw = json.loads(content)
-        return ScenarioCandidate(
-            name=raw["name"],
-            type=raw.get("type") or "happy",
-            steps=list(raw["steps"]),
-            expected_result=raw["expected_result"],
-            test_data=[
-                TestDataFieldCandidate(name=f["name"], mandatory=bool(f["mandatory"]))
-                for f in raw.get("test_data", [])
-            ],
+            # Same hallucination guard — only a known category with a
+            # positive integer count survives; anything else is dropped
+            # rather than trusted, since a malformed value here would force
+            # generate_scenarios to produce an unintended exact count.
+            # The regex fallback fills in whatever the LLM's own call left
+            # out — never overrides a category it did return.
+            requested_scenario_counts={
+                **_fallback_requested_scenario_counts(prompt),
+                **(
+                    {
+                        str(k): int(v)
+                        for k, v in requested_scenario_counts.items()
+                        if str(k) in ("happy", "negative", "edge")
+                        and isinstance(v, int)
+                        and not isinstance(v, bool)
+                        and v > 0
+                    }
+                    if isinstance(requested_scenario_counts, dict)
+                    else {}
+                ),
+            },
         )
 
     async def infer_state_similarity(
@@ -1300,6 +1437,47 @@ class HostedAIProvider:
         )
         return content.strip()
 
+    async def decide_live_exploration_action(
+        self,
+        requirement: str,
+        history: list[dict],
+        snapshot: dict,
+        *,
+        is_heal: bool = False,
+    ) -> LiveExplorationDecision:
+        system_prompt = _LIVE_HEAL_PROMPT_SYSTEM if is_heal else _LIVE_EXPLORATION_PROMPT_SYSTEM
+        user_template = _LIVE_HEAL_PROMPT_USER if is_heal else _LIVE_EXPLORATION_PROMPT_USER
+        history_text = (
+            "\n".join(
+                f"{i}. called {turn.get('tool_name')}({turn.get('tool_args')}) — "
+                f"{turn.get('rationale', '')}"
+                for i, turn in enumerate(history)
+            )
+            or "(none yet)"
+        )
+        content = await _chat_completion(
+            [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": user_template.format(
+                        requirement=requirement,
+                        history=history_text,
+                        snapshot=json.dumps(snapshot),
+                    ),
+                },
+            ],
+            response_format={"type": "json_object"},
+            timeout=60,
+        )
+        parsed = json.loads(content)
+        return LiveExplorationDecision(
+            tool_name=parsed["tool_name"],
+            tool_args=parsed.get("tool_args") or {},
+            rationale=parsed.get("rationale", ""),
+            goal_satisfied=bool(parsed.get("goal_satisfied", False)),
+        )
+
     async def generate_playwright(
         self,
         scenario: Scenario,
@@ -1316,6 +1494,7 @@ class HostedAIProvider:
         target_url: str | None = None,
         failure_screenshot_png: bytes | None = None,
         live_inspection_locators: list[dict] | None = None,
+        live_action_sequence: list[dict] | None = None,
     ) -> TestAssetCode:
         step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
         base_url = getattr(scenario, "base_url", None) or ""
@@ -1374,6 +1553,13 @@ class HostedAIProvider:
             if live_inspection_locators
             else ""
         )
+        live_action_sequence_context = (
+            _PLAYWRIGHT_LIVE_ACTION_SEQUENCE_CONTEXT.format(
+                action_sequence_listing=_describe_live_action_sequence(live_action_sequence)
+            )
+            if live_action_sequence
+            else ""
+        )
         system_message = {
             "role": "system",
             "content": _PLAYWRIGHT_PROMPT_SYSTEM.format(
@@ -1393,6 +1579,7 @@ class HostedAIProvider:
             known_locators_listing=_describe_known_locators(known_locators),
             failure_context=failure_context,
             live_inspection_context=live_inspection_context,
+            live_action_sequence_context=live_action_sequence_context,
         )
         messages: list[dict[str, Any]] = [
             system_message,

@@ -67,7 +67,15 @@ def _known_accessible_names(known_locators: list[dict[str, str]]) -> set[str]:
         selector = loc.get("selector", "")
         if strategy == "label":
             names.add(selector.strip().lower())
-        elif strategy == "aria":
+        elif strategy in ("aria", "role"):
+            # "role" is live-exploration's only locator strategy
+            # (`snapshot_node_to_locator_candidate`, e.g.
+            # `get_by_role("button", name="...")`) — the crawler never
+            # produces it (its own strategies are testid/aria/text/label/
+            # css_scoped/css_absolute), so this case never existed before.
+            # Without it every live-exploration-sourced known locator was
+            # silently dropped, and every locator in generated
+            # live-exploration test code was falsely flagged as invented.
             m = re.search(r'name="([^"]+)"', selector)
             if m:
                 names.add(m.group(1).strip().lower())
