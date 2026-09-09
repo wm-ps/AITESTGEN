@@ -9,8 +9,11 @@ tests in apps/workers/generation). Verifies the orchestration shape itself:
   AI-only activities there.
 - On a passing execution, LiveHealActivity is never called at all.
 - On a failing execution, LiveHealActivity is called; when it reports
-  `healed=True`, ExecuteTestActivity runs again with the new TestAsset id
-  and the final result reflects the re-executed outcome.
+  `healed=True`, ExecuteTestActivity runs again with the new TestAsset id.
+- Every internal execute+heal pass's TestRun(s) get discarded
+  (DiscardTestRunActivity), never finalized into real history — and the
+  workflow's own result never surfaces a per-scenario pass/fail/healed
+  outcome (see live_exploration_workflow.py's module docstring for why).
 """
 
 import uuid
@@ -21,11 +24,11 @@ from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from workflows import (
     ANALYZE_PROMPT_ACTIVITY_NAME,
+    DISCARD_TEST_RUN_ACTIVITY_NAME,
     ENSURE_TEST_SUITE_ACTIVITY_NAME,
     EXECUTE_TEST_ACTIVITY_NAME,
     EXECUTION_TASK_QUEUE,
     FINALIZE_SUITE_GENERATION_ACTIVITY_NAME,
-    FINALIZE_TEST_RUN_ACTIVITY_NAME,
     GENERATION_TASK_QUEUE,
     LIVE_EXPLORATION_TASK_QUEUE,
     LIVE_EXPLORE_ACTIVITY_NAME,
@@ -35,11 +38,11 @@ from workflows import (
     READ_TEST_RESULT_STATUS_ACTIVITY_NAME,
     SCENARIO_GENERATION_ACTIVITY_NAME,
     AnalyzePromptActivityInput,
+    DiscardTestRunActivityInput,
     EnsureTestSuiteActivityInput,
     EnsureTestSuiteActivityResult,
     ExecuteTestActivityInput,
     FinalizeSuiteGenerationActivityInput,
-    FinalizeTestRunActivityInput,
     LiveExplorationTestWorkflow,
     LiveExplorationWorkflowInput,
     LiveExploreActivityInput,
@@ -59,7 +62,8 @@ _execute_test_calls: list[str] = []
 _heal_calls: list[str] = []
 _read_status_results: list[str] = []
 _prepare_calls: list[str] = []
-_finalize_calls: list[str] = []
+_discard_calls: list[str] = []
+_finalize_suite_statuses: list[str] = []
 
 
 @activity.defn(name=ANALYZE_PROMPT_ACTIVITY_NAME)
@@ -104,7 +108,7 @@ async def _fake_playwright_generation(input: PlaywrightGenerationActivityInput) 
 
 @activity.defn(name=FINALIZE_SUITE_GENERATION_ACTIVITY_NAME)
 async def _fake_finalize_suite_generation(input: FinalizeSuiteGenerationActivityInput) -> None:
-    return None
+    _finalize_suite_statuses.append(input.status)
 
 
 @activity.defn(name=PREPARE_SINGLE_TEST_RUN_ACTIVITY_NAME)
@@ -127,9 +131,9 @@ async def _fake_execute_test(input: ExecuteTestActivityInput) -> str:
     return input.test_result_id
 
 
-@activity.defn(name=FINALIZE_TEST_RUN_ACTIVITY_NAME)
-async def _fake_finalize_test_run(input: FinalizeTestRunActivityInput) -> None:
-    _finalize_calls.append(input.test_run_id)
+@activity.defn(name=DISCARD_TEST_RUN_ACTIVITY_NAME)
+async def _fake_discard_test_run(input: DiscardTestRunActivityInput) -> None:
+    _discard_calls.append(input.test_run_id)
 
 
 @activity.defn(name=READ_TEST_RESULT_STATUS_ACTIVITY_NAME)
@@ -167,7 +171,7 @@ async def _run(env: WorkflowEnvironment) -> object:
             activities=[
                 _fake_prepare_single_test_run,
                 _fake_execute_test,
-                _fake_finalize_test_run,
+                _fake_discard_test_run,
                 _fake_read_test_result_status,
             ],
         ),
@@ -193,20 +197,23 @@ async def test_no_heal_when_execution_passes_first_try() -> None:
     _execute_test_calls.clear()
     _heal_calls.clear()
     _prepare_calls.clear()
-    _finalize_calls.clear()
+    _discard_calls.clear()
+    _finalize_suite_statuses.clear()
     _read_status_results[:] = ["passed"]
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         result = await _run(env)
 
     assert result.status == "complete"
-    scenario_result = result.scenarios[0]
-    assert scenario_result.healed is False
-    assert scenario_result.test_result_status == "passed"
+    assert result.journey_id == "journey-1"
+    assert result.journey_name == "MCP connection"
     assert _heal_calls == []
     assert _execute_test_calls == ["test-asset-scenario-1"]
     assert _prepare_calls == ["test-asset-scenario-1"]
-    assert _finalize_calls == ["run-1"]
+    # The only TestRun this scenario touched is discarded, not finalized —
+    # a passing internal check leaves no history behind either.
+    assert _discard_calls == ["run-1"]
+    assert _finalize_suite_statuses == ["complete"]
 
 
 @pytest.mark.asyncio
@@ -214,7 +221,8 @@ async def test_heals_and_re_executes_on_a_failing_run() -> None:
     _execute_test_calls.clear()
     _heal_calls.clear()
     _prepare_calls.clear()
-    _finalize_calls.clear()
+    _discard_calls.clear()
+    _finalize_suite_statuses.clear()
     _read_status_results[:] = ["failed", "passed"]
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -223,10 +231,6 @@ async def test_heals_and_re_executes_on_a_failing_run() -> None:
     assert result.status == "complete"
     assert result.journey_id == "journey-1"
     assert result.journey_name == "MCP connection"
-    assert len(result.scenarios) == 1
-    scenario_result = result.scenarios[0]
-    assert scenario_result.healed is True
-    assert scenario_result.test_result_status == "passed"
 
     # LiveHealActivity ran once (after the first failing execution), and
     # ExecuteTestActivity ran a second time with the HEALED test_asset_id.
@@ -234,7 +238,12 @@ async def test_heals_and_re_executes_on_a_failing_run() -> None:
     assert _execute_test_calls == ["test-asset-scenario-1", "test-asset-scenario-1-healed"]
 
     # The post-heal re-run got its OWN fresh TestRun/TestResult (run-2),
-    # never a replay of run-1's already-terminal one — and both runs get
-    # finalized rather than leaving run-1 stuck at "running" forever.
+    # never a replay of run-1's already-terminal one.
     assert _prepare_calls == ["test-asset-scenario-1", "test-asset-scenario-1-healed"]
-    assert _finalize_calls == ["run-2", "run-1"]
+    # Both the original, failed TestRun and the healed re-run's TestRun are
+    # discarded — neither is finalized into real, user-visible history,
+    # regardless of the healed run's own final outcome.
+    assert _discard_calls == ["run-1", "run-2"]
+    # Still "complete" — a healed-or-not internal check no longer decides
+    # test_suite.status; every scenario got a TestAsset either way.
+    assert _finalize_suite_statuses == ["complete"]

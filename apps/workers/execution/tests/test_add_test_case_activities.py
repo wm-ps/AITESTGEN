@@ -15,6 +15,7 @@ from domain import (
     Organization,
     Scenario,
     TestAsset,
+    TestResult,
     TestRun,
     TestSuite,
 )
@@ -22,7 +23,7 @@ from execution_worker.db import engine, init_db
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
-from workflows import PrepareSingleTestRunActivityInput
+from workflows import DiscardTestRunActivityInput, PrepareSingleTestRunActivityInput
 
 
 def _db_available() -> bool:
@@ -152,3 +153,49 @@ def test_prepare_single_test_run_assigns_sequential_run_numbers(
             run_numbers.append(test_run.run_number)
 
     assert run_numbers == [1, 2, 3]
+
+
+def test_discard_test_run_deletes_the_run_and_its_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    """LiveExplorationTestWorkflow's internal verify+heal pass discards its
+    own TestRun/TestResult rather than finalizing them — a real dashboard/
+    Runs-tab query lists every TestRun for an Application with no filter, so
+    anything left behind there would leak an internal check as if it were a
+    real, user-visible run."""
+    init_db()
+    application = _seed_application()
+    test_asset = _seed_test_asset(application)
+    monkeypatch.setattr(
+        add_test_case_activities_module, "assemble_test_suite_project_to_dir", lambda *a, **k: None
+    )
+    monkeypatch.setattr(add_test_case_activities_module, "_install_project", lambda *a, **k: None)
+
+    prep = add_test_case_activities_module._prepare_single_test_run_sync(
+        PrepareSingleTestRunActivityInput(
+            application_id=str(application.external_id),
+            test_asset_id=str(test_asset.external_id),
+        )
+    )
+
+    add_test_case_activities_module._discard_test_run_sync(
+        DiscardTestRunActivityInput(test_run_id=prep.test_run_id)
+    )
+
+    with Session(engine) as session:
+        assert (
+            session.exec(
+                select(TestRun).where(TestRun.external_id == uuid.UUID(prep.test_run_id))
+            ).one_or_none()
+            is None
+        )
+        assert (
+            session.exec(
+                select(TestResult).where(TestResult.external_id == uuid.UUID(prep.test_result_id))
+            ).one_or_none()
+            is None
+        )
+
+    # Idempotent under Temporal's at-least-once retry — a repeat call on an
+    # already-discarded run must not raise.
+    add_test_case_activities_module._discard_test_run_sync(
+        DiscardTestRunActivityInput(test_run_id=prep.test_run_id)
+    )

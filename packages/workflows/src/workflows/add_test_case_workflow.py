@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 ANALYZE_PROMPT_ACTIVITY_NAME = "AnalyzePromptActivity"
 PREPARE_SINGLE_TEST_RUN_ACTIVITY_NAME = "PrepareSingleTestRunActivity"
 READ_TEST_RESULT_STATUS_ACTIVITY_NAME = "ReadTestResultStatusActivity"
+DISCARD_TEST_RUN_ACTIVITY_NAME = "DiscardTestRunActivity"
 
 
 @dataclass
@@ -66,11 +67,18 @@ class ReadTestResultStatusResult:
     error_message: str | None = None
 
 
+@dataclass
+class DiscardTestRunActivityInput:
+    test_run_id: str
+
+
 __all__ = [
     "ANALYZE_PROMPT_ACTIVITY_NAME",
+    "DISCARD_TEST_RUN_ACTIVITY_NAME",
     "PREPARE_SINGLE_TEST_RUN_ACTIVITY_NAME",
     "READ_TEST_RESULT_STATUS_ACTIVITY_NAME",
     "AnalyzePromptActivityInput",
+    "DiscardTestRunActivityInput",
     "PrepareSingleTestRunActivityInput",
     "PrepareSingleTestRunActivityResult",
     "PromptAnalysisResult",

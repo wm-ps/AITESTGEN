@@ -50,6 +50,7 @@ from execution_worker.activities import (
     prepare_test_run_activity,
 )
 from execution_worker.add_test_case_activities import (
+    discard_test_run_activity,
     prepare_single_test_run_activity,
     read_test_result_status_activity,
 )
@@ -95,6 +96,7 @@ async def main() -> None:
             # explicit task_queue=EXECUTION_TASK_QUEUE override.
             prepare_single_test_run_activity,
             read_test_result_status_activity,
+            discard_test_run_activity,
         ],
         # find_purge_candidates_activity/purge_application_activity/
         # check_schedule_gate_activity are sync (plain `def`, not

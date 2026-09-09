@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api } from '../../api'
-import type { LiveTestCaseRequestStatusRead, LiveTestCaseScenarioResultRead } from '../../api'
+import type { LiveTestCaseRequestStatusRead } from '../../api'
 import { GenerationLoader } from '../GenerationLoader'
 
 const POLL_INTERVAL_MS = 3000
@@ -15,51 +15,11 @@ function requestIdStorageKey(applicationId: string) {
 
 const IN_PROGRESS_COPY: Record<string, string> = {
   exploring: 'Exploring the live application…',
+  // Covers code generation AND the internal verify/self-heal pass that
+  // follows it — that pass exists only to catch a broken locator before the
+  // test case ships; it's never a real, user-visible run, so it gets no
+  // status/copy of its own (see LiveExplorationTestWorkflow's docstring).
   generating: 'Generating the test case…',
-  running: 'Running the test case…',
-}
-
-function ResultRow({ result }: { result: LiveTestCaseScenarioResultRead }) {
-  const passed = result.test_result_status === 'passed'
-  return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 0' }}>
-      <span
-        aria-hidden="true"
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          width: 20,
-          height: 20,
-          marginTop: 1,
-          borderRadius: 'var(--radius-full)',
-          background: passed ? 'var(--good-strong)' : 'var(--danger-strong)',
-          color: 'white',
-          fontSize: 12,
-          fontWeight: 700,
-          flexShrink: 0,
-        }}
-      >
-        {passed ? '✓' : '!'}
-      </span>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <p
-          style={{
-            fontSize: 12,
-            color: passed ? 'var(--good-strong)' : 'var(--danger-strong)',
-            fontWeight: 600,
-            margin: 0,
-          }}
-        >
-          {result.test_result_status ?? 'unknown'}
-          {result.healed ? ' · healed via live re-exploration' : ''}
-        </p>
-        {result.error_message && (
-          <p style={{ fontSize: 12.5, color: 'var(--ink-muted)', margin: '2px 0 0' }}>{result.error_message}</p>
-        )}
-      </div>
-    </div>
-  )
 }
 
 // The Natural Language tile's second entry point (AuthoringTab.tsx) — works
@@ -158,7 +118,7 @@ export function LiveExplorationPanel({
 
   const status = statusRow?.status
   const inProgress = status != null && !TERMINAL_STATUSES.has(status)
-  const results = statusRow?.results ?? []
+  const testCaseCount = statusRow?.generated_tests.length ?? 0
 
   return (
     <div
@@ -220,17 +180,12 @@ export function LiveExplorationPanel({
               Journey: {statusRow.journey_name}
             </p>
           )}
-          {results.length === 0 ? (
-            <p style={{ fontSize: 13, color: 'var(--ink-muted)' }}>
-              No scenarios were executed.
-            </p>
-          ) : (
-            results.map((result, i) => (
-              <div key={result.scenario_id} style={{ borderTop: i > 0 ? '1px solid var(--border)' : undefined }}>
-                <ResultRow result={result} />
-              </div>
-            ))
-          )}
+          <p style={{ fontSize: 13.5, color: 'var(--ink)' }}>
+            {testCaseCount > 0
+              ? `${testCaseCount} test case${testCaseCount === 1 ? '' : 's'} added to the suite.`
+              : 'Test case added to the suite.'}{' '}
+            Run them from the Test Suite tab to see results.
+          </p>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border)', marginTop: 16, paddingTop: 14 }}>
             <button
               type="button"

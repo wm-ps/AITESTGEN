@@ -16,7 +16,6 @@ import uuid
 from ai_provider.hosted import HostedAIProvider
 from domain import (
     Application,
-    DiscoverySettings,
     Journey,
     JourneyStep,
     Page,
@@ -28,6 +27,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio import activity
 from workflows import (
+    AUTO_HEAL_ATTEMPT_CAP,
     LiveExploreActivityInput,
     LiveExploreActivityResult,
     LiveHealActivityInput,
@@ -229,7 +229,14 @@ def _load_heal_context_sync(
         application = session.get(Application, journey.application_id) if journey else None
         if application is None or scenario is None:
             return None
-        max_heal_attempts = session.exec(select(DiscoverySettings)).one().max_heal_attempts
+        # `[FIXED]` This is the automatic heal path (no user clicked "Retry
+        # with self-healing") — `TestResult.heal_attempt_count` was split
+        # into `auto_heal_attempt_count`/`manual_heal_attempt_count`
+        # (execution_worker/activities.py), each with its own cap; the
+        # automatic one is the fixed `AUTO_HEAL_ATTEMPT_CAP`, never the
+        # admin-configurable `DiscoverySettings.max_heal_attempts` (that
+        # governs only the manual path).
+        max_heal_attempts = AUTO_HEAL_ATTEMPT_CAP
         # `[FIXED]` `test_asset.scenario_id` is the internal PK (used above
         # via `session.get`, which takes a PK) — `_resolve_scenario_defaults_sync`
         # (generation_worker/activities.py) needs the *external* id instead,
@@ -265,7 +272,7 @@ def _supersede_heal_result_sync(
         )
         test_result = session.get(TestResult, test_result_id)
         assert test_result is not None
-        test_result.heal_attempt_count += 1
+        test_result.auto_heal_attempt_count += 1
         test_result.healed_test_asset_id = new_asset.id
         session.add(test_result)
         session.commit()
@@ -283,7 +290,7 @@ async def live_heal_activity(input: LiveHealActivityInput) -> LiveHealActivityRe
         return LiveHealActivityResult(healed=False, test_asset_id="")
 
     application, test_result, test_asset, max_heal_attempts, scenario_external_id = context
-    if test_result.heal_attempt_count >= max_heal_attempts:
+    if test_result.auto_heal_attempt_count >= max_heal_attempts:
         logger.info(
             "LiveHealActivity: test_result_id=%s already at max_heal_attempts=%d, skipping",
             input.test_result_id,

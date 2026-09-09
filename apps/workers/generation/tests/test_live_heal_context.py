@@ -25,10 +25,14 @@ from domain import (
 )
 from generation_worker.activities import _resolve_scenario_defaults_sync
 from generation_worker.db import engine, init_db
-from generation_worker.live_exploration_activities import _load_heal_context_sync
+from generation_worker.live_exploration_activities import (
+    _load_heal_context_sync,
+    _supersede_heal_result_sync,
+)
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlmodel import Session
+from sqlmodel import Session, select
+from workflows import AUTO_HEAL_ATTEMPT_CAP
 
 
 def _db_available() -> bool:
@@ -122,9 +126,46 @@ def test_load_heal_context_returns_the_scenario_external_id_not_the_internal_one
     context = _load_heal_context_sync(str(test_result.external_id))
 
     assert context is not None
-    _application, _test_result, test_asset, _max_heal_attempts, scenario_external_id = context
+    _application, _test_result, test_asset, max_heal_attempts, scenario_external_id = context
     assert scenario_external_id != str(test_asset.scenario_id)
+    # `[FIXED]` regression: this used to read `DiscoverySettings.max_heal_attempts`
+    # — the *manual* "Retry with self-healing" budget — for what is really
+    # the automatic path; it must use the fixed AUTO_HEAL_ATTEMPT_CAP instead.
+    assert max_heal_attempts == AUTO_HEAL_ATTEMPT_CAP
 
     # The real regression: this must not raise NoResultFound.
     scenario, *_rest = _resolve_scenario_defaults_sync(scenario_external_id)
     assert str(scenario.id) == str(test_asset.scenario_id)
+
+
+def test_supersede_heal_result_increments_auto_heal_attempt_count() -> None:
+    """`[FIXED]` regression: `TestResult.heal_attempt_count` was split into
+    `auto_heal_attempt_count`/`manual_heal_attempt_count` — this still wrote
+    the old, now-nonexistent name, crashing every real live-heal attempt
+    with `AttributeError: 'TestResult' object has no attribute
+    'heal_attempt_count'` (surfaced to the user as "Something went wrong
+    during live exploration")."""
+    init_db()
+    test_result = _seed_test_result()
+
+    new_asset_external_id = _supersede_heal_result_sync(
+        test_result.test_asset_id,
+        test_result.id,
+        code="// healed spec\n",
+        requires_auth=False,
+        warnings=["Healed via live re-exploration."],
+        primary_page_id=None,
+    )
+
+    with Session(engine) as session:
+        refreshed = session.exec(
+            select(TestResult).where(TestResult.id == test_result.id)
+        ).one()
+        assert refreshed.auto_heal_attempt_count == 1
+        assert refreshed.manual_heal_attempt_count == 0
+        assert refreshed.healed_test_asset_id is not None
+
+        new_asset = session.exec(
+            select(TestAsset).where(TestAsset.external_id == uuid.UUID(new_asset_external_id))
+        ).one()
+        assert new_asset.code == "// healed spec\n"

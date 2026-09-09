@@ -1,6 +1,6 @@
-"""PrepareSingleTestRunActivity / ReadTestResultStatusActivity — shared NLM
-building blocks, used by `LiveExplorationTestWorkflow` to assemble+execute
-one already-generated TestAsset and read its outcome back.
+"""PrepareSingleTestRunActivity / ReadTestResultStatusActivity / DiscardTestRunActivity
+— shared NLM building blocks, used by `LiveExplorationTestWorkflow` to
+assemble+execute one already-generated TestAsset and read its outcome back.
 
 `[REMOVED]` `ReadLatestTestResultActivity` — the "reuse_scenario matched an
 already-executed TestAsset, report its last result instead of re-running"
@@ -27,12 +27,22 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from domain import Application, Journey, Scenario, TestAsset, TestResult, TestRun, TestSuite
+from domain import (
+    Application,
+    Journey,
+    Scenario,
+    TestAsset,
+    TestResult,
+    TestResultArtifact,
+    TestRun,
+    TestSuite,
+)
 from sqlalchemy import update
 from sqlmodel import Session, select
 from temporalio import activity
 from test_suite_assembler import assemble_test_suite_project_to_dir, find_login_page_evidence
 from workflows import (
+    DiscardTestRunActivityInput,
     PrepareSingleTestRunActivityInput,
     PrepareSingleTestRunActivityResult,
     ReadTestResultStatusActivityInput,
@@ -195,3 +205,46 @@ async def read_test_result_status_activity(
     input: ReadTestResultStatusActivityInput,
 ) -> ReadTestResultStatusResult:
     return await asyncio.to_thread(_read_test_result_status_sync, input)
+
+
+def _discard_test_run_sync(input: DiscardTestRunActivityInput) -> None:
+    """`LiveExplorationTestWorkflow`'s pre-generation execute+heal pass is an
+    internal correctness check — it exists to catch and fix a broken locator
+    before a test case ever ships, never to report a result. Left as a real
+    `TestRun`/`TestResult` row, it would show up in the dashboard's run stats
+    and the Runs tab (both list every `TestRun` for an Application with no
+    filter) as if the user had actually triggered and seen that run — so it's
+    deleted outright once read, regardless of pass/fail/healed outcome, never
+    kept as history. The user's own "Run All Tests" click is always the first
+    *real*, visible run."""
+    with Session(engine) as session:
+        test_run = session.exec(
+            select(TestRun).where(TestRun.external_id == uuid.UUID(input.test_run_id))
+        ).one_or_none()
+        if test_run is None:
+            return  # already discarded — idempotent under Temporal's at-least-once retry
+
+        test_result_ids = [
+            r.id
+            for r in session.exec(
+                select(TestResult).where(TestResult.test_run_id == test_run.id)
+            ).all()
+        ]
+        for artifact in session.exec(
+            select(TestResultArtifact).where(
+                TestResultArtifact.test_result_id.in_(test_result_ids)  # type: ignore[attr-defined]
+            )
+        ).all():
+            session.delete(artifact)
+        for result in session.exec(
+            select(TestResult).where(TestResult.id.in_(test_result_ids))  # type: ignore[attr-defined]
+        ).all():
+            session.delete(result)
+        session.delete(test_run)
+        session.commit()
+        logger.info("DiscardTestRunActivity: test_run_id=%s discarded", input.test_run_id)
+
+
+@activity.defn(name="DiscardTestRunActivity")
+async def discard_test_run_activity(input: DiscardTestRunActivityInput) -> None:
+    await asyncio.to_thread(_discard_test_run_sync, input)

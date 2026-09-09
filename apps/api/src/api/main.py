@@ -1811,13 +1811,6 @@ class LiveTestCaseCreate(BaseModel):
     prompt: str
 
 
-class LiveTestCaseScenarioResultRead(BaseModel):
-    scenario_id: str
-    test_result_status: str | None = None
-    healed: bool = False
-    error_message: str | None = None
-
-
 # TEMP DEBUG — supports the workflow's temporary exploration-only cutoff
 # (live_exploration_workflow.py). Shows the full-page-sweep data
 # (Form/FormField/Component/ComponentLocator) a live-exploration run
@@ -1852,11 +1845,10 @@ class LiveTestCaseGeneratedTestRead(BaseModel):
 
 class LiveTestCaseRequestStatusRead(BaseModel):
     request_id: str
-    status: str  # exploring | generating | running | complete | rejected | failed
+    status: str  # exploring | generating | complete | rejected | failed
     rejection_reason: str | None = None
     error_message: str | None = None
     journey_name: str | None = None
-    results: list[LiveTestCaseScenarioResultRead] = Field(default_factory=list)
     pages: list[LiveTestCasePageRead] = Field(default_factory=list)
     generated_tests: list[LiveTestCaseGeneratedTestRead] = Field(default_factory=list)
 
@@ -2016,15 +2008,6 @@ async def get_live_test_case_request(
             status=result.status,
             rejection_reason=result.rejection_reason,
             journey_name=result.journey_name,
-            results=[
-                LiveTestCaseScenarioResultRead(
-                    scenario_id=r.scenario_id,
-                    test_result_status=r.test_result_status,
-                    healed=r.healed,
-                    error_message=r.error_message,
-                )
-                for r in (result.scenarios or [])
-            ],
             pages=_live_test_case_page_inventory(session, result.journey_id)
             if result.journey_id
             else [],

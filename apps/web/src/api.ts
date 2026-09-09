@@ -70,16 +70,9 @@ export type TestSuiteRead = Omit<components['schemas']['TestSuiteRead'], 'test_c
 export type LiveTestCaseRequestStatus =
   | 'exploring'
   | 'generating'
-  | 'running'
   | 'complete'
   | 'rejected'
   | 'failed'
-export type LiveTestCaseScenarioResultRead = {
-  scenario_id: string
-  test_result_status: string | null
-  healed: boolean
-  error_message: string | null
-}
 // TEMP DEBUG — mirrors main.py's LiveTestCaseFieldRead/ComponentRead/PageRead,
 // supporting the workflow's temporary exploration-only cutoff. Not permanent.
 export type LiveTestCaseFieldRead = {
@@ -111,7 +104,6 @@ export type LiveTestCaseRequestStatusRead = {
   rejection_reason: string | null
   error_message: string | null
   journey_name: string | null
-  results: LiveTestCaseScenarioResultRead[]
   pages: LiveTestCasePageRead[]
   generated_tests: LiveTestCaseGeneratedTestRead[]
 }
