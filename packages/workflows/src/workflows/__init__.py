@@ -80,6 +80,13 @@ from workflows.live_exploration_workflow import (
     LiveHealActivityInput,
     LiveHealActivityResult,
 )
+from workflows.regenerate_test_asset_workflow import (
+    REGENERATE_TEST_ASSET_ACTIVITY_NAME,
+    RegenerateTestAssetActivityInput,
+    RegenerateTestAssetResult,
+    RegenerateTestAssetStatus,
+    RegenerateTestAssetWorkflow,
+)
 from workflows.scheduled_execution_workflow import (
     CHECK_SCHEDULE_GATE_ACTIVITY_NAME,
     ScheduledExecutionWorkflow,
@@ -128,6 +135,7 @@ __all__ = [
     "PREPARE_TEST_RUN_ACTIVITY_NAME",
     "PURGE_APPLICATION_ACTIVITY_NAME",
     "READ_TEST_RESULT_STATUS_ACTIVITY_NAME",
+    "REGENERATE_TEST_ASSET_ACTIVITY_NAME",
     "SCENARIO_GENERATION_ACTIVITY_NAME",
     "AnalyzePromptActivityInput",
     "ApplicationModelBuilderActivityInput",
@@ -169,6 +177,10 @@ __all__ = [
     "PurgeApplicationResult",
     "ReadTestResultStatusActivityInput",
     "ReadTestResultStatusResult",
+    "RegenerateTestAssetActivityInput",
+    "RegenerateTestAssetResult",
+    "RegenerateTestAssetStatus",
+    "RegenerateTestAssetWorkflow",
     "ScenarioGenerationActivityInput",
     "ScheduleGateActivityInput",
     "ScheduleGateActivityResult",

@@ -66,6 +66,13 @@ class _FakeAIProvider:
         field_input_types: dict[str, str] | None = None,
         repair: tuple[str, list[str]] | None = None,
         live_action_sequence: list[dict] | None = None,
+        # Edit Test Data (Test Suite page) — RegenerateTestAssetActivity's own
+        # tests exercise these; accepted (and ignored) here so this fake's
+        # signature still matches the real generate_playwright and this
+        # file's own PlaywrightGenerationActivity calls (both None) don't
+        # blow up on an unexpected keyword argument.
+        previous_code: str | None = None,
+        changed_test_data: list[dict] | None = None,
     ) -> TestAssetCode:
         self.calls.append(str(scenario.external_id))
         self.known_pages_calls.append(known_pages or [])

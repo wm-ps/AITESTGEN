@@ -22,6 +22,7 @@ import logging
 import re
 import uuid
 
+from ai_provider import TestAssetCode
 from ai_provider.hosted import HostedAIProvider
 from domain import (
     ApiEndpoint,
@@ -49,6 +50,7 @@ from workflows import (
     EnsureTestSuiteActivityResult,
     FinalizeSuiteGenerationActivityInput,
     PlaywrightGenerationActivityInput,
+    RegenerateTestAssetActivityInput,
     ScenarioGenerationActivityInput,
 )
 
@@ -683,6 +685,52 @@ def _ensure_test_suite_sync(input: EnsureTestSuiteActivityInput) -> EnsureTestSu
         )
 
 
+async def _generate_and_typecheck(
+    scenario: Scenario,
+    known_pages: list[dict[str, str]],
+    known_locators: list[dict[str, str]],
+    *,
+    requires_auth: bool,
+    field_input_types: dict[str, str],
+    log_label: str,
+    live_action_sequence: list[dict] | None = None,
+    previous_code: str | None = None,
+    changed_test_data: list[dict] | None = None,
+) -> TestAssetCode:
+    """Shared AI-call + typecheck-retry loop — used by both
+    `PlaywrightGenerationActivity` (fresh generation) and
+    `RegenerateTestAssetActivity` (targeted edit against `previous_code`,
+    Edit Test Data). Up to 2 self-repair turns using the real compiler
+    output (see the original inline comment this was factored out of, still
+    accurate); raises if none of the 3 attempts typechecks clean — the
+    caller must not persist/supersede anything in that case."""
+    provider = HostedAIProvider()
+    repair: tuple[str, list[str]] | None = None
+    for attempt in range(3):
+        code = await provider.generate_playwright(
+            scenario,
+            known_pages,
+            known_locators,
+            requires_auth=requires_auth,
+            field_input_types=field_input_types,
+            repair=repair,
+            live_action_sequence=live_action_sequence,
+            previous_code=previous_code,
+            changed_test_data=changed_test_data,
+        )
+        typecheck_errors = await typecheck_playwright_code(code.code)
+        if not typecheck_errors:
+            return code
+        logger.error(
+            "%s: failed typecheck (attempt %d): %s",
+            log_label,
+            attempt + 1,
+            "; ".join(typecheck_errors),
+        )
+        repair = (code.code, typecheck_errors)
+    raise ValueError("Generated Playwright spec failed typecheck:\n" + "\n".join(typecheck_errors))
+
+
 @activity.defn(name="PlaywrightGenerationActivity")
 async def playwright_generation_activity(input: PlaywrightGenerationActivityInput) -> str:
     """Converts one Scenario into one TestAsset. Idempotent under Temporal's
@@ -745,8 +793,6 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
         if step.get("value")
     ] or None
 
-    provider = HostedAIProvider()
-    repair = None
     # Checklist rule 3: a spec isn't "generated successfully" until it
     # compiles against real @playwright/test types — this catches
     # undefined-variable/hallucinated-matcher bugs at generation time
@@ -757,30 +803,15 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
     # feedback here first (up to 2 repair turns), and only let it fall
     # through to Temporal's outer retry (genuine infra failures) if the
     # model still can't fix it.
-    for attempt in range(3):
-        code = await provider.generate_playwright(
-            scenario,
-            known_pages,
-            known_locators,
-            requires_auth=requires_auth,
-            field_input_types=field_input_types,
-            repair=repair,
-            live_action_sequence=live_action_sequence,
-        )
-        typecheck_errors = await typecheck_playwright_code(code.code)
-        if not typecheck_errors:
-            break
-        logger.error(
-            "PlaywrightGenerationActivity: scenario_id=%s failed typecheck (attempt %d): %s",
-            input.scenario_id,
-            attempt + 1,
-            "; ".join(typecheck_errors),
-        )
-        repair = (code.code, typecheck_errors)
-    else:
-        raise ValueError(
-            "Generated Playwright spec failed typecheck:\n" + "\n".join(typecheck_errors)
-        )
+    code = await _generate_and_typecheck(
+        scenario,
+        known_pages,
+        known_locators,
+        requires_auth=requires_auth,
+        field_input_types=field_input_types,
+        log_label=f"PlaywrightGenerationActivity: scenario_id={input.scenario_id}",
+        live_action_sequence=live_action_sequence,
+    )
 
     # Ground truth beats an LLM guess for the auth tag the same way it does
     # for locators (Story: generation pipeline hardening) — rewritten
@@ -799,6 +830,74 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
     )
     logger.info(
         "PlaywrightGenerationActivity: scenario_id=%s finished test_asset_id=%s",
+        input.scenario_id,
+        test_asset_id,
+    )
+    return test_asset_id
+
+
+@activity.defn(name="RegenerateTestAssetActivity")
+async def regenerate_test_asset_activity(input: RegenerateTestAssetActivityInput) -> str:
+    """Edit Test Data (Test Suite page). Deliberately always regenerates —
+    unlike PlaywrightGenerationActivity's idempotency skip (an existing
+    current TestAsset is exactly why this runs) — as a targeted AI edit
+    against that TestAsset's own code, never a blind rewrite (see
+    `_PLAYWRIGHT_DATA_UPDATE_CONTEXT`, `ai_provider/hosted.py`): existing
+    selectors/assertions/flow are preserved, only the literal(s) tied to
+    `test_data` are updated.
+
+    On any failure (typecheck never passes after 3 attempts, or the AI call
+    itself raises) this raises without ever calling `supersede_test_asset` —
+    the current TestAsset is left completely untouched. Callers must treat
+    "regeneration failed" as "the previous, working test is still current",
+    never as data loss.
+    """
+    (
+        scenario,
+        known_pages,
+        known_locators,
+        required_fields,
+        field_input_types,
+        requires_auth,
+        primary_page_id,
+        _captured_flow,
+    ) = await asyncio.to_thread(_resolve_scenario_defaults_sync, input.scenario_id)
+
+    current_asset_id, previous_code = await asyncio.to_thread(
+        _current_test_asset_sync, input.scenario_id
+    )
+
+    # ponytail: hands the AI the Scenario's full current test_data rather
+    # than a computed diff of just the field(s) that changed — Scenario.test_data
+    # is mutated in place with no before/after history to diff against, so
+    # "only what changed" isn't derivable here. Restating every field is
+    # still safe (the AI is told to update only the literal(s) that need
+    # it, so an unchanged field's restated value gives it no reason to
+    # touch anything else) but a fuller version would thread the specific
+    # changed field name(s) through from the Save action in the UI instead.
+    code = await _generate_and_typecheck(
+        scenario,
+        known_pages,
+        known_locators,
+        requires_auth=requires_auth,
+        field_input_types=field_input_types,
+        log_label=f"RegenerateTestAssetActivity: scenario_id={input.scenario_id}",
+        previous_code=previous_code,
+        changed_test_data=scenario.test_data,
+    )
+    tagged_code = spec_linter.apply_auth_tag(code.code, requires_auth)
+
+    test_asset_id = await asyncio.to_thread(
+        _supersede_test_asset_sync,
+        current_asset_id,
+        tagged_code,
+        requires_auth,
+        required_fields,
+        known_locators,
+        primary_page_id,
+    )
+    logger.info(
+        "RegenerateTestAssetActivity: scenario_id=%s finished test_asset_id=%s",
         input.scenario_id,
         test_asset_id,
     )
@@ -1211,17 +1310,33 @@ def supersede_test_asset(
     operation `_persist_test_asset_sync` above never needed (it only ever
     inserts a brand-new current row; whole-suite supersede is handled
     separately by `ensure_test_suite_activity`, on a *new* TestSuite, not by
-    flipping an existing row). HealTestActivity (execution worker) is the
+    flipping an existing row). HealTestActivity (execution worker) was the
     first caller that needs this, every time a healed candidate passes
     typecheck — not only when it also passes execution — so the "latest
     code" for the next heal attempt is simply whatever TestAsset is
     currently `current` for this scenario, with no separate state to thread
-    through the heal loop."""
-    prior.current = False
-    session.add(prior)
+    through the heal loop.
+
+    `RegenerateTestAssetActivity` (Edit Test Data) is a second caller
+    alongside HealTestActivity, and the two can now genuinely race — a heal
+    triggered by an in-flight run, at the same moment as a manual
+    data-driven regenerate for the same scenario. `prior` is re-fetched
+    under a row lock (`with_for_update`) and re-checked immediately before
+    being flipped, so the loser of a real race aborts cleanly (raises)
+    instead of both callers each inserting their own `current=True` row for
+    the same scenario."""
+    locked_prior = session.exec(
+        select(TestAsset).where(TestAsset.id == prior.id).with_for_update()
+    ).one()
+    if not locked_prior.current:
+        raise RuntimeError(
+            f"TestAsset {locked_prior.id} was already superseded by another caller"
+        )
+    locked_prior.current = False
+    session.add(locked_prior)
     new_asset = TestAsset(
-        scenario_id=prior.scenario_id,
-        test_suite_id=prior.test_suite_id,
+        scenario_id=locked_prior.scenario_id,
+        test_suite_id=locked_prior.test_suite_id,
         code=code,
         current=True,
         requires_auth=requires_auth,
@@ -1232,3 +1347,80 @@ def supersede_test_asset(
     session.add(new_asset)
     session.flush()
     return new_asset
+
+
+def _current_test_asset_sync(scenario_external_id: str) -> tuple[uuid.UUID, str]:
+    """RegenerateTestAssetActivity's own lookup — distinct from
+    `_existing_test_asset_id_sync` above (which only returns an id, for
+    PlaywrightGenerationActivity's idempotency check): this one also needs
+    the current TestAsset's `code` as the `previous_code` to edit against."""
+    with Session(engine) as session:
+        scenario = session.exec(
+            select(Scenario).where(Scenario.external_id == uuid.UUID(scenario_external_id))
+        ).one()
+        test_asset = session.exec(
+            select(TestAsset).where(
+                TestAsset.scenario_id == scenario.id,
+                TestAsset.current.is_(True),  # type: ignore[attr-defined]
+            )
+        ).one()
+        return test_asset.id, test_asset.code
+
+
+def _supersede_test_asset_sync(
+    test_asset_id: uuid.UUID,
+    code: str,
+    requires_auth: bool,
+    required_fields: dict[str, bool],
+    known_locators: list[dict[str, str]],
+    primary_page_id: uuid.UUID | None,
+) -> str:
+    """RegenerateTestAssetActivity's persist step — same warnings/sibling-
+    consistency computation `_persist_test_asset_sync` does for a
+    brand-new TestAsset, applied here to a superseding one so a data-driven
+    regenerate gets the identical review signal a normal generation would."""
+    with Session(engine) as session:
+        prior = session.exec(select(TestAsset).where(TestAsset.id == test_asset_id)).one()
+        scenario = session.get(Scenario, prior.scenario_id)
+
+        sibling = None
+        if primary_page_id is not None:
+            sibling = session.exec(
+                select(TestAsset)
+                .where(
+                    TestAsset.primary_page_id == primary_page_id,
+                    TestAsset.scenario_id != prior.scenario_id,
+                    TestAsset.current.is_(True),  # type: ignore[attr-defined]
+                )
+                .order_by(TestAsset.created_at.desc())  # type: ignore[arg-type]
+            ).first()
+
+        warnings: list[str] = []
+        warnings += spec_linter.lint_required_fields(code, required_fields)
+        warnings += spec_linter.lint_locator_provenance(code, known_locators)
+        warnings += spec_linter.lint_uses_shared_auth_helper(code, requires_auth)
+        warnings += spec_linter.lint_scenario_data_intent(
+            scenario.name, scenario.steps, scenario.test_data
+        )
+        warnings += spec_linter.lint_password_boundary_ignored(
+            scenario.name, scenario.steps, scenario.test_data, code
+        )
+        warnings += spec_linter.lint_asserted_data_not_entered(code, scenario.test_data)
+        warnings += spec_linter.lint_tautological_assertion(code)
+        warnings += spec_linter.lint_ungrounded_error_container_assertion(code)
+        if sibling is not None:
+            warnings += spec_linter.lint_sibling_consistency(code, sibling.code)
+            warnings += spec_linter.lint_shared_state_contradiction(code, sibling.code)
+
+        new_asset = supersede_test_asset(
+            session,
+            prior,
+            code=code,
+            requires_auth=requires_auth,
+            warnings=warnings,
+            status="needs_review" if warnings else "ready",
+            primary_page_id=primary_page_id,
+        )
+        session.commit()
+        session.refresh(new_asset)
+        return str(new_asset.external_id)

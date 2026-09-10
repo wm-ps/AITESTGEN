@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react'
-import { ApiError, api, formatTestCaseNumber, type TestAssetStatusRead, type TestResultRead } from '../../api'
+import {
+  ApiError,
+  api,
+  formatTestCaseNumber,
+  type ScenarioRead,
+  type TestAssetStatusRead,
+  type TestResultRead,
+} from '../../api'
 import { CodeModal } from '../TestSuiteResults'
 import { StatusPill } from '../StatusPill'
 import { ArtifactsModal } from './RunsTab'
@@ -171,12 +178,141 @@ function assetToTestResult(asset: TestAssetStatusRead): TestResultRead | null {
   }
 }
 
-function AssetRow({ asset }: { asset: TestAssetStatusRead }) {
+const REGENERATE_POLL_INTERVAL_MS = 3000
+
+// Edit Test Data (Test Suite page) — inline, expanded-row form, reusing the
+// same field-list markup/behavior ReviewScenarios.tsx already established
+// for this exact data (Scenario.test_data). Unlike that screen's
+// per-field-onBlur save, edits here are held in local `draft` state and
+// only persisted on an explicit Save — and only once every changed field
+// has saved successfully does this trigger a targeted AI regeneration of
+// the Scenario's current TestAsset, so "Save" always means "and update the
+// compiled test to match."
+function TestDataEditor({
+  scenario,
+  onScenarioUpdated,
+  onDone,
+}: {
+  scenario: ScenarioRead
+  onScenarioUpdated: (updated: ScenarioRead) => void
+  onDone: () => void
+}) {
+  const [draft, setDraft] = useState<Record<string, string>>(() =>
+    Object.fromEntries(scenario.test_data.map((field) => [field.name, field.value ?? ''])),
+  )
+  const [saving, setSaving] = useState(false)
+  const [regenerating, setRegenerating] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function pollUntilTerminal(scenarioId: string): Promise<void> {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      await new Promise((resolve) => setTimeout(resolve, REGENERATE_POLL_INTERVAL_MS))
+      const status = await api.getRegenerateTestAssetStatus(scenarioId)
+      if (status.status === 'complete') {
+        onDone()
+        return
+      }
+      if (status.status === 'failed') {
+        setError(
+          status.error_message ??
+            "Could not update this test's code — the previous version is still in use.",
+        )
+        return
+      }
+    }
+  }
+
+  async function handleSave() {
+    setError(null)
+    setSaving(true)
+    let updated = scenario
+    try {
+      for (const field of scenario.test_data) {
+        const value = draft[field.name] ?? ''
+        if (value !== (field.value ?? '')) {
+          updated = await api.updateScenarioTestData(scenario.id, field.name, value)
+        }
+      }
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to save test data')
+      setSaving(false)
+      return
+    }
+    onScenarioUpdated(updated)
+    setSaving(false)
+
+    setRegenerating(true)
+    try {
+      await api.regenerateTestAsset(scenario.id)
+      await pollUntilTerminal(scenario.id)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Failed to regenerate this test')
+    } finally {
+      setRegenerating(false)
+    }
+  }
+
+  const busy = saving || regenerating
+
+  return (
+    <div
+      style={{
+        background: 'var(--accent-wash-soft)',
+        borderRadius: 'var(--radius-lg)',
+        padding: 'var(--space-4)',
+        marginTop: 10,
+      }}
+    >
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 'var(--space-3)' }}>Test data</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        {scenario.test_data.map((field) => (
+          <label key={field.name} className="field">
+            <span style={{ fontSize: 12 }}>
+              {field.name}
+              {field.mandatory && (
+                <span style={{ color: 'var(--danger)' }} aria-label="required">
+                  {' '}
+                  *
+                </span>
+              )}
+            </span>
+            <input
+              value={draft[field.name] ?? ''}
+              placeholder={`Enter ${field.name}`}
+              disabled={busy}
+              onChange={(e) => setDraft((d) => ({ ...d, [field.name]: e.target.value }))}
+            />
+          </label>
+        ))}
+      </div>
+      {error && <p style={{ color: 'var(--danger-strong)', fontSize: 12, margin: 'var(--space-3) 0 0' }}>{error}</p>}
+      <div style={{ marginTop: 'var(--space-3)' }}>
+        <button type="button" className="button-primary" onClick={handleSave} disabled={busy}>
+          {regenerating ? 'Regenerating…' : saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function AssetRow({
+  asset,
+  scenario,
+  onScenarioUpdated,
+  onRegenerated,
+}: {
+  asset: TestAssetStatusRead
+  scenario: ScenarioRead | null
+  onScenarioUpdated: (updated: ScenarioRead) => void
+  onRegenerated: () => void
+}) {
   const [expanded, setExpanded] = useState(false)
   const [code, setCode] = useState<string | null>(null)
   const [codeError, setCodeError] = useState<string | null>(null)
   const [loadingCode, setLoadingCode] = useState(false)
   const [showArtifacts, setShowArtifacts] = useState(false)
+  const [showTestData, setShowTestData] = useState(false)
 
   async function handleViewCode() {
     if (code == null && !loadingCode) {
@@ -291,6 +427,15 @@ function AssetRow({ asset }: { asset: TestAssetStatusRead }) {
             <button type="button" className="button-secondary" onClick={handleViewCode}>
               {loadingCode ? 'Loading…' : 'View Code'}
             </button>
+            {scenario && (
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={() => setShowTestData((o) => !o)}
+              >
+                Edit Test Data
+              </button>
+            )}
             {asset.status === 'failed' && testResult && (
               <button type="button" className="button-secondary" onClick={() => setShowArtifacts(true)}>
                 Artifacts
@@ -299,6 +444,16 @@ function AssetRow({ asset }: { asset: TestAssetStatusRead }) {
           </div>
           {codeError && (
             <p style={{ color: 'var(--danger-strong)', fontSize: 12, margin: '8px 0 0' }}>{codeError}</p>
+          )}
+          {showTestData && scenario && (
+            <TestDataEditor
+              scenario={scenario}
+              onScenarioUpdated={onScenarioUpdated}
+              onDone={() => {
+                onRegenerated()
+                setShowTestData(false)
+              }}
+            />
           )}
         </div>
       )}
@@ -318,8 +473,14 @@ export function TestSuiteTab({ applicationId }: { applicationId: string }) {
   const [search, setSearch] = useState('')
   const [sortKey, setSortKey] = useState<AssetSortKey | null>(null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+  // Edit Test Data — fetched once per page load/refresh here (not once per
+  // row) since every row needing this data would otherwise each fetch the
+  // full per-Application scenario list independently, same reuse of
+  // api.listScenarios ReviewScenarios.tsx already establishes.
+  const [scenarios, setScenarios] = useState<ScenarioRead[]>([])
   const totalPages = Math.max(1, Math.ceil(total / ASSETS_PER_PAGE))
   const sortedAssets = sortKey ? sortAssets(assets, sortKey, sortDir) : assets
+  const scenariosById = Object.fromEntries(scenarios.map((s) => [s.id, s]))
   function handleSort(key: AssetSortKey) {
     if (key === sortKey) {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
@@ -327,6 +488,13 @@ export function TestSuiteTab({ applicationId }: { applicationId: string }) {
       setSortKey(key)
       setSortDir('asc')
     }
+  }
+
+  function refreshAssets() {
+    return api.getTestSuiteStatus(applicationId, page + 1, ASSETS_PER_PAGE, search).then((body) => {
+      setAssets(body.items)
+      setTotal(body.total)
+    })
   }
 
   useEffect(() => {
@@ -341,6 +509,16 @@ export function TestSuiteTab({ applicationId }: { applicationId: string }) {
       cancelled = true
     }
   }, [applicationId, page, search])
+
+  useEffect(() => {
+    let cancelled = false
+    api.listScenarios(applicationId).then((body) => {
+      if (!cancelled) setScenarios(body)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [applicationId])
 
   return (
     <div>
@@ -386,7 +564,15 @@ export function TestSuiteTab({ applicationId }: { applicationId: string }) {
         <div className="card-panel" style={{ overflow: 'hidden' }}>
           <AssetListHeader sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
           {sortedAssets.map((asset) => (
-            <AssetRow key={asset.id} asset={asset} />
+            <AssetRow
+              key={asset.id}
+              asset={asset}
+              scenario={asset.scenario_id ? (scenariosById[asset.scenario_id] ?? null) : null}
+              onScenarioUpdated={(updated) =>
+                setScenarios((rows) => rows.map((s) => (s.id === updated.id ? updated : s)))
+              }
+              onRegenerated={refreshAssets}
+            />
           ))}
           <Pagination
             page={page}

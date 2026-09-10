@@ -20,6 +20,7 @@ from workflows import (
     LIVE_EXPLORATION_TASK_QUEUE,
     GenerationWorkflow,
     LiveExplorationTestWorkflow,
+    RegenerateTestAssetWorkflow,
     SuiteGenerationWorkflow,
 )
 
@@ -27,6 +28,7 @@ from generation_worker.activities import (
     ensure_test_suite_activity,
     finalize_suite_generation_activity,
     playwright_generation_activity,
+    regenerate_test_asset_activity,
     scenario_generation_activity,
 )
 from generation_worker.add_test_case_activities import analyze_prompt_activity
@@ -54,12 +56,14 @@ async def main() -> None:
             GenerationWorkflow,
             SuiteGenerationWorkflow,
             LiveExplorationTestWorkflow,
+            RegenerateTestAssetWorkflow,
         ],
         activities=[
             scenario_generation_activity,
             ensure_test_suite_activity,
             playwright_generation_activity,
             finalize_suite_generation_activity,
+            regenerate_test_asset_activity,
             # Live-exploration NLM feature — prompt classification is a
             # cheap AI-only call. LiveExploreActivity/LiveHealActivity (the
             # actual Playwright-MCP browser agent, which also creates the

@@ -79,6 +79,8 @@ from workflows import (
     HealTestExecutionWorkflow,
     LiveExplorationTestWorkflow,
     LiveExplorationWorkflowInput,
+    RegenerateTestAssetActivityInput,
+    RegenerateTestAssetWorkflow,
     ScheduledExecutionWorkflow,
     ScheduledExecutionWorkflowInput,
     SuiteGenerationWorkflow,
@@ -1770,6 +1772,91 @@ def update_scenario_test_data(
     session.commit()
     session.refresh(scenario)
     return _to_scenario_read(scenario, journey.external_id, journey.name)
+
+
+# --- Edit Test Data (Test Suite page) ---
+# Regenerates this Scenario's current TestAsset as a targeted AI edit
+# against its own existing code (never a blind rewrite — see
+# RegenerateTestAssetActivity's own docstring), after its test_data has
+# already been saved via `update_scenario_test_data` above. Deterministic
+# workflow id (`regenerate-{scenario_id}`) makes this a per-scenario
+# singleton: only one regenerate can be in flight per Scenario at a time,
+# so there's no separate request_id to mint/track — this same id is both
+# started and polled.
+
+
+class RegenerateTestAssetStatusRead(BaseModel):
+    status: str  # running | complete | failed
+    test_asset_id: str | None = None
+    error_message: str | None = None
+
+
+def _regenerate_test_asset_workflow_id(scenario_external_id: uuid.UUID) -> str:
+    return f"regenerate-{scenario_external_id}"
+
+
+@app.post("/scenarios/{external_id}/test-data/regenerate", status_code=202)
+async def regenerate_test_asset(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> dict[str, bool]:
+    _get_org_scenario(session, organization_id, external_id)
+
+    client = await get_temporal_client()
+    if not await has_pollers(client, GENERATION_TASK_QUEUE):
+        raise HTTPException(status_code=503, detail="GENERATION_UNAVAILABLE")
+
+    try:
+        await client.start_workflow(
+            RegenerateTestAssetWorkflow.run,
+            RegenerateTestAssetActivityInput(scenario_id=str(external_id)),
+            id=_regenerate_test_asset_workflow_id(external_id),
+            task_queue=GENERATION_TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        # Already regenerating for this Scenario — the frontend polls the
+        # same deterministic-id status endpoint either way, so a duplicate
+        # click is a no-op start, not an error.
+        pass
+    return {"started": True}
+
+
+@app.get(
+    "/scenarios/{external_id}/test-data/regenerate",
+    response_model=RegenerateTestAssetStatusRead,
+)
+async def get_regenerate_test_asset_status(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> RegenerateTestAssetStatusRead:
+    _get_org_scenario(session, organization_id, external_id)
+    client = await get_temporal_client()
+    handle = client.get_workflow_handle_for(
+        RegenerateTestAssetWorkflow.run, _regenerate_test_asset_workflow_id(external_id)
+    )
+    try:
+        desc = await handle.describe()
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="REGENERATE_REQUEST_NOT_FOUND") from exc
+
+    if desc.status == WorkflowExecutionStatus.RUNNING:
+        status = await handle.query(RegenerateTestAssetWorkflow.get_status)
+        return RegenerateTestAssetStatusRead(status=status.status)
+
+    if desc.status == WorkflowExecutionStatus.COMPLETED:
+        result = await handle.result()
+        return RegenerateTestAssetStatusRead(
+            status=result.status,
+            test_asset_id=result.test_asset_id,
+            error_message=result.error_message,
+        )
+
+    return RegenerateTestAssetStatusRead(
+        status="failed",
+        error_message=f"the request did not finish normally (workflow status: {desc.status.name})",
+    )
 
 
 # --- Generate Suite (Story 4.2) ---
@@ -3784,6 +3871,10 @@ class TestAssetStatusRead(BaseModel):
     # Test Case Number feature: persistent, sequential, per-Application
     # display id — see Scenario.test_case_number's own docstring.
     test_case_number: int
+    # Edit Test Data (Test Suite page) — this row's underlying Scenario,
+    # since test_data lives there, not on the TestAsset itself. Same
+    # defensive None-if-missing convention every other field below uses.
+    scenario_id: uuid.UUID | None
     name: str
     journey_name: str
     type: str
@@ -3868,6 +3959,7 @@ def get_test_suite_status(
             TestAssetStatusRead(
                 id=asset.external_id,
                 test_case_number=scenario.test_case_number if scenario else 0,
+                scenario_id=scenario.external_id if scenario else None,
                 name=scenario.name if scenario else "",
                 journey_name=_journey_name(asset),
                 type=scenario.type if scenario else "happy",

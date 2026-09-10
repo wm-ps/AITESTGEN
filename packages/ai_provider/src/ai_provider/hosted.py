@@ -326,6 +326,24 @@ it as normal. A real browser will inspect the current page and you will
 get another attempt with that fresh evidence — use this sparingly, only
 when you are genuinely blocked, not as a default reflex."""
 
+# Used instead of _PLAYWRIGHT_FAILURE_CONTEXT when a reviewer edited this
+# Scenario's test_data from the Test Suite page and the existing TestAsset
+# needs its literal values updated to match — never a failure/diagnosis
+# situation, so this deliberately carries none of that framing (no error/
+# stack trace/console output, no NEEDS_LIVE_INSPECTION escape hatch).
+_PLAYWRIGHT_DATA_UPDATE_CONTEXT = """
+
+This test already exists and its logic is correct. Its test data changed —
+make the SMALLEST change that reflects the new value(s) below: update ONLY
+the literal(s) in the code that correspond to these field(s). Do not change
+selectors, assertions, control flow, navigation, or any other part of the
+test, and do not "improve" or restructure anything else.
+
+--- existing code ---
+{previous_code}
+--- changed test data ---
+{changed_data_listing}"""
+
 # Only ever populated during a heal attempt (previous_code is not None) AND
 # only when a live inspection actually ran for this attempt — most heal
 # attempts never trigger one (the deterministic locator-failure classifier
@@ -843,6 +861,10 @@ def _describe_test_data(
         return f"- {f['name']}{tag}: {f.get('value')}"
 
     return "\n".join(_line(f) for f in scenario.test_data) or "(none)"
+
+
+def _describe_changed_test_data(changed_test_data: list[dict]) -> str:
+    return "\n".join(f"- {f['name']}: {f.get('value')}" for f in changed_test_data) or "(none)"
 
 
 def _describe_known_pages(known_pages: list[dict[str, str]] | None) -> str:
@@ -1488,6 +1510,11 @@ class HostedAIProvider:
         field_input_types: dict[str, str] | None = None,
         repair: tuple[str, list[str]] | None = None,
         previous_code: str | None = None,
+        # Data-update path (Edit Test Data, Test Suite page) — mutually
+        # exclusive with the failure_*/live_inspection_locators params below.
+        # Requires previous_code; only used to swap in
+        # _PLAYWRIGHT_DATA_UPDATE_CONTEXT instead of _PLAYWRIGHT_FAILURE_CONTEXT.
+        changed_test_data: list[dict] | None = None,
         failure_error_message: str | None = None,
         failure_stack_trace: str | None = None,
         failure_console_output: str | None = None,
@@ -1535,17 +1562,21 @@ class HostedAIProvider:
                 "straight to a deep URL as the first action of the test."
             )
         )
-        failure_context = (
-            _PLAYWRIGHT_FAILURE_CONTEXT.format(
+        if changed_test_data is not None:
+            failure_context = _PLAYWRIGHT_DATA_UPDATE_CONTEXT.format(
+                previous_code=previous_code,
+                changed_data_listing=_describe_changed_test_data(changed_test_data),
+            )
+        elif previous_code is not None:
+            failure_context = _PLAYWRIGHT_FAILURE_CONTEXT.format(
                 previous_code=previous_code,
                 target_url=target_url or "(unknown)",
                 failure_error_message=failure_error_message or "(none)",
                 failure_stack_trace=failure_stack_trace or "(none)",
                 failure_console_output=failure_console_output or "(none)",
             )
-            if previous_code is not None
-            else ""
-        )
+        else:
+            failure_context = ""
         live_inspection_context = (
             _PLAYWRIGHT_LIVE_INSPECTION_CONTEXT.format(
                 live_locator_listing=_describe_live_locators(live_inspection_locators)

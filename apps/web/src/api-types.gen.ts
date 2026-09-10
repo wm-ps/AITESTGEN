@@ -512,6 +512,24 @@ export interface paths {
         patch: operations["update_scenario_test_data_scenarios__external_id__test_data_patch"];
         trace?: never;
     };
+    "/scenarios/{external_id}/test-data/regenerate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Regenerate Test Asset Status */
+        get: operations["get_regenerate_test_asset_status_scenarios__external_id__test_data_regenerate_get"];
+        put?: never;
+        /** Regenerate Test Asset */
+        post: operations["regenerate_test_asset_scenarios__external_id__test_data_regenerate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications/{external_id}/live-test-cases": {
         parameters: {
             query?: never;
@@ -684,6 +702,14 @@ export interface paths {
          *     needed for rows created in the same instant. The frontend keeps its own
          *     stack of previously-seen cursors for "Previous" rather than this
          *     endpoint supporting a reverse direction.
+         *
+         *     `q`, when set, filters (before pagination) by a case-insensitive
+         *     substring match against `suite_name` (the Test Run column) or
+         *     `triggered_by_name` (the Triggered By column) — same `q` convention as
+         *     `get_test_suite_status`. ponytail: a Full Suite run's displayed name
+         *     ("Full Suite Run") is synthesized at read time, not a stored column, so
+         *     searching that literal text won't match — searching the run number or
+         *     a custom suite name does.
          */
         get: operations["list_test_runs_applications__external_id__test_runs_get"];
         put?: never;
@@ -1337,10 +1363,52 @@ export interface components {
             /** Trigger */
             trigger: string;
         };
+        /** LiveTestCaseComponentRead */
+        LiveTestCaseComponentRead: {
+            /** Name */
+            name: string;
+            /** Type */
+            type: string;
+            /** Locator */
+            locator: string | null;
+        };
         /** LiveTestCaseCreate */
         LiveTestCaseCreate: {
             /** Prompt */
             prompt: string;
+        };
+        /** LiveTestCaseFieldRead */
+        LiveTestCaseFieldRead: {
+            /** Name */
+            name: string | null;
+            /** Input Type */
+            input_type: string;
+            /** Required */
+            required: boolean;
+            /** Locator */
+            locator: string | null;
+        };
+        /** LiveTestCaseGeneratedTestRead */
+        LiveTestCaseGeneratedTestRead: {
+            /** Scenario Id */
+            scenario_id: string;
+            /** Name */
+            name: string;
+            /** Type */
+            type: string;
+            /** Code */
+            code: string | null;
+        };
+        /** LiveTestCasePageRead */
+        LiveTestCasePageRead: {
+            /** Url */
+            url: string;
+            /** Heading */
+            heading: string | null;
+            /** Fields */
+            fields?: components["schemas"]["LiveTestCaseFieldRead"][];
+            /** Components */
+            components?: components["schemas"]["LiveTestCaseComponentRead"][];
         };
         /** LiveTestCaseRequestStatusRead */
         LiveTestCaseRequestStatusRead: {
@@ -1354,22 +1422,10 @@ export interface components {
             error_message?: string | null;
             /** Journey Name */
             journey_name?: string | null;
-            /** Results */
-            results?: components["schemas"]["LiveTestCaseScenarioResultRead"][];
-        };
-        /** LiveTestCaseScenarioResultRead */
-        LiveTestCaseScenarioResultRead: {
-            /** Scenario Id */
-            scenario_id: string;
-            /** Test Result Status */
-            test_result_status?: string | null;
-            /**
-             * Healed
-             * @default false
-             */
-            healed: boolean;
-            /** Error Message */
-            error_message?: string | null;
+            /** Pages */
+            pages?: components["schemas"]["LiveTestCasePageRead"][];
+            /** Generated Tests */
+            generated_tests?: components["schemas"]["LiveTestCaseGeneratedTestRead"][];
         };
         /** LoginRequest */
         LoginRequest: {
@@ -1398,6 +1454,15 @@ export interface components {
             last_discovery_started_at: string | null;
             /** Journey Count */
             journey_count: number;
+        };
+        /** RegenerateTestAssetStatusRead */
+        RegenerateTestAssetStatusRead: {
+            /** Status */
+            status: string;
+            /** Test Asset Id */
+            test_asset_id?: string | null;
+            /** Error Message */
+            error_message?: string | null;
         };
         /** ResetPasswordRequest */
         ResetPasswordRequest: {
@@ -1654,6 +1719,8 @@ export interface components {
             id: string;
             /** Test Case Number */
             test_case_number: number;
+            /** Scenario Id */
+            scenario_id: string | null;
             /** Name */
             name: string;
             /** Journey Name */
@@ -3089,6 +3156,74 @@ export interface operations {
             };
         };
     };
+    get_regenerate_test_asset_status_scenarios__external_id__test_data_regenerate_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegenerateTestAssetStatusRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    regenerate_test_asset_scenarios__external_id__test_data_regenerate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_live_test_case_applications__external_id__live_test_cases_post: {
         parameters: {
             query?: never;
@@ -3407,6 +3542,7 @@ export interface operations {
             query?: {
                 cursor?: string | null;
                 limit?: number;
+                q?: string | null;
             };
             header?: never;
             path: {

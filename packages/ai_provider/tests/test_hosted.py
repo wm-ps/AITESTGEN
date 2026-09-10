@@ -563,6 +563,43 @@ async def test_generate_playwright_returns_code(monkeypatch: pytest.MonkeyPatch)
     assert "response_format" not in captured["json"]
 
 
+async def test_generate_playwright_data_update_uses_existing_code_not_failure_framing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Edit Test Data (Test Suite page) — `changed_test_data` swaps in
+    `_PLAYWRIGHT_DATA_UPDATE_CONTEXT` instead of `_PLAYWRIGHT_FAILURE_CONTEXT`:
+    the existing code and the changed field(s) reach the prompt, but none of
+    the failure/diagnosis framing (which would read nonsensically for a
+    plain data edit) does."""
+    captured = _monkeypatch_post(
+        monkeypatch,
+        "import { test, expect } from '@playwright/test'\n\n"
+        "test('guest checkout', async ({ page }) => {})\n",
+    )
+    scenario = _fake_scenario()
+    previous_code = (
+        "import { test, expect } from '@playwright/test'\n\n"
+        "test('guest checkout', { tag: '@public' }, async ({ page }) => {\n"
+        "  await page.getByLabel('Username', { exact: true }).fill('qa-user');\n"
+        "});\n"
+    )
+
+    await HostedAIProvider().generate_playwright(
+        scenario,
+        previous_code=previous_code,
+        changed_test_data=[{"name": "username", "mandatory": True, "value": "new-qa-user"}],
+    )
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert previous_code in content
+    assert "new-qa-user" in content
+    assert "already exists and its logic is correct" in content
+    # None of the failure/diagnosis-only framing leaked into a plain data edit.
+    assert "target URL at time of failure" not in content
+    assert "stack trace" not in content
+    assert "NEEDS_LIVE_INSPECTION" not in content
+
+
 async def test_generate_playwright_strips_markdown_code_fences(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

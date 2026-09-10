@@ -200,6 +200,11 @@ export type TestAssetStatusRead = {
   id: string
   // Test Case Number feature — see ScenarioRead's own comment.
   test_case_number: number
+  // Edit Test Data feature — this row's underlying Scenario, since
+  // test_data lives there, not on the TestAsset itself. null only in the
+  // same defensive missing-Scenario case every other field above falls
+  // back for.
+  scenario_id: string | null
   name: string
   journey_name: string
   type: string
@@ -219,6 +224,13 @@ export type TestAssetStatusPageRead = {
   total: number
 }
 export type TestAssetCodeRead = { code: string }
+// Edit Test Data (Test Suite page) — not in api-types.gen.ts yet, added by
+// hand per the same convention as the types above.
+export type RegenerateTestAssetStatusRead = {
+  status: 'running' | 'complete' | 'failed'
+  test_asset_id: string | null
+  error_message: string | null
+}
 export type HealthTier = 'healthy' | 'needs_attention' | 'critical'
 export type HealthRead = { tier: HealthTier; headline: string }
 export type RunTrendPointRead = { run_id: string; pass_rate: number | null; created_at: string }
@@ -373,6 +385,15 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ name, value }),
     }),
+  // Edit Test Data (Test Suite page) — regenerates the Scenario's current
+  // TestAsset as a targeted AI edit, only after every changed field above
+  // has already saved successfully.
+  regenerateTestAsset: (scenarioId: string) =>
+    request<{ started: boolean }>(`/scenarios/${scenarioId}/test-data/regenerate`, {
+      method: 'POST',
+    }),
+  getRegenerateTestAssetStatus: (scenarioId: string) =>
+    request<RegenerateTestAssetStatusRead>(`/scenarios/${scenarioId}/test-data/regenerate`),
   generateSuite: (applicationId: string) =>
     request<{ suites_triggered: number }>(`/applications/${applicationId}/generate-suite`, {
       method: 'POST',

@@ -354,6 +354,24 @@ class TestGetTestSuiteStatus:
         assert body["items"][0]["status"] == "not_run"
         assert body["items"][0]["last_run_at"] is None
 
+    def test_includes_the_underlying_scenario_id(self) -> None:
+        """Edit Test Data (Test Suite page) — the row needs its Scenario's
+        external_id to know which Scenario's test_data to edit; TestAsset
+        only carries the internal scenario_id, so this is looked up and
+        exposed here."""
+        init_db()
+        client, _ = _signed_in_client("Org Suite Status Scenario Id")
+        application = _create_application(client, "Suite Status Scenario Id App")
+        _, asset = _seed_test_asset(application)
+        with Session(engine) as session:
+            scenario = session.get(Scenario, asset.scenario_id)
+            assert scenario is not None
+            expected_scenario_id = str(scenario.external_id)
+
+        body = client.get(f"/applications/{application['id']}/test-suite-status").json()
+
+        assert body["items"][0]["scenario_id"] == expected_scenario_id
+
     def test_collapses_timed_out_and_errored_to_failed(self) -> None:
         init_db()
         client, _ = _signed_in_client("Org Suite Status Collapse")
