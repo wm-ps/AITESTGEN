@@ -40,7 +40,9 @@ class FakeObjectStore:
         return self.stored[key]
 
 
-async def _crawl(target_app_url: str, on_diagnostic=None, max_duration_seconds=None):
+async def _crawl(
+    target_app_url: str, on_diagnostic=None, max_duration_seconds=None, max_pages=None
+):
     credential = json.dumps({"username": "qa", "password": "qa-pass"}).encode()
     object_store = FakeObjectStore()
 
@@ -64,6 +66,7 @@ async def _crawl(target_app_url: str, on_diagnostic=None, max_duration_seconds=N
             credential=credential,
             on_diagnostic=on_diagnostic,
             max_duration_seconds=max_duration_seconds,
+            max_pages=max_pages,
         )
         await context.close()
         await browser.close()
@@ -378,6 +381,29 @@ async def test_crawl_stops_mid_page_once_max_duration_elapses(target_app_url: st
 
     dashboard_actions = {a.description for a in result.actions if a.page_url == target_app_url}
     assert not dashboard_actions
+    # `[ADDED]` distinguishes this early stop from a genuine full-coverage
+    # completion — both used to write the identical `status="complete"`.
+    assert result.stop_reason == "max_duration"
+
+
+@pytest.mark.asyncio
+async def test_crawl_reports_exhausted_when_the_queue_genuinely_drains(
+    target_app_url: str,
+) -> None:
+    """No `max_pages`/`max_duration_seconds` configured (both default to
+    unlimited) — a full run against the small fixture app finishes because
+    the BFS queue actually ran out of new pages, the AD-10 exhaustive-
+    traversal stop condition, not because a cap fired."""
+    result, _ = await _crawl(target_app_url)
+
+    assert result.stop_reason == "exhausted"
+
+
+@pytest.mark.asyncio
+async def test_crawl_reports_max_pages_as_the_stop_reason(target_app_url: str) -> None:
+    result, _ = await _crawl(target_app_url, max_pages=0)
+
+    assert result.stop_reason == "max_pages"
 
 
 @pytest.mark.asyncio

@@ -166,6 +166,41 @@ def test_get_home_reports_execution_count_and_pass_rate_trend() -> None:
     assert body["last_test_run_pass_rate"] == 0.75
 
 
+def test_get_home_ignores_live_exploration_internal_verification_runs() -> None:
+    """`[FIXED]` A run created by `LiveExplorationTestWorkflow`'s internal
+    execute+heal verification pass (`triggered_by_name="Add Test Case"`)
+    must never count toward the dashboard's execution count/trend/last-run
+    pass rate — only a real, user-triggered run should."""
+    init_db()
+    client = _signed_in_client("Org Home Internal Runs")
+    application = _create_application(client, "Internal Runs App")
+
+    _add_test_run(application, passed_count=3, total_count=4)
+    with Session(engine) as session:
+        app_row = session.exec(
+            select(Application).where(Application.external_id == uuid.UUID(application["id"]))
+        ).one()
+        session.add(
+            TestRun(
+                application_id=app_row.id,
+                run_number=2,
+                status="completed",
+                environment_snapshot=application["environment"],
+                target_base_url_snapshot=application["url"],
+                total_count=1,
+                passed_count=0,
+                triggered_by_name="Add Test Case",
+            )
+        )
+        session.commit()
+
+    response = client.get("/home")
+    body = response.json()[0]
+    assert body["test_run_count"] == 1
+    assert body["recent_pass_rates"] == [0.75]
+    assert body["last_test_run_pass_rate"] == 0.75
+
+
 def test_get_home_returns_counts_scoped_to_org() -> None:
     init_db()
     client = _signed_in_client("Org Home")

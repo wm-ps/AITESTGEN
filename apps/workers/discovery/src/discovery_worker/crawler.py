@@ -1117,6 +1117,11 @@ class CrawlResult:
     api_calls: list[CapturedApiCall] = field(default_factory=list)
     transitions: list[CapturedTransition] = field(default_factory=list)
     session_expired: bool = False
+    # "exhausted" (default — BFS queue genuinely drained, AD-10's intended
+    # stop condition) | "max_pages" | "max_duration". Lets a caller tell a
+    # real full-coverage completion apart from an early stop that happened
+    # to hit the same `status="complete"` — see the two `break`s below.
+    stop_reason: str = "exhausted"
 
 
 class _CaptureSink:
@@ -2973,9 +2978,11 @@ async def run_discovery_crawl(
         # raise) rather than the exhaustive-traversal default below.
         if max_pages is not None and len(visited_pages) > max_pages:
             logger.info("discovery stopped early: max_pages (%d) reached", max_pages)
+            result.stop_reason = "max_pages"
             break
         if deadline is not None and time.monotonic() >= deadline:
             logger.info("discovery stopped early: max_discovery_duration reached")
+            result.stop_reason = "max_duration"
             break
 
         # Exhaustive traversal (Story 2.3) has no cap and a real site can
@@ -3329,32 +3336,46 @@ async def run_discovery_crawl(
         # Story 2.14: tabs (AC 3), same-origin iframes (AC 1) and open shadow
         # roots (AC 2) — run after the page's own forms/buttons so widget
         # exploration sees the page in whatever state those left it.
-        await _explore_tabs(page, sink, current_url, heartbeat, on_diagnostic)
-        async for frame, depth in _iter_same_origin_frames(
-            page.main_frame, 1, max_frame_depth, current_url, on_diagnostic
-        ):
-            await _capture_frame_widgets(
-                frame,
+        # `[FIXED]` This whole block had no deadline check — a tab/iframe/
+        # shadow-DOM-heavy page reached right as `max_discovery_duration`
+        # expired ran this entire unbounded tail anyway (iframes recurse to
+        # `max_frame_depth`), letting a real crawl overshoot the configured
+        # cap by however long just this one page's widget exploration took
+        # (observed live: 30 min configured, run finished at ~32 min).
+        if deadline is not None and time.monotonic() >= deadline:
+            logger.info(
+                "  %s: max_discovery_duration reached before tab/frame/shadow "
+                "exploration — skipping",
                 current_url,
-                sink,
-                seen_form_signatures,
-                heartbeat,
-                credential,
-                on_diagnostic,
-                depth,
-                network_tracker=network_tracker,
-                timeout_seconds=effective_page_load_timeout,
-                loop_guard_state=loop_guard_state,
-                data_resolver_pool=data_resolver_pool,
-                resolution_log=resolution_log,
-                safety=safety,
-                interaction_level=interaction_level_gate,
             )
-        shadow_widgets = await _collect_shadow_dom_widgets(page, current_url, on_diagnostic)
-        if shadow_widgets:
-            await _click_shadow_dom_buttons(
-                page, sink, current_url, shadow_widgets, set(), heartbeat
-            )
+            result.stop_reason = "max_duration"
+        else:
+            await _explore_tabs(page, sink, current_url, heartbeat, on_diagnostic)
+            async for frame, depth in _iter_same_origin_frames(
+                page.main_frame, 1, max_frame_depth, current_url, on_diagnostic
+            ):
+                await _capture_frame_widgets(
+                    frame,
+                    current_url,
+                    sink,
+                    seen_form_signatures,
+                    heartbeat,
+                    credential,
+                    on_diagnostic,
+                    depth,
+                    network_tracker=network_tracker,
+                    timeout_seconds=effective_page_load_timeout,
+                    loop_guard_state=loop_guard_state,
+                    data_resolver_pool=data_resolver_pool,
+                    resolution_log=resolution_log,
+                    safety=safety,
+                    interaction_level=interaction_level_gate,
+                )
+            shadow_widgets = await _collect_shadow_dom_widgets(page, current_url, on_diagnostic)
+            if shadow_widgets:
+                await _click_shadow_dom_buttons(
+                    page, sink, current_url, shadow_widgets, set(), heartbeat
+                )
 
         # Story 2.10 Task 7: this page's full capture set (Page, every
         # Action/Form/ApiCall/Transition attributed to it) is now known —

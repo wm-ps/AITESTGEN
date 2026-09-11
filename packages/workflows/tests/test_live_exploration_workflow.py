@@ -57,6 +57,7 @@ from workflows import (
     ReadTestResultStatusResult,
     ScenarioGenerationActivityInput,
 )
+from workflows.live_exploration_workflow import MAX_VERIFIED_SCENARIOS_PER_JOURNEY
 
 _execute_test_calls: list[str] = []
 _heal_calls: list[str] = []
@@ -64,6 +65,8 @@ _read_status_results: list[str] = []
 _prepare_calls: list[str] = []
 _discard_calls: list[str] = []
 _finalize_suite_statuses: list[str] = []
+_playwright_generation_calls: list[str] = []
+_scenario_ids_for_test: list[str] = ["scenario-1"]
 
 
 @activity.defn(name=ANALYZE_PROMPT_ACTIVITY_NAME)
@@ -98,11 +101,14 @@ async def _fake_scenario_generation(input: ScenarioGenerationActivityInput) -> l
 async def _fake_ensure_test_suite(
     input: EnsureTestSuiteActivityInput,
 ) -> EnsureTestSuiteActivityResult:
-    return EnsureTestSuiteActivityResult(test_suite_id="suite-1", scenario_ids=["scenario-1"])
+    return EnsureTestSuiteActivityResult(
+        test_suite_id="suite-1", scenario_ids=list(_scenario_ids_for_test)
+    )
 
 
 @activity.defn(name=PLAYWRIGHT_GENERATION_ACTIVITY_NAME)
 async def _fake_playwright_generation(input: PlaywrightGenerationActivityInput) -> str:
+    _playwright_generation_calls.append(input.scenario_id)
     return f"test-asset-{input.scenario_id}"
 
 
@@ -199,6 +205,8 @@ async def test_no_heal_when_execution_passes_first_try() -> None:
     _prepare_calls.clear()
     _discard_calls.clear()
     _finalize_suite_statuses.clear()
+    _playwright_generation_calls.clear()
+    _scenario_ids_for_test[:] = ["scenario-1"]
     _read_status_results[:] = ["passed"]
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -223,6 +231,8 @@ async def test_heals_and_re_executes_on_a_failing_run() -> None:
     _prepare_calls.clear()
     _discard_calls.clear()
     _finalize_suite_statuses.clear()
+    _playwright_generation_calls.clear()
+    _scenario_ids_for_test[:] = ["scenario-1"]
     _read_status_results[:] = ["failed", "passed"]
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -246,4 +256,39 @@ async def test_heals_and_re_executes_on_a_failing_run() -> None:
     assert _discard_calls == ["run-1", "run-2"]
     # Still "complete" — a healed-or-not internal check no longer decides
     # test_suite.status; every scenario got a TestAsset either way.
+    assert _finalize_suite_statuses == ["complete"]
+
+
+@pytest.mark.asyncio
+async def test_only_the_capped_number_of_scenarios_get_execute_and_heal_verification() -> None:
+    """`[ADDED]` MAX_VERIFIED_SCENARIOS_PER_JOURNEY bounds how many scenarios
+    in a journey get the internal execute+heal pass — every scenario still
+    gets its Playwright code generated regardless (the unconditional loop
+    just before `_generate_and_verify_one`'s own loop); only the extra
+    execute+heal verification is skipped past the cap, since each pass takes
+    real minutes and an uncapped journey can otherwise take tens of minutes."""
+    _execute_test_calls.clear()
+    _heal_calls.clear()
+    _prepare_calls.clear()
+    _discard_calls.clear()
+    _finalize_suite_statuses.clear()
+    _playwright_generation_calls.clear()
+    all_scenario_ids = [f"scenario-{i}" for i in range(1, 8)]
+    _scenario_ids_for_test[:] = all_scenario_ids
+    _read_status_results[:] = ["passed"]
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        result = await _run(env)
+
+    assert result.status == "complete"
+    # Every scenario gets its Playwright code generated...
+    assert set(all_scenario_ids) <= set(_playwright_generation_calls)
+    # ...but only the first MAX_VERIFIED_SCENARIOS_PER_JOURNEY are executed
+    # (and could be healed) at all.
+    verified_ids = [
+        f"test-asset-{sid}" for sid in all_scenario_ids[:MAX_VERIFIED_SCENARIOS_PER_JOURNEY]
+    ]
+    assert _execute_test_calls == verified_ids
+    assert _prepare_calls == verified_ids
+    assert len(_discard_calls) == MAX_VERIFIED_SCENARIOS_PER_JOURNEY
     assert _finalize_suite_statuses == ["complete"]

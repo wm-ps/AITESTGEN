@@ -58,6 +58,14 @@ class DiscoveryRun(SQLModel, table=True):
     # filter source == "crawler" — a live_exploration run is scoped to one
     # requirement, not a stand-in for the application's full crawled model.
     source: str = Field(default="crawler")
+    # "exhausted" (BFS queue genuinely drained — full coverage) | "max_pages" |
+    # "max_duration" — which of `DiscoverySettings`' caps actually ended a
+    # `complete` run. Only meaningful when status="complete"; None for a run
+    # that predates this field or never reached that branch (e.g. "failed").
+    # Without this, "complete" looked identical whether the crawl actually
+    # covered the whole application or was cut off by max_pages/max_duration
+    # well before it did.
+    stop_reason: str | None = Field(default=None)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

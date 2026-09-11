@@ -85,6 +85,19 @@ LIVE_EXPLORATION_TASK_QUEUE = "live-exploration-task-queue"
 LIVE_EXPLORE_ACTIVITY_NAME = "LiveExploreActivity"
 LIVE_HEAL_ACTIVITY_NAME = "LiveHealActivity"
 
+# Each internal verify+heal pass (execute -> heal -> re-execute) takes
+# several real minutes (a live browser run, and on failure a whole second
+# live-agent/MCP heal session) — for a journey with many scenarios this adds
+# up to tens of minutes before the request ever shows "complete" (observed
+# live: 8 scenarios, several needing a heal, ~35+ minutes total). Capping how
+# many scenarios get this treatment bounds that wall-clock time; every
+# scenario still gets its Playwright code generated (the loop just above
+# `_generate_and_verify_one`'s own loop, unaffected by this cap) — only the
+# extra execute+heal verification is skipped past the cap.
+# `[TEMPORARY 2026-09-10]` Set to 1, not the originally-requested 5, at the
+# user's explicit request while testing — expected to be raised again later.
+MAX_VERIFIED_SCENARIOS_PER_JOURNEY = 1
+
 
 @dataclass
 class LiveExplorationWorkflowInput:
@@ -338,7 +351,7 @@ class LiveExplorationTestWorkflow:
                 result_type=str,
             )
 
-        for scenario_id in prep.scenario_ids:
+        for scenario_id in prep.scenario_ids[:MAX_VERIFIED_SCENARIOS_PER_JOURNEY]:
             await self._generate_and_verify_one(
                 input.application_id, scenario_id, prep.test_suite_id
             )
@@ -381,4 +394,5 @@ __all__ = [
     "LiveExplorationWorkflowInput",
     "LiveHealActivityInput",
     "LiveHealActivityResult",
+    "MAX_VERIFIED_SCENARIOS_PER_JOURNEY",
 ]

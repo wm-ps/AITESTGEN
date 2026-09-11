@@ -490,11 +490,41 @@ async def test_generate_scenarios_tells_the_model_an_exact_count_when_requested(
         requested_counts={"negative": 1},
     )
 
-    happy_system_prompt = captured_calls[0]["messages"][0]["content"]
-    negative_system_prompt = captured_calls[1]["messages"][0]["content"]
+    # `[FIXED]` A user who asked for a specific type at all is implicitly
+    # saying "only that" — a type they never mentioned ("happy", "edge"
+    # here) is skipped entirely rather than still running with its
+    # free-running default guidance, which used to pad in scenario types
+    # nobody asked for on top of the one requested type.
+    assert len(captured_calls) == 1
+    negative_system_prompt = captured_calls[0]["messages"][0]["content"]
     assert "EXACTLY 1 Scenario" in negative_system_prompt
-    # A type with no requested count keeps today's free-running guidance.
-    assert "Usually just one" in happy_system_prompt
+
+
+async def test_generate_scenarios_runs_every_type_with_default_guidance_when_none_requested(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An empty `requested_counts` (no type named at all, e.g. a plain
+    "test the checkout flow" prompt) keeps today's default full-spread
+    behavior — every type still runs, none are skipped."""
+    captured_calls: list[dict] = []
+
+    async def fake_post(self, url, *, headers=None, json=None):
+        captured_calls.append(json)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": _scenario_body("Scenario")}}]},
+            request=httpx.Request("POST", "https://fake-proxy.example.com/chat/completions"),
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+
+    await HostedAIProvider().generate_scenarios(
+        _fake_journey(),
+        [_fake_page("https://a.example.com")],
+        requested_counts={},
+    )
+
+    assert len(captured_calls) == 3
 
 
 async def test_generate_scenarios_grounds_prompt_in_the_recorded_live_session(

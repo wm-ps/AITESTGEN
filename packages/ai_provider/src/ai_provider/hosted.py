@@ -930,13 +930,24 @@ def _describe_live_action_sequence(steps: list[dict] | None) -> str:
 # Shared by `LiveExplorationTestWorkflow`, the only NL entry point (see
 # `analyze_test_case_prompt`'s own section below for what got removed).
 
-_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+_NUMBER_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
+# `[FIXED]` "a"/"an" added alongside the number words — "write A happy path
+# test case" is a far more natural phrasing than "one happy path test case",
+# and previously matched nothing, so `requested_scenario_counts` came back
+# empty for it and `generate_scenarios` fell through to its default (multi-
+# scenario, all three types) guidance instead of the single happy-path
+# scenario actually asked for.
 _PER_CATEGORY_COUNT = re.compile(
-    r"\b(?P<count>\d+|one|two|three|four|five)\s+(?P<category>happy|negative|edge)\w*",
+    r"\b(?P<count>\d+|an?|one|two|three|four|five)\s+(?P<category>happy|negative|edge)\w*",
     re.IGNORECASE,
 )
-_TOTAL_TEST_CASE_COUNT = re.compile(
-    r"\b(?P<count>\d+|one|two|three|four|five)\s+test\s+cases?\b", re.IGNORECASE
+# Requires a following "path"/"case"/"scenario"/"test" — the actual
+# taxonomy vocabulary a user reaches for when naming scenario *types* — not
+# just the bare word, which is common enough in ordinary English prose
+# describing application behavior (e.g. "a negative balance", "users are
+# happy with checkout") to false-positive as a category request otherwise.
+_CATEGORY_MENTION = re.compile(
+    r"\b(?P<category>happy|negative|edge)\w*\s+(?:path|case|scenario|test)", re.IGNORECASE
 )
 
 
@@ -946,28 +957,32 @@ def _fallback_requested_scenario_counts(prompt: str) -> dict[str, int]:
     `requested_scenario_counts` on every call even for an unambiguous prompt
     like "create three test cases: happy path, negative path, edge case".
     Only ever used to fill in a category the LLM's own response left out,
-    never to override one it did return (see caller)."""
-    counts = {
+    never to override one it did return (see caller).
+
+    `[FIXED]` A category named anywhere in the prompt at all — even bare,
+    with no leading number ("the negative path", "an edge case") — used to
+    contribute nothing unless *every* one of the three canonical categories
+    was also named alongside an explicit total ("three test cases: ..."),
+    so a prompt naming only one or two categories (e.g. "write A happy path
+    test case") returned an empty dict. `generate_scenarios` treats an empty
+    dict as "no type was requested" and runs every type's full default
+    guidance — which is exactly how one happy-path request came back as a
+    padded-out mix of happy/negative/edge scenarios nobody asked for. Now:
+    any category mentioned by name at all defaults to a baseline of 1
+    (explicit per-category numbers above still override that baseline), and
+    a category never mentioned stays absent from the result — which is what
+    tells `generate_scenarios` to skip it entirely rather than run its
+    default (often multi-scenario) guidance."""
+    mentioned = {m.group("category").lower() for m in _CATEGORY_MENTION.finditer(prompt)}
+    if not mentioned:
+        return {}
+    explicit_counts = {
         match.group("category").lower(): (
             _NUMBER_WORDS.get(match.group("count").lower()) or int(match.group("count"))
         )
         for match in _PER_CATEGORY_COUNT.finditer(prompt)
     }
-    if counts:
-        return counts
-
-    # No per-category number anywhere (e.g. "3 negative scenarios") — the
-    # other common idiom is a bare total plus all three category words
-    # named with no number of their own, which splits 1 each.
-    total_match = _TOTAL_TEST_CASE_COUNT.search(prompt)
-    categories_named = {
-        category
-        for category in ("happy", "negative", "edge")
-        if re.search(category, prompt, re.IGNORECASE)
-    }
-    if total_match and categories_named == {"happy", "negative", "edge"}:
-        return {"happy": 1, "negative": 1, "edge": 1}
-    return {}
+    return {**{category: 1 for category in mentioned}, **explicit_counts}
 
 _TEST_CASE_PROMPT_SYSTEM = """A user of a QA automation tool has described, in plain English, a \
 test case they want added for a specific web application. Determine whether this is a genuine \
@@ -985,15 +1000,28 @@ Also extract any concrete test-data VALUE the user stated literally in their own
 the user actually wrote — never invent, guess, or fill in a value they didn't state. Most \
 requests give none at all; an empty object is the normal case.
 
-Also extract an explicit scenario COUNT if, and only if, the user's own words state one — a \
-total ("create three test cases", "give me 5 test cases") and/or a per-category breakdown \
-("one happy path, one negative, one edge case", "3 negative scenarios"). Put it in \
+Also extract an explicit scenario COUNT if, and only if, the user's own words state or imply \
+one — a total ("create three test cases", "give me 5 test cases"), a per-category breakdown \
+("one happy path, one negative, one edge case", "3 negative scenarios"), OR a single named \
+category with no explicit number at all ("write A happy path test case", "add an edge case \
+for this", "test the negative path here") — "a"/"an"/a bare singular mention of a category all \
+mean exactly 1 of that category, the same as spelling out "one". Put it in \
 "requested_scenario_counts" as {{"happy": <int>, "negative": <int>, "edge": <int>}}, using only \
-the categories the user actually implied a count for — a bare total with the three canonical \
-categories named (happy/negative/edge, or "successful"/"failure"/"boundary" phrasing) splits \
-1 count each; a bare total with no category breakdown at all is not extractable, leave the \
-object empty. Never invent a count the user didn't state or imply — most requests give none; \
-an empty object is the normal case.
+the categories the user actually named or implied a count for — a bare total with the three \
+canonical categories named (happy/negative/edge, or "successful"/"failure"/"boundary" phrasing) \
+splits 1 count each; a bare total with no category breakdown at all is not extractable, leave \
+the object empty.
+
+Critical: naming even ONE category at all (regardless of how many others are also named) means \
+the user wants ONLY the category/categories they actually named — every category they did NOT \
+name must be OMITTED from the object entirely, never included with an assumed/default count. \
+"Write a happy path test case for the reports page" must produce {{"happy": 1}} alone — NOT \
+{{"happy": 1, "negative": 1, "edge": 1}} and NOT {{"happy": 1, "negative": <some other count>}}; \
+"negative"/"edge" are never mentioned, so they get no scenarios at all, not a default spread. \
+Only when the user's request names no category whatsoever (e.g. "test the checkout flow") does \
+leaving the object completely empty apply, which signals "generate across all types normally." \
+Never invent a count for a category the user didn't name or imply — most requests give none; an \
+empty object is the normal case.
 
 Respond with ONLY a JSON object of this shape, no prose: \
 {{"is_relevant": true, "functionality_summary": "one sentence describing the feature/flow under \
@@ -1284,6 +1312,16 @@ class HostedAIProvider:
         for scenario_type, description in _SCENARIO_TYPE_DESCRIPTIONS.items():
             if limit is not None and len(candidates) >= limit:
                 break
+            # `[FIXED]` A user who named specific type(s) at all ("a happy
+            # path test case") is implicitly saying "only that" — a type
+            # they never mentioned used to still fall through to its
+            # multi-scenario default guidance below, generating negative/
+            # edge scenarios nobody asked for on top of the one requested
+            # happy-path scenario. Only skip when at least one type WAS
+            # named — an entirely empty dict (no type named at all) keeps
+            # today's default full-spread behavior.
+            if requested_counts and scenario_type not in requested_counts:
+                continue
             exact_count = (requested_counts or {}).get(scenario_type)
             count_guidance = (
                 f"Generate EXACTLY {exact_count} Scenario{'s' if exact_count != 1 else ''} of "

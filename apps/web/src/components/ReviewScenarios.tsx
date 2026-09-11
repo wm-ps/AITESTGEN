@@ -778,6 +778,7 @@ export function ReviewScenarios({
                     ))}
                   </ol>
 
+                  {selectedScenario.test_data.length > 0 && (
                   <div
                     style={{
                       background: 'var(--accent-wash-soft)',
@@ -836,6 +837,7 @@ export function ReviewScenarios({
                       })}
                     </div>
                   </div>
+                  )}
 
                   <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 'var(--space-2)' }}>
                     Expected result

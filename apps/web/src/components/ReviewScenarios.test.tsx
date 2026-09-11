@@ -147,6 +147,18 @@ describe('ReviewScenarios', () => {
     // expect(screen.getAllByText('Happy Path').length).toBeGreaterThan(0)
   })
 
+  it('hides the Test data panel entirely when a scenario needs no test data', async () => {
+    const NO_DATA_SCENARIO = { ...COMPLETE_SCENARIO, id: 'scenario-3', name: 'Sign in', test_data: [] }
+    stubFetch([NO_DATA_SCENARIO])
+    render(<ReviewScenarios furthestCount={2}applicationId="app-1" onContinueToGenerate={() => {}} />)
+
+    await waitFor(() => screen.getByText('Sign in'))
+    fireEvent.click(screen.getByText('Sign in'))
+
+    await waitFor(() => screen.getByText('Order confirmation is shown'))
+    expect(screen.queryByText('Test data')).toBeNull()
+  })
+
   it('saves a test data value on blur', async () => {
     let updatedWith: unknown
     stubFetch([INCOMPLETE_SCENARIO], {

@@ -106,6 +106,10 @@ async def test_discovery_activity_captures_the_application_model_against_live_ta
 
     assert completed_run is not None
     assert completed_run.status == "complete"
+    # `[ADDED]` distinguishes a genuine full-coverage completion from an
+    # early stop that used to write the identical status — see
+    # `CrawlResult.stop_reason` in crawler.py.
+    assert completed_run.stop_reason == "exhausted"
     # CR-2 (AC 10): authenticating -> discovering, and stage remains
     # "discovering" through completion (ApplicationModelBuilder/Inference are
     # separate Activities that own the later stage transitions).

@@ -309,6 +309,24 @@ class TestListTestRuns:
         # Newest first (list order) with run_number assigned in creation order.
         assert [item["run_number"] for item in body["items"]] == [2, 1]
 
+    def test_excludes_live_exploration_internal_verification_runs(self) -> None:
+        """`[FIXED]` `LiveExplorationTestWorkflow`'s internal execute+heal
+        pass creates its `TestRun`s with `triggered_by_name="Add Test Case"`
+        and discards them once read — but not instantly, so for however
+        long one exists before its `DiscardTestRunActivity` call, the Runs
+        tab used to show it like any other real run. Must never appear
+        here, discarded or not."""
+        init_db()
+        client, _ = _signed_in_client("Org Internal Run")
+        application = _create_application(client, "Internal Run App")
+        app_id, _ = _seed_test_asset(application)
+        real_run = _seed_test_run(app_id)
+        _seed_test_run(app_id, triggered_by_name="Add Test Case")
+
+        body = client.get(f"/applications/{application['id']}/test-runs").json()
+
+        assert [item["id"] for item in body["items"]] == [str(real_run.external_id)]
+
 
 class TestGetTestRun:
     def test_detail_includes_results(self) -> None:
@@ -392,6 +410,34 @@ class TestGetTestSuiteStatus:
         body = client.get(f"/applications/{application['id']}/test-suite-status").json()
 
         assert body["items"][0]["status"] == "failed"
+
+    def test_ignores_a_live_exploration_internal_verification_result(self) -> None:
+        """`[FIXED]` The internal execute+heal pass that runs before a
+        natural-language test case ships (see live_exploration_workflow.py)
+        must never surface as this test case's status — only a real,
+        user-triggered "Run All Tests" execution should, even while the
+        internal TestRun/TestResult still exists (before its
+        DiscardTestRunActivity call deletes it)."""
+        init_db()
+        client, _ = _signed_in_client("Org Suite Status Internal")
+        application = _create_application(client, "Suite Status Internal App")
+        app_id, asset = _seed_test_asset(application)
+        internal_run = _seed_test_run(app_id, triggered_by_name="Add Test Case")
+        with Session(engine) as session:
+            session.add(
+                TestResult(
+                    test_run_id=internal_run.id,
+                    test_asset_id=asset.id,
+                    scenario_id=asset.scenario_id,
+                    status="passed",
+                )
+            )
+            session.commit()
+
+        body = client.get(f"/applications/{application['id']}/test-suite-status").json()
+
+        assert body["items"][0]["status"] == "not_run"
+        assert body["items"][0]["last_run_at"] is None
 
 
 class TestGetTestAssetCode:

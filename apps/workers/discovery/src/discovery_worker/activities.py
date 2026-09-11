@@ -996,14 +996,22 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                 # condition this story implements, and this is the one and
                 # only place `complete` gets written.
                 discovery_run.status = "complete"
+                # `[ADDED]` `complete` alone doesn't say whether the BFS queue
+                # genuinely drained (full coverage) or `max_pages`/
+                # `max_duration` cut it off first — both used to write the
+                # exact same status, with no way to tell them apart after
+                # the fact. See `CrawlResult.stop_reason` in crawler.py.
+                discovery_run.stop_reason = result.stop_reason
 
         session.add(discovery_run)
         session.commit()
 
         logger.info(
-            "DiscoveryActivity: discovery_run_id=%s finished status=%s page_count=%d",
+            "DiscoveryActivity: discovery_run_id=%s finished status=%s stop_reason=%s "
+            "page_count=%d",
             input.discovery_run_id,
             discovery_run.status,
+            discovery_run.stop_reason,
             page_count,
         )
         return DiscoveryActivityOutput(status=discovery_run.status, page_count=page_count)

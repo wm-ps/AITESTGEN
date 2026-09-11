@@ -24,7 +24,7 @@ class FakeObjectStore:
         return "fake/0"
 
 
-async def _crawl_route(target_app_url: str, route: str):
+async def _crawl_route(target_app_url: str, route: str, max_duration_seconds=None):
     credential = json.dumps({"username": "qa", "password": "qa-pass"}).encode()
     captured: list = []
     diagnostics: list[tuple[str, dict]] = []
@@ -34,7 +34,7 @@ async def _crawl_route(target_app_url: str, route: str):
         context = await establish_session(
             browser, auth_method="standard_login", credential=credential, base_url=target_app_url
         )
-        await run_discovery_crawl(
+        result = await run_discovery_crawl(
             context,
             f"{target_app_url}{route}",
             FakeObjectStore(),
@@ -43,17 +43,18 @@ async def _crawl_route(target_app_url: str, route: str):
             credential=credential,
             on_capture=captured.append,
             on_diagnostic=lambda kind, payload: diagnostics.append((kind, payload)),
+            max_duration_seconds=max_duration_seconds,
         )
         await context.close()
         await browser.close()
-    return captured, diagnostics
+    return captured, diagnostics, result
 
 
 @pytest.mark.asyncio
 async def test_same_origin_iframe_form_attributed_to_containing_page(
     target_app_url: str,
 ) -> None:
-    captured, _ = await _crawl_route(target_app_url, "frames")
+    captured, _, _ = await _crawl_route(target_app_url, "frames")
     forms = [item for item in captured if isinstance(item, CapturedForm)]
     frame_page_url = f"{target_app_url}frames"
     assert any(f.page_url == frame_page_url for f in forms), [
@@ -65,7 +66,7 @@ async def test_same_origin_iframe_form_attributed_to_containing_page(
 async def test_cross_origin_iframe_logged_as_unreachable_container(
     target_app_url: str,
 ) -> None:
-    _, diagnostics = await _crawl_route(target_app_url, "frames")
+    _, diagnostics, _ = await _crawl_route(target_app_url, "frames")
     unreachable = [
         payload
         for kind, payload in diagnostics
@@ -76,14 +77,14 @@ async def test_cross_origin_iframe_logged_as_unreachable_container(
 
 @pytest.mark.asyncio
 async def test_open_shadow_root_button_discovered(target_app_url: str) -> None:
-    captured, _ = await _crawl_route(target_app_url, "shadow-dom")
+    captured, _, _ = await _crawl_route(target_app_url, "shadow-dom")
     actions = [item for item in captured if isinstance(item, CapturedAction)]
     assert any(a.description == "Shadow button" for a in actions), actions
 
 
 @pytest.mark.asyncio
 async def test_closed_shadow_root_logged_as_unreachable_container(target_app_url: str) -> None:
-    _, diagnostics = await _crawl_route(target_app_url, "shadow-dom")
+    _, diagnostics, _ = await _crawl_route(target_app_url, "shadow-dom")
     closed = [
         payload
         for kind, payload in diagnostics
@@ -94,7 +95,7 @@ async def test_closed_shadow_root_logged_as_unreachable_container(target_app_url
 
 @pytest.mark.asyncio
 async def test_each_tab_is_explored(target_app_url: str) -> None:
-    _, diagnostics = await _crawl_route(target_app_url, "tabs")
+    _, diagnostics, _ = await _crawl_route(target_app_url, "tabs")
     explored_labels = {
         payload["label"]
         for kind, payload in diagnostics
@@ -104,8 +105,29 @@ async def test_each_tab_is_explored(target_app_url: str) -> None:
 
 
 @pytest.mark.asyncio
+async def test_crawl_skips_tab_exploration_once_max_duration_elapses(target_app_url: str) -> None:
+    """`[FIXED]` regression: unlike the form loop and `_click_standalone_
+    buttons`, tab/iframe/shadow-DOM exploration had no deadline check at
+    all — a widget-heavy page reached right as `max_discovery_duration`
+    expired ran this whole unbounded tail anyway, letting a real crawl
+    overshoot the configured cap (observed live: 30 min configured, run
+    finished at ~32 min)."""
+    _, diagnostics, result = await _crawl_route(
+        target_app_url, "tabs", max_duration_seconds=0.01
+    )
+
+    explored = [
+        payload
+        for kind, payload in diagnostics
+        if kind == "widget_coverage" and payload.get("type") == "tab_explored"
+    ]
+    assert not explored, diagnostics
+    assert result.stop_reason == "max_duration"
+
+
+@pytest.mark.asyncio
 async def test_dialog_closed_via_close_button(target_app_url: str) -> None:
-    captured, diagnostics = await _crawl_route(target_app_url, "dialog")
+    captured, diagnostics, _ = await _crawl_route(target_app_url, "dialog")
     actions = [item for item in captured if isinstance(item, CapturedAction)]
     assert any(a.description == "Open dialog" for a in actions), actions
     closes = [
@@ -122,7 +144,7 @@ async def test_unclosable_dialog_falls_back_to_forced_navigation(target_app_url:
     nothing — proves the crawl doesn't strand inside it (Dev Notes: the
     highest-risk failure mode in this story) but instead recovers via the
     mandatory forced-navigation rung."""
-    _, diagnostics = await _crawl_route(target_app_url, "dialog")
+    _, diagnostics, _ = await _crawl_route(target_app_url, "dialog")
     closes = [
         payload
         for kind, payload in diagnostics
@@ -135,7 +157,7 @@ async def test_unclosable_dialog_falls_back_to_forced_navigation(target_app_url:
 async def test_same_origin_popup_followed_cross_origin_popup_flagged(
     target_app_url: str,
 ) -> None:
-    _, diagnostics = await _crawl_route(target_app_url, "popups")
+    _, diagnostics, _ = await _crawl_route(target_app_url, "popups")
     followed = [
         payload
         for kind, payload in diagnostics
@@ -152,7 +174,7 @@ async def test_same_origin_popup_followed_cross_origin_popup_flagged(
 
 @pytest.mark.asyncio
 async def test_file_input_receives_placeholder_and_is_logged(target_app_url: str) -> None:
-    captured, diagnostics = await _crawl_route(target_app_url, "upload")
+    captured, diagnostics, _ = await _crawl_route(target_app_url, "upload")
     forms = [item for item in captured if isinstance(item, CapturedForm)]
     file_fields = [f for form in forms for f in form.fields if f.input_type == "file"]
     assert file_fields, forms

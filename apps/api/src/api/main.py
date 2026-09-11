@@ -696,7 +696,10 @@ def get_home(
     test_runs_by_app: dict[uuid.UUID, list[TestRun]] = {}
     for test_run in session.exec(
         select(TestRun)
-        .where(TestRun.application_id.in_(app_ids))  # type: ignore[attr-defined]
+        .where(
+            TestRun.application_id.in_(app_ids),  # type: ignore[attr-defined]
+            TestRun.triggered_by_name.is_distinct_from(_INTERNAL_VERIFICATION_TRIGGER_NAME),  # type: ignore[union-attr]
+        )
         .order_by(TestRun.created_at.desc())  # type: ignore[arg-type]
     ).all():
         test_runs_by_app.setdefault(test_run.application_id, []).append(test_run)
@@ -3539,7 +3542,11 @@ def list_test_runs(
     searching that literal text won't match — searching the run number or
     a custom suite name does."""
     application = _get_org_application(session, organization_id, external_id)
-    query = select(TestRun).where(TestRun.application_id == application.id)
+    # Never a real, user-triggered run — see _INTERNAL_VERIFICATION_TRIGGER_NAME.
+    query = select(TestRun).where(
+        TestRun.application_id == application.id,
+        TestRun.triggered_by_name.is_distinct_from(_INTERNAL_VERIFICATION_TRIGGER_NAME),  # type: ignore[union-attr]
+    )
     if cursor is not None:
         query = query.where(TestRun.id < cursor)  # type: ignore[arg-type]
     if q:
@@ -3793,15 +3800,33 @@ def _current_test_assets_for_application(
     return test_assets, scenarios_by_id
 
 
+# `LiveExplorationTestWorkflow`'s internal execute+heal verification pass
+# (see live_exploration_workflow.py's module docstring) creates its TestRuns
+# via `PrepareSingleTestRunActivity` — the only place in the codebase that
+# sets this exact `triggered_by_name` — and discards them once read, but not
+# instantly: for however long that TestRun/TestResult exists before its
+# matching `DiscardTestRunActivity` call, it's a real row like any other,
+# and a caller polling for "this test case's status" mid-generation would
+# see its pass/fail flash before the discard ever ran. Excluded here so the
+# leak is closed at the query, not just at eventual cleanup.
+#
+# Every filter against this must use `.is_distinct_from(...)`, never `!=` —
+# a plain manual run's `triggered_by_name` is NULL (Postgres's `NULL !=
+# 'Add Test Case'` is NULL, not true, so `!=` silently drops every such row
+# instead of keeping it).
+_INTERNAL_VERIFICATION_TRIGGER_NAME = "Add Test Case"
+
+
 def _latest_result_by_scenario(
     session: Session, application: Application, scenario_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, TestResult]:
-    """The most recent `TestResult` per `Scenario`, across every `TestRun`
-    the Application has ever had — no window function exists elsewhere in
-    this codebase, so this uses the same order-by-desc + `setdefault` idiom
-    already established for "most recent X" lookups (mirrors
-    `_latest_discovery_run` above, just keyed per-scenario instead of
-    per-application).
+    """The most recent `TestResult` per `Scenario`, across every *real*
+    `TestRun` the Application has ever had (never an internal verification
+    run — see `_INTERNAL_VERIFICATION_TRIGGER_NAME`) — no window function
+    exists elsewhere in this codebase, so this uses the same order-by-desc +
+    `setdefault` idiom already established for "most recent X" lookups
+    (mirrors `_latest_discovery_run` above, just keyed per-scenario instead
+    of per-application).
 
     Keyed by `scenario_id`, not `test_asset_id`: `HealTestActivity`
     (`execution_worker/activities.py`) supersedes a healed scenario's
@@ -3822,6 +3847,7 @@ def _latest_result_by_scenario(
         .where(
             TestRun.application_id == application.id,
             TestResult.scenario_id.in_(scenario_ids),  # type: ignore[attr-defined]
+            TestRun.triggered_by_name.is_distinct_from(_INTERNAL_VERIFICATION_TRIGGER_NAME),  # type: ignore[union-attr]
         )
         .order_by(TestResult.created_at.desc())  # type: ignore[arg-type]
     ).all()
@@ -4061,7 +4087,10 @@ def get_overview(
 
     recent_runs = session.exec(
         select(TestRun)
-        .where(TestRun.application_id == application.id)
+        .where(
+            TestRun.application_id == application.id,
+            TestRun.triggered_by_name.is_distinct_from(_INTERNAL_VERIFICATION_TRIGGER_NAME),  # type: ignore[union-attr]
+        )
         .order_by(TestRun.created_at.desc())  # type: ignore[arg-type]
         .limit(_OVERVIEW_TREND_RUN_COUNT)
     ).all()
