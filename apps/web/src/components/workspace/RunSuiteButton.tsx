@@ -1,18 +1,18 @@
 import { useState } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faChevronRight, faListCheck, faPlay } from '@fortawesome/free-solid-svg-icons'
 import { LoadingDots } from '../LoadingDots'
+import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 
-function PlayIcon() {
-  return (
-    <svg width={12} height={12} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <path d="M6 4.5v15l13-7.5z" />
-    </svg>
-  )
-}
+const RUN_MODES: { key: 'full' | 'selective'; icon: typeof faPlay; title: string; body: string }[] = [
+  { key: 'full', icon: faPlay, title: 'Full suite', body: 'Run every test case in this application.' },
+  { key: 'selective', icon: faListCheck, title: 'Selective run', body: 'Choose specific journeys or test cases to run.' },
+]
 
-// Run Suite Flow: "Run Suite" now opens a popover (Full Suite / Run
-// Journey(s)…) instead of triggering a full-scope run directly — same
-// button-anchored-menu shape DiscoverJourneys.tsx's JourneyRowMenu already
-// uses (local `open` state, fixed click-outside overlay + absolute menu).
+// Run Suite Flow: clicking "Run" opens a modal dialog offering Full suite or
+// Selective run — same overlay + card-panel modal shape as
+// RunJourneysDialog.tsx/ScheduleDialog.tsx, replacing the earlier
+// button-anchored dropdown menu with an actual dialog per the prototype.
 export function RunSuiteButton({
   running,
   onFullSuite,
@@ -23,17 +23,18 @@ export function RunSuiteButton({
   onOpenJourneysDialog: () => void
 }) {
   const [open, setOpen] = useState(false)
+  useEscapeToClose(open ? () => setOpen(false) : () => {})
 
   return (
-    <div style={{ position: 'relative' }}>
+    <>
       <button
         type="button"
         aria-disabled={running}
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => {
           if (running) return
-          setOpen((o) => !o)
+          setOpen(true)
         }}
         style={{
           display: 'inline-flex',
@@ -53,74 +54,96 @@ export function RunSuiteButton({
           cursor: running ? 'not-allowed' : 'pointer',
         }}
       >
-        <PlayIcon />
-        {running ? <LoadingDots label="Running" /> : 'Run Suite'}
+        <FontAwesomeIcon icon={faPlay} style={{ fontSize: 11 }} />
+        {running ? <LoadingDots label="Running" /> : 'Run'}
       </button>
+
       {open && (
-        <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} />
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Run tests"
+          onClick={() => setOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15,23,42,0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 50,
+          }}
+        >
           <div
-            role="menu"
+            onClick={(e) => e.stopPropagation()}
             style={{
-              position: 'absolute',
-              right: 0,
-              top: 'calc(100% + 6px)',
-              minWidth: 200,
-              borderRadius: 10,
-              background: 'var(--panel)',
+              background: 'linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,255,255,0.82))',
+              backdropFilter: 'blur(20px) saturate(1.3)',
               border: '1px solid var(--border-2)',
-              boxShadow: 'var(--panel-shadow)',
-              overflow: 'hidden',
-              zIndex: 50,
+              borderRadius: 16,
+              boxShadow: '0 30px 80px rgba(8,12,20,0.34), var(--panel-shadow)',
+              width: '100%',
+              maxWidth: 440,
+              padding: '24px 24px 18px',
+              boxSizing: 'border-box',
             }}
           >
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false)
-                onFullSuite()
-              }}
-              style={{
-                display: 'block',
-                width: '100%',
-                textAlign: 'left',
-                padding: '10px 14px',
-                background: 'none',
-                border: 'none',
-                fontSize: 13.5,
-                color: 'var(--fg-1)',
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-              }}
-            >
-              Full Suite
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setOpen(false)
-                onOpenJourneysDialog()
-              }}
-              style={{
-                display: 'block',
-                width: '100%',
-                textAlign: 'left',
-                padding: '10px 14px',
-                background: 'none',
-                border: 'none',
-                fontSize: 13.5,
-                color: 'var(--fg-1)',
-                cursor: 'pointer',
-                fontFamily: 'inherit',
-              }}
-            >
-              Selective Run…
-            </button>
+            <h2 style={{ fontSize: 17, fontWeight: 600, color: 'var(--fg)', margin: '0 0 16px' }}>Run tests</h2>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {RUN_MODES.map((mode) => (
+                <button
+                  key={mode.key}
+                  type="button"
+                  onClick={() => {
+                    setOpen(false)
+                    if (mode.key === 'full') onFullSuite()
+                    else onOpenJourneysDialog()
+                  }}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 12,
+                    width: '100%',
+                    padding: '12px 14px',
+                    borderRadius: 10,
+                    border: '1px solid var(--border-2)',
+                    background: 'var(--panel)',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    fontFamily: 'inherit',
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 32,
+                      height: 32,
+                      flex: 'none',
+                      borderRadius: 8,
+                      background: 'var(--chip)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: 'var(--accent-2)',
+                    }}
+                  >
+                    <FontAwesomeIcon icon={mode.icon} style={{ fontSize: 13 }} />
+                  </span>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>{mode.title}</span>
+                    <span style={{ display: 'block', fontSize: 12.5, color: 'var(--fg-3)', marginTop: 2 }}>{mode.body}</span>
+                  </span>
+                  <FontAwesomeIcon icon={faChevronRight} style={{ fontSize: 11, color: 'var(--fg-4)' }} />
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
+              <button type="button" className="button-secondary" onClick={() => setOpen(false)} style={{ padding: '9px 16px', fontSize: 13.5 }}>
+                Cancel
+              </button>
+            </div>
           </div>
-        </>
+        </div>
       )}
-    </div>
+    </>
   )
 }

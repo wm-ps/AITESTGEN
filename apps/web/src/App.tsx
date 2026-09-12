@@ -5,6 +5,7 @@ import { ApiError, api, type ApplicationRead, type UserRead } from './api'
 import { AcceptInvite } from './components/AcceptInvite'
 import { ConnectAppForm } from './components/ConnectAppForm'
 import { DiscoverJourneys } from './components/DiscoverJourneys'
+import { AppBootLoader, GlobalLoadingOverlay } from './components/GlobalLoadingOverlay'
 import { Home } from './components/Home'
 import { Overview } from './components/Overview'
 import { RecordAndPlay } from './components/RecordAndPlay'
@@ -205,7 +206,7 @@ function App() {
     return <ServiceError code="API_UNAVAILABLE" onRetry={() => window.location.reload()} />
   }
 
-  if (user === undefined) return null
+  if (user === undefined) return <AppBootLoader />
 
   if (user === null) {
     return <SignIn onSignedIn={setUser} />
@@ -226,26 +227,31 @@ function App() {
     }
   }
 
-  // Same resume logic as before, just landing on a tab key instead of a
-  // separate view: a test suite already generated means every step is
-  // done — land on Overview instead of Discover Journeys.
+  // Switches immediately instead of blocking behind a full-screen spinner
+  // overlay — Workspace's own tabs (Overview/Journeys/Scenarios/Test cases)
+  // already show their own skeleton/loading state while this data resolves,
+  // so a second, separate "Loading project" spinner on top of that is
+  // redundant. Lands on Overview optimistically; corrected below once the
+  // real generation state is known.
   async function handleResumeApplication(app: ApplicationRead) {
     if (globalLoading) return
-    setGlobalLoading('Loading project')
+    setApplication(app)
+    setJustGeneratedSuite(false)
+    setAutoTriggerRun(false)
+    setAppTab('overview')
+    setView('app')
     try {
-      setApplication(app)
       const [scenarios, suites] = await Promise.all([
         api.listScenarios(app.id),
         api.listTestSuites(app.id),
       ])
       // A TestSuite row exists as soon as generation starts (before its
       // TestAssets do) — resuming mid-generation must land back on the
-      // Test cases tab's generating state, not jump to Overview with a
+      // Test cases tab's generating state, not stay on Overview with a
       // partial suite.
       const testCaseCount = suites.reduce((sum, s) => sum + s.test_cases.length, 0)
       const suiteComplete = suites.length > 0 && testCaseCount >= scenarios.length
       setJustGeneratedSuite(suites.length > 0 && !suiteComplete)
-      setAutoTriggerRun(false)
       setAppTab(
         suiteComplete
           ? 'overview'
@@ -255,12 +261,10 @@ function App() {
               ? 'scenarios'
               : 'journeys',
       )
-      setView('app')
     } catch {
       setApplication(null)
+      setView('home')
       setErrorToast('Failed to load project. Please try again.')
-    } finally {
-      setGlobalLoading(null)
     }
   }
 
@@ -315,6 +319,7 @@ function App() {
         <DiscoverJourneys
           applicationId={application.id}
           applicationName={application.name}
+          applicationUrl={application.url}
           discoveryStatus={application.discovery_status}
           discoveryStage={application.discovery_stage ?? null}
           discoveryFailureReason={application.discovery_failure_reason ?? null}
@@ -324,6 +329,8 @@ function App() {
       {view === 'app' && application && appTab === 'scenarios' && (
         <ReviewScenarios
           applicationId={application.id}
+          applicationName={application.name}
+          applicationUrl={application.url}
           onGoToJourneys={() => setAppTab('journeys')}
           onContinueToGenerate={async () => {
             if (globalLoading) return
@@ -340,7 +347,9 @@ function App() {
           }}
         />
       )}
-      {view === 'app' && application && appTab === 'record' && <RecordAndPlay />}
+      {view === 'app' && application && appTab === 'record' && (
+        <RecordAndPlay applicationName={application.name} applicationUrl={application.url} />
+      )}
       {view === 'app' && application && appTab !== 'journeys' && appTab !== 'scenarios' && appTab !== 'record' && (
         justGeneratedSuite && appTab === 'suite' ? (
           <TestSuiteResults
@@ -405,6 +414,8 @@ function App() {
       {errorToast && (
         <Toast message={errorToast} kind="error" onDismiss={() => setErrorToast(null)} />
       )}
+
+      {globalLoading && <GlobalLoadingOverlay message={globalLoading} />}
     </>
   )
 }

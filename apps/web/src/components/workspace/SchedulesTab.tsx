@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faEllipsisVertical } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type ScheduleRead } from '../../api'
 import { ScheduleDialog } from './ScheduleDialog'
 import { SkeletonRows } from '../Skeleton'
@@ -74,17 +76,11 @@ function ToggleSwitch({
   )
 }
 
-// Same three-dot glyph as Home.tsx's own kebab menu — not a new shape.
-// Horizontal dots (matches the prototype's fa-ellipsis and every other
-// row-action kebab in the app — Home.tsx, TeamMembers.tsx, ReviewScenarios.tsx).
+// Vertical kebab (faEllipsisVertical) — same convention every other
+// row-action menu in the app uses (Home.tsx, TeamMembers.tsx), not a
+// hand-rolled horizontal-dots SVG.
 function MoreIcon() {
-  return (
-    <svg width={19} height={19} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <circle cx="5" cy="12" r="1.8" />
-      <circle cx="12" cy="12" r="1.8" />
-      <circle cx="19" cy="12" r="1.8" />
-    </svg>
-  )
+  return <FontAwesomeIcon icon={faEllipsisVertical} style={{ fontSize: 15 }} />
 }
 
 const kebabButtonStyle: React.CSSProperties = {
@@ -278,7 +274,24 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
-        <button type="button" className="button-primary" onClick={() => setDialog('create')}>
+        <button
+          type="button"
+          onClick={() => setDialog('create')}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            height: 36,
+            padding: '0 18px',
+            borderRadius: 8,
+            border: 'none',
+            fontSize: 13.5,
+            fontWeight: 600,
+            color: '#fff',
+            background: 'var(--accent)',
+            boxShadow: '0 4px 14px rgba(30,150,138,0.3)',
+            cursor: 'pointer',
+          }}
+        >
           New schedule
         </button>
       </div>

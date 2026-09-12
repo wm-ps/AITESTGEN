@@ -1660,6 +1660,8 @@ export interface components {
              * Format: uuid
              */
             run_id: string;
+            /** Run Number */
+            run_number: number;
             /** Pass Rate */
             pass_rate: number | null;
             /**

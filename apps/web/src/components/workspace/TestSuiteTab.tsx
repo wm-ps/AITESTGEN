@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCheck, faCode, faCopy, faTableList, faVial, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faCheck, faCode, faCopy, faTableList, faVial, faWandMagicSparkles, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { faIcon } from '../../faIcon'
 
 const FileCode = faIcon(faCode)
@@ -124,33 +124,6 @@ export function ChevronIcon({ open }: { open: boolean }) {
     </svg>
   )
 }
-
-type AssetSortKey = 'number' | 'name' | 'journey'
-
-function assetSortValue(asset: TestAssetStatusRead, key: AssetSortKey): string | number {
-  switch (key) {
-    case 'number':
-      return asset.test_case_number
-    case 'name':
-      return asset.name.toLowerCase()
-    case 'journey':
-      return asset.journey_name.toLowerCase()
-  }
-}
-
-// Sorts only the currently-loaded page — the list API has no `sort` param,
-// and re-sorting across pages would mean fetching every page up front.
-function sortAssets(assets: TestAssetStatusRead[], key: AssetSortKey, dir: 'asc' | 'desc'): TestAssetStatusRead[] {
-  const sorted = [...assets].sort((a, b) => {
-    const av = assetSortValue(a, key)
-    const bv = assetSortValue(b, key)
-    if (av < bv) return -1
-    if (av > bv) return 1
-    return 0
-  })
-  return dir === 'asc' ? sorted : sorted.reverse()
-}
-
 
 const REGENERATE_POLL_INTERVAL_MS = 3000
 const AUTOFILL_POLL_INTERVAL_MS = 500
@@ -414,6 +387,7 @@ function AssetCard({
             onClick={handleViewCode}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 30, padding: '0 12px', borderRadius: 8, border: '1px solid var(--border-2)', background: codeOpen ? 'var(--hover)' : 'var(--panel-2)', fontSize: 12, fontWeight: 500, color: 'var(--fg-2)', cursor: 'pointer', whiteSpace: 'nowrap' }}
           >
+            <FileCode size={11} />
             {loadingCode ? 'Loading…' : 'View code'}
           </button>
           {scenario && (
@@ -439,6 +413,7 @@ function AssetCard({
                 whiteSpace: 'nowrap',
               }}
             >
+              <FontAwesomeIcon icon={faTableList} style={{ fontSize: 11 }} />
               Test data
             </button>
           )}
@@ -479,8 +454,6 @@ export function TestSuiteTab({
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(0)
   const [search, setSearch] = useState('')
-  const [sortKey, setSortKey] = useState<AssetSortKey | null>(null)
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   // Edit Test Data — fetched once per page load/refresh here (not once per
   // row) since every row needing this data would otherwise each fetch the
   // full per-Application scenario list independently, same reuse of
@@ -502,16 +475,7 @@ export function TestSuiteTab({
   // prototype's isData screen (toggleAuthor), not on Scenarios.
   const [authoringOpen, setAuthoringOpen] = useState(false)
   const totalPages = Math.max(1, Math.ceil(total / ASSETS_PER_PAGE))
-  const sortedAssets = sortKey ? sortAssets(assets, sortKey, sortDir) : assets
   const scenariosById = Object.fromEntries(scenarios.map((s) => [s.id, s]))
-  function handleSort(key: AssetSortKey) {
-    if (key === sortKey) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-    } else {
-      setSortKey(key)
-      setSortDir('asc')
-    }
-  }
 
   function refreshAssets() {
     return api.getTestSuiteStatus(applicationId, page + 1, ASSETS_PER_PAGE, search).then((body) => {
@@ -615,39 +579,11 @@ export function TestSuiteTab({
     }
   }, [applicationId, assetsLoaded, assets.length, search, page])
 
-  const SORT_LABELS: Record<AssetSortKey, string> = {
-    number: '#',
-    name: 'Test Case',
-    journey: 'Journey',
-  }
-
   const pendingAutofillCount = scenarios.filter((s) => !s.test_data_complete).length
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <button
-          type="button"
-          onClick={() => setAuthoringOpen(true)}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 8,
-            height: 34,
-            padding: '0 14px',
-            whiteSpace: 'nowrap',
-            background: 'var(--panel-2)',
-            color: 'var(--fg-2)',
-            border: '1px solid var(--border-2)',
-            borderRadius: 8,
-            fontSize: 12.5,
-            fontWeight: 500,
-            fontFamily: 'inherit',
-            cursor: 'pointer',
-          }}
-        >
-          Author a test case
-        </button>
         {pendingAutofillCount > 0 && (
           <button
             type="button"
@@ -655,6 +591,7 @@ export function TestSuiteTab({
             disabled={!!bulkAutofill}
             style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 34, padding: '0 14px', borderRadius: 8, border: '1px solid var(--border-2)', background: 'var(--panel)', fontSize: 12.5, fontWeight: 500, color: 'var(--fg-2)', cursor: bulkAutofill ? 'default' : 'pointer', whiteSpace: 'nowrap' }}
           >
+            <FontAwesomeIcon icon={faWandMagicSparkles} style={{ fontSize: 12 }} />
             {bulkAutofill ? 'Generating…' : 'Auto-generate data'}
           </button>
         )}
@@ -669,31 +606,6 @@ export function TestSuiteTab({
           </div>
         )}
         <span style={{ flex: 1 }} />
-        <select
-          aria-label="Sort by"
-          value={sortKey ?? ''}
-          onChange={(e) => handleSort(e.target.value as AssetSortKey)}
-          style={{ height: 34, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 8, fontSize: 12.5, color: 'var(--fg-1)', background: 'var(--panel)' }}
-        >
-          <option value="" disabled>
-            Sort by…
-          </option>
-          {(Object.keys(SORT_LABELS) as AssetSortKey[]).map((key) => (
-            <option key={key} value={key}>
-              {SORT_LABELS[key]}
-            </option>
-          ))}
-        </select>
-        {sortKey && (
-          <button
-            type="button"
-            onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
-            title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
-            style={{ height: 34, width: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-2)', borderRadius: 8, background: 'var(--panel)', color: 'var(--fg-2)', cursor: 'pointer' }}
-          >
-            {sortDir === 'asc' ? '↑' : '↓'}
-          </button>
-        )}
         <input
           id="test-suite-search"
           type="text"
@@ -706,6 +618,29 @@ export function TestSuiteTab({
           }}
           style={{ width: 240, maxWidth: '100%', boxSizing: 'border-box', height: 34, padding: '0 12px', border: '1px solid var(--border-2)', borderRadius: 8, fontSize: 13, fontFamily: 'inherit', color: 'var(--fg-1)', background: 'var(--panel)' }}
         />
+        <button
+          type="button"
+          onClick={() => setAuthoringOpen((open) => !open)}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            height: 34,
+            padding: '0 14px',
+            whiteSpace: 'nowrap',
+            background: authoringOpen ? 'rgba(30,150,138,0.14)' : 'var(--panel)',
+            color: 'var(--accent-2)',
+            border: `1px solid rgba(30,150,138,${authoringOpen ? 0.45 : 0.3})`,
+            borderRadius: 8,
+            fontSize: 12.5,
+            fontWeight: 600,
+            fontFamily: 'inherit',
+            cursor: 'pointer',
+          }}
+        >
+          <FontAwesomeIcon icon={authoringOpen ? faXmark : faWandMagicSparkles} style={{ fontSize: 11 }} />
+          Author a test case
+        </button>
       </div>
       {authoringOpen && (
         <LiveExplorationPanel applicationId={applicationId} onClose={() => setAuthoringOpen(false)} />
@@ -721,21 +656,11 @@ export function TestSuiteTab({
         search ? (
           <p style={{ fontSize: 13, color: 'var(--fg-4)' }}>No test cases match this search.</p>
         ) : suiteGenerating ? (
-          <div
-            style={{
-              background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
-              backdropFilter: 'blur(16px) saturate(1.25)',
-              border: '1px solid var(--border-1)',
-              borderRadius: 14,
-              boxShadow: 'var(--panel-shadow)',
-            }}
-          >
-            <GenerationLoader
-              icon={Vial}
-              title="Writing test cases…"
-              body="Vantage is turning approved scenarios into Playwright specs with generated fixtures. Nothing to review until the suite is written."
-            />
-          </div>
+          <GenerationLoader
+            icon={Vial}
+            title="Writing test cases…"
+            body="Vantage is turning approved scenarios into test cases with generated fixtures. Nothing to review until the suite is written."
+          />
         ) : (
           <EmptyState
             illustration={<TestCasesIllustration />}
@@ -746,7 +671,7 @@ export function TestSuiteTab({
       ) : (
         <>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {sortedAssets.map((asset) => (
+            {assets.map((asset) => (
               <AssetCard
                 key={asset.id}
                 asset={asset}

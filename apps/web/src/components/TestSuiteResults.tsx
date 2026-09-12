@@ -442,7 +442,16 @@ export function TestSuiteResults({
   if (!isComplete) {
     return (
       <>
-        <main style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, boxSizing: 'border-box' }}>
+        <main style={{ width: '100%', boxSizing: 'border-box', flex: 1 }}>
+          <div
+            style={{
+              width: '100%',
+              maxWidth: 'var(--content-max-wide)',
+              margin: '0 auto',
+              padding: `var(--content-top) var(--content-x)`,
+              boxSizing: 'border-box',
+            }}
+          >
           <div
             style={{
               background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
@@ -450,15 +459,14 @@ export function TestSuiteResults({
               border: '1px solid var(--border-1)',
               borderRadius: 14,
               boxShadow: 'var(--panel-shadow)',
-              maxWidth: 480,
               width: '100%',
             }}
           >
           <GenerationLoader
             icon={FlaskConical}
             title="Writing test cases…"
-            body="Vantage is turning approved scenarios into Playwright specs with generated fixtures. Nothing to review until the suite is written."
-            bullets={['Resolving locators', 'Writing specs', 'Generating fixtures']}
+            body="Vantage is turning approved scenarios into test cases with generated fixtures. Nothing to review until the suite is written."
+            bullets={['Resolving locators', 'Writing test cases', 'Generating fixtures']}
             percent={expectedTestCaseCount > 0 ? (testCaseCount / expectedTestCaseCount) * 100 : undefined}
             caption={
               <p className="caption" style={{ margin: '2px 0 0', fontSize: 12.5 }}>
@@ -490,6 +498,7 @@ export function TestSuiteResults({
               )
             }
           />
+          </div>
           </div>
         </main>
       </>

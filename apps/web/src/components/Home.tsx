@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEllipsis, faLayerGroup, faPlus } from '@fortawesome/free-solid-svg-icons'
+import { faEllipsisVertical, faLayerGroup, faPlus } from '@fortawesome/free-solid-svg-icons'
 import { api, type ApplicationRead, type HomeApplicationRead, type UserRead } from '../api'
 import { StatusPill } from './StatusPill'
 import { Pagination } from './Pagination'
@@ -11,14 +11,7 @@ import { useEscapeToClose } from '../hooks/useEscapeToClose'
 
 const POLL_INTERVAL_MS = 15000
 const APPS_PER_PAGE = 8
-// Mirrors MAX_ACTIVE_PROJECTS in apps/api/src/api/main.py — server enforces
-// this for real. The old page-level "+ New Application" button used to
-// disable itself with a tooltip at the cap; that button is gone now that
-// "Add application" lives in AppShell's sidebar/topbar (shared across every
-// screen, not just Home), so the cap is only enforced by ConnectAppForm's
-// existing generic ApiError surfacing (a 409 at submit shows the server's
-// message) rather than pre-emptively. Functionality preserved, just one step
-// later.
+// No cap on active applications — removed per product decision.
 
 export type ApplicationStage =
   | 'failed'
@@ -47,6 +40,15 @@ export function applicationStage(application: HomeApplicationRead): {
   // its TestAssets do) — `suites_generating_count` is the suite.status-based
   // signal that fixes that: whether any suite is still actually mid-run.
   const suiteGenerating = application.suite_count > 0 && application.suites_generating_count > 0
+  // ponytail: coverage-based proxy, not a live status — unlike suite
+  // generation, scenario generation has no `status`/in-progress column on
+  // Scenario or a generating-count field (it fires one Temporal workflow per
+  // Journey with nothing written back to SQL until it finishes), so this
+  // can't tell "still generating" from "generation was triggered for some
+  // journeys and never finished/retried for the rest." Upgrade path: a real
+  // signal needs either a Scenario-generation status column the workflow
+  // updates, or a live Temporal query endpoint — either is a backend change
+  // beyond this UI pass.
   const scenariosGenerating =
     application.scenario_count > 0 && application.scenario_journeys_covered < application.journey_count
   const stage: ApplicationStage =
@@ -298,7 +300,7 @@ function ApplicationRow({
                 padding: 0,
               }}
             >
-              <FontAwesomeIcon icon={faEllipsis} style={{ fontSize: 17 }} />
+              <FontAwesomeIcon icon={faEllipsisVertical} style={{ fontSize: 17 }} />
             </button>
             {menuOpen &&
               menuPos &&

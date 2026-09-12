@@ -91,7 +91,12 @@ export function StatusPill({
   // 'inline' drops the tinted pill chrome for a dashboard-list-row look
   // (colored dot + plain text, e.g. Vercel/Linear deployment status) —
   // same color data, no background/padding/shadow.
-  variant?: 'pill' | 'inline'
+  // 'flat' matches the prototype's own bare PILL/OK/BAD/WARN/NEU/VIO chip
+  // exactly (e.g. `runPill: OK, runPillText: "Completed"` on the run detail
+  // header) — 6px rounded-rect, color-mixed tint, no dot, no box-shadow.
+  // Distinct from the default 'pill' (full round, drop-shadow, always-on
+  // dot) used elsewhere per DESIGN.md's own pill spec.
+  variant?: 'pill' | 'inline' | 'flat'
   // The prototype's Applications table status chip is bare colored
   // text — no leading dot — unlike every other pill in the app.
   dot?: boolean
@@ -100,24 +105,28 @@ export function StatusPill({
   const colors = STATUS_COLORS[status] ?? STATUS_COLORS.running
   const showPulse = pulsing ?? status === 'running'
   const inline = variant === 'inline'
+  const flat = variant === 'flat'
   return (
     <span
-      className={inline ? undefined : 'status-pill'}
+      className={inline || flat ? undefined : 'status-pill'}
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 6,
-        background: inline ? 'none' : colors.background,
+        gap: flat ? 5 : 6,
+        background: inline ? 'none' : flat ? `color-mix(in srgb, ${colors.foreground} 12%, transparent)` : colors.background,
         color: inline ? 'var(--fg-2)' : colors.foreground,
-        fontSize: inline ? 12.5 : undefined,
-        fontWeight: inline ? 600 : undefined,
+        fontSize: inline ? 12.5 : flat ? 10.5 : undefined,
+        fontWeight: inline ? 600 : flat ? 600 : undefined,
+        padding: flat ? '3px 9px' : undefined,
+        borderRadius: flat ? 6 : undefined,
+        border: flat ? `1px solid color-mix(in srgb, ${colors.foreground} 28%, transparent)` : undefined,
       }}
     >
       {/* A leading dot always shows, not only while pulsing — reads as a
           proper status indicator (like a build/CI chip) instead of plain
           tinted text. While in motion it becomes a spinning ring instead of
           a solid dot — reads as "actively working" rather than a blink. */}
-      {dot && (showPulse ? (
+      {dot && !flat && (showPulse ? (
         <span
           aria-hidden="true"
           style={{

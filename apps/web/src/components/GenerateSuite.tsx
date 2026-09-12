@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
 import { api, type JourneyRead, type ScenarioRead } from '../api'
 import { ServiceErrorNote } from './ServiceError'
 import { Stepper, type StepKey } from './Stepper'
@@ -11,14 +13,6 @@ const ENV_OPTIONS = [
   ['qa', 'QA'],
   ['production', 'Production'],
 ] as const
-
-function PlayIcon() {
-  return (
-    <svg width={17} height={17} viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M5 4v16l14-8Z" />
-    </svg>
-  )
-}
 
 // Story 4.2 AC 2: no suite-name field — each TestSuite is auto-named from
 // its own Journey (Task 1), there is nothing for the user to type here.
@@ -122,7 +116,9 @@ export function GenerateSuite({
                 flexShrink: 0,
               }}
             >
-              <PlayIcon />
+              {/* Generate, not run — a play glyph here read as "Run Suite"
+                  (RunSuiteButton.tsx's own icon), which this screen isn't. */}
+              <FontAwesomeIcon icon={faWandMagicSparkles} style={{ fontSize: 15, color: '#FFFFFF' }} />
             </div>
             <div>
               <h2 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>Generate Test Suite</h2>

@@ -104,7 +104,7 @@ describe('ReviewScenarios', () => {
       expect(screen.getAllByText('Test Data Required').length).toBeGreaterThan(0)
     })
     const button = screen.getByRole('button', {
-      name: 'Generate Test Suite',
+      name: 'Generate test cases',
     }) as HTMLButtonElement
     expect(button.disabled).toBe(false)
   })
@@ -115,7 +115,7 @@ describe('ReviewScenarios', () => {
 
     await waitFor(() => screen.getByText('Checkout with promo'))
     const button = screen.getByRole('button', {
-      name: 'Generate Test Suite',
+      name: 'Generate test cases',
     }) as HTMLButtonElement
     expect(button.disabled).toBe(false)
   })
@@ -126,7 +126,7 @@ describe('ReviewScenarios', () => {
 
     await waitFor(() => screen.getByText(/Modelling scenarios/))
     const button = screen.getByRole('button', {
-      name: 'Generate Test Suite',
+      name: 'Generate test cases',
     }) as HTMLButtonElement
     expect(button.disabled).toBe(true)
   })
@@ -189,7 +189,7 @@ describe('ReviewScenarios', () => {
     )
 
     await waitFor(() => screen.getByText('Checkout with promo'))
-    fireEvent.click(screen.getByRole('button', { name: 'Generate Test Suite' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Generate test cases' }))
     expect(onContinueToGenerate).toHaveBeenCalledOnce()
   })
 

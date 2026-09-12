@@ -24,7 +24,7 @@ describe('RunsTab', () => {
                   status: 'completed',
                   trigger: 'Manual run',
                   pass_rate: 1,
-                  health: { tier: 'good' },
+                  health: { tier: 'healthy', headline: 'Healthy' },
                   total_count: 1,
                   passed_count: 1,
                   failed_count: 0,
@@ -49,6 +49,6 @@ describe('RunsTab', () => {
 
     render(<RunsTab applicationId="app-1" />)
 
-    await waitFor(() => expect(screen.getByText('#3')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Run #3')).toBeInTheDocument())
   })
 })

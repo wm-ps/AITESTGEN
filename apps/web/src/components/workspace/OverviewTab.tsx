@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faClock, faCompass, faFlaskVial, faListCheck, faRoute, faTableList } from '@fortawesome/free-solid-svg-icons'
+import { faCircleDot, faClock, faDownload, faFlaskVial, faListCheck, faRoute, faTableList } from '@fortawesome/free-solid-svg-icons'
 import { api, type OverviewRead } from '../../api'
-import { EmptyState } from '../EmptyState'
+import { EmptyState, RunsIllustration } from '../EmptyState'
+import { Skeleton } from '../Skeleton'
 import { formatDuration, parseTrigger } from './RunsTab'
 import { RunSuiteButton } from './RunSuiteButton'
 import { faIcon } from '../../faIcon'
@@ -18,6 +18,8 @@ const LayersIcon = faIcon(faListCheck)
 const CheckCircleIcon = faIcon(faTableList)
 const RunHistoryIcon = faIcon(faFlaskVial)
 const ClockPauseIcon = faIcon(faClock)
+const DownloadProjectIcon = faIcon(faDownload)
+const RecordIcon = faIcon(faCircleDot)
 
 // Prototype's appStats tile recipe (Vantage v2 mockup, isAppHome.appStats) —
 // same label/value/sub tile used un-iconed on the Global overview page.
@@ -93,7 +95,7 @@ function PassRateByRunBars({ trend }: { trend: OverviewRead['trend'] }) {
               }}
             />
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: isLast ? 'var(--fg-2)' : 'var(--fg-5)' }}>
-              {formatDateTime(t.created_at)}
+              #{t.run_number}
             </div>
           </div>
         )
@@ -106,14 +108,16 @@ function PassRateByRunBars({ trend }: { trend: OverviewRead['trend'] }) {
 // Workspace/AppShell already route on, kept as a local string union instead
 // of importing WorkspaceTab from Workspace.tsx to avoid a circular import
 // (Workspace.tsx already imports this file).
-type QuickActionTarget = 'journeys' | 'scenarios' | 'suite' | 'runs' | 'schedules'
+type QuickActionTarget = 'journeys' | 'scenarios' | 'record' | 'suite' | 'runs' | 'schedules' | 'export'
 
 const QUICK_ACTIONS: { target: QuickActionTarget; label: string; hint: string; icon: () => React.JSX.Element }[] = [
   { target: 'journeys', label: 'View journeys', hint: 'See every discovered page flow.', icon: DiscoveryIcon },
   { target: 'scenarios', label: 'Review scenarios', hint: 'Approve or edit drafted test scenarios.', icon: LayersIcon },
+  { target: 'record', label: 'Record and play', hint: 'Capture a flow by hand and replay it as a test.', icon: RecordIcon },
   { target: 'suite', label: 'View test cases', hint: "See this application's generated Playwright suite.", icon: CheckCircleIcon },
   { target: 'runs', label: 'View test runs', hint: 'Browse past executions and results.', icon: RunHistoryIcon },
   { target: 'schedules', label: 'Schedules and CI', hint: 'Automate discovery and suite runs on a cadence.', icon: ClockPauseIcon },
+  { target: 'export', label: 'Download project', hint: 'Get the generated Playwright project as a .zip.', icon: DownloadProjectIcon },
 ]
 
 // Same right-pointing chevron every "navigate to" row in this app uses
@@ -121,15 +125,18 @@ const QUICK_ACTIONS: { target: QuickActionTarget; label: string; hint: string; i
 // worth importing across files for.
 function ChevronRightIcon() {
   return (
-    <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="var(--fg-5)" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="var(--fg-5)" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M9 6l6 6-6 6" />
     </svg>
   )
 }
 
+// Fixed 3-per-row (not auto-fit) — a wide viewport would otherwise pack 4+
+// of these ~240px-minimum cards onto one row; the prototype's grid is
+// strictly 3 wide, wrapping to further rows instead of stretching wider.
 function QuickActionsGrid({ onNavigate }: { onNavigate: (target: QuickActionTarget) => void }) {
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 14 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 14 }}>
       {QUICK_ACTIONS.map((action) => {
         const Icon = action.icon
         return (
@@ -210,10 +217,18 @@ export function OverviewTab({
   }, [applicationId])
 
   if (!overview) {
+    // Skeleton, not a spinner — this tab is the landing spot right after
+    // opening an application, before its first poll resolves.
     return (
-      <p className="caption" style={{ fontSize: 12.5 }}>
-        Loading overview…
-      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 14 }}>
+        {Array.from({ length: 4 }, (_, i) => (
+          <div key={i} style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 14, padding: '18px 20px 17px', boxShadow: 'var(--panel-shadow)' }}>
+            <Skeleton width={80} height={10} />
+            <Skeleton width={70} height={28} style={{ marginTop: 16 }} />
+            <Skeleton width={120} height={10} style={{ marginTop: 10 }} />
+          </div>
+        ))}
+      </div>
     )
   }
 
@@ -234,7 +249,7 @@ export function OverviewTab({
           }}
         >
           <EmptyState
-            illustration={<FontAwesomeIcon icon={faCompass} style={{ fontSize: 19, color: 'var(--accent-2)' }} />}
+            illustration={<RunsIllustration />}
             title="No test runs yet"
             subtitle="Health, pass rate, and trend will show up here once your first run finishes."
             action={
@@ -250,6 +265,13 @@ export function OverviewTab({
   const { passed_count, failed_count, blocked_count } = overview.latest_run
   const total = passed_count + failed_count + blocked_count
   const segPct = (n: number) => (total > 0 ? (n / total) * 100 : 0)
+  // Same denominator as the "Pass rate by run" bars below (this run's own
+  // passed/total) — not `overview.pass_rate` (latest-known status per
+  // scenario across all history, a different, wider-scoped number). Both
+  // this stat tile and "Last run pass rate" are explicitly run-scoped, so
+  // they must agree with the bars they sit next to instead of quietly
+  // pulling from a different metric with a different denominator.
+  const runPassRate = total > 0 ? passed_count / total : null
   const trend = overview.trend
   const deltaPts =
     trend.length >= 2 && trend[trend.length - 1].pass_rate != null && trend[trend.length - 2].pass_rate != null
@@ -267,7 +289,7 @@ export function OverviewTab({
         <StatTile label="Test cases" value={overview.total_tests} sub={`${overview.not_run} not yet run`} />
         <StatTile
           label="Pass rate"
-          value={overview.pass_rate == null ? '—' : `${(overview.pass_rate * 100).toFixed(1)}%`}
+          value={runPassRate == null ? '—' : `${(runPassRate * 100).toFixed(1)}%`}
           sub={`Latest run · ${formatDuration(overview.latest_run.duration_ms)}`}
         />
         <StatTile label="Open failures" value={overview.failed} sub={`${blocked_count} skipped`} />
@@ -303,7 +325,7 @@ export function OverviewTab({
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
             <div style={{ fontSize: 40, lineHeight: '42px', fontWeight: 600, letterSpacing: '-0.03em', color: 'var(--fg)' }}>
-              {overview.pass_rate == null ? '—' : `${(overview.pass_rate * 100).toFixed(1)}%`}
+              {runPassRate == null ? '—' : `${(runPassRate * 100).toFixed(1)}%`}
             </div>
             {deltaPts != null && (
               <div style={{ fontSize: 11.5, fontWeight: 500, color: deltaPts >= 0 ? 'var(--ok)' : 'var(--bad)' }}>

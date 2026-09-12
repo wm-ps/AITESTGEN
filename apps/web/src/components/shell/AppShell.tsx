@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faChartPie, faGear, faLayerGroup, faPlus, faRightLeft, faUsers } from '@fortawesome/free-solid-svg-icons'
+import { faChartPie, faChevronRight, faGear, faLayerGroup, faPlus, faRightLeft, faUsers } from '@fortawesome/free-solid-svg-icons'
 // Bell import dropped alongside the commented-out notifications icon below —
 // restore both together once there's a real notification source.
 import { api, type UserRead } from '../../api'
@@ -250,8 +250,10 @@ export function AppShell({
             padding: '0 22px',
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--fg-1)', fontWeight: 500, flex: '1 1 auto', minWidth: 140, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {crumb}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 500, flex: '1 1 auto', minWidth: 140, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <span style={{ color: 'var(--fg-4)' }}>Workspace</span>
+            <FontAwesomeIcon icon={faChevronRight} style={{ fontSize: 9, color: 'var(--fg-5)' }} />
+            <span style={{ color: 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{crumb}</span>
           </div>
           <button
             type="button"
@@ -326,19 +328,6 @@ export function AppShell({
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>{user.name}</div>
                     <div style={{ fontSize: 12, marginTop: 1, color: 'var(--fg-4)' }}>{user.email}</div>
                   </div>
-                  {user.role === 'admin' && onOpenSettings && (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      onClick={() => {
-                        setMenuOpen(false)
-                        onOpenSettings()
-                      }}
-                      style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px', background: 'none', border: 'none', borderBottom: '1px solid var(--line)', fontSize: 13, color: 'var(--fg-1)', cursor: 'pointer', fontFamily: 'inherit' }}
-                    >
-                      Settings
-                    </button>
-                  )}
                   <button
                     type="button"
                     role="menuitem"

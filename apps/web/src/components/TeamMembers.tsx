@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEllipsis, faShieldHalved, faUserPlus } from '@fortawesome/free-solid-svg-icons'
+import { faEllipsisVertical, faShieldHalved, faUserPlus } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type UserRead } from '../api'
 import { InviteTeammateModal } from './InviteTeammateModal'
 import { SkeletonRows } from './Skeleton'
@@ -94,7 +94,7 @@ function MemberRow({ member, isSelf, onChanged, onError }: { member: TeamMember;
               onClick={() => setMenuOpen((v) => !v)}
               style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: 'var(--fg-4)', display: 'inline-flex' }}
             >
-              <FontAwesomeIcon icon={faEllipsis} style={{ fontSize: 15 }} />
+              <FontAwesomeIcon icon={faEllipsisVertical} style={{ fontSize: 15 }} />
             </button>
             {menuOpen && (
               <>

@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faClapperboard, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
-import { faImage } from '@fortawesome/free-regular-svg-icons'
+import { faCircleExclamation, faClapperboard, faImage, faShieldHalved, faTriangleExclamation, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
+import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipContentProps } from 'recharts'
 import {
   ApiError,
   api,
   formatTestCaseNumber,
+  type HealthTier,
   type TestResultArtifactRead,
   type TestResultRead,
   type TestRunRead,
@@ -36,7 +37,7 @@ function BackIcon() {
 // expanded/collapsed, not "navigate").
 function RightChevronIcon() {
   return (
-    <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="var(--fg-5)" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="var(--fg-5)" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M9 6l6 6-6 6" />
     </svg>
   )
@@ -44,12 +45,36 @@ function RightChevronIcon() {
 
 const NON_PASSED_STATUSES = new Set(['failed', 'timed_out', 'errored'])
 
+// Shared badge for every self-heal status/action chip — text label plus
+// icon, not an icon alone, so the state is self-explanatory without a
+// tooltip. Shape matches the prototype's own "Self-healed" chip exactly
+// (rgba(30,150,138,0.14) fill / rgba(30,150,138,0.28) border, 6px radius,
+// 10.5px label) — a tinted rounded-rect badge, not a full grey pill —
+// generalized to any semantic color via color-mix so Retry/Healing/Exhausted
+// share the same family instead of each inventing its own chrome.
+function healChipStyle(color: string): React.CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 5,
+    padding: '2px 8px',
+    borderRadius: 6,
+    background: `color-mix(in srgb, ${color} 14%, transparent)`,
+    border: `1px solid color-mix(in srgb, ${color} 28%, transparent)`,
+    fontSize: 10.5,
+    fontWeight: 600,
+    color,
+    flexShrink: 0,
+    whiteSpace: 'nowrap',
+  }
+}
+
 // Self-explanatory icon (not text) for a passed result that only passed
 // after self-heal fixed it — same magic-wand mark the prototype uses for
 // every AI-authored/self-healed badge (Authored by prompt, Self-healed,
 // Passed with self-heal), not a bolt.
 function AutoHealedIcon() {
-  return <FontAwesomeIcon icon={faWandMagicSparkles} style={{ fontSize: 14, color: "var(--good)" }} />
+  return <FontAwesomeIcon icon={faWandMagicSparkles} style={{ fontSize: 9, color: "var(--good)" }} />
 }
 
 // Exhausted state gets its own glyph (not the retry arrow, faded) — reusing
@@ -57,7 +82,7 @@ function AutoHealedIcon() {
 // gave up, a human needs to look at this."
 function HealExhaustedIcon() {
   return (
-    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M10.3 3.6 2.5 17a1.8 1.8 0 0 0 1.5 2.7h16a1.8 1.8 0 0 0 1.5-2.7L13.7 3.6a1.8 1.8 0 0 0-3.4 0z" />
       <path d="M12 9v4M12 17h.01" />
     </svg>
@@ -84,7 +109,7 @@ function PassedIllustration() {
 // (not the bolt above, which marks a row that already passed via heal).
 function SelfHealIcon() {
   return (
-    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
       <path d="M3 3v5h5" />
       <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16" />
@@ -474,23 +499,17 @@ function TestResultRow({
             {formatTestCaseNumber(liveResult.test_case_number)} — {liveResult.scenario_name}
           </span>
           {/* Self-healing status/action lives right on the test case it
-              applies to, not off in its own column — bolt (already
-              healed), retry arrow, spinner, or exhausted glyph are
-              mutually exclusive (status passed vs. non-passed), so only
-              one of these four ever renders per row. */}
+              applies to, not off in its own column — a labeled chip (not a
+              bare icon) so the state reads on its own without a hover
+              tooltip. Healed/retry/healing/exhausted are mutually exclusive
+              (status passed vs. non-passed), so only one chip ever renders
+              per row. */}
           {wasAutoHealed && (
-            <span
-              title="Self-healed — this test failed on initial execution and was automatically remediated by self-healing test automation."
-              aria-label="Self-healed"
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, flexShrink: 0 }}
-            >
+            <span title="This test failed on initial execution and was automatically remediated by self-healing test automation." style={healChipStyle('var(--good)')}>
               <AutoHealedIcon />
+              Self-healed
             </span>
           )}
-          {/* In-row self-heal action — icon-only (title carries the label),
-              not the old "Retry with self-heal" text button, and not tucked
-              into the expand panel: it's the one action worth reaching for
-              without opening a row first. */}
           {!healing && canRetryHeal && (
             <button
               type="button"
@@ -498,48 +517,34 @@ function TestResultRow({
                 e.stopPropagation()
                 handleHeal()
               }}
-              title="Retry with self-healing"
-              aria-label="Retry with self-healing"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                width: 20,
-                height: 20,
-                flexShrink: 0,
-                padding: 0,
-                background: 'none',
-                border: 'none',
-                borderRadius: 6,
-                color: 'var(--accent)',
-                cursor: 'pointer',
-              }}
+              title="Retry this test with self-healing"
+              style={{ ...healChipStyle('var(--accent)'), cursor: 'pointer', fontFamily: 'inherit' }}
             >
               <SelfHealIcon />
+              Retry
             </button>
           )}
           {healing && (
             <span
               title={`Self-healing in progress — manual remediation attempt ${liveResult.manual_heal_attempt_count + 1} of ${liveResult.max_heal_attempts}`}
-              aria-label="Self-healing in progress"
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, flexShrink: 0, color: 'var(--accent)' }}
+              style={healChipStyle('var(--accent)')}
             >
               <span style={{ display: 'inline-flex', animation: 'aitg-spin 1s linear infinite' }}>
                 <SelfHealIcon />
               </span>
+              Healing…
             </span>
           )}
-          {/* Exhausted — its own glyph + warn tint (not the retry arrow
+          {/* Exhausted — its own chip + warn tint (not the retry chip
               faded), so "no more heal attempts, needs a human" doesn't
-              read as a merely-disabled version of the retry button
-              above. */}
+              read as a merely-disabled version of the retry chip above. */}
           {!healing && healExhausted && (
             <span
               title={`Self-healing remediation exhausted after ${liveResult.max_heal_attempts} manual attempts — manual triage required.`}
-              aria-label="Self-healing exhausted — manual triage required"
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 20, height: 20, flexShrink: 0, color: 'var(--warn-strong)' }}
+              style={healChipStyle('var(--warn-strong)')}
             >
               <HealExhaustedIcon />
+              Heal exhausted
             </span>
           )}
         </div>
@@ -551,7 +556,7 @@ function TestResultRow({
             executing right now is inferred as the first still-pending row
             once finished ones are sorted to the top. */}
         <div style={{ justifySelf: 'start' }}>
-          <StatusPill status={liveResult.status} label={isCurrentlyRunning ? 'Running' : undefined} pulsing={isCurrentlyRunning} />
+          <StatusPill status={liveResult.status} label={isCurrentlyRunning ? 'Running' : undefined} pulsing={isCurrentlyRunning} variant="flat" />
         </div>
       </div>
 
@@ -715,6 +720,23 @@ function SummaryTile({ label, value, valueColor }: { label: string; value: strin
   )
 }
 
+// Test runs list's own summary row — matches the prototype's four cards
+// above the runs table (Latest/Average pass rate, Median duration, Open
+// failures), which the runs list previously had no equivalent of.
+function RunStatTile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'bad' }) {
+  return (
+    <div style={tileCardStyle}>
+      <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 21, fontWeight: 600, color: tone === 'bad' ? 'var(--danger-strong)' : 'var(--fg)', marginTop: 8 }}>{value}</div>
+      {sub && (
+        <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub}</div>
+      )}
+    </div>
+  )
+}
+
 const DONUT_RADIUS = 15.9
 const DONUT_CIRCUMFERENCE = 2 * Math.PI * DONUT_RADIUS
 
@@ -723,29 +745,73 @@ function donutArc(fraction: number): string {
   return `${len.toFixed(2)} ${DONUT_CIRCUMFERENCE.toFixed(2)}`
 }
 
+type ResultSegment = 'passed' | 'flaky' | 'failed'
+
 // "Result split" donut — pass/flaky/fail arcs stacked around one ring
 // (rotated -90deg so the first arc starts at 12 o'clock), same three
-// buckets as the summary tiles above it.
-function ResultSplitDonut({ passed, flaky, failed, total }: { passed: number; flaky: number; failed: number; total: number }) {
+// buckets as the summary tiles above it. Sized up from the original 132px —
+// the card around it has room to spare — and interactive: hovering an arc
+// (or the matching legend row, via `hovered`/`onHover` from the parent)
+// thickens that segment and fades the other two, instead of a static ring.
+function ResultSplitDonut({
+  passed,
+  flaky,
+  failed,
+  total,
+  hovered,
+  onHover,
+}: {
+  passed: number
+  flaky: number
+  failed: number
+  total: number
+  hovered: ResultSegment | null
+  onHover: (segment: ResultSegment | null) => void
+}) {
   const passFrac = total > 0 ? passed / total : 0
   const flakyFrac = total > 0 ? flaky / total : 0
   const failFrac = total > 0 ? failed / total : 0
   const rate = total > 0 ? `${Math.round((passed / total) * 100)}%` : '—'
+  const SIZE = 156
+  function segStyle(segment: ResultSegment): { strokeWidth: number; opacity: number } {
+    if (!hovered) return { strokeWidth: 5, opacity: 1 }
+    return hovered === segment ? { strokeWidth: 7, opacity: 1 } : { strokeWidth: 5, opacity: 0.35 }
+  }
+  const passStyle = segStyle('passed')
+  const flakyStyle = segStyle('flaky')
+  const failStyle = segStyle('failed')
   return (
-    <div style={{ position: 'relative', width: 132, height: 132, flex: 'none' }}>
-      <svg viewBox="0 0 42 42" style={{ width: 132, height: 132, transform: 'rotate(-90deg)' }}>
+    <div style={{ position: 'relative', width: SIZE, height: SIZE, flex: 'none' }}>
+      <svg viewBox="0 0 42 42" style={{ width: SIZE, height: SIZE, transform: 'rotate(-90deg)' }}>
         <circle cx={21} cy={21} r={DONUT_RADIUS} fill="none" stroke="var(--panel-2)" strokeWidth={5} />
-        <circle cx={21} cy={21} r={DONUT_RADIUS} fill="none" stroke="var(--good-strong)" strokeWidth={5} strokeDasharray={donutArc(passFrac)} strokeLinecap="round" />
+        <circle
+          cx={21}
+          cy={21}
+          r={DONUT_RADIUS}
+          fill="none"
+          stroke="var(--good-strong)"
+          strokeWidth={passStyle.strokeWidth}
+          strokeOpacity={passStyle.opacity}
+          strokeDasharray={donutArc(passFrac)}
+          strokeLinecap="round"
+          style={{ transition: 'stroke-width 120ms ease, stroke-opacity 120ms ease', cursor: passed > 0 ? 'pointer' : 'default' }}
+          onMouseEnter={() => passed > 0 && onHover('passed')}
+          onMouseLeave={() => onHover(null)}
+        />
         <circle
           cx={21}
           cy={21}
           r={DONUT_RADIUS}
           fill="none"
           stroke="var(--warn-strong)"
-          strokeWidth={5}
+          strokeWidth={flakyStyle.strokeWidth}
+          strokeOpacity={flakyStyle.opacity}
           strokeDasharray={donutArc(flakyFrac)}
           strokeDashoffset={-(passFrac * DONUT_CIRCUMFERENCE)}
           strokeLinecap="round"
+          style={{ transition: 'stroke-width 120ms ease, stroke-opacity 120ms ease', cursor: flaky > 0 ? 'pointer' : 'default' }}
+          onMouseEnter={() => flaky > 0 && onHover('flaky')}
+          onMouseLeave={() => onHover(null)}
         />
         <circle
           cx={21}
@@ -753,10 +819,14 @@ function ResultSplitDonut({ passed, flaky, failed, total }: { passed: number; fl
           r={DONUT_RADIUS}
           fill="none"
           stroke="var(--danger-strong)"
-          strokeWidth={5}
+          strokeWidth={failStyle.strokeWidth}
+          strokeOpacity={failStyle.opacity}
           strokeDasharray={donutArc(failFrac)}
           strokeDashoffset={-((passFrac + flakyFrac) * DONUT_CIRCUMFERENCE)}
           strokeLinecap="round"
+          style={{ transition: 'stroke-width 120ms ease, stroke-opacity 120ms ease', cursor: failed > 0 ? 'pointer' : 'default' }}
+          onMouseEnter={() => failed > 0 && onHover('failed')}
+          onMouseLeave={() => onHover(null)}
         />
       </svg>
       <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 21, color: 'var(--fg)', fontWeight: 600 }}>
@@ -769,6 +839,38 @@ function ResultSplitDonut({ passed, flaky, failed, total }: { passed: number; fl
 // One stacked bar per Journey (a Journey's Scenarios compile into one spec
 // file/suite) — same pass/self-healed/failed buckets as the Result split
 // donut, just broken out per suite instead of aggregated across the run.
+// Recharts (real Tooltip/hover, not a hand-rolled one) so each bar segment
+// says what it is on hover instead of the bar's bare total being the only
+// number on screen.
+function ResultsBySuiteTooltip({ active, payload }: TooltipContentProps<number, string>) {
+  if (!active || !payload?.length) return null
+  const total = payload.reduce((sum, p) => sum + (typeof p.value === 'number' ? p.value : 0), 0)
+  const fullName = (payload[0]?.payload as { fullName?: string } | undefined)?.fullName ?? ''
+  return (
+    <div
+      style={{
+        background: 'var(--panel)',
+        border: '1px solid var(--border-2)',
+        borderRadius: 8,
+        boxShadow: 'var(--panel-shadow)',
+        padding: '8px 12px',
+        fontSize: 11.5,
+      }}
+    >
+      <div style={{ fontWeight: 600, color: 'var(--fg)', marginBottom: 3 }}>{fullName}</div>
+      <div style={{ color: 'var(--fg-3)', marginBottom: 3 }}>{total} test case{total === 1 ? '' : 's'}</div>
+      {payload
+        .slice()
+        .reverse()
+        .map((p) => (
+          <div key={p.dataKey as string} style={{ color: p.color }}>
+            {p.value} {p.name}
+          </div>
+        ))}
+    </div>
+  )
+}
+
 function ResultsBySuite({ results }: { results: TestResultRead[] }) {
   const bySuite = new Map<string, { passed: number; flaky: number; failed: number }>()
   for (const r of results) {
@@ -782,49 +884,47 @@ function ResultsBySuite({ results }: { results: TestResultRead[] }) {
     }
     bySuite.set(key, bucket)
   }
-  const suites = [...bySuite.entries()]
-  const maxTotal = Math.max(1, ...suites.map(([, v]) => v.passed + v.flaky + v.failed))
-  const barHeight = 170
+  // Full names go in the tooltip/legend already — the axis just needs a
+  // short, non-overlapping label per bar, since a run can cover a dozen-plus
+  // Journeys and full names at 0 rotation collide into an unreadable smear.
+  // Cap shrinks as bar count grows (more bars = less width each) so labels
+  // never outrun the space between adjacent ticks, whatever the suite count.
+  const maxNameChars = Math.max(6, Math.min(14, Math.floor(96 / Math.max(1, bySuite.size))))
+  const chartData = [...bySuite.entries()].map(([name, v]) => ({
+    name: name.length > maxNameChars ? `${name.slice(0, maxNameChars - 1)}…` : name,
+    fullName: name,
+    Passed: v.passed,
+    'Self-healed': v.flaky,
+    Failed: v.failed,
+  }))
   return (
     <div style={tileCardStyle}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
-        <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Results by suite</div>
-        <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--fg-3)' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--good-strong)' }} />
-            Passed
-          </span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--danger-strong)' }} />
-            Failed
-          </span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--warn-strong)' }} />
-            Self-healed
-          </span>
-        </div>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 18, height: barHeight, marginTop: 18, overflowX: 'auto' }}>
-        {suites.map(([name, v]) => {
-          const total = v.passed + v.flaky + v.failed
-          const scale = barHeight / maxTotal
-          return (
-            <div key={name} style={{ flex: '1 0 36px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, height: '100%', justifyContent: 'flex-end' }}>
-              <div style={{ width: '100%', maxWidth: 36, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', borderRadius: '5px 5px 0 0', overflow: 'hidden' }}>
-                {v.failed > 0 && <div style={{ height: v.failed * scale, background: 'var(--danger-strong)' }} />}
-                {v.flaky > 0 && <div style={{ height: v.flaky * scale, background: 'var(--warn-strong)' }} />}
-                {v.passed > 0 && <div style={{ height: v.passed * scale, background: 'var(--good-strong)' }} />}
-                {total === 0 && <div style={{ height: 2, background: 'var(--chip)' }} />}
-              </div>
-              <div
-                title={name}
-                style={{ fontSize: 10.5, color: 'var(--fg-4)', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 60 }}
-              >
-                {name}
-              </div>
-            </div>
-          )
-        })}
+      <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Results by suite</div>
+      {/* Legend pinned to the top, clear of the chart body — the bottom
+          margin already belongs to the rotated x-axis labels below, and a
+          bottom-anchored legend used to sit right on top of them. */}
+      <div style={{ marginTop: 18, height: 280 }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <BarChart data={chartData} margin={{ top: 0, right: 0, left: 0, bottom: 60 }} barCategoryGap="30%">
+            <CartesianGrid vertical={false} stroke="var(--border-2)" strokeDasharray="3 3" />
+            <Legend verticalAlign="top" wrapperStyle={{ fontSize: 11.5, color: 'var(--fg-3)' }} iconType="circle" iconSize={7} />
+            <XAxis
+              dataKey="name"
+              tick={{ fontSize: 10.5, fill: 'var(--fg-4)' }}
+              tickLine={false}
+              axisLine={{ stroke: 'var(--border-2)' }}
+              interval={0}
+              angle={-45}
+              textAnchor="end"
+              height={70}
+            />
+            <YAxis tick={{ fontSize: 10, fill: 'var(--fg-5)' }} tickLine={false} axisLine={false} allowDecimals={false} width={26} />
+            <Tooltip content={ResultsBySuiteTooltip} cursor={{ fill: 'var(--hover)' }} />
+            <Bar dataKey="Passed" stackId="a" fill="var(--good-strong)" radius={0} />
+            <Bar dataKey="Self-healed" stackId="a" fill="var(--warn-strong)" radius={0} />
+            <Bar dataKey="Failed" stackId="a" fill="var(--danger-strong)" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
       </div>
     </div>
   )
@@ -842,25 +942,14 @@ function RunDetail({
   onBack: () => void
 }) {
   const isRunning = run.status === 'pending' || run.status === 'running'
+  const [hoveredSegment, setHoveredSegment] = useState<ResultSegment | null>(null)
   const [resultsPage, setResultsPage] = useState(0)
   const [resultSortKey, setResultSortKey] = useState<ResultSortKey | null>(null)
   const [resultSortDir, setResultSortDir] = useState<'asc' | 'desc'>('asc')
-  const [downloading, setDownloading] = useState(false)
   const results = run.results ?? []
   const flakyCount = results.filter(isFlaky).length
   const cleanPassedCount = run.passed_count - flakyCount
   const failedCount = run.failed_count + run.timed_out_count + run.errored_count
-
-  async function handleDownload() {
-    setDownloading(true)
-    try {
-      await api.downloadTestSuiteProject(applicationId)
-    } catch {
-      // best-effort — a failed download just leaves the button re-enabled
-    } finally {
-      setDownloading(false)
-    }
-  }
   const runningResultId = run.status === 'running' ? results.find((r) => r.status === 'pending')?.id : undefined
   // Finished (passed/failed/etc.) first, still-pending ones last — each
   // group keeps its original request order (stable sort on one boolean).
@@ -908,17 +997,13 @@ function RunDetail({
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 20, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.01em' }}>{run.name}</span>
-            <StatusPill status={run.status} label={testRunStatusLabel(run.status)} />
+            <span style={{ fontSize: 20, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.01em' }}>Run #{run.run_number}</span>
+            <StatusPill status={run.status} label={testRunStatusLabel(run.status)} variant="flat" />
           </div>
           <div className="caption" style={{ fontSize: 13, marginTop: 5 }}>
             {run.trigger} · {formatDateTime(run.created_at)}
           </div>
         </div>
-        <div style={{ flex: 1 }} />
-        <button type="button" className="button-secondary" onClick={handleDownload} disabled={downloading}>
-          {downloading ? 'Downloading…' : 'Download project'}
-        </button>
       </div>
 
       {!isRunning && run.results && results.length > 0 && (
@@ -935,26 +1020,42 @@ function RunDetail({
             <div style={tileCardStyle}>
               <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Result split</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 22, marginTop: 18 }}>
-                <ResultSplitDonut passed={cleanPassedCount} flaky={flakyCount} failed={failedCount} total={run.total_count} />
+                <ResultSplitDonut
+                  passed={cleanPassedCount}
+                  flaky={flakyCount}
+                  failed={failedCount}
+                  total={run.total_count}
+                  hovered={hoveredSegment}
+                  onHover={setHoveredSegment}
+                />
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--good-strong)' }} />
-                    <span style={{ color: 'var(--fg-3)' }}>Passed</span>
-                    <span style={{ flex: 1 }} />
-                    <span style={{ color: 'var(--fg-1)' }}>{cleanPassedCount}</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--warn-strong)' }} />
-                    <span style={{ color: 'var(--fg-3)' }}>Self-healed</span>
-                    <span style={{ flex: 1 }} />
-                    <span style={{ color: 'var(--fg-1)' }}>{flakyCount}</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
-                    <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--danger-strong)' }} />
-                    <span style={{ color: 'var(--fg-3)' }}>Failed</span>
-                    <span style={{ flex: 1 }} />
-                    <span style={{ color: 'var(--fg-1)' }}>{failedCount}</span>
-                  </div>
+                  {(
+                    [
+                      { key: 'passed' as const, color: 'var(--good-strong)', label: 'Passed', value: cleanPassedCount },
+                      { key: 'flaky' as const, color: 'var(--warn-strong)', label: 'Self-healed', value: flakyCount },
+                      { key: 'failed' as const, color: 'var(--danger-strong)', label: 'Failed', value: failedCount },
+                    ]
+                  ).map((row) => (
+                    <div
+                      key={row.key}
+                      onMouseEnter={() => row.value > 0 && setHoveredSegment(row.key)}
+                      onMouseLeave={() => setHoveredSegment(null)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        fontSize: 12.5,
+                        cursor: row.value > 0 ? 'pointer' : 'default',
+                        opacity: hoveredSegment && hoveredSegment !== row.key ? 0.45 : 1,
+                        transition: 'opacity 120ms ease',
+                      }}
+                    >
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: row.color, flexShrink: 0 }} />
+                      <span style={{ color: 'var(--fg-3)' }}>{row.label}</span>
+                      <span style={{ flex: 1 }} />
+                      <span style={{ color: 'var(--fg-1)' }}>{row.value}</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
@@ -1014,53 +1115,6 @@ export function parseTrigger(trigger: string): { by: string } {
   return { by: match ? match[1] : '—' }
 }
 
-type SortKey = 'name' | 'date' | 'triggeredBy' | 'passRate' | 'passed' | 'failed' | 'duration' | 'status'
-
-function sortValue(run: TestRunRead, key: SortKey): string | number {
-  switch (key) {
-    case 'name':
-      return run.name.toLowerCase()
-    case 'date':
-      return run.created_at
-    case 'triggeredBy':
-      return parseTrigger(run.trigger).by.toLowerCase()
-    case 'passRate':
-      return run.pass_rate ?? -1
-    case 'passed':
-      return run.passed_count
-    case 'failed':
-      return run.failed_count
-    case 'duration':
-      return runDurationMs(run) ?? -1
-    case 'status':
-      return run.status
-  }
-}
-
-// Sorts only the currently-loaded page — the list API has no `sort` param,
-// and re-sorting across pages would mean fetching every page up front.
-function sortRuns(runs: TestRunRead[], key: SortKey, dir: 'asc' | 'desc'): TestRunRead[] {
-  const sorted = [...runs].sort((a, b) => {
-    const av = sortValue(a, key)
-    const bv = sortValue(b, key)
-    if (av < bv) return -1
-    if (av > bv) return 1
-    return 0
-  })
-  return dir === 'asc' ? sorted : sorted.reverse()
-}
-
-const RUN_SORT_LABELS: Record<SortKey, string> = {
-  name: 'Test Run',
-  date: 'Date & Time',
-  triggeredBy: 'Triggered By',
-  passRate: 'Pass Rate',
-  passed: 'Passed',
-  failed: 'Failed',
-  duration: 'Duration',
-  status: 'Status',
-}
-
 function RunListHeader() {
   return (
     <div
@@ -1083,10 +1137,26 @@ function RunListHeader() {
   )
 }
 
+// Same 3-tier vocabulary as `run.health` (backend `_health_tier`, >90%
+// healthy / 70-90% needs attention / <70% critical) — a distinct icon per
+// tier, not just a colored dot, so a glance down the run list distinguishes
+// "needs attention" from "critical" without reading the pass-rate column.
+const HEALTH_ICON: Record<HealthTier, { icon: typeof faShieldHalved; color: string }> = {
+  healthy: { icon: faShieldHalved, color: 'var(--good-strong)' },
+  needs_attention: { icon: faTriangleExclamation, color: 'var(--warn-strong)' },
+  critical: { icon: faCircleExclamation, color: 'var(--danger-strong)' },
+}
+
+function RunHealthIcon({ tier }: { tier: HealthTier }) {
+  const { icon, color } = HEALTH_ICON[tier]
+  return <FontAwesomeIcon icon={icon} style={{ fontSize: 13, color }} title={tier.replace('_', ' ')} />
+}
+
 function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
   const { by } = parseTrigger(run.trigger)
   const total = run.passed_count + run.failed_count + run.timed_out_count + run.errored_count
   const passPct = total > 0 ? (run.passed_count / total) * 100 : 0
+  const isActive = run.status === 'pending' || run.status === 'running'
   return (
     <div
       role="button"
@@ -1111,9 +1181,9 @@ function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
             per-row status icon — not off in its own column, which is why
             the last column below carries only the plain status word. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-          <StatusPill status={run.status} label="" variant="inline" />
+          {isActive ? <StatusPill status={run.status} label="" variant="inline" /> : <RunHealthIcon tier={run.health.tier} />}
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={run.name}>
-            {run.name}
+            Run #{run.run_number}
           </span>
         </div>
         <div className="caption" style={{ fontSize: 10.5, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1187,18 +1257,6 @@ export function RunsTab({
   const [cursors, setCursors] = useState<(string | null)[]>([null])
   const [hasNext, setHasNext] = useState(false)
   const [page, setPage] = useState(0)
-  const [search, setSearch] = useState('')
-  const [sortKey, setSortKey] = useState<SortKey>('date')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const sortedRuns = useMemo(() => sortRuns(runs, sortKey, sortDir), [runs, sortKey, sortDir])
-  function handleSort(key: SortKey) {
-    if (key === sortKey) {
-      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
-    } else {
-      setSortKey(key)
-      setSortDir('asc')
-    }
-  }
   const autoSelectPendingRef = useRef(!!autoSelectLatest)
   // "Latest ref" pattern — `onAutoSelectConsumed` is a fresh arrow function
   // from Workspace on every render, so calling it via a ref rather than
@@ -1227,7 +1285,7 @@ export function RunsTab({
 
     async function load() {
       try {
-        const body = await api.listTestRuns(applicationId, cursors[page] ?? null, RUNS_PER_PAGE, search)
+        const body = await api.listTestRuns(applicationId, cursors[page] ?? null, RUNS_PER_PAGE)
         if (cancelled) return
         setRuns(body.items)
         setHasNext(body.next_cursor !== null)
@@ -1267,7 +1325,7 @@ export function RunsTab({
       cancelled = true
       clearInterval(interval)
     }
-  }, [applicationId, page, search, selectedRunId])
+  }, [applicationId, page, selectedRunId])
 
   useEffect(() => {
     if (!selectedRunId) {
@@ -1329,83 +1387,50 @@ export function RunsTab({
     )
   }
 
+  // Best-effort over the currently-loaded page of runs (up to RUNS_PER_PAGE)
+  // — the list API has no aggregate endpoint, so "Average pass rate"/"Median
+  // duration" describe recent loaded runs, not the application's full run
+  // history. ponytail: add a dedicated runs-summary endpoint if that
+  // distinction ever needs to be exact.
+  const latestRun = runs[0]
+  const ratedRuns = runs.filter((r) => r.pass_rate != null)
+  const avgPassRate = ratedRuns.length === 0 ? null : ratedRuns.reduce((s, r) => s + (r.pass_rate ?? 0), 0) / ratedRuns.length
+  const sortedDurations = runs
+    .map((r) => runDurationMs(r))
+    .filter((d): d is number => d != null)
+    .sort((a, b) => a - b)
+  const medianDuration =
+    sortedDurations.length === 0
+      ? null
+      : sortedDurations.length % 2 !== 0
+        ? sortedDurations[(sortedDurations.length - 1) / 2]
+        : (sortedDurations[sortedDurations.length / 2 - 1] + sortedDurations[sortedDurations.length / 2]) / 2
+  const openFailures = latestRun ? latestRun.failed_count + latestRun.timed_out_count + latestRun.errored_count : 0
+
   return (
     <div>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'flex-end',
-          alignItems: 'center',
-          gap: 8,
-          marginBottom: 'var(--space-3)',
-        }}
-      >
-        <select
-          aria-label="Sort by"
-          value={sortKey}
-          onChange={(e) => handleSort(e.target.value as SortKey)}
-          style={{ height: 34, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 8, fontSize: 12.5, color: 'var(--fg-1)', background: 'var(--panel)' }}
-        >
-          {(Object.keys(RUN_SORT_LABELS) as SortKey[]).map((key) => (
-            <option key={key} value={key}>
-              {RUN_SORT_LABELS[key]}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
-          title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
-          style={{ height: 34, width: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-2)', borderRadius: 8, background: 'var(--panel)', color: 'var(--fg-2)', cursor: 'pointer' }}
-        >
-          {sortDir === 'asc' ? '↑' : '↓'}
-        </button>
-        <input
-          id="test-runs-search"
-          type="text"
-          aria-label="Search by Test Run or Triggered By"
-          placeholder="Search test runs"
-          value={search}
-          onChange={(e) => {
-            setSearch(e.target.value)
-            setPage(0)
-            setCursors([null])
-          }}
-          style={{
-            width: 240,
-            maxWidth: '100%',
-            boxSizing: 'border-box',
-            height: 34,
-            padding: '0 12px',
-            border: '1px solid var(--border-2)',
-            borderRadius: 8,
-            fontSize: 13,
-            fontFamily: 'inherit',
-            color: 'var(--fg-1)',
-            background: 'var(--panel)',
-          }}
-        />
-      </div>
+      {runsLoaded && runs.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 12, marginBottom: 'var(--space-4)' }}>
+          <RunStatTile label="Latest pass rate" value={latestRun?.pass_rate != null ? `${Math.round(latestRun.pass_rate * 100)}%` : '—'} sub={latestRun ? latestRun.name : undefined} />
+          <RunStatTile label="Average pass rate" value={avgPassRate != null ? `${Math.round(avgPassRate * 100)}%` : '—'} sub={`Over ${ratedRuns.length} run${ratedRuns.length === 1 ? '' : 's'}`} />
+          <RunStatTile label="Median duration" value={medianDuration != null ? formatDuration(medianDuration) : '—'} />
+          <RunStatTile label="Open failures" value={String(openFailures)} sub="In the latest run" tone={openFailures > 0 ? 'bad' : undefined} />
+        </div>
+      )}
       {!runsLoaded ? (
         <div style={{ padding: '4px 0' }}>
           <SkeletonRows count={5} height={44} gap={10} />
         </div>
       ) : runs.length === 0 ? (
-        search ? (
-          <p className="caption" style={{ fontSize: 13 }}>
-            No test runs match this search.
-          </p>
-        ) : (
-          <EmptyState
-            illustration={<RunsIllustration />}
-            title="No test runs yet"
-            subtitle="Once discovery finishes and the suite is generated, every execution shows up here with results, traces and per-case re-runs."
-          />
-        )
+        <EmptyState
+          illustration={<RunsIllustration />}
+          title="No test runs yet"
+          subtitle="Once discovery finishes and the suite is generated, every execution shows up here with results, traces and per-case re-runs."
+        />
       ) : (
         <div style={{ ...mainPanelStyle, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <RunListHeader />
-          {sortedRuns.map((run) => (
+          {runs.map((run) => (
             <RunListRow key={run.id} run={run} onOpen={() => setSelectedRunId(run.id)} />
           ))}
           <Pagination

@@ -614,9 +614,6 @@ _UNREACHABLE_DETAIL = (
     "Base URL did not respond — confirm it's deployed and accessible before connecting."
 )
 
-MAX_ACTIVE_PROJECTS = 4
-_PROJECT_LIMIT_DETAIL = f"Maximum of {MAX_ACTIVE_PROJECTS} active projects reached — delete one before adding another."
-
 
 async def _check_reachable(client: httpx.AsyncClient, url: str) -> None:
     """FR-31 (CR-3): gates Application creation on the Base URL actually
@@ -641,17 +638,6 @@ async def create_application(
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
 ) -> ApplicationRead:
-    active_count = len(
-        session.exec(
-            select(Application).where(
-                Application.organization_id == organization_id,
-                Application.deleted_at.is_(None),  # type: ignore[attr-defined]
-            )
-        ).all()
-    )
-    if active_count >= MAX_ACTIVE_PROJECTS:
-        raise HTTPException(status_code=409, detail=_PROJECT_LIMIT_DETAIL)
-
     # FR-31 (CR-3): fail fast before any write if the Base URL isn't reachable.
     async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
         await _check_reachable(client, payload.url)
@@ -812,8 +798,7 @@ def get_home(
     ).all():
         latest_run_by_app.setdefault(run.application_id, run)
 
-    # Every TestRun per app (org has at most MAX_ACTIVE_PROJECTS applications,
-    # so this stays cheap) — newest first, backs "Running"/"Last run"/
+    # Every TestRun per app — newest first, backs "Running"/"Last run"/
     # pass-rate, the Executions count, and the Trend sparkline all from one
     # query.
     test_runs_by_app: dict[uuid.UUID, list[TestRun]] = {}
@@ -4411,6 +4396,7 @@ def get_test_asset_code(
 
 class RunTrendPointRead(BaseModel):
     run_id: uuid.UUID
+    run_number: int
     pass_rate: float | None
     created_at: datetime
 
@@ -4490,6 +4476,7 @@ def get_overview(
     trend = [
         RunTrendPointRead(
             run_id=r.external_id,
+            run_number=r.run_number,
             pass_rate=(r.passed_count / r.total_count) if r.total_count else None,
             created_at=r.created_at,
         )

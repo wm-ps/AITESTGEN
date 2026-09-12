@@ -1,5 +1,13 @@
 @import './tokens.css';
 
+/* Utilities + theme scale only, no preflight — this app's existing
+   components all carry their own inline styles/resets already; pulling in
+   Tailwind's base reset too would restyle every untouched element (buttons,
+   headings, lists) app-wide for no reason. Scoped to what shadcn/ui-style
+   components (src/components/ui/*) need. */
+@import 'tailwindcss/theme' layer(theme);
+@import 'tailwindcss/utilities' layer(utilities);
+
 * {
   box-sizing: border-box;
 }
@@ -265,6 +273,7 @@ textarea:focus-visible,
   font-weight: 700;
   letter-spacing: 0.01em;
   padding: 5px 11px;
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
 }
 

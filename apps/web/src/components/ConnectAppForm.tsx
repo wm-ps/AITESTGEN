@@ -26,7 +26,7 @@ const fieldInputStyle: React.CSSProperties = {
   borderRadius: 8,
   fontSize: 13.5,
   color: 'var(--fg-1)',
-  background: 'var(--panel-2)',
+  background: 'var(--panel)',
   outline: 'none',
   width: '100%',
   boxSizing: 'border-box',

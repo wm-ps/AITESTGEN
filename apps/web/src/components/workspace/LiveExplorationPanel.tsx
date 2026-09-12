@@ -173,7 +173,7 @@ export function LiveExplorationPanel({
             Author a test case in plain language
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 4 }}>
-            Describe what should be tested. Vantage explores the live application, writes the Playwright spec and
+            Describe what should be tested. Vantage explores the live application, writes the test case and
             adds it to this suite.
           </div>
         </div>

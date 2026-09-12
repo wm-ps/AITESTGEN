@@ -1,5 +1,12 @@
 # AITestGen — project instructions
 
+## Kebab menus are vertical, not horizontal
+
+Any "more options" row/card menu trigger uses FontAwesome's vertical kebab
+(`faEllipsisVertical`, ⋮), never the horizontal one (`faEllipsis`, ⋯) —
+matches the Vantage v2 prototype. Applies anywhere a `...` menu trigger is
+added (Team members, Applications list, etc.).
+
 ## bmad docs are stale — never read them
 
 `_bmad-output/` and `_bmad/` (planning artifacts, implementation-artifact story

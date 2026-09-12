@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBrain, faChevronDown, faChevronRight, faRoute, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
 import { api, formatTestCaseNumber, type JourneyRead, type ScenarioRead } from '../api'
+import { AppIdentityLine } from './AppIdentityLine'
 import { GenerationLoader } from './GenerationLoader'
 import { ServiceErrorNote } from './ServiceError'
 import { EmptyState, ScenariosIllustration } from './EmptyState'
@@ -163,10 +164,14 @@ function ScenarioRowMenu({ onRename, onDelete }: { onRename: () => void; onDelet
 
 export function ReviewScenarios({
   applicationId,
+  applicationName,
+  applicationUrl,
   onContinueToGenerate,
   onGoToJourneys,
 }: {
   applicationId: string
+  applicationName: string
+  applicationUrl: string
   onContinueToGenerate: () => void
   onGoToJourneys: () => void
 }) {
@@ -325,9 +330,8 @@ export function ReviewScenarios({
           flex: 1,
           width: '100%',
           minWidth: 0,
-          maxWidth: 'var(--content-max-wide)',
+          maxWidth: 1560,
           margin: '0 auto',
-          padding: `var(--content-top) var(--content-x)`,
           boxSizing: 'border-box',
         }}
       >
@@ -340,8 +344,9 @@ export function ReviewScenarios({
             marginBottom: 'var(--space-7)',
           }}
         >
-          <div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <h2 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Scenarios</h2>
+            <AppIdentityLine name={applicationName} url={applicationUrl} />
             {headerSub && (
               <div className="caption" style={{ fontSize: 13, marginTop: 3, maxWidth: 520 }}>
                 {headerSub}
@@ -371,16 +376,20 @@ export function ReviewScenarios({
                 }}
               >
                 <WandSparkles size={14} />
-                Generate Test Suite
+                Generate test cases
               </button>
           </div>
         </div>
 
-        {scenarios.length === 0 && hadScenariosRef.current ? (
+        {scenarios.length === 0 && isComplete ? (
           <EmptyState
             illustration={<ScenariosIllustration />}
-            title="No scenarios remain"
-            subtitle="Add journeys back to generate new scenarios."
+            title={hadScenariosRef.current ? 'No scenarios remain' : 'No scenarios yet'}
+            subtitle={
+              hadScenariosRef.current
+                ? 'Add journeys back to generate new scenarios.'
+                : 'Scenarios appear here once discovered journeys are turned into drafted test scenarios.'
+            }
           />
         ) : !isComplete && generationUnavailable ? (
           <div

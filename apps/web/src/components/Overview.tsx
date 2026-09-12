@@ -3,15 +3,15 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faChevronDown,
   faCircleCheck,
+  faClock,
   faCompass,
   faDiagramProject,
-  faFileCode,
   faLayerGroup,
   faPlus,
+  faTableList,
   faTriangleExclamation,
   faWandMagicSparkles,
 } from '@fortawesome/free-solid-svg-icons'
-import { faClock as faClockRegular } from '@fortawesome/free-regular-svg-icons'
 import { api, type HomeApplicationRead, type OverviewStatsRead } from '../api'
 import { EmptyState, RunsIllustration } from './EmptyState'
 import { applicationStage, relativeTime } from './Home'
@@ -78,17 +78,34 @@ export function Overview({
     .filter((row): row is { app: HomeApplicationRead; stageIndex: number } => row.stageIndex !== null)
   const totalTestCases = apps.reduce((sum, a) => sum + a.test_case_count, 0)
   const totalRuns = apps.reduce((sum, a) => sum + a.test_run_count, 0)
-  const ranApps = apps.filter((a) => a.last_test_run_pass_rate != null)
-  // `last_test_run_pass_rate` is a 0-1 fraction (passed_count / total_count,
-  // see get_home) — scaled to 0-100 here since every consumer below (the KPI
-  // tiles, PassDonut) expects a percentage, same convention Home.tsx's own
-  // passRatePct already uses.
-  const avgPassRate =
-    ranApps.length === 0 ? null : (ranApps.reduce((sum, a) => sum + (a.last_test_run_pass_rate ?? 0), 0) / ranApps.length) * 100
+  // Gated on status === 'completed', not just pass_rate != null — a run
+  // still in progress already has a non-null rate (passed_count / total_count
+  // with most of total_count not yet attempted), which would silently count
+  // every not-yet-run test as a failure in every metric below. Same gate
+  // Home.tsx's own `hasCompletedRun` uses per-app card.
+  const ranApps = apps.filter((a) => a.last_test_run_status === 'completed' && a.last_test_run_pass_rate != null)
   // Real totals for the donut's legend — same last-run counts each app's
   // own Runs tab shows, just summed across the workspace.
   const totalPassed = ranApps.reduce((sum, a) => sum + (a.last_test_run_passed_count ?? 0), 0)
   const totalFailed = ranApps.reduce((sum, a) => sum + (a.last_test_run_failed_count ?? 0), 0)
+  // "Latest run outcome" is the actual pass/fail split of every app's most
+  // recent run, pooled — not avgPassRate below (that's each app's rate
+  // averaged, which lets a 5-case app's percentage count the same as a
+  // 500-case app's real result).
+  const latestRunPassRate = totalPassed + totalFailed === 0 ? null : (totalPassed / (totalPassed + totalFailed)) * 100
+  // Weighted by each app's test case count, not a flat average of each app's
+  // pass-rate percentage — a flat average lets a 5-case app move the
+  // headline number exactly as much as a 500-case app. HomeApplicationRead
+  // has no true per-run total_count to pool against directly (only the
+  // pre-divided pass_rate fraction plus passed/failed counts, which alone
+  // undercount runs with timed-out/errored/blocked results), so
+  // test_case_count — the app's current suite size — is the closest
+  // existing-data proxy for how much each app's rate should count.
+  const passRateWeight = ranApps.reduce((sum, a) => sum + a.test_case_count, 0)
+  const avgPassRate =
+    passRateWeight === 0
+      ? null
+      : (ranApps.reduce((sum, a) => sum + (a.last_test_run_pass_rate ?? 0) * a.test_case_count, 0) / passRateWeight) * 100
   // Scoped to ranApps, not all apps — `_health_tier(None)` (backend) reports
   // an application with zero runs as "needs_attention" (its headline says
   // "No tests have run yet", not "tests are failing"), so counting every
@@ -176,7 +193,7 @@ export function Overview({
                 stageIndex === 1
                   ? `${app.scenario_journeys_covered}/${app.journey_count} journeys`
                   : stageIndex === 0
-                    ? 'Crawling in progress'
+                    ? 'Discovery in progress'
                     : stageIndex === 2
                       ? 'Generating suite…'
                       : 'Run in progress'
@@ -225,7 +242,7 @@ export function Overview({
       )}
 
       {applications === null ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,minmax(180px,1fr))', gap: 14 }}>
           {Array.from({ length: 4 }, (_, i) => (
             <div key={i} style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 14, padding: '18px 20px 17px', boxShadow: 'var(--panel-shadow)' }}>
               <Skeleton width={80} height={10} />
@@ -301,7 +318,7 @@ export function Overview({
         </div>
       ) : apps.length > 0 ? (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,minmax(180px,1fr))', gap: 14 }}>
             {[
               {
                 label: 'Applications tested',
@@ -312,7 +329,7 @@ export function Overview({
               },
               {
                 label: 'Test cases generated',
-                icon: faFileCode,
+                icon: faTableList,
                 value: totalTestCases.toLocaleString(),
                 delta: null,
                 sub: `${Math.round(totalTestCases / apps.length)} average per application`,
@@ -376,11 +393,11 @@ export function Overview({
 
             <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, padding: '18px 20px', display: 'flex', flexDirection: 'column' }}>
               <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Latest run outcome</div>
-              <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>Average of every application's last run</div>
+              <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>Pooled pass/fail from every application's last run</div>
               <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '14px 0' }}>
-                <PassDonut passRate={avgPassRate} />
+                <PassDonut passRate={latestRunPassRate} />
               </div>
-              {avgPassRate != null && (
+              {latestRunPassRate != null && (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 9, fontSize: 12.5 }}>
                     <span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--ok)' }} />
@@ -397,76 +414,112 @@ export function Overview({
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(330px,1fr))', gap: 14 }}>
-            <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, padding: '18px 20px', minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
-                <div>
-                  <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Test cases per application</div>
-                  <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>Top {topByCases.length} by suite size · pass/fail split</div>
+          {(() => {
+            const testCasesCard = (
+              <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, padding: '18px 20px', minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Test cases per application</div>
+                    <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>Top {topByCases.length} by suite size · pass/fail split</div>
+                  </div>
+                  <span onClick={onGoApps} style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--accent-hi)', cursor: 'pointer' }}>
+                    View all {apps.length}
+                  </span>
                 </div>
-                <span onClick={onGoApps} style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--accent-hi)', cursor: 'pointer' }}>
-                  View all {apps.length}
-                </span>
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {topByCases.map((a) => {
-                  // Already a 0-1 fraction (passed_count / total_count) — no /100 needed.
-                  const passFrac = a.last_test_run_pass_rate
-                  return (
-                    <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <div style={{ width: 158, flex: 'none', fontSize: 12.5, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</div>
-                      <div style={{ flex: 1, height: 18, borderRadius: 5, background: 'var(--track)', display: 'flex', overflow: 'hidden' }}>
-                        {passFrac != null && (
-                          <>
-                            <div style={{ width: `${passFrac * 100}%`, background: 'var(--ok)' }} />
-                            <div style={{ width: `${(1 - passFrac) * 100}%`, background: 'var(--bad)' }} />
-                          </>
-                        )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {topByCases.map((a) => {
+                    // Already a 0-1 fraction (passed_count / total_count) — no /100 needed.
+                    const passFrac = a.last_test_run_pass_rate
+                    return (
+                      <div
+                        key={a.id}
+                        onClick={() => onOpenApplication(a)}
+                        className="v2-row-hover"
+                        style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer', borderRadius: 8, margin: '0 -6px', padding: '2px 6px' }}
+                      >
+                        <div style={{ width: 158, flex: 'none', fontSize: 12.5, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</div>
+                        <div style={{ flex: 1, height: 18, borderRadius: 5, background: 'var(--track)', display: 'flex', overflow: 'hidden' }}>
+                          {passFrac != null && (
+                            <>
+                              <div style={{ width: `${passFrac * 100}%`, background: 'var(--ok)' }} />
+                              <div style={{ width: `${(1 - passFrac) * 100}%`, background: 'var(--bad)' }} />
+                            </>
+                          )}
+                        </div>
+                        <div style={{ width: 42, flex: 'none', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--fg-1)' }}>{a.test_case_count}</div>
                       </div>
-                      <div style={{ width: 42, flex: 'none', textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--fg-1)' }}>{a.test_case_count}</div>
-                    </div>
-                  )
-                })}
+                    )
+                  })}
+                </div>
               </div>
-            </div>
+            )
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, padding: '16px 18px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <FontAwesomeIcon icon={faClockRegular} style={{ fontSize: 12, color: 'var(--accent-hi)' }} />
-                  <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>Avg run duration</span>
+            const miniTiles = [
+              {
+                key: 'duration',
+                icon: faClock,
+                label: 'Avg run duration',
+                value: stats == null ? '—' : formatDuration(stats.avg_run_duration_ms),
+                sub: stats == null ? '—' : `Across ${stats.run_count} run${stats.run_count === 1 ? '' : 's'}`,
+              },
+              {
+                key: 'healed',
+                icon: faWandMagicSparkles,
+                label: 'Self-healed locators',
+                value: stats == null ? '—' : String(stats.self_healed_count),
+                sub: 'In the last 7 days',
+              },
+              {
+                key: 'discovery',
+                icon: faCompass,
+                label: 'Last discovery',
+                value: lastDiscoveryAt == null ? '—' : relativeTime(lastDiscoveryAt),
+                sub: `${appsDiscoveredUnderAWeek} of ${apps.length} apps under 7 days`,
+              },
+            ]
+
+            function MiniTile({ icon, label, value, sub, flex }: { icon: typeof faCompass; label: string; value: string; sub: string; flex?: number }) {
+              return (
+                <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, padding: '16px 18px', flex, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <FontAwesomeIcon icon={icon} style={{ fontSize: 12, color: 'var(--accent-hi)' }} />
+                    <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>{label}</span>
+                  </div>
+                  <div style={{ fontSize: 22, lineHeight: '28px', color: 'var(--fg)', marginTop: 8, fontWeight: 600 }}>{value}</div>
+                  <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 2 }}>{sub}</div>
                 </div>
-                <div style={{ fontSize: 22, lineHeight: '28px', color: 'var(--fg)', marginTop: 8, fontWeight: 600 }}>
-                  {stats == null ? '—' : formatDuration(stats.avg_run_duration_ms)}
-                </div>
-                <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 2 }}>
-                  {stats == null ? '—' : `Across ${stats.run_count} run${stats.run_count === 1 ? '' : 's'}`}
+              )
+            }
+
+            // Fewer than 3 applications means the "Test cases per application"
+            // card is short (1-2 rows) — pairing it with a full 3-tile column
+            // would leave that column mostly empty air. Pair it with just the
+            // first mini tile instead, and let the other two form their own
+            // row below. 3+ applications keeps the original two-column split,
+            // with the mini tiles stretched (flex: 1 each) to fill the taller
+            // card's full height instead of clustering at the top.
+            return topByCases.length >= 3 ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(330px,1fr))', gap: 14 }}>
+                {testCasesCard}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  {miniTiles.map((t) => (
+                    <MiniTile key={t.key} {...t} flex={1} />
+                  ))}
                 </div>
               </div>
-              <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, padding: '16px 18px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <FontAwesomeIcon icon={faWandMagicSparkles} style={{ fontSize: 12, color: 'var(--accent-hi)' }} />
-                  <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>Self-healed locators</span>
+            ) : (
+              <>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(330px,1fr))', gap: 14 }}>
+                  {testCasesCard}
+                  <MiniTile {...miniTiles[0]} />
                 </div>
-                <div style={{ fontSize: 22, lineHeight: '28px', color: 'var(--fg)', marginTop: 8, fontWeight: 600 }}>
-                  {stats == null ? '—' : stats.self_healed_count}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(330px,1fr))', gap: 14 }}>
+                  <MiniTile {...miniTiles[1]} />
+                  <MiniTile {...miniTiles[2]} />
                 </div>
-                <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 2 }}>In the last 7 days</div>
-              </div>
-              <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, padding: '16px 18px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <FontAwesomeIcon icon={faCompass} style={{ fontSize: 12, color: 'var(--accent-hi)' }} />
-                  <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>Last discovery</span>
-                </div>
-                <div style={{ fontSize: 22, lineHeight: '28px', color: 'var(--fg)', marginTop: 8, fontWeight: 600 }}>
-                  {lastDiscoveryAt == null ? '—' : relativeTime(lastDiscoveryAt)}
-                </div>
-                <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 2 }}>
-                  {appsDiscoveredUnderAWeek} of {apps.length} apps under 7 days
-                </div>
-              </div>
-            </div>
-          </div>
+              </>
+            )
+          })()}
         </>
       ) : null}
     </div>
@@ -488,6 +541,29 @@ function TrendSvg({ values }: { values: number[] }) {
   // Failure % is the exact complement of the pass-rate series already being
   // plotted — no separate data needed, just 100 minus the same values.
   const failPoints = values.map((v, i) => `${i * step},${y(100 - v)}`).join(' ')
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null)
+
+  function handleMoveAt(clientX: number, rect: DOMRect) {
+    const xFrac = (clientX - rect.left) / rect.width
+    const idx = Math.round(xFrac * (values.length - 1))
+    setHoverIndex(Math.max(0, Math.min(values.length - 1, idx)))
+  }
+
+  function handleMove(e: React.MouseEvent<SVGSVGElement>) {
+    handleMoveAt(e.clientX, e.currentTarget.getBoundingClientRect())
+  }
+
+  // Touch has no hover — without this, the crosshair/tooltip built above
+  // only ever worked with a mouse, so touching the chart on a phone/tablet
+  // did nothing. A touch drag now scrubs the same crosshair a mouse move does.
+  function handleTouch(e: React.TouchEvent<SVGSVGElement>) {
+    const touch = e.touches[0]
+    if (!touch) return
+    handleMoveAt(touch.clientX, e.currentTarget.getBoundingClientRect())
+  }
+
+  const hoverPct = hoverIndex != null ? `${(hoverIndex / Math.max(1, values.length - 1)) * 100}%` : null
+
   return (
     <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height, fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--fg-5)', textAlign: 'right', width: 26 }}>
@@ -497,8 +573,17 @@ function TrendSvg({ values }: { values: number[] }) {
         <span>25</span>
         <span>0</span>
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ width: '100%', height, display: 'block' }}>
+      <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          preserveAspectRatio="none"
+          style={{ width: '100%', height, display: 'block', cursor: values.length > 1 ? 'crosshair' : 'default' }}
+          onMouseMove={values.length > 1 ? handleMove : undefined}
+          onMouseLeave={() => setHoverIndex(null)}
+          onTouchStart={values.length > 1 ? handleTouch : undefined}
+          onTouchMove={values.length > 1 ? handleTouch : undefined}
+          onTouchEnd={() => setHoverIndex(null)}
+        >
           <defs>
             <linearGradient id="overview-trend-fill" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="var(--ok)" stopOpacity={0.28} />
@@ -511,7 +596,41 @@ function TrendSvg({ values }: { values: number[] }) {
           <polygon points={areaPoints} fill="url(#overview-trend-fill)" />
           <polyline points={failPoints} fill="none" stroke="var(--bad)" strokeWidth={1.6} strokeLinejoin="round" strokeDasharray="3 4" opacity={0.85} />
           <polyline points={points} fill="none" stroke="var(--ok)" strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+          {hoverIndex != null && (
+            <g pointerEvents="none">
+              <line x1={hoverIndex * step} y1={0} x2={hoverIndex * step} y2={height} stroke="var(--fg-5)" strokeWidth={1} strokeDasharray="3 3" />
+              <circle cx={hoverIndex * step} cy={y(values[hoverIndex])} r={4} fill="var(--ok)" stroke="#fff" strokeWidth={1.5} />
+              <circle cx={hoverIndex * step} cy={y(100 - values[hoverIndex])} r={4} fill="var(--bad)" stroke="#fff" strokeWidth={1.5} />
+            </g>
+          )}
         </svg>
+        {hoverIndex != null && hoverPct != null && (
+          <div
+            style={{
+              position: 'absolute',
+              top: 4,
+              left: hoverPct,
+              transform: `translateX(${hoverIndex === 0 ? '0%' : hoverIndex === values.length - 1 ? '-100%' : '-50%'})`,
+              pointerEvents: 'none',
+              background: 'var(--panel)',
+              border: '1px solid var(--border-2)',
+              borderRadius: 8,
+              boxShadow: 'var(--panel-shadow)',
+              padding: '6px 10px',
+              fontSize: 11.5,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--ok)' }} />
+              <span style={{ color: 'var(--fg-2)' }}>Pass {values[hoverIndex].toFixed(1)}%</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+              <span style={{ width: 6, height: 6, borderRadius: 2, background: 'var(--bad)' }} />
+              <span style={{ color: 'var(--fg-2)' }}>Fail {(100 - values[hoverIndex]).toFixed(1)}%</span>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faClock, faDownload, faFlaskVial, faGauge, faTableList } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api } from '../../api'
+import { AppIdentityLine } from '../AppIdentityLine'
 import { ServiceErrorNote } from '../ServiceError'
 import { Toast } from '../Toast'
 import { DownloadTab } from './DownloadTab'
@@ -63,10 +64,10 @@ export function Workspace({
   applicationUrl: string
   activeTab: WorkspaceTab
   // Widened beyond WorkspaceTab — OverviewTab's quick-action shortcuts can
-  // also jump to 'journeys'/'scenarios', which live in App.tsx's `appTab`
-  // state, not this component's own `activeTab`. The caller (App.tsx)
-  // already handles every value in that broader union.
-  onActiveTabChange: (tab: WorkspaceTab | 'journeys' | 'scenarios') => void
+  // also jump to 'journeys'/'scenarios'/'record', which live in App.tsx's
+  // `appTab` state, not this component's own `activeTab`. The caller
+  // (App.tsx) already handles every value in that broader union.
+  onActiveTabChange: (tab: WorkspaceTab | 'journeys' | 'scenarios' | 'record') => void
   // Reports the currently-visible tab list up to the caller (AppShell's
   // sidebar renders it) whenever it changes.
   onTabsChange?: (tabs: typeof WORKSPACE_TABS) => void
@@ -87,6 +88,11 @@ export function Workspace({
   // trend are all meaningless) — kept out of the nav rail entirely until
   // then, rather than showing it just to land on its own empty state.
   const [hasRunEver, setHasRunEver] = useState(false)
+  // Nothing to download and nothing worth running before the suite has
+  // written at least one test case — kept out of the nav rail (Download
+  // project) and off the toolbar (Run Suite) until then, same reasoning as
+  // hasRunEver above.
+  const [hasTestsGenerated, setHasTestsGenerated] = useState(false)
   const [triggerError, setTriggerError] = useState<string | null>(null)
   const [triggerErrorUnavailable, setTriggerErrorUnavailable] = useState(false)
   const [running, setRunning] = useState(false)
@@ -131,6 +137,12 @@ export function Workspace({
         const active = !!latest && RUN_IS_ACTIVE(latest.status)
         setRunning(active || Date.now() < suppressReenableUntilRef.current)
         if (page.items.length > 0) setHasRunEver(true)
+      } catch {
+        // best-effort poll — a transient failure just skips this tick
+      }
+      try {
+        const suiteStatus = await api.getTestSuiteStatus(applicationId, 1, 1, '')
+        if (!cancelled && suiteStatus.total > 0) setHasTestsGenerated(true)
       } catch {
         // best-effort poll — a transient failure just skips this tick
       }
@@ -186,9 +198,13 @@ export function Workspace({
   // once `hasRunEver` flips true so Overview appears without needing a
   // remount.
   useEffect(() => {
-    onTabsChange?.(hasRunEver ? WORKSPACE_TABS : WORKSPACE_TABS.filter((tab) => tab.key !== 'overview'))
+    onTabsChange?.(
+      WORKSPACE_TABS.filter(
+        (tab) => (tab.key !== 'overview' || hasRunEver) && (tab.key !== 'export' || hasTestsGenerated),
+      ),
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasRunEver])
+  }, [hasRunEver, hasTestsGenerated])
 
   return (
     <main style={{ display: 'flex', flex: 1, minHeight: 0 }}>
@@ -204,22 +220,11 @@ export function Workspace({
                 <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>
                   {WORKSPACE_TABS.find((tab) => tab.key === activeTab)?.heading}
                 </h1>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--fg-3)', minWidth: 0 }}>
-                  <span style={{ fontWeight: 600, color: 'var(--fg-2)', flex: 'none' }}>{applicationName}</span>
-                  <span style={{ width: 3, height: 3, borderRadius: 1000, background: 'var(--fg-6)', flex: 'none' }} />
-                  <a
-                    href={applicationUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ color: 'var(--fg-4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-                  >
-                    {applicationUrl}
-                  </a>
-                </div>
+                <AppIdentityLine name={applicationName} url={applicationUrl} />
               </>
             )}
           </div>
-          {(activeTab === 'runs' || activeTab === 'suite') && (
+          {activeTab === 'runs' && hasTestsGenerated && (
             <RunSuiteButton
               running={running}
               onFullSuite={() => handleRunSuite()}

@@ -257,7 +257,7 @@ export type AutofillScenarioTestDataStatusRead = {
 }
 export type HealthTier = 'healthy' | 'needs_attention' | 'critical'
 export type HealthRead = { tier: HealthTier; headline: string }
-export type RunTrendPointRead = { run_id: string; pass_rate: number | null; created_at: string }
+export type RunTrendPointRead = { run_id: string; run_number: number; pass_rate: number | null; created_at: string }
 export type LatestRunSummaryRead = {
   id: string
   created_at: string

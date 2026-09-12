@@ -5,6 +5,7 @@ import { faImage } from '@fortawesome/free-regular-svg-icons'
 import { api, type JourneyRead, type JourneyStepRead } from '../api'
 import { useDiscoveryProgress } from '../hooks/useDiscoveryProgress'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
+import { AppIdentityLine } from './AppIdentityLine'
 import { ServiceErrorNote } from './ServiceError'
 import { ImportProgress } from './ImportProgress'
 import { Pagination } from './Pagination'
@@ -163,6 +164,7 @@ function JourneyRowMenu({ onRename, onDelete }: { onRename: () => void; onDelete
 export function DiscoverJourneys({
   applicationId,
   applicationName,
+  applicationUrl,
   discoveryStatus,
   discoveryStage,
   discoveryFailureReason,
@@ -170,6 +172,7 @@ export function DiscoverJourneys({
 }: {
   applicationId: string
   applicationName: string
+  applicationUrl: string
   discoveryStatus: string
   discoveryStage: string | null
   discoveryFailureReason: string | null
@@ -368,9 +371,8 @@ export function DiscoverJourneys({
           flex: 1,
           width: '100%',
           minWidth: 0,
-          maxWidth: 'var(--content-max-wide)',
+          maxWidth: 1560,
           margin: '0 auto',
-          padding: `var(--content-top) var(--content-x)`,
           boxSizing: 'border-box',
         }}
       >
@@ -383,8 +385,9 @@ export function DiscoverJourneys({
             marginBottom: 'var(--space-7)',
           }}
         >
-          <div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             <h2 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Journeys</h2>
+            <AppIdentityLine name={applicationName} url={applicationUrl} />
             <div className="caption" style={{ fontSize: 13, marginTop: 3 }}>
               {journeys.length} Journey{journeys.length === 1 ? '' : 's'} Discovered
             </div>
@@ -451,7 +454,7 @@ export function DiscoverJourneys({
 
         {sessionExpired ? (
           <p className="caption" role="alert" style={{ color: 'var(--danger)' }}>
-            Session expired mid-crawl. Re-authenticate to continue discovery.
+            Session expired mid-discovery. Re-authenticate to continue discovery.
           </p>
         ) : discoveryWorkerDown ? (
           <ServiceErrorNote code="DISCOVERY_UNAVAILABLE" />
@@ -541,17 +544,21 @@ export function DiscoverJourneys({
                           >
                             {!loaded && (
                               <div
+                                className="aitg-skeleton"
                                 style={{
                                   position: 'absolute',
                                   inset: 0,
                                   display: 'flex',
+                                  flexDirection: 'column',
                                   alignItems: 'center',
                                   justifyContent: 'center',
-                                  background: 'var(--panel-2)',
-                                  animation: 'v2-pulse 1.6s ease-in-out infinite',
+                                  gap: 6,
+                                  background: 'linear-gradient(90deg, var(--chip) 25%, var(--border-2) 50%, var(--chip) 75%)',
+                                  backgroundSize: '200% 100%',
                                 }}
                               >
-                                <FontAwesomeIcon icon={faImage} style={{ fontSize: 20, color: "var(--fg-5)" }} />
+                                <FontAwesomeIcon icon={faImage} style={{ fontSize: 18, color: 'var(--fg-5)' }} />
+                                <span style={{ fontSize: 10.5, color: 'var(--fg-4)' }}>Preparing preview…</span>
                               </div>
                             )}
                             <img
@@ -568,7 +575,7 @@ export function DiscoverJourneys({
                                 objectFit: 'cover',
                                 cursor: 'zoom-in',
                                 opacity: loaded ? 1 : 0,
-                                transition: 'opacity 0.2s ease',
+                                transition: 'opacity 250ms ease',
                               }}
                             />
                           </div>
