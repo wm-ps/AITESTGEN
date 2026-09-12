@@ -9,8 +9,8 @@ body {
   font-family: var(--font-ui);
   font-size: 14px;
   line-height: 1.5;
-  color: var(--ink);
-  background: var(--canvas);
+  color: var(--fg);
+  background: var(--panel);
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
 }
@@ -48,11 +48,11 @@ textarea:focus-visible,
 
 .caption,
 .label {
-  color: var(--ink-muted);
+  color: var(--fg-4);
 }
 
 .decorative {
-  color: var(--ink-faint);
+  color: var(--fg-5);
 }
 
 .label-required::after {
@@ -79,9 +79,9 @@ textarea:focus-visible,
 }
 
 .button-secondary {
-  background: var(--canvas);
-  color: var(--ink-secondary);
-  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  color: var(--fg-2);
+  border: 1px solid var(--border-3);
   border-radius: var(--radius);
   font-size: 13px;
   font-weight: 600;
@@ -91,7 +91,7 @@ textarea:focus-visible,
 }
 
 .button-secondary:hover {
-  background: var(--canvas-wash);
+  background: var(--bg-2);
 }
 
 .pagination-page-btn {
@@ -102,9 +102,9 @@ textarea:focus-visible,
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  border: 1px solid var(--border-strong);
-  background: var(--canvas);
-  color: var(--ink-secondary);
+  border: 1px solid var(--border-3);
+  background: var(--panel);
+  color: var(--fg-2);
   font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
@@ -112,7 +112,7 @@ textarea:focus-visible,
 }
 
 .pagination-page-btn:hover:not(.pagination-page-btn--active):not(:disabled) {
-  background: var(--canvas-wash);
+  background: var(--bg-2);
 }
 
 .pagination-page-btn:disabled {
@@ -129,14 +129,14 @@ textarea:focus-visible,
   justify-content: center;
   border: none;
   background: none;
-  color: var(--ink-secondary);
+  color: var(--fg-2);
   font-size: 14px;
   font-weight: 700;
   cursor: pointer;
 }
 
 .pagination-arrow-btn:hover:not(:disabled) {
-  color: var(--ink);
+  color: var(--fg);
 }
 
 .pagination-arrow-btn:disabled {
@@ -162,11 +162,11 @@ textarea:focus-visible,
 .field input,
 .field select,
 .field textarea {
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-2);
   border-radius: var(--radius);
   padding: 9px var(--space-5);
-  background: var(--canvas);
-  color: var(--ink);
+  background: var(--panel);
+  color: var(--fg);
   font-family: inherit;
   font-size: inherit;
 }
@@ -190,13 +190,13 @@ textarea:focus-visible,
 }
 
 .card-panel {
-  background: var(--canvas);
+  background: var(--panel);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-card);
 }
 
 .list-row {
-  background: var(--canvas);
+  background: var(--panel);
   border-left: 3px solid transparent;
   border-radius: var(--radius-md);
   box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
@@ -225,7 +225,7 @@ textarea:focus-visible,
 }
 
 .data-table thead tr {
-  background: var(--canvas-wash-alt);
+  background: var(--hover);
 }
 
 .data-table tbody tr.clickable {
@@ -233,7 +233,7 @@ textarea:focus-visible,
 }
 
 .data-table tbody tr.clickable:hover {
-  background: var(--canvas-wash);
+  background: var(--bg-2);
 }
 
 .data-table th.sortable {
@@ -248,14 +248,6 @@ textarea:focus-visible,
 
 .card-clickable:hover {
   box-shadow: var(--shadow-card-hover);
-}
-
-.home-app-card {
-  transition: box-shadow 0.15s ease;
-}
-
-.home-app-card:hover {
-  box-shadow: 0 10px 24px -8px rgba(15, 23, 42, 0.12);
 }
 
 .badge {
@@ -281,7 +273,7 @@ textarea:focus-visible,
 }
 
 .avatar-button:hover {
-  background: var(--border);
+  background: var(--border-2);
 }
 
 .menu-item-danger {
@@ -297,7 +289,7 @@ textarea:focus-visible,
 }
 
 .menu-item:hover {
-  background: var(--canvas-wash-alt);
+  background: var(--hover);
 }
 
 .button-primary:hover:not(:disabled) {
@@ -311,6 +303,74 @@ textarea:focus-visible,
 .stat-tile-hover:hover {
   transform: translateY(-3px);
   box-shadow: 0 6px 16px -6px rgba(15, 23, 42, 0.18);
+}
+
+/* Vantage V2 redesign — reusable row-hover for the new dense data tables
+   (Applications list, and later Runs/Test cases once they migrate). Scoped
+   to its own class rather than reusing .data-table so screens still on the
+   old card/list layout are unaffected. */
+.v2-table-row:hover {
+  background: var(--row-hover);
+}
+
+/* Active pipelines row (Global overview) — matches the prototype's
+   style-hover="background:var(--panel-2)" on each pipeline row. `.clickable`
+   only applies inside `.data-table tbody tr`, so a bare row div needs its
+   own class. */
+.v2-row-hover:hover {
+  background: var(--panel-2);
+}
+
+/* Vantage V2 redesign — GenerationLoader's animated browser-mockup (prototype
+   recipe: pulsing skeleton lines, a scan-line sweep, and two expanding rings
+   around the stage icon). v2-prefixed to avoid colliding with the existing
+   aitg-pulse (box-shadow based, different shape) already used elsewhere. */
+@keyframes v2-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes v2-scan {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(62px);
+    opacity: 0;
+  }
+}
+
+@keyframes v2-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(2.1);
+    opacity: 0;
+  }
+}
+
+@keyframes v2-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
 }
 
 @keyframes aitg-materialize {
@@ -455,6 +515,19 @@ textarea:focus-visible,
   }
   100% {
     background-position: 140px 0;
+  }
+}
+
+.aitg-skeleton {
+  animation: aitg-skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes aitg-skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
   }
 }
 

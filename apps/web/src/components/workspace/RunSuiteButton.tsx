@@ -28,7 +28,6 @@ export function RunSuiteButton({
     <div style={{ position: 'relative' }}>
       <button
         type="button"
-        className="button-primary"
         aria-disabled={running}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -36,7 +35,23 @@ export function RunSuiteButton({
           if (running) return
           setOpen((o) => !o)
         }}
-        style={{ display: 'inline-flex', alignItems: 'center', gap: 8, cursor: running ? 'not-allowed' : 'pointer' }}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 8,
+          height: 36,
+          padding: '0 18px',
+          borderRadius: 8,
+          border: 'none',
+          fontSize: 13.5,
+          fontWeight: 600,
+          flex: 'none',
+          whiteSpace: 'nowrap',
+          color: '#fff',
+          background: running ? 'var(--fg-4)' : 'var(--accent)',
+          boxShadow: running ? 'none' : '0 4px 14px rgba(30,150,138,0.3)',
+          cursor: running ? 'not-allowed' : 'pointer',
+        }}
       >
         <PlayIcon />
         {running ? <LoadingDots label="Running" /> : 'Run Suite'}
@@ -46,13 +61,15 @@ export function RunSuiteButton({
           <div style={{ position: 'fixed', inset: 0, zIndex: 49 }} onClick={() => setOpen(false)} />
           <div
             role="menu"
-            className="card-panel"
             style={{
               position: 'absolute',
               right: 0,
               top: 'calc(100% + 6px)',
               minWidth: 200,
-              boxShadow: '0 12px 28px rgba(15,23,42,0.14)',
+              borderRadius: 10,
+              background: 'var(--panel)',
+              border: '1px solid var(--border-2)',
+              boxShadow: 'var(--panel-shadow)',
               overflow: 'hidden',
               zIndex: 50,
             }}
@@ -72,6 +89,7 @@ export function RunSuiteButton({
                 background: 'none',
                 border: 'none',
                 fontSize: 13.5,
+                color: 'var(--fg-1)',
                 cursor: 'pointer',
                 fontFamily: 'inherit',
               }}
@@ -93,6 +111,7 @@ export function RunSuiteButton({
                 background: 'none',
                 border: 'none',
                 fontSize: 13.5,
+                color: 'var(--fg-1)',
                 cursor: 'pointer',
                 fontFamily: 'inherit',
               }}

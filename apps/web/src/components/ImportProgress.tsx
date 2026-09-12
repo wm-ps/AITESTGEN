@@ -1,3 +1,7 @@
+import { faRoute } from '@fortawesome/free-solid-svg-icons'
+import { faIcon } from '../faIcon'
+
+const Route = faIcon(faRoute)
 import { GenerationLoader } from './GenerationLoader'
 
 // Business-language import progress (FR-33, sprint-change-proposal-2026-07-21
@@ -14,16 +18,22 @@ import { GenerationLoader } from './GenerationLoader'
 export function ImportProgress({ applicationName }: { applicationName?: string }) {
   return (
     <div
-      className="card-panel"
       style={{
-        padding: 'var(--space-10) var(--space-5)',
+        background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
+        backdropFilter: 'blur(16px) saturate(1.25)',
+        border: '1px solid var(--border-1)',
+        borderRadius: 14,
+        boxShadow: 'var(--panel-shadow)',
         marginTop: 'var(--space-5)',
       }}
     >
       <GenerationLoader
-        title={`Discovering journeys${applicationName ? ` in ${applicationName}` : ''}`}
+        icon={Route}
+        title="Mapping journeys…"
+        body={`Vantage is crawling the deployed URL and grouping the crawl graph into journeys${applicationName ? ` in ${applicationName}` : ''}.`}
+        bullets={['Crawling pages', 'Grouping flows', 'Capturing screenshots']}
         footer={
-          <p className="caption" style={{ margin: '6px 0 0', fontSize: 12, opacity: 0.7 }}>
+          <p className="caption" style={{ margin: '10px 0 0', fontSize: 12, opacity: 0.7 }}>
             Discovery runs in the background — this list updates automatically.
           </p>
         }

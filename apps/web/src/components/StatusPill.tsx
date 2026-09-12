@@ -31,9 +31,13 @@ const STATUS_COLORS: Record<string, { background: string; foreground: string }> 
   blocked: { background: 'var(--warn-wash)', foreground: 'var(--warn-strong)' },
   pending: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   passed: { background: 'var(--good-wash)', foreground: 'var(--good-strong)' },
+  // Not a stored TestResult.status — a display-only bucket for a result
+  // that only passed after auto-heal fixed it (healed_test_asset_id set +
+  // status passed). Computed by callers, never sent by the API.
+  flaky: { background: 'var(--warn-wash)', foreground: 'var(--warn-strong)' },
   timed_out: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },
   errored: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },
-  not_run: { background: 'var(--canvas-wash-alt)', foreground: 'var(--ink-muted)' },
+  not_run: { background: 'var(--hover)', foreground: 'var(--fg-4)' },
   // Post-execution pass-rate badge (Home card, Runs tab, Overview tab) —
   // shares `_health_tier`'s tier names (apps/api/src/api/main.py) so the
   // wording/color is one vocabulary everywhere it appears.
@@ -59,6 +63,7 @@ const LABELS: Record<string, string> = {
   blocked: 'Skipped',
   pending: 'Pending',
   passed: 'Passed',
+  flaky: 'Flaky',
   failed: 'Failed',
   timed_out: 'Timed Out',
   errored: 'Errored',
@@ -73,6 +78,7 @@ export function StatusPill({
   pulsing,
   label: labelOverride,
   variant = 'pill',
+  dot = true,
 }: {
   status: string
   pulsing?: boolean
@@ -86,6 +92,9 @@ export function StatusPill({
   // (colored dot + plain text, e.g. Vercel/Linear deployment status) —
   // same color data, no background/padding/shadow.
   variant?: 'pill' | 'inline'
+  // The prototype's Applications table status chip is bare colored
+  // text — no leading dot — unlike every other pill in the app.
+  dot?: boolean
 }) {
   const label = labelOverride ?? LABELS[status] ?? status.charAt(0).toUpperCase() + status.slice(1)
   const colors = STATUS_COLORS[status] ?? STATUS_COLORS.running
@@ -99,7 +108,7 @@ export function StatusPill({
         alignItems: 'center',
         gap: 6,
         background: inline ? 'none' : colors.background,
-        color: inline ? 'var(--ink-secondary)' : colors.foreground,
+        color: inline ? 'var(--fg-2)' : colors.foreground,
         fontSize: inline ? 12.5 : undefined,
         fontWeight: inline ? 600 : undefined,
       }}
@@ -108,7 +117,7 @@ export function StatusPill({
           proper status indicator (like a build/CI chip) instead of plain
           tinted text. While in motion it becomes a spinning ring instead of
           a solid dot — reads as "actively working" rather than a blink. */}
-      {showPulse ? (
+      {dot && (showPulse ? (
         <span
           aria-hidden="true"
           style={{
@@ -133,7 +142,7 @@ export function StatusPill({
             flexShrink: 0,
           }}
         />
-      )}
+      ))}
       {label}
     </span>
   )

@@ -5,7 +5,7 @@ import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
-    <span className="label-required" style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
+    <span className="label-required" style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-2)' }}>
       {children}
     </span>
   )
@@ -145,13 +145,22 @@ export function ScheduleDialog({
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
-        className="card-panel"
-        style={{ width: '100%', maxWidth: 480, padding: '24px 28px', boxSizing: 'border-box' }}
+        style={{
+          background: 'linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,255,255,0.82))',
+          backdropFilter: 'blur(20px) saturate(1.3)',
+          border: '1px solid var(--border-2)',
+          borderRadius: 16,
+          boxShadow: '0 30px 80px rgba(8,12,20,0.34), var(--panel-shadow)',
+          width: '100%',
+          maxWidth: 480,
+          padding: '24px 28px',
+          boxSizing: 'border-box',
+        }}
       >
-        <h2 style={{ fontSize: 17, fontWeight: 600, color: 'var(--ink)', margin: '0 0 4px' }}>
+        <h2 style={{ fontSize: 17, fontWeight: 600, color: 'var(--fg)', margin: '0 0 4px' }}>
           {initial ? 'Edit schedule' : 'New schedule'}
         </h2>
-        <p style={{ fontSize: 13.5, color: 'var(--ink-muted)', margin: '10px 0 18px' }}>
+        <p style={{ fontSize: 13.5, color: 'var(--fg-4)', margin: '10px 0 18px' }}>
           Automatically runs "Run All Tests" for this Application on the cadence below.
         </p>
 
@@ -162,7 +171,7 @@ export function ScheduleDialog({
               <input
                 required
                 autoFocus
-                placeholder="Nightly Regression"
+                placeholder="Enter a name for this schedule"
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
@@ -184,7 +193,7 @@ export function ScheduleDialog({
 
             {form.cadenceType === 'weekly' && (
               <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
-                <legend style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-secondary)', padding: 0 }}>
+                <legend style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-2)', padding: 0 }}>
                   Days
                 </legend>
                 <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginTop: 6 }}>
@@ -272,7 +281,7 @@ export function ScheduleDialog({
             <p
               className="caption"
               style={{
-                background: 'var(--canvas-wash)',
+                background: 'var(--bg-2)',
                 borderRadius: 'var(--radius)',
                 padding: 'var(--space-3)',
                 margin: 0,

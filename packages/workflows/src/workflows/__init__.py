@@ -5,6 +5,12 @@ direct browser/LLM/Git calls — only calls to Activities and Workflow-safe
 primitives. All I/O lives in apps/workers/* Activities.
 """
 
+from workflows.autofill_scenario_test_data_workflow import (
+    AUTOFILL_SCENARIO_TEST_DATA_ACTIVITY_NAME,
+    AutofillScenarioTestDataActivityInput,
+    AutofillScenarioTestDataResult,
+    AutofillScenarioTestDataWorkflow,
+)
 from workflows.add_test_case_workflow import (
     ANALYZE_PROMPT_ACTIVITY_NAME,
     DISCARD_TEST_RUN_ACTIVITY_NAME,
@@ -108,6 +114,7 @@ from workflows.suite_generation_workflow import (
 __all__ = [
     "ANALYZE_PROMPT_ACTIVITY_NAME",
     "APPLICATION_MODEL_BUILDER_ACTIVITY_NAME",
+    "AUTOFILL_SCENARIO_TEST_DATA_ACTIVITY_NAME",
     "AUTO_HEAL_ATTEMPT_CAP",
     "CHECK_SCHEDULE_GATE_ACTIVITY_NAME",
     "DEFAULT_MAX_CONCURRENCY",
@@ -138,6 +145,9 @@ __all__ = [
     "REGENERATE_TEST_ASSET_ACTIVITY_NAME",
     "SCENARIO_GENERATION_ACTIVITY_NAME",
     "AnalyzePromptActivityInput",
+    "AutofillScenarioTestDataActivityInput",
+    "AutofillScenarioTestDataResult",
+    "AutofillScenarioTestDataWorkflow",
     "ApplicationModelBuilderActivityInput",
     "ApplicationModelBuilderActivityOutput",
     "ApplicationTestExecutionWorkflow",

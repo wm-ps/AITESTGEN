@@ -43,8 +43,59 @@
   --happy-wash: #eff6ff;
   --happy-strong: #1d4ed8;
 
-  --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'SFMono-Regular', Consolas, ui-monospace, Menlo, monospace;
+  --font-ui: 'Instrument Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, ui-monospace, Menlo, monospace;
+
+  /* Vantage V2 palette (_bmad-output/.../mockups/Vantage v2.html, light theme) —
+     added alongside the block above rather than replacing it: the redesign is
+     landing screen by screen, and pages not yet migrated still read the
+     --canvas/--ink/etc names above. Drop the old block once every screen has
+     moved to these names. */
+  --bg: #EDEEF0;
+  --bg-2: #FAFAFB;
+  --panel: #FFFFFF;
+  --panel-hi: #FFFFFF;
+  --panel-2: #F5F6F7;
+  --code-bg: #15161A;
+  --line: #E5E6E9;
+  /* Vantage v2's own subtlest tier — named distinctly from the legacy
+     --border above (kept for unmigrated screens like SignIn.tsx) rather than
+     overwriting it, so this doesn't silently reshade pages outside this
+     redesign. Card-panel outlines use this; --border-2/--border-3 stay the
+     stronger dividers (inputs, buttons, menus) the prototype itself also
+     uses at that strength. */
+  --border-1: #DADCE0;
+  --border-2: #C8CACF;
+  --border-3: #ABAEB5;
+  --row-line: #EBECEE;
+  --row-hover: #F7F8F9;
+  --hover: #F1F2F4;
+  --chip: #EFF0F2;
+  --seg: #E4E6E9;
+  --track: #E8E9EC;
+  --fg: #16161A;
+  --fg-1: #232329;
+  --fg-2: #3E3E46;
+  --fg-3: #484851;
+  --fg-4: #5C5C66;
+  --fg-5: #9C9CA6;
+  --fg-6: #BDBDC5;
+  --accent-hi: #0C5E58;
+  --accent-2: #0D6B64;
+  --accent-deep: #083F3B;
+  --ok: #0D8A64;
+  --bad: #C93049;
+  --on-ok: #FFFFFF;
+  /* named --warn-2, not --warn: the block above already defines --warn at a
+     different shade and unconverted pages still read that one */
+  --warn-2: #9A6A10;
+  --accent-glow: 0 6px 16px rgba(15, 118, 110, 0.18);
+  --panel-shadow: 0 1px 1px rgba(22, 26, 38, 0.05), 0 6px 18px rgba(22, 26, 38, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.6);
+  --glow: radial-gradient(circle, rgba(15, 118, 110, 0.13), transparent 68%);
+  --panel-veil: rgba(255, 255, 255, 0.78);
+  --page-wash: radial-gradient(900px 520px at 8% -10%, rgba(15, 118, 110, 0.1), transparent 60%),
+    radial-gradient(760px 460px at 98% 2%, rgba(13, 138, 100, 0.07), transparent 58%),
+    radial-gradient(680px 420px at 62% 108%, rgba(154, 106, 16, 0.06), transparent 60%);
 
   --radius-xs: 6px;
   --radius-sm: 7px;

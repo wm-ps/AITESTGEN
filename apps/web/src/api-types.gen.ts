@@ -124,6 +124,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/team": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Team */
+        get: operations["list_team_team_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/team/{email}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Team Member */
+        delete: operations["remove_team_member_team__email__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/forgot-password": {
         parameters: {
             query?: never;
@@ -171,6 +205,23 @@ export interface paths {
         put?: never;
         /** Create Application */
         post: operations["create_application_applications_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/test-connection": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test Application Connection */
+        post: operations["test_application_connection_applications_test_connection_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -292,6 +343,57 @@ export interface paths {
          *     password, isn't what this form collects).
          */
         patch: operations["update_application_credentials_applications__external_id__credentials_patch"];
+        trace?: never;
+    };
+    "/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Credentials */
+        get: operations["list_credentials_credentials_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/credentials/{external_id}/reveal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reveal Credential */
+        post: operations["reveal_credential_credentials__external_id__reveal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/credentials/{external_id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify Credential */
+        post: operations["verify_credential_credentials__external_id__verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/applications/{external_id}/resume-discovery": {
@@ -524,6 +626,24 @@ export interface paths {
         put?: never;
         /** Regenerate Test Asset */
         post: operations["regenerate_test_asset_scenarios__external_id__test_data_regenerate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/scenarios/{external_id}/test-data/auto-fill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Autofill Scenario Test Data Status */
+        get: operations["get_autofill_scenario_test_data_status_scenarios__external_id__test_data_auto_fill_get"];
+        put?: never;
+        /** Autofill Scenario Test Data */
+        post: operations["autofill_scenario_test_data_scenarios__external_id__test_data_auto_fill_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1117,6 +1237,13 @@ export interface components {
             username: string;
             /** Password */
             password: string;
+            /**
+             * Mfa Enabled
+             * @default false
+             */
+            mfa_enabled: boolean;
+            /** Totp Seed */
+            totp_seed?: string | null;
         };
         /** ApplicationRead */
         ApplicationRead: {
@@ -1164,6 +1291,14 @@ export interface components {
             /** Name */
             name: string;
         };
+        /** AutofillScenarioTestDataStatusRead */
+        AutofillScenarioTestDataStatusRead: {
+            /** Status */
+            status: string;
+            scenario?: components["schemas"]["ScenarioRead"] | null;
+            /** Error Message */
+            error_message?: string | null;
+        };
         /** CaptureRead */
         CaptureRead: {
             /** Kind */
@@ -1175,6 +1310,46 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+        };
+        /** ConnectionTestPayload */
+        ConnectionTestPayload: {
+            /** Url */
+            url: string;
+        };
+        /** ConnectionTestResult */
+        ConnectionTestResult: {
+            /** Reachable */
+            reachable: boolean;
+            /** Detail */
+            detail?: string | null;
+        };
+        /** CredentialListEntry */
+        CredentialListEntry: {
+            /**
+             * Application Id
+             * Format: uuid
+             */
+            application_id: string;
+            /** Application Name */
+            application_name: string;
+            /** Environment */
+            environment: string;
+            /** Username */
+            username: string;
+            /** Has Password */
+            has_password: boolean;
+        };
+        /** CredentialReveal */
+        CredentialReveal: {
+            /** Password */
+            password: string;
+        };
+        /** CredentialVerifyResult */
+        CredentialVerifyResult: {
+            /** Reachable */
+            reachable: boolean;
+            /** Detail */
+            detail?: string | null;
         };
         /** ExecutionPolicyRead */
         ExecutionPolicyRead: {
@@ -1694,6 +1869,22 @@ export interface components {
              */
             max_test_cases_per_application: number | "__unset__" | null;
         };
+        /** TeamMemberRead */
+        TeamMemberRead: {
+            /** Name */
+            name: string;
+            /** Email */
+            email: string;
+            /** Role */
+            role: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Last Active At */
+            last_active_at?: string | null;
+        };
         /** TestAssetCodeRead */
         TestAssetCodeRead: {
             /** Code */
@@ -2208,6 +2399,68 @@ export interface operations {
             };
         };
     };
+    list_team_team_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamMemberRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_team_member_team__email__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                email: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     forgot_password_auth_forgot_password_post: {
         parameters: {
             query?: never;
@@ -2360,6 +2613,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApplicationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_application_connection_applications_test_connection_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionTestPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionTestResult"];
                 };
             };
             /** @description Validation Error */
@@ -2597,6 +2885,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApplicationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_credentials_credentials_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialListEntry"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reveal_credential_credentials__external_id__reveal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialReveal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_credential_credentials__external_id__verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialVerifyResult"];
                 };
             };
             /** @description Validation Error */
@@ -3190,6 +3575,74 @@ export interface operations {
         };
     };
     regenerate_test_asset_scenarios__external_id__test_data_regenerate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_autofill_scenario_test_data_status_scenarios__external_id__test_data_auto_fill_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutofillScenarioTestDataStatusRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    autofill_scenario_test_data_scenarios__external_id__test_data_auto_fill_post: {
         parameters: {
             query?: never;
             header?: never;

@@ -50,3 +50,11 @@ class PlatformUser(SQLModel, table=True):
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
+    # Bumped on every authenticated request (see `api.auth.current_user`,
+    # the one choke point every route already depends on to slide the
+    # session's idle window) — never set anywhere else, so it always
+    # reflects real session activity, not just login time.
+    last_active_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )

@@ -25,6 +25,7 @@ from workflows import (
 )
 
 from generation_worker.activities import (
+    autofill_scenario_test_data_activity,
     ensure_test_suite_activity,
     finalize_suite_generation_activity,
     playwright_generation_activity,
@@ -64,6 +65,7 @@ async def main() -> None:
             playwright_generation_activity,
             finalize_suite_generation_activity,
             regenerate_test_asset_activity,
+            autofill_scenario_test_data_activity,
             # Live-exploration NLM feature — prompt classification is a
             # cheap AI-only call. LiveExploreActivity/LiveHealActivity (the
             # actual Playwright-MCP browser agent, which also creates the

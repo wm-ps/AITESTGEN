@@ -1,30 +1,29 @@
 import { useEffect, useRef, useState } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faBrain, faChevronDown, faChevronRight, faRoute, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
 import { api, formatTestCaseNumber, type JourneyRead, type ScenarioRead } from '../api'
-import { Stepper, type StepKey } from './Stepper'
 import { GenerationLoader } from './GenerationLoader'
 import { ServiceErrorNote } from './ServiceError'
-import { Pagination } from './Pagination'
 import { EmptyState, ScenariosIllustration } from './EmptyState'
+import { faIcon } from '../faIcon'
 
-const POLL_INTERVAL_MS = 3000
-const SCENARIOS_PER_PAGE = 5
+const Route = faIcon(faRoute)
+const WandSparkles = faIcon(faWandMagicSparkles)
+const Brain = faIcon(faBrain)
 
-const READINESS_FILTERS = ['All', 'Ready', 'Needs data'] as const
-type ReadinessFilter = (typeof READINESS_FILTERS)[number]
-
-function ReadinessPill({ ready }: { ready: boolean }) {
+// Matches the prototype's disclosure pattern exactly — a closed group/scenario
+// shows fa-chevron-right, an open one shows fa-chevron-down (two different
+// glyphs, not one rotated).
+function ChevronIcon({ open, small }: { open: boolean; small?: boolean }) {
   return (
-    <span
-      className="status-pill"
-      style={{
-        background: ready ? 'var(--good-wash)' : 'var(--warn-wash)',
-        color: ready ? 'var(--good-strong)' : 'var(--warn-strong)',
-      }}
-    >
-      {ready ? 'Ready' : 'Test Data Required'}
-    </span>
+    <FontAwesomeIcon
+      icon={open ? faChevronDown : faChevronRight}
+      style={{ fontSize: small ? 10 : 11, color: 'var(--fg-4)', flex: 'none' }}
+    />
   )
 }
+
+const POLL_INTERVAL_MS = 3000
 
 function ScenarioRenameInput({
   initialName,
@@ -42,7 +41,7 @@ function ScenarioRenameInput({
     <input
       autoFocus
       value={value}
-      aria-label="Test case name"
+      aria-label="Scenario name"
       onChange={(e) => setValue(e.target.value)}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => {
@@ -59,7 +58,7 @@ function ScenarioRenameInput({
         else onCancel()
       }}
       style={{
-        border: '1px solid var(--border-strong)',
+        border: '1px solid var(--border-3)',
         borderRadius: 'var(--radius)',
         padding: '4px 8px',
         fontSize: 14,
@@ -67,189 +66,6 @@ function ScenarioRenameInput({
         marginRight: 'var(--space-3)',
       }}
     />
-  )
-}
-
-function SingleSelectFilterDropdown<T extends string>({
-  label,
-  options,
-  selected,
-  formatOption,
-  onChange,
-}: {
-  label: string
-  options: readonly T[]
-  selected: T
-  formatOption?: (value: T) => string
-  onChange: (value: T) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const display = formatOption ? formatOption(selected) : selected
-
-  return (
-    <div style={{ position: 'relative' }}>
-      <button
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className="button-secondary"
-        style={{ fontSize: 12, whiteSpace: 'nowrap' }}
-      >
-        {label}: {display} ▾
-      </button>
-      {open && (
-        <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 9 }} onClick={() => setOpen(false)} />
-          <div
-            role="menu"
-            aria-label={`Filter by ${label.toLowerCase()}`}
-            className="card-panel"
-            style={{
-              position: 'absolute',
-              right: 0,
-              top: 34,
-              minWidth: 170,
-              boxShadow: '0 12px 28px rgba(15,23,42,0.14)',
-              zIndex: 10,
-              padding: 'var(--space-2) 0',
-            }}
-          >
-            {options.map((option) => (
-              <button
-                key={option}
-                type="button"
-                role="menuitemradio"
-                aria-checked={selected === option}
-                onClick={() => {
-                  onChange(option)
-                  setOpen(false)
-                }}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: '8px 12px',
-                  background: selected === option ? 'var(--canvas-wash-alt)' : 'none',
-                  border: 'none',
-                  fontSize: 12.5,
-                  fontWeight: selected === option ? 600 : 500,
-                  color: selected === option ? 'var(--accent)' : 'var(--ink)',
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                }}
-              >
-                {formatOption ? formatOption(option) : option}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-function JourneyFilterDropdown({
-  journeys,
-  selected,
-  onChange,
-}: {
-  journeys: JourneyRead[]
-  selected: Set<string>
-  onChange: (next: Set<string>) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const label = selected.size === 0 ? 'All journeys' : `${selected.size} journey${selected.size === 1 ? '' : 's'}`
-
-  function toggle(id: string) {
-    const next = new Set(selected)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    onChange(next)
-  }
-
-  return (
-    <div style={{ position: 'relative' }}>
-      <button
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className="button-secondary"
-        style={{ fontSize: 12, whiteSpace: 'nowrap' }}
-      >
-        {label} ▾
-      </button>
-      {open && (
-        <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 9 }} onClick={() => setOpen(false)} />
-          <div
-            role="menu"
-            aria-label="Filter by journey"
-            className="card-panel"
-            style={{
-              position: 'absolute',
-              right: 0,
-              top: 34,
-              minWidth: 220,
-              maxHeight: 280,
-              overflowY: 'auto',
-              boxShadow: '0 12px 28px rgba(15,23,42,0.14)',
-              zIndex: 10,
-              padding: 'var(--space-2) 0',
-            }}
-          >
-            {selected.size > 0 && (
-              <button
-                type="button"
-                onClick={() => onChange(new Set())}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: '8px 12px',
-                  background: 'none',
-                  border: 'none',
-                  borderBottom: '1px solid var(--border-hairline)',
-                  fontSize: 12.5,
-                  fontWeight: 600,
-                  color: 'var(--accent)',
-                  cursor: 'pointer',
-                  fontFamily: 'inherit',
-                }}
-              >
-                Clear filter
-              </button>
-            )}
-            {journeys.map((journey) => (
-              <label
-                key={journey.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '8px 12px',
-                  fontSize: 12.5,
-                  cursor: 'pointer',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={selected.has(journey.id)}
-                  onChange={() => toggle(journey.id)}
-                />
-                {journey.name}
-              </label>
-            ))}
-            {journeys.length === 0 && (
-              <div className="caption" style={{ padding: '8px 12px', fontSize: 12 }}>
-                No journeys yet.
-              </div>
-            )}
-          </div>
-        </>
-      )}
-    </div>
   )
 }
 
@@ -262,7 +78,7 @@ function ScenarioRowMenu({ onRename, onDelete }: { onRename: () => void; onDelet
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="Test case actions"
+        aria-label="Scenario actions"
         onClick={() => setOpen((o) => !o)}
         style={{
           width: 26,
@@ -270,7 +86,7 @@ function ScenarioRowMenu({ onRename, onDelete }: { onRename: () => void; onDelet
           borderRadius: 'var(--radius)',
           background: 'transparent',
           border: 'none',
-          color: 'var(--ink-muted)',
+          color: 'var(--fg-4)',
           cursor: 'pointer',
           fontSize: 16,
           lineHeight: 1,
@@ -348,26 +164,23 @@ function ScenarioRowMenu({ onRename, onDelete }: { onRename: () => void; onDelet
 export function ReviewScenarios({
   applicationId,
   onContinueToGenerate,
-  furthestCount,
-  onStepClick,
-  onPrevious,
-  onNext,
+  onGoToJourneys,
 }: {
   applicationId: string
   onContinueToGenerate: () => void
-  furthestCount: number
-  onStepClick?: (key: StepKey) => void
-  onPrevious?: () => void
-  onNext?: () => void
+  onGoToJourneys: () => void
 }) {
   const [scenarios, setScenarios] = useState<ScenarioRead[]>([])
   const [journeys, setJourneys] = useState<JourneyRead[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  // Vantage V2: accordion by journey, then by scenario — journey groups open
+  // by default, scenario detail (steps + test data) closed by default,
+  // matching the prototype's own open/closed defaults. No more pagination;
+  // an accordion's own collapse already manages density.
+  const [closedGroupIds, setClosedGroupIds] = useState<Set<string>>(new Set())
+  const [openScenarioIds, setOpenScenarioIds] = useState<Set<string>>(new Set())
   const [renamingId, setRenamingId] = useState<string | null>(null)
-  const [readinessFilter, setReadinessFilter] = useState<ReadinessFilter>('All')
-  const [journeyFilter, setJourneyFilter] = useState<Set<string>>(new Set())
-  const [search, setSearch] = useState('')
-  const [page, setPage] = useState(0)
+  const [autofillingId, setAutofillingId] = useState<string | null>(null)
+  const [autofillError, setAutofillError] = useState<string | null>(null)
   // Same distinction DiscoverJourneys draws for Journeys: "generation still
   // running" and "every Scenario was removed" both look like an empty list.
   const hadScenariosRef = useRef(false)
@@ -423,13 +236,6 @@ export function ReviewScenarios({
     }
   }, [applicationId, isComplete])
 
-  // Land on the first Scenario selected by default, not an empty canvas —
-  // also re-picks the first one if the selected Scenario was deleted.
-  useEffect(() => {
-    if (selectedId && scenarios.some((s) => s.id === selectedId)) return
-    setSelectedId(scenarios[0]?.id ?? null)
-  }, [scenarios, selectedId])
-
   async function handleRename(id: string, name: string) {
     setRenamingId(null)
     const updated = await api.renameScenario(id, name)
@@ -437,10 +243,9 @@ export function ReviewScenarios({
   }
 
   async function handleDelete(id: string) {
-    if (!window.confirm('Delete this test case?')) return
+    if (!window.confirm('Delete this scenario?')) return
     await api.deleteScenario(id)
     setScenarios((rows) => rows.filter((s) => s.id !== id))
-    setSelectedId((current) => (current === id ? null : current))
   }
 
   async function handleTestDataChange(scenarioId: string, name: string, value: string) {
@@ -448,37 +253,72 @@ export function ReviewScenarios({
     setScenarios((rows) => rows.map((s) => (s.id === scenarioId ? updated : s)))
   }
 
-  const selectedScenario = scenarios.find((s) => s.id === selectedId) ?? null
+  // "Clear" — resets every field on this Scenario to blank, reusing the same
+  // per-field endpoint the manual edit fields already call (no new backend
+  // needed for this half of the feature).
+  async function handleClearTestData(scenario: ScenarioRead) {
+    for (const field of scenario.test_data) {
+      await handleTestDataChange(scenario.id, field.name, '')
+    }
+  }
+
+  // "Auto-generate" — the same deterministic, non-AI default fill Suite
+  // Generation already applies to any still-blank field, triggerable early.
+  async function handleAutofillTestData(scenarioId: string) {
+    if (autofillingId) return
+    setAutofillingId(scenarioId)
+    setAutofillError(null)
+    try {
+      await api.autofillScenarioTestData(scenarioId)
+      let result = await api.getAutofillScenarioTestDataStatus(scenarioId)
+      while (result.status === 'running') {
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        result = await api.getAutofillScenarioTestDataStatus(scenarioId)
+      }
+      if (result.status === 'complete' && result.scenario) {
+        setScenarios((rows) => rows.map((s) => (s.id === scenarioId ? result.scenario! : s)))
+      } else {
+        setAutofillError(result.error_message ?? 'Could not auto-fill test data — try again.')
+      }
+    } catch {
+      setAutofillError('Could not auto-fill test data — try again.')
+    } finally {
+      setAutofillingId(null)
+    }
+  }
+
   // `[UPDATED]` No longer gated on test_data completeness — any blank field
   // (missed by the reviewer, or never filled in at all) gets a sensible
   // default at generation time (PlaywrightGenerationActivity, Story 4.2).
   // Enabled as soon as there's at least one Scenario to generate from.
   const canContinue = scenarios.length > 0
-  const searchLower = search.trim().toLowerCase()
-  const visibleScenarios = scenarios.filter((s) => {
-    const matchesSearch =
-      (s.name ?? '').toLowerCase().includes(searchLower) ||
-      (s.journey_name ?? '').toLowerCase().includes(searchLower) ||
-      formatTestCaseNumber(s.test_case_number).toLowerCase().includes(searchLower)
-    if (!matchesSearch) return false
-    if (journeyFilter.size > 0 && !journeyFilter.has(s.journey_id)) return false
-    if (readinessFilter === 'Ready') return s.test_data_complete
-    if (readinessFilter === 'Needs data') return !s.test_data_complete
-    return true
-  })
+  // Matches the prototype's scenarioSubhead: "{N} scenarios across {M}
+  // journeys · each with its own test steps and test data".
   const headerSub =
-    scenarios.length === 0 ? '' : `${scenarios.length} test case${scenarios.length === 1 ? '' : 's'} generated.`
-  const totalPages = Math.max(1, Math.ceil(visibleScenarios.length / SCENARIOS_PER_PAGE))
-  const pageClamped = Math.min(page, totalPages - 1)
-  const pagedScenarios = visibleScenarios.slice(
-    pageClamped * SCENARIOS_PER_PAGE,
-    pageClamped * SCENARIOS_PER_PAGE + SCENARIOS_PER_PAGE,
-  )
-  const showPagination = visibleScenarios.length > SCENARIOS_PER_PAGE
+    scenarios.length === 0
+      ? ''
+      : `${scenarios.length} scenario${scenarios.length === 1 ? '' : 's'} across ${journeys.length} journey${journeys.length === 1 ? '' : 's'} · each with its own test steps and test data`
+
+  // Group by journey, in the same order Journeys were discovered — a
+  // journey_id with no match in `journeys` (its Journey was deleted) still
+  // gets its own group, keyed by that scenario's own journey_name.
+  const groupedScenarios: { journeyId: string; journeyName: string; scenarios: ScenarioRead[] }[] = []
+  for (const journey of journeys) {
+    const inGroup = scenarios.filter((s) => s.journey_id === journey.id)
+    if (inGroup.length > 0) groupedScenarios.push({ journeyId: journey.id, journeyName: journey.name, scenarios: inGroup })
+  }
+  for (const scenario of scenarios) {
+    if (!journeys.some((j) => j.id === scenario.journey_id) && !groupedScenarios.some((g) => g.journeyId === scenario.journey_id)) {
+      groupedScenarios.push({
+        journeyId: scenario.journey_id,
+        journeyName: scenario.journey_name,
+        scenarios: scenarios.filter((s) => s.journey_id === scenario.journey_id),
+      })
+    }
+  }
 
   return (
     <>
-      <Stepper current="review" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
       <main style={{ width: '100%', boxSizing: 'border-box', flex: 1, display: 'flex', flexDirection: 'column' }}>
       <div
         style={{
@@ -501,7 +341,7 @@ export function ReviewScenarios({
           }}
         >
           <div>
-            <h2 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>Review Test Cases</h2>
+            <h2 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Scenarios</h2>
             {headerSub && (
               <div className="caption" style={{ fontSize: 13, marginTop: 3, maxWidth: 520 }}>
                 {headerSub}
@@ -509,56 +349,18 @@ export function ReviewScenarios({
             )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)', flexShrink: 0 }}>
-              {isComplete && (
-                <>
-                  <SingleSelectFilterDropdown
-                    label="Readiness"
-                    options={READINESS_FILTERS}
-                    selected={readinessFilter}
-                    onChange={(value) => {
-                      setReadinessFilter(value)
-                      setPage(0)
-                    }}
-                  />
-                  <JourneyFilterDropdown
-                    journeys={journeys}
-                    selected={journeyFilter}
-                    onChange={(next) => {
-                      setJourneyFilter(next)
-                      setPage(0)
-                    }}
-                  />
-                  <input
-                    type="text"
-                    placeholder="Search test cases"
-                    aria-label="Search test cases"
-                    value={search}
-                    onChange={(e) => {
-                      setSearch(e.target.value)
-                      setPage(0)
-                    }}
-                    style={{
-                      width: 200,
-                      boxSizing: 'border-box',
-                      padding: '8px 12px',
-                      border: '1px solid var(--border)',
-                      borderRadius: 'var(--radius)',
-                      fontSize: 13,
-                      fontFamily: 'inherit',
-                      color: 'var(--ink)',
-                    }}
-                  />
-                </>
-              )}
               <button
                 type="button"
                 onClick={onContinueToGenerate}
                 disabled={!canContinue}
                 style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
                   padding: '10px 20px',
                   whiteSpace: 'nowrap',
-                  background: canContinue ? 'var(--accent)' : 'var(--border)',
-                  color: canContinue ? 'var(--accent-ink)' : 'var(--ink-faint)',
+                  background: canContinue ? 'var(--accent)' : 'var(--border-2)',
+                  color: canContinue ? 'var(--accent-ink)' : 'var(--fg-5)',
                   border: 'none',
                   borderRadius: 'var(--radius)',
                   fontSize: 14,
@@ -568,6 +370,7 @@ export function ReviewScenarios({
                   boxShadow: canContinue ? 'var(--shadow-button-primary)' : 'none',
                 }}
               >
+                <WandSparkles size={14} />
                 Generate Test Suite
               </button>
           </div>
@@ -576,13 +379,17 @@ export function ReviewScenarios({
         {scenarios.length === 0 && hadScenariosRef.current ? (
           <EmptyState
             illustration={<ScenariosIllustration />}
-            title="No test cases remain"
-            subtitle="Add journeys back to generate new test cases."
+            title="No scenarios remain"
+            subtitle="Add journeys back to generate new scenarios."
           />
         ) : !isComplete && generationUnavailable ? (
           <div
-            className="card-panel"
             style={{
+              background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
+              backdropFilter: 'blur(16px) saturate(1.25)',
+              border: '1px solid var(--border-1)',
+              borderRadius: 14,
+              boxShadow: 'var(--panel-shadow)',
               padding: 'var(--space-10) var(--space-5)',
               marginTop: 'var(--space-5)',
               textAlign: 'center',
@@ -592,7 +399,7 @@ export function ReviewScenarios({
             <p className="caption" style={{ margin: '10px 0 0', fontSize: 12 }}>
               <button
                 type="button"
-                onClick={() => onStepClick?.('discover')}
+                onClick={onGoToJourneys}
                 style={{ font: 'inherit', color: 'var(--accent)', background: 'none', border: 0, padding: 0, cursor: 'pointer' }}
               >
                 Go back and retry
@@ -607,257 +414,219 @@ export function ReviewScenarios({
           // screen the same way, so both "something is generating" flows read
           // consistently: stay on the loader until the whole batch is done.
           <div
-            className="card-panel"
             style={{
-              padding: 'var(--space-10) var(--space-5)',
+              background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
+              backdropFilter: 'blur(16px) saturate(1.25)',
+              border: '1px solid var(--border-1)',
+              borderRadius: 14,
+              boxShadow: 'var(--panel-shadow)',
               marginTop: 'var(--space-5)',
             }}
           >
             <GenerationLoader
-              title="Generating test cases"
+              icon={Brain}
+              title="Modelling scenarios…"
+              body="Each settled journey is broken into scenarios with their own steps and test data. They appear here as discovery completes."
+              bullets={['Reading journeys', 'Drafting scenarios', 'Deriving test data']}
+              percent={journeys.length > 0 ? (journeysCovered / journeys.length) * 100 : undefined}
               caption={
-                <p className="caption" style={{ margin: 0, fontSize: 12.5 }}>
+                <p className="caption" style={{ margin: '2px 0 0', fontSize: 12.5 }}>
                   {journeysCovered}/{journeys.length || '…'} journeys covered
                 </p>
               }
               footer={
-                <p className="caption" style={{ margin: '6px 0 0', fontSize: 12, opacity: 0.7 }}>
+                <p className="caption" style={{ margin: '10px 0 0', fontSize: 12, opacity: 0.7 }}>
                   Generation runs in the background — this list updates automatically.
                 </p>
               }
             />
           </div>
         ) : (
-          <div className="card-panel" style={{ display: 'flex', overflow: 'hidden' }}>
-            <div
-              style={{
-                width: 280,
-                flexShrink: 0,
-                display: 'flex',
-                flexDirection: 'column',
-                background: 'var(--canvas-wash-alt)',
-                borderRight: '1px solid var(--border)',
-              }}
-            >
-              <ul
-                style={{
-                  listStyle: 'none',
-                  margin: 0,
-                  padding: 'var(--space-6) var(--space-5) var(--space-3)',
-                  flex: 1,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 'var(--space-2)',
-                }}
-              >
-                {pagedScenarios.map((scenario) => {
-                  // ponytail: Happy Path/Negative Path/Edge Case badge hidden
-                  // per request — commented, not deleted, so it's a one-line
-                  // revert. See the matching span below.
-                  // const badge = TYPE_BADGE[scenario.type] ?? TYPE_BADGE.happy
-                  return (
-                    <li
-                      key={scenario.id}
-                      className={`list-row card-clickable${selectedId === scenario.id ? ' list-row-selected' : ''}`}
-                      onClick={() => setSelectedId(scenario.id)}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {groupedScenarios.map((group) => {
+              const groupOpen = !closedGroupIds.has(group.journeyId)
+              return (
+                <div
+                  key={group.journeyId}
+                  style={{
+                    background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
+                    backdropFilter: 'blur(16px) saturate(1.25)',
+                    border: '1px solid var(--border-1)',
+                    borderRadius: 14,
+                    overflow: 'hidden',
+                    boxShadow: 'var(--panel-shadow)',
+                  }}
+                >
+                  <div
+                    onClick={() =>
+                      setClosedGroupIds((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(group.journeyId)) next.delete(group.journeyId)
+                        else next.add(group.journeyId)
+                        return next
+                      })
+                    }
+                    style={{ display: 'flex', alignItems: 'center', gap: 13, padding: '15px 18px', cursor: 'pointer', background: 'var(--panel)' }}
+                  >
+                    <ChevronIcon open={groupOpen} />
+                    <div
                       style={{
-                        padding: 'var(--space-4) var(--space-4)',
+                        width: 30,
+                        height: 30,
+                        flex: 'none',
+                        borderRadius: 9,
+                        background: 'var(--chip)',
+                        border: '1px solid var(--border-2)',
                         display: 'flex',
                         alignItems: 'center',
-                        justifyContent: 'space-between',
-                        cursor: 'pointer',
+                        justifyContent: 'center',
+                        color: 'var(--accent-2)',
                       }}
                     >
-                      {renamingId === scenario.id ? (
-                        <ScenarioRenameInput
-                          initialName={scenario.name}
-                          onSave={(name) => handleRename(scenario.id, name)}
-                          onCancel={() => setRenamingId(null)}
-                        />
-                      ) : (
-                        <div style={{ minWidth: 0 }}>
-                          <div
-                            style={{
-                              fontSize: 13.5,
-                              fontWeight: 600,
-                              color: selectedId === scenario.id ? 'var(--accent)' : 'var(--ink)',
-                            }}
-                          >
-                            <span className="caption" style={{ fontWeight: 700, marginRight: 6 }}>
-                              {formatTestCaseNumber(scenario.test_case_number)}
-                            </span>
-                            {scenario.name}
-                          </div>
-                          <div
-                            className="caption"
-                            style={{
-                              fontSize: 11.5,
-                              marginTop: 2,
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                            }}
-                          >
-                            {scenario.journey_name}
-                          </div>
-                          {/* <span className="badge" style={{ background: badge.background, color: badge.color }}>
-                            {badge.label}
-                          </span> */}
-                        </div>
-                      )}
-                      <ScenarioRowMenu
-                        onRename={() => setRenamingId(scenario.id)}
-                        onDelete={() => handleDelete(scenario.id)}
-                      />
-                    </li>
-                  )
-                })}
-                {pagedScenarios.length === 0 && (
-                  <EmptyState
-                    illustration={<ScenariosIllustration />}
-                    title="No test cases match these filters"
-                    subtitle="Try clearing a filter or the search term."
-                  />
-                )}
-              </ul>
-              {showPagination && (
-                <div style={{ flexShrink: 0, borderTop: '1px solid var(--border-hairline)' }}>
-                  <Pagination
-                    page={pageClamped}
-                    totalPages={totalPages}
-                    onPrev={() => setPage(pageClamped - 1)}
-                    onNext={() => setPage(pageClamped + 1)}
-                  />
-                </div>
-              )}
-            </div>
-
-            <div
-              style={{
-                flex: 1,
-                minWidth: 0,
-                padding: 'var(--space-9) var(--content-x)',
-              }}
-            >
-              {selectedScenario ? (
-                <div style={{ maxWidth: 950 }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 'var(--space-3)',
-                      marginBottom: 'var(--space-1)',
-                    }}
-                  >
-                    <div style={{ fontSize: 16, fontWeight: 700 }}>{selectedScenario.name}</div>
-                    {/* ponytail: Happy Path/Negative Path/Edge Case badge
-                        hidden per request — commented, not deleted.
-                    {(() => {
-                      const badge = TYPE_BADGE[selectedScenario.type] ?? TYPE_BADGE.happy
-                      return (
-                        <span className="badge" style={{ background: badge.background, color: badge.color }}>
-                          {badge.label}
-                        </span>
-                      )
-                    })()}
-                    */}
-                    <ReadinessPill ready={selectedScenario.test_data_complete} />
-                  </div>
-                  <div className="caption" style={{ fontSize: 12, marginBottom: 'var(--space-4)' }}>
-                    from {selectedScenario.journey_name}
-                  </div>
-
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 'var(--space-2)' }}>
-                    Test steps
-                  </div>
-                  <ol style={{ margin: '0 0 var(--space-4)', paddingLeft: 20 }}>
-                    {selectedScenario.steps.map((step, index) => (
-                      <li key={index} style={{ fontSize: 13, marginBottom: 6 }}>
-                        {step}
-                      </li>
-                    ))}
-                  </ol>
-
-                  {selectedScenario.test_data.length > 0 && (
-                  <div
-                    style={{
-                      background: 'var(--accent-wash-soft)',
-                      borderRadius: 'var(--radius-lg)',
-                      padding: 'var(--space-4)',
-                      marginBottom: 'var(--space-4)',
-                    }}
-                  >
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 'var(--space-3)' }}>
-                      Test data
+                      <Route size={14} />
                     </div>
-                    {!selectedScenario.test_data_complete && (
-                      <p
-                        role="alert"
-                        style={{
-                          background: 'var(--warn-wash)',
-                          color: '#92400E',
-                          borderRadius: 'var(--radius)',
-                          padding: 'var(--space-3)',
-                          fontSize: 12.5,
-                          margin: '0 0 var(--space-3)',
-                        }}
-                      >
-                        Test data required — fill in the highlighted fields below to mark this
-                        test case Ready.
-                      </p>
-                    )}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
-                      {selectedScenario.test_data.map((field) => {
-                        const missing = field.mandatory && !field.value
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.01em', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {group.journeyName}
+                      </div>
+                      <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 3 }}>
+                        {group.scenarios.length} scenario{group.scenarios.length === 1 ? '' : 's'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {groupOpen && (
+                    <div style={{ borderTop: '1px solid var(--border-2)' }}>
+                      {group.scenarios.map((scenario, index) => {
+                        const isOpen = openScenarioIds.has(scenario.id)
                         return (
-                          <label key={field.name} className="field">
-                            <span style={{ fontSize: 12 }}>
-                              {field.name}
-                              {field.mandatory && (
-                                <span style={{ color: 'var(--danger)' }} aria-label="required">
-                                  {' '}
-                                  *
-                                </span>
-                              )}
-                            </span>
-                            <input
-                              defaultValue={field.value ?? ''}
-                              placeholder={`Enter ${field.name}`}
-                              onBlur={(e) =>
-                                handleTestDataChange(selectedScenario.id, field.name, e.target.value)
+                          <div key={scenario.id} style={index ? { borderTop: '1px solid var(--row-line)' } : undefined}>
+                            <div
+                              onClick={() =>
+                                setOpenScenarioIds((prev) => {
+                                  const next = new Set(prev)
+                                  if (next.has(scenario.id)) next.delete(scenario.id)
+                                  else next.add(scenario.id)
+                                  return next
+                                })
                               }
-                            />
-                            {missing && (
-                              <span style={{ fontSize: 11, color: 'var(--warn-strong)' }}>
-                                Required to generate this test
+                              style={{ display: 'flex', alignItems: 'flex-start', gap: 13, padding: '15px 18px 15px 20px', cursor: 'pointer' }}
+                            >
+                              <span style={{ marginTop: 5 }}>
+                                <ChevronIcon open={isOpen} small />
                               </span>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                {renamingId === scenario.id ? (
+                                  <div onClick={(e) => e.stopPropagation()}>
+                                    <ScenarioRenameInput
+                                      initialName={scenario.name}
+                                      onSave={(name) => handleRename(scenario.id, name)}
+                                      onCancel={() => setRenamingId(null)}
+                                    />
+                                  </div>
+                                ) : (
+                                  <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg-1)' }}>
+                                    <span className="caption" style={{ fontWeight: 700, marginRight: 6 }}>
+                                      {formatTestCaseNumber(scenario.test_case_number)}
+                                    </span>
+                                    {scenario.name}
+                                  </div>
+                                )}
+                              </div>
+                              <div style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 14 }}>
+                                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--fg-4)', whiteSpace: 'nowrap' }}>
+                                  {scenario.steps.length} steps
+                                </span>
+                                <div onClick={(e) => e.stopPropagation()}>
+                                  <ScenarioRowMenu onRename={() => setRenamingId(scenario.id)} onDelete={() => handleDelete(scenario.id)} />
+                                </div>
+                              </div>
+                            </div>
+
+                            {isOpen && (
+                              <div style={{ padding: '2px 18px 18px 43px', display: 'flex', flexDirection: 'column', gap: 13 }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(300px,1fr))', gap: 13 }}>
+                                  <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, background: 'var(--panel-2)', padding: 14 }}>
+                                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-1)', marginBottom: 10 }}>Test steps</div>
+                                    <ol style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                                      {scenario.steps.map((step, stepIndex) => (
+                                        <li key={stepIndex} style={{ fontSize: 12.5, color: 'var(--fg-1)' }}>
+                                          {step}
+                                        </li>
+                                      ))}
+                                    </ol>
+                                  </div>
+
+                                  {scenario.test_data.length > 0 && (
+                                  <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, background: 'var(--panel-2)', padding: 14, minWidth: 0 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 13, flexWrap: 'wrap' }}>
+                                      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-1)', flex: 1 }}>Test data</span>
+                                    </div>
+                                    <>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 13 }}>
+                                          {scenario.test_data.map((field) => {
+                                            const missing = field.mandatory && !field.value
+                                            return (
+                                              <div key={field.name} style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
+                                                <label style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)' }}>
+                                                  {field.name}
+                                                  {field.mandatory && <span style={{ color: 'var(--bad)' }}> *</span>}
+                                                </label>
+                                                <input
+                                                  defaultValue={field.value ?? ''}
+                                                  placeholder={`Enter ${field.name}`}
+                                                  onBlur={(e) => handleTestDataChange(scenario.id, field.name, e.target.value)}
+                                                  style={{ height: 34, padding: '0 10px', border: `1px solid ${missing ? 'var(--warn-2)' : 'var(--border-2)'}`, borderRadius: 8, fontSize: 12.5, color: 'var(--fg-1)', background: 'var(--panel)', outline: 'none' }}
+                                                />
+                                                <div style={{ fontSize: 10.5, color: 'var(--fg-4)' }}>
+                                                  {field.mandatory ? 'Required for this scenario' : 'Optional — auto-filled if left blank'}
+                                                </div>
+                                                {missing && <div style={{ fontSize: 10.5, color: 'var(--warn-2)' }}>Required to generate this test</div>}
+                                              </div>
+                                            )
+                                          })}
+                                        </div>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
+                                          <button
+                                            type="button"
+                                            disabled={autofillingId === scenario.id}
+                                            onClick={() => handleAutofillTestData(scenario.id)}
+                                            style={{ display: 'inline-flex', alignItems: 'center', gap: 7, height: 30, padding: '0 12px', borderRadius: 8, border: '1px solid var(--border-2)', background: 'var(--panel)', fontSize: 12, fontWeight: 500, color: 'var(--fg-2)', cursor: autofillingId === scenario.id ? 'default' : 'pointer' }}
+                                          >
+                                            {autofillingId === scenario.id ? 'Generating…' : 'Auto-generate'}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => handleClearTestData(scenario)}
+                                            style={{ display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 12px', borderRadius: 8, border: '1px solid var(--border-2)', background: 'var(--panel)', fontSize: 12, fontWeight: 500, color: 'var(--fg-3)', cursor: 'pointer' }}
+                                          >
+                                            Clear
+                                          </button>
+                                          <span style={{ flex: 1 }} />
+                                          <span style={{ fontSize: 11, color: 'var(--fg-4)' }}>Blank fields are generated from the discovered form constraints</span>
+                                        </div>
+                                        {autofillError && autofillingId === null && (
+                                          <div style={{ fontSize: 11.5, color: 'var(--bad)', marginTop: 8 }}>{autofillError}</div>
+                                        )}
+                                      </>
+                                  </div>
+                                  )}
+                                </div>
+
+                                <div>
+                                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-1)', marginBottom: 6 }}>Expected result</div>
+                                  <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>{scenario.expected_result}</div>
+                                </div>
+                              </div>
                             )}
-                          </label>
+                          </div>
                         )
                       })}
                     </div>
-                  </div>
                   )}
-
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 'var(--space-2)' }}>
-                    Expected result
-                  </div>
-                  <div
-                    style={{
-                      color: 'var(--ink-secondary)',
-                      padding: 'var(--space-3)',
-                      fontSize: 13,
-                    }}
-                  >
-                    {selectedScenario.expected_result}
-                  </div>
                 </div>
-              ) : (
-                <p className="caption" style={{ margin: 0 }}>
-                  Select a test case to see its Test steps, Test data, and Expected result.
-                </p>
-              )}
-            </div>
+              )
+            })}
           </div>
         )}
       </div>

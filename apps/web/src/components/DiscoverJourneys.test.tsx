@@ -79,7 +79,6 @@ function stubFetch(overrides: {
 function renderScreen(onContinueToScenarios: () => void = () => {}) {
   return render(
     <DiscoverJourneys
-      furthestCount={1}
       applicationId="app-1"
       applicationName="Test App"
       discoveryStatus="complete"
@@ -95,29 +94,17 @@ afterEach(() => {
 })
 
 describe('DiscoverJourneys', () => {
-  it('renders a candidate row with name and step count, no confidence/risk signal', async () => {
+  it('renders a journey card with name, step count and description, no confidence/risk signal', async () => {
     stubFetch()
     renderScreen()
 
     await waitFor(() => {
       expect(screen.getByText('Checkout')).toBeTruthy()
     })
-    expect(screen.getByText('2 steps')).toBeTruthy()
-    expect(screen.queryByText('Customer adds an item to the cart and completes payment.')).toBeNull()
+    expect(screen.getByText('2 navigation steps')).toBeTruthy()
+    expect(screen.getByText('Customer adds an item to the cart and completes payment.')).toBeTruthy()
     expect(screen.queryByText(/confidence/i)).toBeNull()
     expect(screen.queryByText(/risk/i)).toBeNull()
-  })
-
-  it('shows the selected journey description in the right canvas, not the list row', async () => {
-    stubFetch()
-    renderScreen()
-
-    await waitFor(() => screen.getByText('Checkout'))
-    fireEvent.click(screen.getByText('Checkout'))
-
-    expect(
-      await screen.findByText('Customer adds an item to the cart and completes payment.'),
-    ).toBeTruthy()
   })
 
   it('keeps polling for more Journeys after the first one appears', async () => {
@@ -190,8 +177,9 @@ describe('DiscoverJourneys', () => {
     renderScreen()
 
     await waitFor(() => {
-      expect(screen.getByText('Discovering journeys in Test App')).toBeTruthy()
+      expect(screen.getByText(/Mapping journeys/)).toBeTruthy()
     })
+    expect(screen.getByText(/journeys in Test App/)).toBeTruthy()
     // No internal stage naming, and no crawl-specific/technical terminology
     // in this view (CR-2 + live UX correction), and no percent-fill progress
     // bar — this uses the same generation-loader animation as scenario/test
@@ -224,7 +212,6 @@ describe('DiscoverJourneys', () => {
     )
     render(
       <DiscoverJourneys
-        furthestCount={1}
         applicationId="app-1"
         applicationName="Test App"
         discoveryStatus="running"
@@ -240,18 +227,15 @@ describe('DiscoverJourneys', () => {
     expect(screen.queryByRole('progressbar')).toBeNull()
   })
 
-  it('selecting a row replaces the detail panel with that Journey’s step-by-step detail', async () => {
+  it('shows each Journey’s step-by-step navigation inline, no click needed', async () => {
     stubFetch()
     renderScreen()
     await waitFor(() => screen.getByText('Checkout'))
-
-    fireEvent.click(screen.getByText('Checkout'))
 
     await waitFor(() => {
       expect(screen.getByText('Login')).toBeTruthy()
     })
     expect(screen.getByText('MFA Verification')).toBeTruthy()
-    expect(screen.getByText('Discovered flow · 2 steps')).toBeTruthy()
     const flow = within(screen.getByTestId('journey-flow'))
     expect(flow.getByText('1')).toBeTruthy()
     expect(flow.getByText('2')).toBeTruthy()
@@ -283,11 +267,10 @@ describe('DiscoverJourneys', () => {
     )
     renderScreen()
     await waitFor(() => screen.getByText('Checkout'))
-    fireEvent.click(screen.getByText('Checkout'))
 
     await waitFor(() => {
-      // row name + detail-panel header + flow node
-      expect(screen.getAllByText('Checkout')).toHaveLength(3)
+      // card title + the flow node sharing the same label ("Checkout" stage)
+      expect(screen.getAllByText('Checkout')).toHaveLength(2)
     })
     expect(screen.getAllByText('Cart')).toHaveLength(1)
     const flow = within(screen.getByTestId('journey-flow'))

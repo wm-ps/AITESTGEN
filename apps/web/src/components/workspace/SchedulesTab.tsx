@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ApiError, api, type ScheduleRead } from '../../api'
 import { ScheduleDialog } from './ScheduleDialog'
+import { SkeletonRows } from '../Skeleton'
+import { EmptyState, SchedulesIllustration } from '../EmptyState'
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -14,10 +16,12 @@ function formatDateTime(iso: string): string {
 const columnHeaderLabelStyle: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
-  color: 'var(--ink-faint)',
+  color: 'var(--fg-4)',
   textTransform: 'uppercase',
   letterSpacing: '0.05em',
 }
+
+const SCHEDULE_ROW_GRID_TEMPLATE = 'minmax(160px,2fr) minmax(120px,1.3fr) minmax(120px,1.2fr) 70px 32px'
 
 // Self-contained on/off control — doubles as the status indicator (no
 // separate "Enabled"/"Disabled" pill needed alongside it, the switch's own
@@ -46,7 +50,7 @@ function ToggleSwitch({
         border: 'none',
         padding: 0,
         flexShrink: 0,
-        background: checked ? 'var(--accent)' : 'var(--border-strong)',
+        background: checked ? 'var(--accent)' : 'var(--track)',
         cursor: disabled ? 'not-allowed' : 'pointer',
         opacity: disabled ? 0.6 : 1,
         transition: 'background 0.15s ease',
@@ -71,12 +75,14 @@ function ToggleSwitch({
 }
 
 // Same three-dot glyph as Home.tsx's own kebab menu — not a new shape.
+// Horizontal dots (matches the prototype's fa-ellipsis and every other
+// row-action kebab in the app — Home.tsx, TeamMembers.tsx, ReviewScenarios.tsx).
 function MoreIcon() {
   return (
     <svg width={19} height={19} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <circle cx="12" cy="5" r="1.8" />
+      <circle cx="5" cy="12" r="1.8" />
       <circle cx="12" cy="12" r="1.8" />
-      <circle cx="12" cy="19" r="1.8" />
+      <circle cx="19" cy="12" r="1.8" />
     </svg>
   )
 }
@@ -90,7 +96,7 @@ const kebabButtonStyle: React.CSSProperties = {
   borderRadius: 6,
   border: 'none',
   background: 'none',
-  color: 'var(--ink-muted)',
+  color: 'var(--fg-4)',
   padding: 0,
   cursor: 'pointer',
 }
@@ -104,7 +110,7 @@ const menuItemStyle: React.CSSProperties = {
   fontWeight: 500,
   border: 'none',
   background: 'none',
-  color: 'var(--ink)',
+  color: 'var(--fg-1)',
   cursor: 'pointer',
 }
 
@@ -163,7 +169,7 @@ function RowMenu({
                 }}
                 style={{
                   ...menuItemStyle,
-                  color: item.danger ? 'var(--danger)' : menuItemStyle.color,
+                  color: item.danger ? 'var(--bad)' : menuItemStyle.color,
                   opacity: item.disabled ? 0.6 : 1,
                   cursor: item.disabled ? 'not-allowed' : 'pointer',
                 }}
@@ -264,19 +270,11 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
 
   if (loadError) {
     return (
-      <p role="alert" style={{ color: 'var(--danger)', fontSize: 13 }}>
+      <p role="alert" style={{ color: 'var(--bad)', fontSize: 13 }}>
         {loadError}
       </p>
     )
   }
-  if (!schedules) {
-    return (
-      <p className="caption" style={{ fontSize: 12.5 }}>
-        Loading…
-      </p>
-    )
-  }
-
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
@@ -286,73 +284,105 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
       </div>
 
       {actionError && (
-        <p role="alert" style={{ color: 'var(--danger)', fontSize: 13, marginBottom: 14 }}>
+        <p role="alert" style={{ color: 'var(--bad)', fontSize: 13, marginBottom: 14 }}>
           {actionError}
         </p>
       )}
 
-      {schedules.length === 0 ? (
-        <p className="caption" style={{ fontSize: 13 }}>
-          No schedules yet. Create one to run this Application's tests automatically on a
-          recurring cadence.
-        </p>
+      {schedules === null ? (
+        <SkeletonRows count={3} height={48} gap={10} />
+      ) : schedules.length === 0 ? (
+        <EmptyState
+          illustration={<SchedulesIllustration />}
+          title="No schedules yet"
+          subtitle="Create one to run this Application's tests automatically on a recurring cadence."
+        />
       ) : (
-        <div className="card-panel" style={{ overflow: 'hidden' }}>
-          <div style={{ overflowX: 'auto' }}>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th style={{ ...columnHeaderLabelStyle, width: '20%' }}>Name</th>
-                  <th style={{ ...columnHeaderLabelStyle, width: '32%' }}>Cadence</th>
-                  <th style={{ ...columnHeaderLabelStyle, width: '20%' }}>Next run</th>
-                  <th style={{ ...columnHeaderLabelStyle, width: '10%' }}>Enabled</th>
-                  <th style={{ ...columnHeaderLabelStyle, width: '8%' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {schedules.map((schedule) => (
-                  <tr key={schedule.id}>
-                    <td style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{schedule.name}</td>
-                    <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>{schedule.cadence_label}</td>
-                    <td className="caption" style={{ fontSize: 12 }}>
-                      {schedule.next_run_at ? formatDateTime(schedule.next_run_at) : '—'}
-                    </td>
-                    <td>
-                      <ToggleSwitch
-                        checked={schedule.enabled}
-                        disabled={pendingAction === schedule.id}
-                        onChange={() => handleToggle(schedule)}
-                      />
-                    </td>
-                    <td>
-                      <RowMenu
-                        open={openMenuId === schedule.id}
-                        onOpenChange={(open) => setOpenMenuId(open ? schedule.id : null)}
-                        items={[
-                          {
-                            label: 'Run now',
-                            disabled: pendingAction === schedule.id,
-                            onClick: () => handleRunNow(schedule),
-                          },
-                          {
-                            label: 'Edit',
-                            disabled: pendingAction === schedule.id,
-                            onClick: () => setDialog({ edit: schedule }),
-                          },
-                          {
-                            label: 'Delete',
-                            danger: true,
-                            disabled: pendingAction === schedule.id,
-                            onClick: () => handleDelete(schedule),
-                          },
-                        ]}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div
+          style={{
+            background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
+            backdropFilter: 'blur(16px) saturate(1.25)',
+            border: '1px solid var(--border-1)',
+            borderRadius: 14,
+            boxShadow: 'var(--panel-shadow)',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: SCHEDULE_ROW_GRID_TEMPLATE,
+              alignItems: 'center',
+              gap: 14,
+              padding: '11px 20px',
+              background: 'var(--panel-2)',
+            }}
+          >
+            <div style={columnHeaderLabelStyle}>Schedule</div>
+            <div style={columnHeaderLabelStyle}>Cadence</div>
+            <div style={columnHeaderLabelStyle}>Next run</div>
+            <div style={columnHeaderLabelStyle}>Enabled</div>
+            <div />
           </div>
+          {schedules.map((schedule) => (
+            <div
+              key={schedule.id}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: SCHEDULE_ROW_GRID_TEMPLATE,
+                alignItems: 'center',
+                gap: 14,
+                padding: '13px 20px',
+                borderBottom: '1px solid var(--row-line)',
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {schedule.name}
+                </div>
+                {schedule.created_by_name && (
+                  <div className="caption" style={{ fontSize: 11.5, marginTop: 2 }}>
+                    Created by {schedule.created_by_name}
+                  </div>
+                )}
+              </div>
+              <div style={{ fontSize: 12.5, color: 'var(--fg-3)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {schedule.cadence_label}
+              </div>
+              <div className="caption" style={{ fontSize: 12 }}>
+                {schedule.next_run_at ? formatDateTime(schedule.next_run_at) : '—'}
+              </div>
+              <ToggleSwitch
+                checked={schedule.enabled}
+                disabled={pendingAction === schedule.id}
+                onChange={() => handleToggle(schedule)}
+              />
+              <RowMenu
+                open={openMenuId === schedule.id}
+                onOpenChange={(open) => setOpenMenuId(open ? schedule.id : null)}
+                items={[
+                  {
+                    label: 'Run now',
+                    disabled: pendingAction === schedule.id,
+                    onClick: () => handleRunNow(schedule),
+                  },
+                  {
+                    label: 'Edit',
+                    disabled: pendingAction === schedule.id,
+                    onClick: () => setDialog({ edit: schedule }),
+                  },
+                  {
+                    label: 'Delete',
+                    danger: true,
+                    disabled: pendingAction === schedule.id,
+                    onClick: () => handleDelete(schedule),
+                  },
+                ]}
+              />
+            </div>
+          ))}
         </div>
       )}
 

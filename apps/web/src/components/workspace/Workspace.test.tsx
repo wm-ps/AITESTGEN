@@ -26,7 +26,7 @@ describe('Workspace', () => {
 
     render(
       <StrictMode>
-        <Workspace applicationId="app-1" initialTab="runs" autoTriggerRun />
+        <Workspace applicationId="app-1" activeTab="runs" onActiveTabChange={() => {}} autoTriggerRun />
       </StrictMode>,
     )
 
@@ -50,11 +50,9 @@ describe('Workspace', () => {
       }),
     )
 
-    render(<Workspace applicationId="app-1" initialTab="schedules" />)
+    render(<Workspace applicationId="app-1" activeTab="schedules" onActiveTabChange={() => {}} />)
 
-    // Both the nav rail label and the page heading read "Schedules" —
-    // disambiguate to the heading specifically.
-    await waitFor(() => expect(screen.getByText('Schedules', { selector: 'h1' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Schedules and CI', { selector: 'h1' })).toBeInTheDocument())
     await waitFor(() => expect(hitSchedules).toBe(true))
   })
 })

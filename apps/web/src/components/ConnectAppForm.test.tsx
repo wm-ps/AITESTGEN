@@ -4,10 +4,12 @@ import { ConnectAppForm } from './ConnectAppForm'
 
 function fillCommonFields() {
   fireEvent.change(screen.getByLabelText('Application name'), { target: { value: 'My App' } })
-  fireEvent.change(screen.getByLabelText('Base URL'), {
+  fireEvent.change(screen.getByLabelText('Deployed URL'), {
     target: { value: 'https://staging.example.com' },
   })
   fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'staging' } })
+  fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
+  fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'qa-password' } })
 }
 
 afterEach(() => {
@@ -15,54 +17,25 @@ afterEach(() => {
 })
 
 describe('ConnectAppForm', () => {
-  it('defaults the Authentication method select to Username & Password with credential fields visible', () => {
-    render(<ConnectAppForm furthestCount={0}onConnected={vi.fn()} onCancel={vi.fn()} />)
+  it('always shows Username/Password — sign-in is required for every application today', () => {
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
-    const select = screen.getByLabelText('Authentication method') as HTMLSelectElement
-    expect(select.tagName).toBe('SELECT')
-    expect(select.value).toBe('standard_login')
     expect(screen.getByLabelText('Username')).toBeTruthy()
     expect(screen.getByLabelText('Password')).toBeTruthy()
-    expect(screen.queryByLabelText('API Key')).toBeNull()
   })
 
-  it('offers exactly the confirmed 3-option auth method set, API Key and OAuth disabled pending backend support', () => {
-    render(<ConnectAppForm furthestCount={0}onConnected={vi.fn()} onCancel={vi.fn()} />)
+  it('offers Staging/Production/QA plus a free-text Other environment', () => {
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
-    const select = screen.getByLabelText('Authentication method') as HTMLSelectElement
-    const options = Array.from(select.options).map((o) => ({ value: o.value, disabled: o.disabled }))
-    expect(options).toEqual([
-      { value: 'standard_login', disabled: false },
-      { value: 'api_key', disabled: true },
-      { value: 'oauth_client_credentials', disabled: true },
-    ])
+    const select = screen.getByLabelText('Environment') as HTMLSelectElement
+    const options = Array.from(select.options).map((o) => o.value)
+    expect(options).toEqual(['staging', 'production', 'qa', 'other'])
+
+    fireEvent.change(select, { target: { value: 'other' } })
+    expect(screen.getByLabelText('Custom environment')).toBeTruthy()
   })
 
-  it('swaps to the API Key field when the API Key method is selected', () => {
-    render(<ConnectAppForm furthestCount={0}onConnected={vi.fn()} onCancel={vi.fn()} />)
-
-    fireEvent.change(screen.getByLabelText('Authentication method'), {
-      target: { value: 'api_key' },
-    })
-
-    expect(screen.queryByLabelText('Username')).toBeNull()
-    expect(screen.queryByLabelText('Password')).toBeNull()
-    expect(screen.getByLabelText('API Key')).toBeTruthy()
-  })
-
-  it('reveals no additional fields for OAuth Client Credentials (unconfirmed by the prototype)', () => {
-    render(<ConnectAppForm furthestCount={0}onConnected={vi.fn()} onCancel={vi.fn()} />)
-
-    fireEvent.change(screen.getByLabelText('Authentication method'), {
-      target: { value: 'oauth_client_credentials' },
-    })
-
-    expect(screen.queryByLabelText('Username')).toBeNull()
-    expect(screen.queryByLabelText('Password')).toBeNull()
-    expect(screen.queryByLabelText('API Key')).toBeNull()
-  })
-
-  it('submits username/password when standard_login is selected (the default)', async () => {
+  it('submits with auth_method always standard_login', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 201,
@@ -70,12 +43,10 @@ describe('ConnectAppForm', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const onConnected = vi.fn()
-    render(<ConnectAppForm furthestCount={0}onConnected={onConnected} onCancel={vi.fn()} />)
+    render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
     fillCommonFields()
-    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'qa-password' } })
-    fireEvent.click(screen.getByRole('button', { name: /Proceed/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
     const body = JSON.parse(fetchMock.mock.calls[0][1].body)
@@ -93,12 +64,10 @@ describe('ConnectAppForm', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
     const onConnected = vi.fn()
-    render(<ConnectAppForm furthestCount={0}onConnected={onConnected} onCancel={vi.fn()} />)
+    render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
     fillCommonFields()
-    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
-    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'qa-password' } })
-    fireEvent.click(screen.getByRole('button', { name: /Proceed/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
     const alert = await screen.findByRole('alert')
@@ -107,9 +76,28 @@ describe('ConnectAppForm', () => {
     expect(screen.getByLabelText('Application name')).toBeTruthy()
   })
 
-  it('calls onCancel when Cancel is clicked, matching prototype-v3.html Import screen', () => {
+  it('tests the Deployed URL reachability without submitting the form', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ reachable: true, detail: null }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    fireEvent.change(screen.getByLabelText('Deployed URL'), { target: { value: 'https://staging.example.com' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
+
+    await screen.findByText('URL is reachable.')
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/applications/test-connection'),
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
+  it('calls onCancel when Cancel is clicked', () => {
     const onCancel = vi.fn()
-    render(<ConnectAppForm furthestCount={0}onConnected={vi.fn()} onCancel={onCancel} />)
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={onCancel} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 

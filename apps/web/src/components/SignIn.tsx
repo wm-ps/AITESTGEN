@@ -453,7 +453,7 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
                     type="email"
                     required
                     autoComplete="username"
-                    placeholder="you@company.com"
+                    placeholder="Enter your email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     style={{ padding: '11px 14px', fontSize: 14.5 }}

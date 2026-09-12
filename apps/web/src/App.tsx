@@ -1,37 +1,67 @@
 import { useEffect, useState } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faCircleDot, faListCheck, faRoute } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type ApplicationRead, type UserRead } from './api'
 import { AcceptInvite } from './components/AcceptInvite'
 import { ConnectAppForm } from './components/ConnectAppForm'
-import { ConnectSuccessModal } from './components/ConnectSuccessModal'
 import { DiscoverJourneys } from './components/DiscoverJourneys'
-import { Footer } from './components/Footer'
 import { Home } from './components/Home'
-import { InviteTeammateModal } from './components/InviteTeammateModal'
+import { Overview } from './components/Overview'
+import { RecordAndPlay } from './components/RecordAndPlay'
 import { ResetPassword } from './components/ResetPassword'
 import { ReviewScenarios } from './components/ReviewScenarios'
 import { Settings } from './components/Settings'
 import { ServiceError } from './components/ServiceError'
 import { SignIn } from './components/SignIn'
-import type { StepKey } from './components/Stepper'
+import { TeamMembers } from './components/TeamMembers'
 import { TestSuiteResults } from './components/TestSuiteResults'
 import { Toast } from './components/Toast'
-import { TopBar } from './components/TopBar'
-import { Workspace } from './components/workspace/Workspace'
+import { Workspace, type WorkspaceTab, WORKSPACE_TABS } from './components/workspace/Workspace'
+import { AppShell, type AppShellTab, type ShellRoute } from './components/shell/AppShell'
 
-const VIEW_FOR_STEP: Record<StepKey, View> = {
-  'connect-app': 'connect-app',
-  discover: 'discover',
-  review: 'review-scenarios',
-  // No 'generate-suite' config screen anymore — the "Generate Test Suite"
-  // click on Review Scenarios kicks off generation directly, so this step
-  // goes straight to its results.
-  generate: 'test-suite-results',
+// Vantage V2 redesign: AppShell (left sidebar + topbar) wraps every
+// signed-in view. Views that used to be separate Stepper-gated wizard
+// screens (Discover Journeys, Review Scenarios, the post-generate results
+// screen) plus Workspace's own internal tab rail are now one persistent
+// per-application tab set living in AppShell's sidebar "Application"
+// section — matching the prototype's Overview/Journeys/Scenarios/Test
+// cases/Test runs/Record and play/Schedules and CI tabs. Credentials stays
+// as an extra tab beyond the prototype's 8 (no prototype-tab home for
+// existing per-app credential rotation) and Download project stays folded
+// into Test cases (TestSuiteTab already combines suite view + export).
+const SHELL_ROUTE_FOR_VIEW: Partial<Record<View, ShellRoute>> = {
+  overview: 'overview',
+  home: 'apps',
+  'connect-app': 'wizard',
+  app: 'app',
+  settings: 'settings',
+  team: 'team',
+}
+const SHELL_CRUMB_FOR_VIEW: Partial<Record<View, string>> = {
+  overview: 'Overview',
+  home: 'Applications',
+  'connect-app': 'Add application',
+  settings: 'Settings',
+  team: 'Team members',
 }
 
-// Previous/Next walk this same order — 'test-suite-results' has no Stepper
-// circle of its own (it renders the Stepper with furthestCount 4, all done),
-// but it's still a stop along the Previous/Next line.
-const VIEW_ORDER: View[] = ['connect-app', 'discover', 'review-scenarios', 'test-suite-results']
+function JourneysIcon() {
+  return <FontAwesomeIcon icon={faRoute} style={{ fontSize: 15 }} />
+}
+function ScenariosIcon() {
+  return <FontAwesomeIcon icon={faListCheck} style={{ fontSize: 15 }} />
+}
+function RecordIcon() {
+  return <FontAwesomeIcon icon={faCircleDot} style={{ fontSize: 15 }} />
+}
+
+// journeys/scenarios/record aren't part of Workspace's own tab set (they
+// predate it, or have no backend yet) — merged with Workspace's static tab
+// list below, then reordered to the prototype's sequence.
+const JOURNEYS_TAB = { key: 'journeys', label: 'Journeys', heading: 'Discover Journeys', icon: JourneysIcon }
+const SCENARIOS_TAB = { key: 'scenarios', label: 'Scenarios', heading: 'Review Scenarios', icon: ScenariosIcon }
+const RECORD_TAB = { key: 'record', label: 'Record and play', heading: 'Record and play', icon: RecordIcon }
+const TAB_ORDER = ['overview', 'journeys', 'scenarios', 'suite', 'runs', 'record', 'schedules', 'export']
 
 // Invite links point at /accept-invite?token=... — handled before the
 // signed-in check below since accepting an invite never requires an
@@ -50,14 +80,9 @@ function getResetTokenFromUrl(): string | null {
     : null
 }
 
-type View =
-  | 'home'
-  | 'connect-app'
-  | 'discover'
-  | 'review-scenarios'
-  | 'test-suite-results'
-  | 'workspace'
-  | 'settings'
+type AppTab = 'journeys' | 'scenarios' | 'record' | WorkspaceTab
+
+type View = 'overview' | 'home' | 'connect-app' | 'app' | 'settings' | 'team'
 
 function App() {
   const [user, setUser] = useState<UserRead | null | undefined>(undefined)
@@ -68,23 +93,58 @@ function App() {
   const [view, setView] = useState<View>('home')
   const [previousView, setPreviousView] = useState<View>('home')
   const [application, setApplication] = useState<ApplicationRead | null>(null)
-  // Set right after Connect Application succeeds, cleared once the user
-  // dismisses ConnectSuccessModal — separate from `application` itself so
-  // resuming an already-connected app (handleResumeApplication) never
-  // re-triggers this one-time modal.
-  const [justConnected, setJustConnected] = useState<ApplicationRead | null>(null)
-  // How many of the 4 wizard steps are actually finished — independent of
-  // `view`, which is just whichever screen is on screen right now. Lets
-  // Previous/Next and the Stepper's own step numbers revisit an earlier
-  // completed step without losing its checkmark.
-  const [furthestCount, setFurthestCount] = useState(0)
-  const [inviteModalOpen, setInviteModalOpen] = useState(false)
   const [inviteToken, setInviteToken] = useState(getInviteTokenFromUrl)
   const [resetToken, setResetToken] = useState(getResetTokenFromUrl)
   // Covers logout and resume-application — both involve an API round trip
   // before the screen changes, and users were reading the pause as a hang.
   const [globalLoading, setGlobalLoading] = useState<string | null>(null)
   const [errorToast, setErrorToast] = useState<string | null>(null)
+
+  // Which per-application tab is active — freely clickable via AppShell's
+  // sidebar, no more furthestCount/Stepper gating (the tabs each handle
+  // their own "nothing here yet" state, same as Workspace's tabs already
+  // did before this merge).
+  const [appTab, setAppTab] = useState<AppTab>('journeys')
+  // One-shot: set when "Generate Test Suite" (Scenarios tab) or "Run Tests"
+  // (the post-generate results screen) fires, so the Test cases / Test runs
+  // tab shows that transitional screen once, then reverts to the steady-
+  // state tab content on any other navigation — same one-time-screen
+  // behavior the old 'test-suite-results' view had.
+  const [justGeneratedSuite, setJustGeneratedSuite] = useState(false)
+  const [autoTriggerRun, setAutoTriggerRun] = useState(false)
+  // Gates the sidebar's "Overview" link (and the view itself) — the
+  // dashboard is all pass-rate/trend/history, which is meaningless before
+  // any application has ever finished a run. Polled independently of
+  // Home.tsx/Overview.tsx's own `getHome` calls (each screen already fetches
+  // its own copy today) since this needs to be known on every screen, not
+  // just while Home or Overview happen to be mounted.
+  const [hasAnyRun, setHasAnyRun] = useState(false)
+
+  useEffect(() => {
+    if (!user) return
+    let cancelled = false
+    async function poll() {
+      try {
+        const rows = await api.getHome()
+        if (!cancelled) setHasAnyRun(rows.some((a) => a.test_run_count > 0))
+      } catch {
+        // best-effort — Overview just stays hidden until the next poll succeeds
+      }
+    }
+    poll()
+    const interval = setInterval(poll, 15000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
+  }, [user])
+
+  // Overview is only reachable via the sidebar link this same flag hides —
+  // this is just a defensive fallback in case some other path (e.g. a future
+  // deep link) ever lands here while hasAnyRun is still false.
+  useEffect(() => {
+    if (view === 'overview' && !hasAnyRun) setView('home')
+  }, [view, hasAnyRun])
 
   useEffect(() => {
     if (!errorToast) return
@@ -104,15 +164,6 @@ function App() {
     window.addEventListener('auth:expired', handleExpired)
     return () => window.removeEventListener('auth:expired', handleExpired)
   }, [])
-
-  // Read once by Workspace on mount (it fully remounts each time `view`
-  // toggles away from 'workspace' and back) — lets "Run All Tests" land
-  // straight on the Runs tab with the new run auto-selected, while a plain
-  // dashboard resume lands on Overview as usual.
-  const [workspaceEntry, setWorkspaceEntry] = useState<{
-    initialTab: 'overview' | 'runs'
-    autoTriggerRun: boolean
-  }>({ initialTab: 'overview', autoTriggerRun: false })
 
   useEffect(() => {
     if (inviteToken || resetToken) return
@@ -168,7 +219,6 @@ function App() {
       setUser(null)
       setView('home')
       setApplication(null)
-      setJustConnected(null)
     } catch {
       setErrorToast('Failed to log out. Please try again.')
     } finally {
@@ -176,11 +226,9 @@ function App() {
     }
   }
 
-  // A test suite already generated means every wizard step is done —
-  // land straight on the results screen instead of Discover Journeys.
-  // Otherwise unchanged: always resume on Discover Journeys (existing
-  // behavior), just with an accurate furthestCount for Previous/Next/Stepper
-  // navigation once the user starts moving around.
+  // Same resume logic as before, just landing on a tab key instead of a
+  // separate view: a test suite already generated means every step is
+  // done — land on Overview instead of Discover Journeys.
   async function handleResumeApplication(app: ApplicationRead) {
     if (globalLoading) return
     setGlobalLoading('Loading project')
@@ -192,21 +240,22 @@ function App() {
       ])
       // A TestSuite row exists as soon as generation starts (before its
       // TestAssets do) — resuming mid-generation must land back on the
-      // Generate Suite results screen (it already polls and shows its own
-      // "generating" state), not jump into Workspace with a partial suite.
+      // Test cases tab's generating state, not jump to Overview with a
+      // partial suite.
       const testCaseCount = suites.reduce((sum, s) => sum + s.test_cases.length, 0)
       const suiteComplete = suites.length > 0 && testCaseCount >= scenarios.length
-      setFurthestCount(suites.length > 0 ? 4 : scenarios.length > 0 ? 2 : 1)
-      setWorkspaceEntry({ initialTab: 'overview', autoTriggerRun: false })
-      setView(
+      setJustGeneratedSuite(suites.length > 0 && !suiteComplete)
+      setAutoTriggerRun(false)
+      setAppTab(
         suiteComplete
-          ? 'workspace'
+          ? 'overview'
           : suites.length > 0
-            ? 'test-suite-results'
+            ? 'suite'
             : scenarios.length > 0
-              ? 'review-scenarios'
-              : 'discover',
+              ? 'scenarios'
+              : 'journeys',
       )
+      setView('app')
     } catch {
       setApplication(null)
       setErrorToast('Failed to load project. Please try again.')
@@ -215,176 +264,143 @@ function App() {
     }
   }
 
-  const viewingIndex = VIEW_ORDER.indexOf(view)
-  const onPrevious = viewingIndex > 0 ? () => setView(VIEW_ORDER[viewingIndex - 1]) : undefined
-  const onNext =
-    viewingIndex >= 0 && viewingIndex < VIEW_ORDER.length - 1 && viewingIndex + 1 <= furthestCount
-      ? () => setView(VIEW_ORDER[viewingIndex + 1])
-      : undefined
-  // Stepper only calls this for a step index <= furthestCount in the first
-  // place (its own clickable check) — no need to re-guard here.
-  const onStepClick = (key: StepKey) => setView(VIEW_FOR_STEP[key])
+  // Shared by AppShell's sidebar/topbar "Add application" and Home's own
+  // connect-app card, so both entry points reset the same state.
+  function goAddApplication() {
+    setApplication(null)
+    setView('connect-app')
+  }
+
+  function selectAppTab(tab: string) {
+    // A deliberate sidebar click is never the one-shot "just generated /
+    // just triggered a run" transition — only the two programmatic
+    // transitions below (Scenarios' Generate, the results screen's Run
+    // Tests) set those flags.
+    setJustGeneratedSuite(false)
+    setAutoTriggerRun(false)
+    setAppTab(tab as AppTab)
+  }
+
+  const shellRoute = SHELL_ROUTE_FOR_VIEW[view]
+
+  // Overview/Suite/Runs/Schedules must show from the very first render
+  // inside an app — Workspace only mounts (and only then reports its tab
+  // list) once the user actually visits one of its own tabs, so waiting on
+  // `workspaceTabs` for these would leave the sidebar missing Overview the
+  // whole time a user sits on Journeys/Scenarios.
+  const mergedAppTabs: AppShellTab[] = application
+    ? [...WORKSPACE_TABS, JOURNEYS_TAB, SCENARIOS_TAB, RECORD_TAB]
+        .sort((a, b) => TAB_ORDER.indexOf(a.key) - TAB_ORDER.indexOf(b.key))
+        .map((t) => ({ key: t.key, label: t.label, icon: t.icon }))
+    : []
+
+  const mainContent = (
+    <>
+      {view === 'overview' && (
+        <Overview onConnectApp={goAddApplication} onGoApps={() => setView('home')} onOpenApplication={handleResumeApplication} />
+      )}
+      {view === 'home' && <Home user={user} onConnectApp={goAddApplication} onResumeApplication={handleResumeApplication} />}
+      {view === 'connect-app' && (
+        <ConnectAppForm
+          application={application}
+          onConnected={(connectedApplication) => {
+            setApplication(connectedApplication)
+            setAppTab('journeys')
+            setView('app')
+          }}
+          onCancel={() => setView('home')}
+        />
+      )}
+      {view === 'app' && application && appTab === 'journeys' && (
+        <DiscoverJourneys
+          applicationId={application.id}
+          applicationName={application.name}
+          discoveryStatus={application.discovery_status}
+          discoveryStage={application.discovery_stage ?? null}
+          discoveryFailureReason={application.discovery_failure_reason ?? null}
+          onContinueToScenarios={() => setAppTab('scenarios')}
+        />
+      )}
+      {view === 'app' && application && appTab === 'scenarios' && (
+        <ReviewScenarios
+          applicationId={application.id}
+          onGoToJourneys={() => setAppTab('journeys')}
+          onContinueToGenerate={async () => {
+            if (globalLoading) return
+            setGlobalLoading('Generating test suite')
+            try {
+              await api.generateSuite(application.id)
+              setJustGeneratedSuite(true)
+              setAppTab('suite')
+            } catch {
+              setErrorToast('Failed to start test suite generation. Please try again.')
+            } finally {
+              setGlobalLoading(null)
+            }
+          }}
+        />
+      )}
+      {view === 'app' && application && appTab === 'record' && <RecordAndPlay />}
+      {view === 'app' && application && appTab !== 'journeys' && appTab !== 'scenarios' && appTab !== 'record' && (
+        justGeneratedSuite && appTab === 'suite' ? (
+          <TestSuiteResults
+            applicationId={application.id}
+            onRunTests={() => {
+              setJustGeneratedSuite(false)
+              setAutoTriggerRun(true)
+              setAppTab('runs')
+            }}
+          />
+        ) : (
+          <Workspace
+            applicationId={application.id}
+            applicationName={application.name}
+            applicationUrl={application.url}
+            activeTab={appTab as WorkspaceTab}
+            onActiveTabChange={(tab) => setAppTab(tab)}
+            autoTriggerRun={autoTriggerRun}
+          />
+        )
+      )}
+      {view === 'settings' && user && <Settings user={user} onCancel={() => setView(previousView)} />}
+      {view === 'team' && user && <TeamMembers user={user} />}
+    </>
+  )
 
   return (
     <>
-      <TopBar
+      <AppShell
         user={user}
-        applicationBadge={
-          view === 'home' || view === 'settings'
-            ? undefined
-            : application
-              ? { name: application.name, environment: application.environment }
-              : undefined
+        route={shellRoute ?? 'apps'}
+        crumb={
+          view === 'app'
+            ? (mergedAppTabs.find((t) => t.key === appTab)?.label ?? '')
+            : (SHELL_CRUMB_FOR_VIEW[view] ?? '')
         }
-        onLogout={handleLogout}
-        onGoHome={() => setView('home')}
-        onInviteTeammate={() => setInviteModalOpen(true)}
+        showOverview={hasAnyRun}
+        onGoOverview={() => setView('overview')}
+        onGoApps={() => setView('home')}
+        onAddApplication={goAddApplication}
         onOpenSettings={() => {
           setPreviousView(view)
           setView('settings')
         }}
-        onOpenWorkspace={
-          application && view !== 'home' && furthestCount >= 4 && view !== 'workspace'
-            ? () => {
-                setWorkspaceEntry({ initialTab: 'overview', autoTriggerRun: false })
-                setView('workspace')
+        onGoTeam={() => setView('team')}
+        onLogout={handleLogout}
+        app={
+          application && view === 'app'
+            ? {
+                name: application.name,
+                tabs: mergedAppTabs,
+                activeTab: appTab,
+                onSelectTab: selectAppTab,
+                onExit: () => setView('home'),
               }
             : undefined
         }
-        onViewDiscovery={application && view === 'workspace' ? () => setView('discover') : undefined}
-      />
-      {inviteModalOpen && <InviteTeammateModal onClose={() => setInviteModalOpen(false)} />}
-      {justConnected && (
-        <ConnectSuccessModal
-          application={justConnected}
-          onGoHome={() => {
-            setJustConnected(null)
-            setView('home')
-          }}
-        />
-      )}
-      <main style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        {view === 'home' && (
-          <Home
-            user={user}
-            onConnectApp={() => {
-              setApplication(null)
-              setFurthestCount(0)
-              setView('connect-app')
-            }}
-            onResumeApplication={handleResumeApplication}
-          />
-        )}
-        {view === 'connect-app' && (
-          <ConnectAppForm
-            application={application}
-            onConnected={(connectedApplication) => {
-              setApplication(connectedApplication)
-              setFurthestCount((c) => Math.max(c, 1))
-              setJustConnected(connectedApplication)
-            }}
-            onCancel={() => setView('home')}
-            furthestCount={furthestCount}
-            onStepClick={onStepClick}
-            onPrevious={onPrevious}
-            onNext={onNext}
-          />
-        )}
-        {view === 'discover' && application && (
-          <DiscoverJourneys
-            applicationId={application.id}
-            applicationName={application.name}
-            discoveryStatus={application.discovery_status}
-            discoveryStage={application.discovery_stage ?? null}
-            discoveryFailureReason={application.discovery_failure_reason ?? null}
-            onContinueToScenarios={() => {
-              setFurthestCount((c) => Math.max(c, 2))
-              setView('review-scenarios')
-            }}
-            furthestCount={furthestCount}
-            onStepClick={onStepClick}
-            onPrevious={onPrevious}
-            onNext={onNext}
-          />
-        )}
-        {view === 'review-scenarios' && application && (
-          <ReviewScenarios
-            applicationId={application.id}
-            onContinueToGenerate={async () => {
-              if (globalLoading) return
-              setGlobalLoading('Generating test suite')
-              try {
-                await api.generateSuite(application.id)
-                setFurthestCount(4)
-                setView('test-suite-results')
-              } catch {
-                setErrorToast('Failed to start test suite generation. Please try again.')
-              } finally {
-                setGlobalLoading(null)
-              }
-            }}
-            furthestCount={furthestCount}
-            onStepClick={onStepClick}
-            onPrevious={onPrevious}
-            onNext={onNext}
-          />
-        )}
-        {view === 'test-suite-results' && application && (
-          <TestSuiteResults
-            applicationId={application.id}
-            onRunTests={() => {
-              setWorkspaceEntry({ initialTab: 'runs', autoTriggerRun: true })
-              setView('workspace')
-            }}
-            furthestCount={furthestCount}
-            onStepClick={onStepClick}
-            onPrevious={onPrevious}
-          />
-        )}
-        {view === 'workspace' && application && (
-          <Workspace
-            applicationId={application.id}
-            initialTab={workspaceEntry.initialTab}
-            autoTriggerRun={workspaceEntry.autoTriggerRun}
-            isAdmin={user?.role === 'admin'}
-          />
-        )}
-        {view === 'settings' && user && <Settings user={user} onCancel={() => setView(previousView)} />}
-      </main>
-
-      <Footer />
-
-      {globalLoading && (
-        <div
-          role="status"
-          aria-label={globalLoading}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 100,
-            pointerEvents: 'none',
-          }}
-        >
-          <span style={{ display: 'flex', gap: 6 }} aria-hidden="true">
-            {[0, 0.15, 0.3].map((delay) => (
-              <span
-                key={delay}
-                style={{
-                  width: 8,
-                  height: 8,
-                  borderRadius: 'var(--radius-full)',
-                  background: 'var(--accent)',
-                  animation: 'aitg-dot-bounce 1s ease-in-out infinite',
-                  animationDelay: `${delay}s`,
-                }}
-              />
-            ))}
-          </span>
-        </div>
-      )}
+      >
+        {mainContent}
+      </AppShell>
 
       {errorToast && (
         <Toast message={errorToast} kind="error" onDismiss={() => setErrorToast(null)} />

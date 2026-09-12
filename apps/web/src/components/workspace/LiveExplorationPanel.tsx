@@ -1,4 +1,9 @@
 import { useEffect, useState } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faWandMagicSparkles, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faIcon } from '../../faIcon'
+
+const Sparkles = faIcon(faWandMagicSparkles)
 import { ApiError, api } from '../../api'
 import type { LiveTestCaseRequestStatusRead } from '../../api'
 import { GenerationLoader } from '../GenerationLoader'
@@ -13,6 +18,20 @@ function requestIdStorageKey(applicationId: string) {
   return `live-exploration-request:${applicationId}`
 }
 
+const secondaryButtonStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  height: 34,
+  padding: '0 14px',
+  borderRadius: 8,
+  border: '1px solid var(--border-2)',
+  background: 'var(--panel-2)',
+  color: 'var(--fg-2)',
+  fontSize: 12.5,
+  fontWeight: 500,
+  cursor: 'pointer',
+}
+
 const IN_PROGRESS_COPY: Record<string, string> = {
   exploring: 'Exploring the live application…',
   // Covers code generation AND the internal verify/self-heal pass that
@@ -22,8 +41,9 @@ const IN_PROGRESS_COPY: Record<string, string> = {
   generating: 'Generating the test case…',
 }
 
-// The Natural Language tile's second entry point (AuthoringTab.tsx) — works
-// even on a brand-new application with zero Discovery/TestSuite history: a
+// Opened via "Author a test case" on the Scenario page (ReviewScenarios.tsx)
+// — works even on a brand-new application with zero Discovery/TestSuite
+// history: a
 // live agent explores the real application itself (Playwright MCP + an LLM
 // deciding each step) to accomplish the requirement, then generates and runs
 // a test case grounded in exactly what it found. See
@@ -123,70 +143,143 @@ export function LiveExplorationPanel({
   return (
     <div
       style={{
-        background: 'var(--canvas)',
-        borderRadius: 'var(--radius-xl)',
-        boxShadow: 'var(--shadow-card)',
-        padding: '28px 24px',
+        background: 'var(--panel)',
+        border: '1px solid rgba(30,150,138,0.26)',
+        borderRadius: 14,
+        boxShadow: 'var(--panel-shadow)',
+        padding: '19px 20px',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>Explore live</h3>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 13 }}>
+        <div
+          aria-hidden="true"
+          style={{
+            width: 32,
+            height: 32,
+            flexShrink: 0,
+            borderRadius: 9,
+            background: 'rgba(30,150,138,0.16)',
+            border: '1px solid rgba(30,150,138,0.3)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: 'var(--accent-2)',
+          }}
+        >
+          <FontAwesomeIcon icon={faWandMagicSparkles} style={{ fontSize: 13 }} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.01em' }}>
+            Author a test case in plain language
+          </div>
+          <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 4 }}>
+            Describe what should be tested. Vantage explores the live application, writes the Playwright spec and
+            adds it to this suite.
+          </div>
+        </div>
         <button
           type="button"
           onClick={onClose}
-          style={{ background: 'none', border: 'none', color: 'var(--ink-muted)', cursor: 'pointer', fontSize: 13, padding: 0 }}
+          aria-label="Close"
+          style={{
+            width: 28,
+            height: 28,
+            flexShrink: 0,
+            borderRadius: 8,
+            border: '1px solid var(--border-2)',
+            background: 'var(--panel-2)',
+            color: 'var(--fg-4)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+          }}
         >
-          Close
+          <FontAwesomeIcon icon={faXmark} style={{ fontSize: 11 }} />
         </button>
       </div>
 
       {!requestId && (
-        <form onSubmit={handleSubmit}>
-          <label className="field">
-            <span className="label">Test case</span>
-            <textarea
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              placeholder='Describe what to do in the real application, e.g. "Create a new MCP connection for a tenant and verify it appears in the list." No prior discovery data is needed — a live agent explores the application itself.'
-              rows={6}
-              style={{ resize: 'vertical' }}
-            />
-          </label>
+        <form onSubmit={handleSubmit} style={{ marginTop: 16 }}>
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            placeholder="Describe what should happen in the application — the steps to take and what to check."
+            rows={4}
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              padding: '11px 13px',
+              border: '1px solid var(--border-2)',
+              borderRadius: 9,
+              fontSize: 13,
+              color: 'var(--fg-1)',
+              background: 'var(--panel-2)',
+              fontFamily: 'inherit',
+              resize: 'vertical',
+              outline: 'none',
+            }}
+          />
 
-          {error && <div style={{ color: 'var(--danger)', fontSize: 13, marginTop: 8 }}>{error}</div>}
-          <button type="submit" className="button-primary" disabled={submitting || !prompt.trim()} style={{ marginTop: 14 }}>
-            {submitting ? 'Submitting…' : 'Explore and generate'}
-          </button>
+          {error && <div style={{ color: 'var(--bad)', fontSize: 13, marginTop: 8 }}>{error}</div>}
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14 }}>
+            <button
+              type="submit"
+              disabled={submitting || !prompt.trim()}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                height: 36,
+                padding: '0 16px',
+                borderRadius: 8,
+                border: 'none',
+                fontSize: 13.5,
+                fontWeight: 600,
+                color: '#fff',
+                background: submitting || !prompt.trim() ? 'var(--fg-4)' : 'var(--accent)',
+                boxShadow: submitting || !prompt.trim() ? 'none' : 'var(--accent-glow)',
+                cursor: submitting || !prompt.trim() ? 'default' : 'pointer',
+              }}
+            >
+              <FontAwesomeIcon icon={faWandMagicSparkles} style={{ fontSize: 11 }} />
+              {submitting ? 'Submitting…' : 'Explore and generate'}
+            </button>
+            <span style={{ fontSize: 10.5, color: 'var(--fg-4)' }}>
+              No prior discovery is needed — a live agent explores the application itself.
+            </span>
+          </div>
         </form>
       )}
 
-      {inProgress && status && <GenerationLoader title={IN_PROGRESS_COPY[status] ?? 'Working…'} />}
+      {inProgress && status && <GenerationLoader icon={Sparkles} title={IN_PROGRESS_COPY[status] ?? 'Working…'} />}
 
       {status === 'rejected' && (
-        <div>
-          <p style={{ color: 'var(--danger)', fontSize: 14 }}>
+        <div style={{ marginTop: 16 }}>
+          <p style={{ color: 'var(--bad)', fontSize: 13.5, margin: '0 0 12px' }}>
             {statusRow?.rejection_reason || "That doesn't look like a test case request for this application."}
           </p>
-          <button type="button" className="button-secondary" onClick={reset}>
+          <button type="button" onClick={reset} style={secondaryButtonStyle}>
             Try again
           </button>
         </div>
       )}
 
       {status === 'complete' && (
-        <div>
+        <div style={{ marginTop: 16 }}>
           {statusRow?.journey_name && (
-            <p style={{ fontSize: 13, color: 'var(--ink-muted)', marginBottom: 10 }}>
+            <p style={{ fontSize: 13, color: 'var(--fg-4)', margin: '0 0 10px' }}>
               Journey: {statusRow.journey_name}
             </p>
           )}
-          <p style={{ fontSize: 13.5, color: 'var(--ink)' }}>
+          <p style={{ fontSize: 13.5, color: 'var(--fg)', margin: 0 }}>
             {testCaseCount > 0
               ? `${testCaseCount} test case${testCaseCount === 1 ? '' : 's'} added to the suite.`
               : 'Test case added to the suite.'}{' '}
             Run them from the Test Suite tab to see results.
           </p>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border)', marginTop: 16, paddingTop: 14 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-2)', marginTop: 16, paddingTop: 14 }}>
             <button
               type="button"
               onClick={reset}
@@ -194,7 +287,7 @@ export function LiveExplorationPanel({
             >
               + Explore another
             </button>
-            <button type="button" className="button-secondary" onClick={onClose}>
+            <button type="button" onClick={onClose} style={secondaryButtonStyle}>
               Close
             </button>
           </div>
@@ -202,12 +295,12 @@ export function LiveExplorationPanel({
       )}
 
       {status === 'failed' && (
-        <div>
-          <p style={{ color: 'var(--danger)', fontSize: 14 }}>Something went wrong during live exploration.</p>
+        <div style={{ marginTop: 16 }}>
+          <p style={{ color: 'var(--bad)', fontSize: 13.5, margin: '0 0 8px' }}>Something went wrong during live exploration.</p>
           {statusRow?.error_message && (
-            <p style={{ fontSize: 13, color: 'var(--ink-muted)' }}>{statusRow.error_message}</p>
+            <p style={{ fontSize: 13, color: 'var(--fg-4)', margin: '0 0 12px' }}>{statusRow.error_message}</p>
           )}
-          <button type="button" className="button-secondary" onClick={reset}>
+          <button type="button" onClick={reset} style={secondaryButtonStyle}>
             Try again
           </button>
         </div>

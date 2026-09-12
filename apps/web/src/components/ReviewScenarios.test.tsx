@@ -85,7 +85,7 @@ afterEach(() => {
 describe('ReviewScenarios', () => {
   it('renders scenario rows with type badge and journey name', async () => {
     stubFetch([INCOMPLETE_SCENARIO])
-    render(<ReviewScenarios furthestCount={2}applicationId="app-1" onContinueToGenerate={() => {}} />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
 
     await waitFor(() => {
       expect(screen.getByText('Guest checkout')).toBeTruthy()
@@ -96,7 +96,7 @@ describe('ReviewScenarios', () => {
 
   it('shows a Test Data Required readiness pill but leaves Continue enabled — blank fields get a default at generation time', async () => {
     stubFetch([INCOMPLETE_SCENARIO])
-    render(<ReviewScenarios furthestCount={2}applicationId="app-1" onContinueToGenerate={() => {}} />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
 
     await waitFor(() => screen.getByText('Guest checkout'))
     fireEvent.click(screen.getByText('Guest checkout'))
@@ -111,7 +111,7 @@ describe('ReviewScenarios', () => {
 
   it('enables Continue to Generate Test Suite once every scenario is complete', async () => {
     stubFetch([COMPLETE_SCENARIO])
-    render(<ReviewScenarios furthestCount={2}applicationId="app-1" onContinueToGenerate={() => {}} />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
 
     await waitFor(() => screen.getByText('Checkout with promo'))
     const button = screen.getByRole('button', {
@@ -122,9 +122,9 @@ describe('ReviewScenarios', () => {
 
   it('keeps Continue disabled only when there are zero scenarios', async () => {
     stubFetch([])
-    render(<ReviewScenarios furthestCount={2}applicationId="app-1" onContinueToGenerate={() => {}} />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
 
-    await waitFor(() => screen.getByText('Generating scenarios'))
+    await waitFor(() => screen.getByText(/Modelling scenarios/))
     const button = screen.getByRole('button', {
       name: 'Generate Test Suite',
     }) as HTMLButtonElement
@@ -133,7 +133,7 @@ describe('ReviewScenarios', () => {
 
   it('selecting a scenario shows its steps, test data inputs, and expected result', async () => {
     stubFetch([INCOMPLETE_SCENARIO])
-    render(<ReviewScenarios furthestCount={2}applicationId="app-1" onContinueToGenerate={() => {}} />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
 
     await waitFor(() => screen.getByText('Guest checkout'))
     fireEvent.click(screen.getByText('Guest checkout'))
@@ -150,7 +150,7 @@ describe('ReviewScenarios', () => {
   it('hides the Test data panel entirely when a scenario needs no test data', async () => {
     const NO_DATA_SCENARIO = { ...COMPLETE_SCENARIO, id: 'scenario-3', name: 'Sign in', test_data: [] }
     stubFetch([NO_DATA_SCENARIO])
-    render(<ReviewScenarios furthestCount={2}applicationId="app-1" onContinueToGenerate={() => {}} />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
 
     await waitFor(() => screen.getByText('Sign in'))
     fireEvent.click(screen.getByText('Sign in'))
@@ -166,7 +166,7 @@ describe('ReviewScenarios', () => {
         updatedWith = body
       },
     })
-    render(<ReviewScenarios furthestCount={2}applicationId="app-1" onContinueToGenerate={() => {}} />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
 
     await waitFor(() => screen.getByText('Guest checkout'))
     fireEvent.click(screen.getByText('Guest checkout'))
@@ -185,7 +185,7 @@ describe('ReviewScenarios', () => {
     stubFetch([COMPLETE_SCENARIO])
     const onContinueToGenerate = vi.fn()
     render(
-      <ReviewScenarios furthestCount={2}applicationId="app-1" onContinueToGenerate={onContinueToGenerate} />,
+      <ReviewScenarios applicationId="app-1" onContinueToGenerate={onContinueToGenerate} onGoToJourneys={() => {}} />,
     )
 
     await waitFor(() => screen.getByText('Checkout with promo'))
@@ -195,10 +195,10 @@ describe('ReviewScenarios', () => {
 
   it('shows the shared generation-loader animation, not the scenario list, while scenarios are still generating', async () => {
     stubFetch([])
-    render(<ReviewScenarios furthestCount={2}applicationId="app-1" onContinueToGenerate={() => {}} />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
 
     await waitFor(() => {
-      expect(screen.getByRole('status').textContent).toContain('Generating scenarios')
+      expect(screen.getByRole('status').textContent).toContain('Modelling scenarios')
     })
     expect(screen.queryByRole('progressbar')).toBeNull()
   })
@@ -227,10 +227,10 @@ describe('ReviewScenarios', () => {
         return { ok: true, status: 200, json: async () => [] }
       }),
     )
-    render(<ReviewScenarios furthestCount={2}applicationId="app-1" onContinueToGenerate={() => {}} />)
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
 
     await waitFor(() => {
-      expect(screen.getByRole('status').textContent).toContain('Generating scenarios')
+      expect(screen.getByRole('status').textContent).toContain('Modelling scenarios')
     })
     expect(screen.queryByText('Guest checkout')).toBeNull()
   })

@@ -1,41 +1,46 @@
 import { useState } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faBolt, faPlay, faPlugCircleCheck } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type ApplicationCreate, type ApplicationRead } from '../api'
-import { Stepper, type StepKey } from './Stepper'
-import { PasswordInput } from './PasswordInput'
 import { LoadingDots } from './LoadingDots'
 
-// The dropdown's confirmed 3-option set (DESIGN.md "Connect App form"): Username & Password,
-// API Key, OAuth Client Credentials. Only 'standard_login' is backend-supported today
-// (packages/domain/src/domain/application.py AuthMethod) — API Key/OAuth are shown per the
-// confirmed design but disabled until the backend accepts them.
-type AuthMethod = ApplicationCreate['auth_method'] | 'api_key' | 'oauth_client_credentials'
+const KNOWN_ENVIRONMENTS = ['staging', 'production', 'qa']
 
-function FieldLabel({ children }: { children: React.ReactNode }) {
+// A real <label> wrapping its control (not a sibling span) — keeps
+// getByLabelText/screen-reader association working, same as the field
+// pattern this replaces.
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <span className="label-required" style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
+    <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)' }}>{label}</span>
       {children}
-    </span>
+      {hint && <span style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>{hint}</span>}
+    </label>
   )
 }
 
-const KNOWN_ENVIRONMENTS = ['staging', 'qa']
+const fieldInputStyle: React.CSSProperties = {
+  height: 38,
+  padding: '0 12px',
+  border: '1px solid var(--border-2)',
+  borderRadius: 8,
+  fontSize: 13.5,
+  color: 'var(--fg-1)',
+  background: 'var(--panel-2)',
+  outline: 'none',
+  width: '100%',
+  boxSizing: 'border-box',
+  fontFamily: 'inherit',
+}
 
 export function ConnectAppForm({
   application,
   onConnected,
   onCancel,
-  furthestCount,
-  onStepClick,
-  onPrevious,
-  onNext,
 }: {
   application?: ApplicationRead | null
   onConnected: (application: ApplicationRead) => void
   onCancel: () => void
-  furthestCount: number
-  onStepClick?: (key: StepKey) => void
-  onPrevious?: () => void
-  onNext?: () => void
 }) {
   // Once an application is connected, this screen is a read-only receipt of
   // what was submitted — not editable, and never swaps to a different layout.
@@ -50,12 +55,26 @@ export function ConnectAppForm({
   const [customEnvironment, setCustomEnvironment] = useState(
     application && !KNOWN_ENVIRONMENTS.includes(application.environment) ? application.environment : '',
   )
-  const [authMethod, setAuthMethod] = useState<AuthMethod>(application?.auth_method ?? 'standard_login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [apiKey, setApiKey] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [testingConnection, setTestingConnection] = useState(false)
+  const [connectionResult, setConnectionResult] = useState<{ ok: boolean; detail: string | null } | null>(null)
+
+  async function handleTestConnection() {
+    if (testingConnection || !url) return
+    setTestingConnection(true)
+    setConnectionResult(null)
+    try {
+      const result = await api.testConnection(url)
+      setConnectionResult({ ok: result.reachable, detail: result.detail })
+    } catch (err) {
+      setConnectionResult({ ok: false, detail: err instanceof ApiError ? err.message : 'Could not reach the server to test this URL.' })
+    } finally {
+      setTestingConnection(false)
+    }
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -67,8 +86,9 @@ export function ConnectAppForm({
         url,
         login_url: loginUrl || undefined,
         environment: environment === 'other' ? customEnvironment : environment,
-        auth_method: authMethod as ApplicationCreate['auth_method'],
-        ...(authMethod === 'standard_login' ? { username, password } : {}),
+        auth_method: 'standard_login' as ApplicationCreate['auth_method'],
+        username,
+        password,
       })
       onConnected(application)
     } catch (err) {
@@ -80,188 +100,240 @@ export function ConnectAppForm({
 
   return (
     <>
-      <Stepper current="connect-app" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} onNext={onNext} />
-      <main style={{ width: '100%', boxSizing: 'border-box', flex: 1, display: 'flex', flexDirection: 'column' }}>
-      <div
-        style={{
-          flex: 1,
-          width: '100%',
-          minWidth: 0,
-          maxWidth: 'clamp(720px, 92vw, var(--content-max-wide))',
-          margin: '0 auto',
-          padding: '32px 24px',
-          boxSizing: 'border-box',
-        }}
-      >
-        <h1 style={{ fontSize: 16, fontWeight: 700, margin: '0 0 12px', textAlign: 'center' }}>
-          {readOnly ? 'Connected application' : 'Connect to your live application'}
-        </h1>
+      <div style={{ maxWidth: 1560, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div>
+          <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>
+            {readOnly ? 'Connected application' : 'Add application'}
+          </h1>
+          <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 4 }}>
+            {readOnly
+              ? 'What was submitted when this application connected.'
+              : 'Enter the deployed URL and sign-in credentials. Discovery starts immediately — journeys, scenarios and Playwright code follow automatically.'}
+          </div>
+        </div>
 
         <form
           onSubmit={handleSubmit}
-          className="card-panel"
           style={{
-            padding: '14px 22px',
+            background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
+            backdropFilter: 'blur(16px) saturate(1.25)',
+            border: '1px solid var(--border-1)',
+            borderRadius: 14,
+            padding: 18,
             display: 'flex',
             flexDirection: 'column',
-            gap: 'var(--space-3)',
-            boxShadow: 'var(--shadow-dropdown-lg)',
+            gap: 14,
+            boxShadow: 'var(--panel-shadow)',
           }}
         >
-          <fieldset disabled={submitting || readOnly} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 'var(--space-7)' }}>
-            <label className="field">
-              <FieldLabel>Application name</FieldLabel>
-              <input required placeholder="e.g. Staging Checkout" value={name} onChange={(e) => setName(e.target.value)} />
-            </label>
-
-            <label className="field">
-              <FieldLabel>Application URL</FieldLabel>
-              <input
-                type="url"
-                required
-                placeholder="https://staging.example.com"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-              />
-            </label>
-          </div>
-
-          <label className="field">
-            <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
-              Login URL (optional)
-            </span>
-            <input
-              type="url"
-              placeholder="https://staging.example.com/login"
-              value={loginUrl}
-              onChange={(e) => setLoginUrl(e.target.value)}
-            />
-            <span className="caption" style={{ fontSize: 11.5 }}>
-              Only needed if the login form isn't reachable from the Application URL.
-            </span>
-          </label>
-
-          <div style={{ height: 1, background: 'var(--border-hairline)' }} />
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
-            <label className="field">
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
-                Environment
-              </span>
-              <select value={environment} onChange={(e) => setEnvironment(e.target.value)}>
-                <option value="staging">Staging</option>
-                <option value="qa">QA</option>
-                <option value="other">Other</option>
-              </select>
-              {environment === 'other' && (
+          <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              <Field label="Application name">
                 <input
-                  type="text"
-                  placeholder="e.g. sandbox, uat"
-                  value={customEnvironment}
-                  onChange={(e) => setCustomEnvironment(e.target.value)}
                   required
-                  style={{ marginTop: 6 }}
+                  readOnly={readOnly}
+                  placeholder="Enter the application name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  style={fieldInputStyle}
                 />
-              )}
-            </label>
-
-            <label className="field">
-              <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
-                Authentication method
-              </span>
-              <select
-                value={authMethod}
-                onChange={(e) => setAuthMethod(e.target.value as AuthMethod)}
-              >
-                <option value="standard_login">Username &amp; Password</option>
-                <option value="api_key" disabled>
-                  API Key (coming soon)
-                </option>
-                <option value="oauth_client_credentials" disabled>
-                  OAuth Client Credentials (coming soon)
-                </option>
-              </select>
-            </label>
-          </div>
-
-          {authMethod === 'standard_login' ? (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-7)' }}>
-              <label className="field">
-                <FieldLabel>Username</FieldLabel>
-                <input
-                  required={!readOnly}
-                  autoComplete="off"
-                  placeholder={readOnly ? 'Stored securely — not shown' : 'Login username'}
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                />
-              </label>
-              <label className="field">
-                <FieldLabel>Password</FieldLabel>
-                {readOnly ? (
-                  <input readOnly placeholder="Stored securely — not shown" value={password} />
-                ) : (
-                  <PasswordInput
+              </Field>
+              <Field label="Environment">
+                <select
+                  value={environment}
+                  disabled={readOnly}
+                  onChange={(e) => setEnvironment(e.target.value)}
+                  style={{ ...fieldInputStyle, opacity: 1, WebkitTextFillColor: 'var(--fg-1)', cursor: readOnly ? 'default' : 'pointer' }}
+                >
+                  <option value="staging">Staging</option>
+                  <option value="production">Production</option>
+                  <option value="qa">QA</option>
+                  <option value="other">Other</option>
+                </select>
+                {environment === 'other' && (
+                  <input
+                    type="text"
+                    aria-label="Custom environment"
+                    readOnly={readOnly}
+                    placeholder="Enter the environment name"
+                    value={customEnvironment}
+                    onChange={(e) => setCustomEnvironment(e.target.value)}
                     required
-                    autoComplete="off"
-                    placeholder="Login password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    style={{ ...fieldInputStyle, marginTop: 4 }}
                   />
                 )}
-              </label>
+              </Field>
             </div>
-          ) : authMethod === 'api_key' ? (
-            <label className="field">
-              <FieldLabel>API Key</FieldLabel>
-              <input
-                required
-                autoComplete="off"
-                placeholder="Paste API key"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-              />
-            </label>
-          ) : null}
 
-          {!readOnly && (
-            <p
-              className="caption"
-              style={{
-                background: 'var(--canvas-wash)',
-                borderRadius: 'var(--radius)',
-                padding: 'var(--space-3)',
-                margin: 0,
-                fontSize: 12.5,
-                lineHeight: 1.5,
-              }}
-            >
-              Use a Dedicated Test Account for this Application, not a real end-user identity, on a lower environment.
-              Credentials are written directly to the secrets store and never stored in plaintext.
-            </p>
-          )}
+            <Field label="Deployed URL">
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <input
+                  type="url"
+                  required
+                  readOnly={readOnly}
+                  placeholder="https://"
+                  value={url}
+                  onChange={(e) => {
+                    setUrl(e.target.value)
+                    setConnectionResult(null)
+                  }}
+                  style={{ ...fieldInputStyle, fontFamily: 'var(--font-mono)', fontSize: 13 }}
+                />
+                <button
+                  type="button"
+                  disabled={!url || testingConnection || readOnly}
+                  onClick={handleTestConnection}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    height: 30,
+                    padding: '0 12px',
+                    borderRadius: 8,
+                    border: '1px solid rgba(30,150,138,0.35)',
+                    background: 'rgba(30,150,138,0.1)',
+                    color: 'var(--accent-2)',
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: !url || testingConnection || readOnly ? 'not-allowed' : 'pointer',
+                    opacity: !url || readOnly ? 0.5 : 1,
+                    whiteSpace: 'nowrap',
+                    flexShrink: 0,
+                  }}
+                >
+                  {testingConnection ? (
+                    <LoadingDots label="Testing" />
+                  ) : (
+                    <>
+                      <FontAwesomeIcon icon={faPlugCircleCheck} style={{ fontSize: 11 }} />
+                      Test connection
+                    </>
+                  )}
+                </button>
+              </div>
+              {connectionResult && (
+                <div style={{ fontSize: 12, color: connectionResult.ok ? 'var(--ok)' : 'var(--bad)' }}>
+                  {connectionResult.ok ? 'URL is reachable.' : connectionResult.detail ?? 'URL is not reachable.'}
+                </div>
+              )}
+            </Field>
 
-          {error && (
-            <div style={{ color: 'var(--danger)', fontSize: 13 }} role="alert">
-              {error}
+            <div style={{ height: 1, background: 'var(--line)' }} />
+
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+              <div
+                title="Sign-in is required for every application today"
+                style={{ width: 36, height: 20, flex: 'none', borderRadius: 1000, padding: 2, display: 'flex', background: 'var(--ok)' }}
+              >
+                <div style={{ width: 16, height: 16, borderRadius: 1000, background: 'var(--on-ok)', transform: 'translateX(16px)' }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--fg-1)' }}>This application requires sign-in</div>
+                <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
+                  Credentials are stored encrypted and injected at discovery and run time only.
+                </div>
+              </div>
             </div>
-          )}
 
-          {!readOnly && (
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 'var(--space-4)', marginTop: 'var(--space-4)' }}>
-              <button type="button" className="button-secondary" onClick={onCancel} style={{ padding: '9px 18px' }}>
-                Cancel
-              </button>
-              <button type="submit" className="button-primary" disabled={submitting} style={{ padding: '9px 20px' }}>
-                {submitting ? <LoadingDots label="Connecting" /> : 'Proceed'}
-              </button>
+            <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, padding: 14, background: 'var(--panel-2)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <Field label="Login URL (optional)">
+                <input
+                  type="url"
+                  readOnly={readOnly}
+                  placeholder="Enter the login page URL"
+                  value={loginUrl}
+                  onChange={(e) => setLoginUrl(e.target.value)}
+                  style={{ ...fieldInputStyle, background: 'var(--panel)', fontFamily: 'var(--font-mono)', fontSize: 13 }}
+                />
+              </Field>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <Field label="Username">
+                  <input
+                    required={!readOnly}
+                    readOnly={readOnly}
+                    autoComplete="off"
+                    placeholder={readOnly ? 'Stored securely — not shown' : 'Service account email'}
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    style={{ ...fieldInputStyle, background: 'var(--panel)' }}
+                  />
+                </Field>
+                <Field label="Password">
+                  <input
+                    type="password"
+                    readOnly={readOnly}
+                    required={!readOnly}
+                    autoComplete="off"
+                    placeholder={readOnly ? 'Stored securely — not shown' : 'Password or token'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    style={{ ...fieldInputStyle, background: 'var(--panel)' }}
+                  />
+                </Field>
+              </div>
             </div>
-          )}
+
+            {!readOnly && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', border: '1px solid var(--border-2)', borderRadius: 10, background: 'var(--panel-2)' }}>
+                <FontAwesomeIcon icon={faBolt} style={{ fontSize: 13, color: 'var(--fg-3)', flexShrink: 0 }} />
+                <div style={{ flex: 1, fontSize: 12.5, color: 'var(--fg-3)' }}>
+                  Discovery uses the workspace defaults for runtime, page count and journey limits. Change them in Configuration → Settings.
+                </div>
+              </div>
+            )}
+
+            {error && (
+              <div style={{ color: 'var(--bad)', fontSize: 13 }} role="alert">
+                {error}
+              </div>
+            )}
+
+            {!readOnly && (
+              <>
+                <div style={{ height: 1, background: 'var(--line)' }} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={onCancel}
+                    style={{ height: 38, padding: '0 18px', borderRadius: 8, border: '1px solid var(--border-2)', background: 'var(--panel)', fontSize: 13.5, fontWeight: 500, color: 'var(--fg-2)', cursor: 'pointer' }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={submitting}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      height: 38,
+                      padding: '0 20px',
+                      borderRadius: 8,
+                      background: 'var(--accent)',
+                      color: '#fff',
+                      fontSize: 13.5,
+                      fontWeight: 600,
+                      cursor: submitting ? 'default' : 'pointer',
+                      boxShadow: 'var(--accent-glow)',
+                      border: 'none',
+                      opacity: submitting ? 0.75 : 1,
+                    }}
+                  >
+                    {submitting ? (
+                      <LoadingDots label="Connecting" />
+                    ) : (
+                      <>
+                        <FontAwesomeIcon icon={faPlay} style={{ fontSize: 11 }} />
+                        Start discovery
+                      </>
+                    )}
+                  </button>
+                </div>
+              </>
+            )}
           </fieldset>
         </form>
       </div>
-      </main>
     </>
   )
 }

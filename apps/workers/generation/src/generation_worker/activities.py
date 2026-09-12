@@ -46,6 +46,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio import activity
 from workflows import (
+    AutofillScenarioTestDataActivityInput,
     EnsureTestSuiteActivityInput,
     EnsureTestSuiteActivityResult,
     FinalizeSuiteGenerationActivityInput,
@@ -834,6 +835,21 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
         test_asset_id,
     )
     return test_asset_id
+
+
+@activity.defn(name="AutofillScenarioTestDataActivity")
+async def autofill_scenario_test_data_activity(
+    input: AutofillScenarioTestDataActivityInput,
+) -> list[dict]:
+    """Scenarios tab "Auto-generate" button — same deterministic, non-AI
+    default-value fill `_resolve_scenario_defaults_sync` already applies at
+    suite-generation time, just triggerable early. No AI call, no
+    typecheck — returns the Scenario's own (already-persisted, by
+    `_resolve_scenario_defaults_sync` itself) test_data."""
+    (scenario, *_rest) = await asyncio.to_thread(
+        _resolve_scenario_defaults_sync, input.scenario_id
+    )
+    return scenario.test_data
 
 
 @activity.defn(name="RegenerateTestAssetActivity")

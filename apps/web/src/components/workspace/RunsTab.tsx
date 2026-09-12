@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faClapperboard, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
+import { faImage } from '@fortawesome/free-regular-svg-icons'
 import {
   ApiError,
   api,
@@ -10,6 +13,7 @@ import {
 import { StatusPill } from '../StatusPill'
 import { ServiceErrorNote } from '../ServiceError'
 import { EmptyState, RunsIllustration } from '../EmptyState'
+import { SkeletonRows } from '../Skeleton'
 import { Pagination } from '../Pagination'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { ChevronIcon } from './TestSuiteTab'
@@ -27,17 +31,25 @@ function BackIcon() {
   )
 }
 
+// Run list row's trailing "open this run" chevron — a plain right-pointing
+// glyph, distinct from TestSuiteTab's `ChevronIcon` (which rotates to mean
+// expanded/collapsed, not "navigate").
+function RightChevronIcon() {
+  return (
+    <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="var(--fg-5)" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  )
+}
+
 const NON_PASSED_STATUSES = new Set(['failed', 'timed_out', 'errored'])
 
 // Self-explanatory icon (not text) for a passed result that only passed
-// after self-heal fixed it — a lightning bolt reads as "auto-fixed" without
-// a label competing for space in the row.
+// after self-heal fixed it — same magic-wand mark the prototype uses for
+// every AI-authored/self-healed badge (Authored by prompt, Self-healed,
+// Passed with self-heal), not a bolt.
 function AutoHealedIcon() {
-  return (
-    <svg width={14} height={14} viewBox="0 0 24 24" fill="var(--good)" stroke="none" aria-hidden="true">
-      <path d="M13 2 3 14h7l-1 8 11-14h-7l1-6z" />
-    </svg>
-  )
+  return <FontAwesomeIcon icon={faWandMagicSparkles} style={{ fontSize: 14, color: "var(--good)" }} />
 }
 
 // Exhausted state gets its own glyph (not the retry arrow, faded) — reusing
@@ -63,7 +75,7 @@ function PassedIllustration() {
     <svg width={40} height={40} viewBox="0 0 40 40" fill="none" aria-hidden="true">
       <rect x="1" y="1" width="38" height="38" rx="12" fill="var(--good-wash)" />
       <circle cx="20" cy="20" r="10" fill="var(--good-strong)" />
-      <path d="M15 20.5 18.4 24 25.5 16.5" stroke="var(--canvas)" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+      <path d="M15 20.5 18.4 24 25.5 16.5" stroke="var(--panel)" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
     </svg>
   )
 }
@@ -120,8 +132,8 @@ export function ArtifactsModal({ testResult, onClose }: { testResult: TestResult
       <div
         onClick={(e) => e.stopPropagation()}
         style={{
-          background: 'var(--canvas)',
-          borderRadius: 'var(--radius)',
+          background: 'var(--panel)',
+          borderRadius: 16,
           width: 'min(560px, 92vw)',
           maxHeight: '80vh',
           display: 'flex',
@@ -135,10 +147,10 @@ export function ArtifactsModal({ testResult, onClose }: { testResult: TestResult
             justifyContent: 'space-between',
             alignItems: 'center',
             padding: '12px 16px',
-            borderBottom: '1px solid var(--border-hairline)',
+            borderBottom: '1px solid var(--line)',
           }}
         >
-          <span style={{ color: 'var(--ink)', fontSize: 13, fontWeight: 600 }}>
+          <span style={{ color: 'var(--fg)', fontSize: 13, fontWeight: 600 }}>
             {testResult.scenario_name} — failure artifacts
           </span>
           <button
@@ -148,7 +160,7 @@ export function ArtifactsModal({ testResult, onClose }: { testResult: TestResult
             style={{
               background: 'none',
               border: 'none',
-              color: 'var(--ink-muted)',
+              color: 'var(--fg-4)',
               cursor: 'pointer',
               fontSize: 16,
               lineHeight: 1,
@@ -164,8 +176,8 @@ export function ArtifactsModal({ testResult, onClose }: { testResult: TestResult
               style={{
                 margin: '0 0 16px',
                 padding: 12,
-                background: 'var(--canvas-wash)',
-                border: '1px solid var(--border-hairline)',
+                background: 'var(--bg-2)',
+                border: '1px solid var(--line)',
                 borderRadius: 'var(--radius)',
                 fontSize: 12,
                 lineHeight: 1.6,
@@ -192,8 +204,9 @@ export function ArtifactsModal({ testResult, onClose }: { testResult: TestResult
                     href={artifact.url}
                     target="_blank"
                     rel="noreferrer"
-                    style={{ fontSize: 13, color: 'var(--accent)', fontWeight: 600 }}
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--accent)', fontWeight: 600 }}
                   >
+                    {artifact.artifact_type === 'trace' ? <FontAwesomeIcon icon={faClapperboard} style={{ fontSize: 13 }} /> : <FontAwesomeIcon icon={faImage} style={{ fontSize: 13 }} />}
                     {artifact.artifact_type === 'trace' ? 'Playwright trace' : 'Screenshot'} (
                     {Math.max(1, Math.round(artifact.size_bytes / 1024))} KB)
                   </a>
@@ -210,7 +223,7 @@ export function ArtifactsModal({ testResult, onClose }: { testResult: TestResult
 const columnHeaderLabelStyle: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
-  color: 'var(--ink-faint)',
+  color: 'var(--fg-5)',
   textTransform: 'uppercase',
   letterSpacing: '0.05em',
   whiteSpace: 'nowrap',
@@ -222,18 +235,19 @@ const columnHeaderLabelStyle: React.CSSProperties = {
 // live in the expand panel below the row, same as TestSuiteTab, so they
 // don't need their own column.
 const RESULT_GRID_TEMPLATE = '50% 1fr 1fr'
-// Runs table columns (RunListHeader/RunListRow) use percentages, not px —
-// `table-layout: fixed` + `width: 100%` on `.data-table` means these scale
-// with the table instead of leaving it stuck at a fixed pixel sum. Date &
-// Time gets the biggest share (22%); the rest split what's left, and Status
-// stays unwidthed so it alone absorbs any remainder.
-const TEST_RUN_COL_WIDTH = '22%'
-const DATE_COL_WIDTH = '18%'
-const TRIGGERED_BY_COL_WIDTH = '13%'
-const PASS_RATE_COL_WIDTH = '9%'
-const PASSED_COL_WIDTH = '10%'
-const FAILED_COL_WIDTH = '10%'
-const RUN_DURATION_COL_WIDTH = '9%'
+
+// Run list row columns — same proportions as the prototype's Run/Trigger/
+// Results/Pass rate/chevron grid.
+const RUN_ROW_GRID_TEMPLATE = 'minmax(140px,1.3fr) minmax(110px,0.9fr) 90px minmax(130px,1.4fr) 84px 20px'
+
+// Not a stored TestResult field — a result only reads as "flaky" once it
+// ended up passed *after* auto-heal touched it (healed_test_asset_id set).
+// Browser split and commit/branch metadata from the prototype's Runs screen
+// were explicitly skipped (no such data exists in this domain) — flaky is
+// the one extra bucket that's computable from fields already on the row.
+function isFlaky(result: TestResultRead): boolean {
+  return result.status === 'passed' && result.healed_test_asset_id != null
+}
 
 // Same "Test Case" / "Duration" / "Status" columns as the Test Suite tab's
 // asset list (TestSuiteTab.tsx) — a failing test case reads the same way in
@@ -307,7 +321,7 @@ function ResultListHeader({
         alignItems: 'center',
         gap: 20,
         padding: '8px 16px',
-        background: 'var(--canvas-wash-alt)',
+        background: 'var(--hover)',
       }}
     >
       {/* 24px = chevron (14) + its gap (10) in each row below, so the label lines up over the row's text, not its icon. */}
@@ -449,7 +463,7 @@ function TestResultRow({
           <span
             style={{
               fontSize: 13,
-              color: 'var(--ink)',
+              color: 'var(--fg)',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -547,7 +561,7 @@ function TestResultRow({
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 0 10px' }}>
               <PassedIllustration />
               <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-secondary)' }}>Passed cleanly</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>Passed cleanly</div>
                 <div className="caption" style={{ fontSize: 12, marginTop: 2 }}>
                   No errors, screenshots, or traces — this scenario ran with nothing to flag.
                 </div>
@@ -564,8 +578,8 @@ function TestResultRow({
               style={{
                 margin: '0 0 10px',
                 padding: 10,
-                background: 'var(--canvas-wash)',
-                border: '1px solid var(--border-hairline)',
+                background: 'var(--bg-2)',
+                border: '1px solid var(--line)',
                 borderRadius: 'var(--radius)',
                 fontSize: 11.5,
                 lineHeight: 1.5,
@@ -604,8 +618,9 @@ function TestResultRow({
                       target="_blank"
                       rel="noreferrer"
                       className="button-secondary"
-                      style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center' }}
+                      style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
                     >
+                      {artifact.artifact_type === 'trace' ? <FontAwesomeIcon icon={faClapperboard} style={{ fontSize: 12 }} /> : <FontAwesomeIcon icon={faImage} style={{ fontSize: 12 }} />}
                       {artifact.artifact_type === 'trace' ? 'Playwright trace' : 'Screenshot'} (
                       {Math.max(1, Math.round(artifact.size_bytes / 1024))} KB)
                     </a>
@@ -668,6 +683,153 @@ export function formatDuration(ms: number | null): string {
   return `${hours}h ${minutes}m ${seconds}s`
 }
 
+const tileCardStyle: React.CSSProperties = {
+  background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
+  backdropFilter: 'blur(16px) saturate(1.25)',
+  border: '1px solid var(--border-1)',
+  borderRadius: 12,
+  padding: '15px 18px',
+  boxShadow: 'var(--panel-shadow)',
+}
+
+// Same frosted-glass main-panel look every other Vantage panel on this
+// screen uses — replaces the old solid `.card-panel` class (`var(--panel)`,
+// no blur) that a couple of RunDetail panels were still carrying, which
+// made them look flat/rectangular next to their glass-panel neighbors.
+const mainPanelStyle: React.CSSProperties = {
+  background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
+  backdropFilter: 'blur(16px) saturate(1.25)',
+  border: '1px solid var(--border-1)',
+  borderRadius: 14,
+  boxShadow: 'var(--panel-shadow)',
+}
+
+function SummaryTile({ label, value, valueColor }: { label: string; value: string; valueColor?: string }) {
+  return (
+    <div style={tileCardStyle}>
+      <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 21, fontWeight: 600, color: valueColor ?? 'var(--fg)', marginTop: 8 }}>{value}</div>
+    </div>
+  )
+}
+
+const DONUT_RADIUS = 15.9
+const DONUT_CIRCUMFERENCE = 2 * Math.PI * DONUT_RADIUS
+
+function donutArc(fraction: number): string {
+  const len = Math.max(0, Math.min(1, fraction)) * DONUT_CIRCUMFERENCE
+  return `${len.toFixed(2)} ${DONUT_CIRCUMFERENCE.toFixed(2)}`
+}
+
+// "Result split" donut — pass/flaky/fail arcs stacked around one ring
+// (rotated -90deg so the first arc starts at 12 o'clock), same three
+// buckets as the summary tiles above it.
+function ResultSplitDonut({ passed, flaky, failed, total }: { passed: number; flaky: number; failed: number; total: number }) {
+  const passFrac = total > 0 ? passed / total : 0
+  const flakyFrac = total > 0 ? flaky / total : 0
+  const failFrac = total > 0 ? failed / total : 0
+  const rate = total > 0 ? `${Math.round((passed / total) * 100)}%` : '—'
+  return (
+    <div style={{ position: 'relative', width: 132, height: 132, flex: 'none' }}>
+      <svg viewBox="0 0 42 42" style={{ width: 132, height: 132, transform: 'rotate(-90deg)' }}>
+        <circle cx={21} cy={21} r={DONUT_RADIUS} fill="none" stroke="var(--panel-2)" strokeWidth={5} />
+        <circle cx={21} cy={21} r={DONUT_RADIUS} fill="none" stroke="var(--good-strong)" strokeWidth={5} strokeDasharray={donutArc(passFrac)} strokeLinecap="round" />
+        <circle
+          cx={21}
+          cy={21}
+          r={DONUT_RADIUS}
+          fill="none"
+          stroke="var(--warn-strong)"
+          strokeWidth={5}
+          strokeDasharray={donutArc(flakyFrac)}
+          strokeDashoffset={-(passFrac * DONUT_CIRCUMFERENCE)}
+          strokeLinecap="round"
+        />
+        <circle
+          cx={21}
+          cy={21}
+          r={DONUT_RADIUS}
+          fill="none"
+          stroke="var(--danger-strong)"
+          strokeWidth={5}
+          strokeDasharray={donutArc(failFrac)}
+          strokeDashoffset={-((passFrac + flakyFrac) * DONUT_CIRCUMFERENCE)}
+          strokeLinecap="round"
+        />
+      </svg>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 21, color: 'var(--fg)', fontWeight: 600 }}>
+        {rate}
+      </div>
+    </div>
+  )
+}
+
+// One stacked bar per Journey (a Journey's Scenarios compile into one spec
+// file/suite) — same pass/self-healed/failed buckets as the Result split
+// donut, just broken out per suite instead of aggregated across the run.
+function ResultsBySuite({ results }: { results: TestResultRead[] }) {
+  const bySuite = new Map<string, { passed: number; flaky: number; failed: number }>()
+  for (const r of results) {
+    const key = r.journey_name || 'Other'
+    const bucket = bySuite.get(key) ?? { passed: 0, flaky: 0, failed: 0 }
+    if (r.status === 'passed') {
+      if (isFlaky(r)) bucket.flaky += 1
+      else bucket.passed += 1
+    } else if (NON_PASSED_STATUSES.has(r.status)) {
+      bucket.failed += 1
+    }
+    bySuite.set(key, bucket)
+  }
+  const suites = [...bySuite.entries()]
+  const maxTotal = Math.max(1, ...suites.map(([, v]) => v.passed + v.flaky + v.failed))
+  const barHeight = 170
+  return (
+    <div style={tileCardStyle}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+        <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Results by suite</div>
+        <div style={{ display: 'flex', gap: 14, fontSize: 11.5, color: 'var(--fg-3)' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--good-strong)' }} />
+            Passed
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--danger-strong)' }} />
+            Failed
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 7, height: 7, borderRadius: 2, background: 'var(--warn-strong)' }} />
+            Self-healed
+          </span>
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 18, height: barHeight, marginTop: 18, overflowX: 'auto' }}>
+        {suites.map(([name, v]) => {
+          const total = v.passed + v.flaky + v.failed
+          const scale = barHeight / maxTotal
+          return (
+            <div key={name} style={{ flex: '1 0 36px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, height: '100%', justifyContent: 'flex-end' }}>
+              <div style={{ width: '100%', maxWidth: 36, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', borderRadius: '5px 5px 0 0', overflow: 'hidden' }}>
+                {v.failed > 0 && <div style={{ height: v.failed * scale, background: 'var(--danger-strong)' }} />}
+                {v.flaky > 0 && <div style={{ height: v.flaky * scale, background: 'var(--warn-strong)' }} />}
+                {v.passed > 0 && <div style={{ height: v.passed * scale, background: 'var(--good-strong)' }} />}
+                {total === 0 && <div style={{ height: 2, background: 'var(--chip)' }} />}
+              </div>
+              <div
+                title={name}
+                style={{ fontSize: 10.5, color: 'var(--fg-4)', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 60 }}
+              >
+                {name}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function RunDetail({
   applicationId,
   run,
@@ -683,7 +845,22 @@ function RunDetail({
   const [resultsPage, setResultsPage] = useState(0)
   const [resultSortKey, setResultSortKey] = useState<ResultSortKey | null>(null)
   const [resultSortDir, setResultSortDir] = useState<'asc' | 'desc'>('asc')
+  const [downloading, setDownloading] = useState(false)
   const results = run.results ?? []
+  const flakyCount = results.filter(isFlaky).length
+  const cleanPassedCount = run.passed_count - flakyCount
+  const failedCount = run.failed_count + run.timed_out_count + run.errored_count
+
+  async function handleDownload() {
+    setDownloading(true)
+    try {
+      await api.downloadTestSuiteProject(applicationId)
+    } catch {
+      // best-effort — a failed download just leaves the button re-enabled
+    } finally {
+      setDownloading(false)
+    }
+  }
   const runningResultId = run.status === 'running' ? results.find((r) => r.status === 'pending')?.id : undefined
   // Finished (passed/failed/etc.) first, still-pending ones last — each
   // group keeps its original request order (stable sort on one boolean).
@@ -706,32 +883,92 @@ function RunDetail({
   }
 
   return (
-    <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <button
-            type="button"
-            className="button-secondary"
-            onClick={onBack}
-            aria-label="Back to Test Runs"
-            style={{ display: 'inline-flex', alignItems: 'center', padding: 8 }}
-          >
-            <BackIcon />
-          </button>
-          <span style={{ fontSize: 15, fontWeight: 800, color: 'var(--ink)' }}>{run.name}</span>
-          <StatusPill status={run.status} label={testRunStatusLabel(run.status)} />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <button
+        type="button"
+        onClick={onBack}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 8,
+          fontSize: 12.5,
+          fontWeight: 500,
+          color: 'var(--fg-3)',
+          background: 'none',
+          border: 'none',
+          padding: 0,
+          cursor: 'pointer',
+          width: 'fit-content',
+        }}
+      >
+        <BackIcon />
+        All test runs
+      </button>
+
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 20, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.01em' }}>{run.name}</span>
+            <StatusPill status={run.status} label={testRunStatusLabel(run.status)} />
+          </div>
+          <div className="caption" style={{ fontSize: 13, marginTop: 5 }}>
+            {run.trigger} · {formatDateTime(run.created_at)}
+          </div>
         </div>
-        <span className="caption" style={{ fontSize: 12.5 }}>
-          {run.trigger} · {formatDateTime(run.created_at)}
-        </span>
+        <div style={{ flex: 1 }} />
+        <button type="button" className="button-secondary" onClick={handleDownload} disabled={downloading}>
+          {downloading ? 'Downloading…' : 'Download project'}
+        </button>
       </div>
 
+      {!isRunning && run.results && results.length > 0 && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 14 }}>
+            <SummaryTile label="Total" value={String(run.total_count)} />
+            <SummaryTile label="Passed" value={String(cleanPassedCount)} valueColor="var(--good-strong)" />
+            <SummaryTile label="Self-healed" value={String(flakyCount)} valueColor="var(--warn-strong)" />
+            <SummaryTile label="Failed" value={String(failedCount)} valueColor="var(--danger-strong)" />
+            <SummaryTile label="Duration" value={formatDuration(runDurationMs(run))} />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))', gap: 14 }}>
+            <div style={tileCardStyle}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Result split</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 22, marginTop: 18 }}>
+                <ResultSplitDonut passed={cleanPassedCount} flaky={flakyCount} failed={failedCount} total={run.total_count} />
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--good-strong)' }} />
+                    <span style={{ color: 'var(--fg-3)' }}>Passed</span>
+                    <span style={{ flex: 1 }} />
+                    <span style={{ color: 'var(--fg-1)' }}>{cleanPassedCount}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--warn-strong)' }} />
+                    <span style={{ color: 'var(--fg-3)' }}>Self-healed</span>
+                    <span style={{ flex: 1 }} />
+                    <span style={{ color: 'var(--fg-1)' }}>{flakyCount}</span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--danger-strong)' }} />
+                    <span style={{ color: 'var(--fg-3)' }}>Failed</span>
+                    <span style={{ flex: 1 }} />
+                    <span style={{ color: 'var(--fg-1)' }}>{failedCount}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <ResultsBySuite results={results} />
+          </div>
+        </>
+      )}
+
       {run.status === 'blocked' && (
-        <div className="card-panel" style={{ padding: '16px 20px', marginBottom: 20 }}>
+        <div style={{ ...mainPanelStyle, padding: '16px 20px', marginBottom: 20 }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--warn-strong)', marginBottom: 4 }}>
             Skipped
           </div>
-          <div style={{ fontSize: 13, color: 'var(--ink-secondary)' }}>{run.blocked_reason}</div>
+          <div style={{ fontSize: 13, color: 'var(--fg-2)' }}>{run.blocked_reason}</div>
         </div>
       )}
 
@@ -744,7 +981,7 @@ function RunDetail({
       )}
 
       {run.results && results.length > 0 && (
-        <div className="card-panel" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ ...mainPanelStyle, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <ResultListHeader sortKey={resultSortKey} sortDir={resultSortDir} onSort={handleResultSort} />
           {pagedResults.map((result) => (
             <TestResultRow
@@ -813,145 +1050,104 @@ function sortRuns(runs: TestRunRead[], key: SortKey, dir: 'asc' | 'desc'): TestR
   return dir === 'asc' ? sorted : sorted.reverse()
 }
 
-function SortableTh({
-  label,
-  sortKey,
-  activeKey,
-  dir,
-  onSort,
-  width,
-  align,
-}: {
-  label: string
-  sortKey: SortKey
-  activeKey: SortKey
-  dir: 'asc' | 'desc'
-  onSort: (key: SortKey) => void
-  // Omitted only for the last column — under `table-layout: fixed`, every
-  // other column holds exactly the width it's given (px or %), and the one
-  // column left without a width absorbs whatever space remains instead of
-  // the browser stretching all of them proportionally to fill the row.
-  width?: number | string
-  align?: 'left' | 'right'
-}) {
-  const isActive = sortKey === activeKey
-  return (
-    <th
-      className="sortable"
-      onClick={() => onSort(sortKey)}
-      style={{ ...columnHeaderLabelStyle, width, textAlign: align ?? 'left' }}
-    >
-      {label}
-      {isActive ? (dir === 'asc' ? ' ▲' : ' ▼') : ''}
-    </th>
-  )
+const RUN_SORT_LABELS: Record<SortKey, string> = {
+  name: 'Test Run',
+  date: 'Date & Time',
+  triggeredBy: 'Triggered By',
+  passRate: 'Pass Rate',
+  passed: 'Passed',
+  failed: 'Failed',
+  duration: 'Duration',
+  status: 'Status',
 }
 
-function RunListHeader({
-  sortKey,
-  sortDir,
-  onSort,
-}: {
-  sortKey: SortKey
-  sortDir: 'asc' | 'desc'
-  onSort: (key: SortKey) => void
-}) {
+function RunListHeader() {
   return (
-    <thead>
-      <tr>
-        <SortableTh label="Test Run" sortKey="name" activeKey={sortKey} dir={sortDir} onSort={onSort} width={TEST_RUN_COL_WIDTH} />
-        <SortableTh label="Date & Time" sortKey="date" activeKey={sortKey} dir={sortDir} onSort={onSort} width={DATE_COL_WIDTH} />
-        <SortableTh
-          label="Triggered By"
-          sortKey="triggeredBy"
-          activeKey={sortKey}
-          dir={sortDir}
-          onSort={onSort}
-          width={TRIGGERED_BY_COL_WIDTH}
-        />
-        <SortableTh
-          label="Pass Rate"
-          sortKey="passRate"
-          activeKey={sortKey}
-          dir={sortDir}
-          onSort={onSort}
-          width={PASS_RATE_COL_WIDTH}
-          align="right"
-        />
-        <SortableTh
-          label="Passed"
-          sortKey="passed"
-          activeKey={sortKey}
-          dir={sortDir}
-          onSort={onSort}
-          width={PASSED_COL_WIDTH}
-          align="right"
-        />
-        <SortableTh
-          label="Failed"
-          sortKey="failed"
-          activeKey={sortKey}
-          dir={sortDir}
-          onSort={onSort}
-          width={FAILED_COL_WIDTH}
-          align="right"
-        />
-        <SortableTh
-          label="Duration"
-          sortKey="duration"
-          activeKey={sortKey}
-          dir={sortDir}
-          onSort={onSort}
-          width={RUN_DURATION_COL_WIDTH}
-          align="right"
-        />
-        <SortableTh label="Status" sortKey="status" activeKey={sortKey} dir={sortDir} onSort={onSort} />
-      </tr>
-    </thead>
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: RUN_ROW_GRID_TEMPLATE,
+        alignItems: 'center',
+        gap: 14,
+        padding: '11px 20px',
+        background: 'var(--hover)',
+      }}
+    >
+      <div style={columnHeaderLabelStyle}>Run</div>
+      <div style={columnHeaderLabelStyle}>Triggered by</div>
+      <div style={{ ...columnHeaderLabelStyle, textAlign: 'center' }}>Duration</div>
+      <div style={columnHeaderLabelStyle}>Results</div>
+      <div style={{ ...columnHeaderLabelStyle, textAlign: 'right' }}>Pass rate</div>
+      <div />
+    </div>
   )
 }
 
 function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
   const { by } = parseTrigger(run.trigger)
+  const total = run.passed_count + run.failed_count + run.timed_out_count + run.errored_count
+  const passPct = total > 0 ? (run.passed_count / total) * 100 : 0
   return (
-    <tr
+    <div
       role="button"
       tabIndex={0}
-      className="clickable"
       onClick={onOpen}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') onOpen()
       }}
+      className="clickable"
+      style={{
+        display: 'grid',
+        gridTemplateColumns: RUN_ROW_GRID_TEMPLATE,
+        alignItems: 'center',
+        gap: 14,
+        padding: '14px 20px',
+        borderBottom: '1px solid var(--row-line)',
+        cursor: 'pointer',
+      }}
     >
-      <td
-        style={{
-          fontSize: 13,
-          fontWeight: 700,
-          color: 'var(--ink)',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-        title={run.name}
-      >
-        {run.name}
-      </td>
-      <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>
-        {formatDateTimeWithZone(run.created_at)}
-      </td>
-      <td style={{ fontSize: 12.5, color: 'var(--ink-secondary)' }}>{by}</td>
-      <td className="caption" style={{ fontSize: 12, textAlign: 'right' }}>
-        {run.pass_rate != null ? `${Math.round(run.pass_rate * 100)}%` : '—'}
-      </td>
-      <td style={{ fontSize: 12, textAlign: 'right', color: 'var(--good)' }}>{run.passed_count} passed</td>
-      <td style={{ fontSize: 12, textAlign: 'right', color: 'var(--danger)' }}>{run.failed_count} failed</td>
-      <td className="caption" style={{ fontSize: 12, textAlign: 'right' }}>
+      <div style={{ minWidth: 0 }}>
+        {/* Status dot sits right on the run name, same as the prototype's
+            per-row status icon — not off in its own column, which is why
+            the last column below carries only the plain status word. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+          <StatusPill status={run.status} label="" variant="inline" />
+          <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={run.name}>
+            {run.name}
+          </span>
+        </div>
+        <div className="caption" style={{ fontSize: 10.5, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {formatDateTimeWithZone(run.created_at)}
+        </div>
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{by}</div>
+      </div>
+      <div style={{ minWidth: 0, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--fg-2)', whiteSpace: 'nowrap' }}>
         {formatDuration(runDurationMs(run))}
-      </td>
-      <td>
-        <StatusPill status={run.status} label={testRunStatusLabel(run.status)} />
-      </td>
-    </tr>
+      </div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ height: 6, borderRadius: 1000, background: 'var(--panel-2)', display: 'flex', overflow: 'hidden' }}>
+          <div style={{ width: `${passPct}%`, background: 'var(--good-strong)' }} />
+          <div style={{ width: `${100 - passPct}%`, background: 'var(--danger-strong)' }} />
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 6 }}>
+          <span style={{ fontSize: 10.5, color: 'var(--good)', whiteSpace: 'nowrap' }}>{run.passed_count} passed</span>
+          <span style={{ fontSize: 10.5, color: 'var(--danger)', whiteSpace: 'nowrap' }}>{run.failed_count} failed</span>
+        </div>
+      </div>
+      <div style={{ minWidth: 0, textAlign: 'right' }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 13, color: 'var(--fg-1)' }}>
+          {run.pass_rate != null ? `${Math.round(run.pass_rate * 100)}%` : '—'}
+        </div>
+        <div className="caption" style={{ fontSize: 10.5, marginTop: 4 }}>
+          {testRunStatusLabel(run.status) ?? run.status.charAt(0).toUpperCase() + run.status.slice(1)}
+        </div>
+      </div>
+      <div style={{ textAlign: 'right' }}>
+        <RightChevronIcon />
+      </div>
+    </div>
   )
 }
 
@@ -982,6 +1178,7 @@ export function RunsTab({
   const [selectedRun, setSelectedRun] = useState<TestRunRead | null>(null)
   const [executionUnavailable, setExecutionUnavailable] = useState(false)
   const [runs, setRuns] = useState<TestRunRead[]>([])
+  const [runsLoaded, setRunsLoaded] = useState(false)
   // Cursor-paginated: `cursors[i]` is the cursor to fetch page `i` with
   // (`cursors[0]` is always null, i.e. "start from the newest run"). Moving
   // "Next" appends the cursor the server just handed back for the page
@@ -1054,8 +1251,10 @@ export function RunsTab({
           setSelectedRunId(body.items[0].id)
           onAutoSelectConsumedRef.current?.()
         }
+        setRunsLoaded(true)
       } catch {
         // best-effort poll — a transient failure just skips this tick
+        setRunsLoaded(true)
       }
     }
 
@@ -1141,13 +1340,31 @@ export function RunsTab({
           marginBottom: 'var(--space-3)',
         }}
       >
-        <label htmlFor="test-runs-search" className="caption" style={{ fontSize: 12.5, whiteSpace: 'nowrap' }}>
-          Search
-        </label>
+        <select
+          aria-label="Sort by"
+          value={sortKey}
+          onChange={(e) => handleSort(e.target.value as SortKey)}
+          style={{ height: 34, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 8, fontSize: 12.5, color: 'var(--fg-1)', background: 'var(--panel)' }}
+        >
+          {(Object.keys(RUN_SORT_LABELS) as SortKey[]).map((key) => (
+            <option key={key} value={key}>
+              {RUN_SORT_LABELS[key]}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+          title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
+          style={{ height: 34, width: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border-2)', borderRadius: 8, background: 'var(--panel)', color: 'var(--fg-2)', cursor: 'pointer' }}
+        >
+          {sortDir === 'asc' ? '↑' : '↓'}
+        </button>
         <input
           id="test-runs-search"
           type="text"
-          placeholder="Search by Test Run or Triggered By"
+          aria-label="Search by Test Run or Triggered By"
+          placeholder="Search test runs"
           value={search}
           onChange={(e) => {
             setSearch(e.target.value)
@@ -1155,19 +1372,25 @@ export function RunsTab({
             setCursors([null])
           }}
           style={{
-            width: 320,
+            width: 240,
             maxWidth: '100%',
             boxSizing: 'border-box',
-            padding: '8px 12px',
-            border: '1px solid var(--border)',
-            borderRadius: 'var(--radius)',
+            height: 34,
+            padding: '0 12px',
+            border: '1px solid var(--border-2)',
+            borderRadius: 8,
             fontSize: 13,
             fontFamily: 'inherit',
-            color: 'var(--ink)',
+            color: 'var(--fg-1)',
+            background: 'var(--panel)',
           }}
         />
       </div>
-      {runs.length === 0 ? (
+      {!runsLoaded ? (
+        <div style={{ padding: '4px 0' }}>
+          <SkeletonRows count={5} height={44} gap={10} />
+        </div>
+      ) : runs.length === 0 ? (
         search ? (
           <p className="caption" style={{ fontSize: 13 }}>
             No test runs match this search.
@@ -1176,24 +1399,15 @@ export function RunsTab({
           <EmptyState
             illustration={<RunsIllustration />}
             title="No test runs yet"
-            subtitle={'Use "Run Suite" to start one.'}
+            subtitle="Once discovery finishes and the suite is generated, every execution shows up here with results, traces and per-case re-runs."
           />
         )
       ) : (
-        <div
-          className="card-panel"
-          style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}
-        >
-          <div style={{ overflowX: 'auto' }}>
-            <table className="data-table">
-              <RunListHeader sortKey={sortKey} sortDir={sortDir} onSort={handleSort} />
-              <tbody>
-                {sortedRuns.map((run) => (
-                  <RunListRow key={run.id} run={run} onOpen={() => setSelectedRunId(run.id)} />
-                ))}
-              </tbody>
-            </table>
-          </div>
+        <div style={{ ...mainPanelStyle, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+          <RunListHeader />
+          {sortedRuns.map((run) => (
+            <RunListRow key={run.id} run={run} onOpen={() => setSelectedRunId(run.id)} />
+          ))}
           <Pagination
             page={page}
             hasPrev={page > 0}

@@ -20,3 +20,13 @@ applies to every app (`apps/api`, `apps/web`, `apps/workers/*`) — the
 discovery-worker one especially (see the
 `discovery-worker-test-safety` skill: it spins up many real Chromium
 instances and can hang for 20-30+ minutes).
+
+## Input placeholder copy — instructional, never a fake example
+
+A field's `placeholder` must tell the user what to do (`"Enter the
+application name"`, `"Enter your email"`), never hand them a fabricated
+example value/domain (`"e.g. Apex Insurance Portal"`, `"you@company.com"`,
+`"Checkout Regression"`). Invented example data reads as AI slop. The one
+exception is a field whose valid syntax genuinely isn't guessable from an
+instruction alone (e.g. a cron expression) — there, a real-format example
+is the actually-helpful placeholder.

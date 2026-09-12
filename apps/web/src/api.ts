@@ -28,6 +28,17 @@ export type HomeApplicationRead = ApplicationRead & {
   last_test_run_health: HealthRead
   test_run_count: number
   recent_pass_rates: (number | null)[]
+  last_discovery_started_at: string | null
+  last_test_run_passed_count: number | null
+  last_test_run_failed_count: number | null
+}
+// Global overview's org-wide "Avg run duration"/"Self-healed locators"
+// sidebar cards — not per-application, so a separate endpoint from /home.
+export type OverviewStatsRead = {
+  avg_run_duration_ms: number | null
+  run_count: number
+  self_healed_count: number
+  self_healed_since: string
 }
 export type JourneyRead = components['schemas']['JourneyRead']
 export type JourneyStepRead = components['schemas']['JourneyStepRead']
@@ -137,6 +148,9 @@ export type TestResultStatus = 'pending' | 'passed' | 'failed' | 'timed_out' | '
 export type TestResultRead = {
   id: string
   scenario_name: string
+  // Which Journey (suite) this result's Scenario belongs to — groups a
+  // run's results "by suite" the same way TestSuiteTab groups assets.
+  journey_name: string
   // Test Case Number feature — see ScenarioRead's own comment. null only if
   // the Scenario itself was hard-deleted since this result ran.
   test_case_number: number | null
@@ -229,6 +243,16 @@ export type TestAssetCodeRead = { code: string }
 export type RegenerateTestAssetStatusRead = {
   status: 'running' | 'complete' | 'failed'
   test_asset_id: string | null
+  error_message: string | null
+}
+// Scenarios tab "Auto-generate" (test data) — not in api-types.gen.ts yet,
+// added by hand per the same convention.
+export type AutofillScenarioTestDataStatusRead = {
+  status: 'running' | 'complete' | 'failed'
+  // Full Scenario, not just its test_data — test_data_complete is computed
+  // at read time, so the caller needs the freshly-converted Scenario for an
+  // accurate readiness pill (same as updateScenarioTestData's response).
+  scenario: ScenarioRead | null
   error_message: string | null
 }
 export type HealthTier = 'healthy' | 'needs_attention' | 'critical'
@@ -336,8 +360,14 @@ export const api = {
     request<UserRead>('/auth/reset-password', { method: 'POST', body: JSON.stringify(payload) }),
   createApplication: (payload: ApplicationCreate) =>
     request<ApplicationRead>('/applications', { method: 'POST', body: JSON.stringify(payload) }),
+  testConnection: (url: string) =>
+    request<{ reachable: boolean; detail: string | null }>('/applications/test-connection', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
   listApplications: () => request<ApplicationRead[]>('/applications'),
   getHome: () => request<HomeApplicationRead[]>('/home'),
+  getOverviewStats: () => request<OverviewStatsRead>('/overview-stats'),
   getApplication: (applicationId: string) =>
     request<ApplicationRead>(`/applications/${applicationId}`),
   renameApplication: (applicationId: string, name: string) =>
@@ -345,13 +375,37 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ name }),
     }),
-  updateApplicationCredentials: (applicationId: string, username: string, password: string) =>
+  updateApplicationCredentials: (
+    applicationId: string,
+    username: string,
+    password: string,
+    mfa?: { enabled: boolean; totpSeed: string },
+  ) =>
     request<ApplicationRead>(`/applications/${applicationId}/credentials`, {
       method: 'PATCH',
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify({
+        username,
+        password,
+        mfa_enabled: mfa?.enabled ?? false,
+        totp_seed: mfa?.totpSeed,
+      }),
     }),
   deleteApplication: (applicationId: string) =>
     request<undefined>(`/applications/${applicationId}`, { method: 'DELETE' }),
+  listTeam: () =>
+    request<{ name: string; email: string; role: 'admin' | 'member'; created_at: string; last_active_at: string | null }[]>(
+      '/team',
+    ),
+  removeTeamMember: (email: string) =>
+    request<undefined>(`/team/${encodeURIComponent(email)}`, { method: 'DELETE' }),
+  listCredentials: () =>
+    request<
+      { application_id: string; application_name: string; environment: string; username: string; has_password: boolean }[]
+    >('/credentials'),
+  revealCredential: (applicationId: string) =>
+    request<{ password: string }>(`/credentials/${applicationId}/reveal`, { method: 'POST' }),
+  verifyCredential: (applicationId: string) =>
+    request<{ reachable: boolean; detail: string | null }>(`/credentials/${applicationId}/verify`, { method: 'POST' }),
   pauseDiscovery: (applicationId: string) =>
     request<ApplicationRead>(`/applications/${applicationId}/pause-discovery`, { method: 'POST' }),
   resumeDiscovery: (applicationId: string) =>
@@ -394,6 +448,15 @@ export const api = {
     }),
   getRegenerateTestAssetStatus: (scenarioId: string) =>
     request<RegenerateTestAssetStatusRead>(`/scenarios/${scenarioId}/test-data/regenerate`),
+  // Auto-generate test data — deterministic default fill, no AI, distinct
+  // from regenerateTestAsset above (that's an AI code edit after a manual
+  // change; this only ever fills still-blank fields).
+  autofillScenarioTestData: (scenarioId: string) =>
+    request<{ started: boolean }>(`/scenarios/${scenarioId}/test-data/auto-fill`, {
+      method: 'POST',
+    }),
+  getAutofillScenarioTestDataStatus: (scenarioId: string) =>
+    request<AutofillScenarioTestDataStatusRead>(`/scenarios/${scenarioId}/test-data/auto-fill`),
   generateSuite: (applicationId: string) =>
     request<{ suites_triggered: number }>(`/applications/${applicationId}/generate-suite`, {
       method: 'POST',

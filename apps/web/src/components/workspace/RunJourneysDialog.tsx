@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api, formatTestCaseNumber, type TestSuiteRead } from '../../api'
-import { LoadingDots } from '../LoadingDots'
+import { SkeletonRows } from '../Skeleton'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { ChevronIcon } from './TestSuiteTab'
 
@@ -84,8 +84,12 @@ export function RunJourneysDialog({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="card-panel"
         style={{
+          background: 'linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,255,255,0.82))',
+          backdropFilter: 'blur(20px) saturate(1.3)',
+          border: '1px solid var(--border-2)',
+          borderRadius: 16,
+          boxShadow: '0 30px 80px rgba(8,12,20,0.34), var(--panel-shadow)',
           width: '100%',
           maxWidth: 560,
           maxHeight: '82vh',
@@ -95,7 +99,7 @@ export function RunJourneysDialog({
           boxSizing: 'border-box',
         }}
       >
-        <h2 style={{ fontSize: 17, fontWeight: 600, color: 'var(--ink)', margin: '0 0 18px' }}>Selective Run</h2>
+        <h2 style={{ fontSize: 17, fontWeight: 600, color: 'var(--fg)', margin: '0 0 18px' }}>Selective Run</h2>
 
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
           {loadError && (
@@ -105,23 +109,23 @@ export function RunJourneysDialog({
           )}
 
           <label className="field">
-            <span className="label-required" style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>
+            <span className="label-required" style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-2)' }}>
               Run Name
             </span>
             <input
               required
               autoFocus
-              placeholder="Checkout Regression"
+              placeholder="Enter a name for this run"
               value={suiteName}
               onChange={(e) => setSuiteName(e.target.value)}
             />
           </label>
 
           <div>
-            <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink-secondary)' }}>Journeys</span>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-2)' }}>Journeys</span>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
               {suites === null ? (
-                <LoadingDots label="Loading journeys" />
+                <SkeletonRows count={3} height={36} gap={6} />
               ) : suites.length === 0 ? (
                 <p className="caption">No journeys with test cases yet.</p>
               ) : (
@@ -130,7 +134,7 @@ export function RunJourneysDialog({
                   const selectedCount = suite.test_cases.filter((tc) => selectedTestCaseIds.has(tc.id)).length
                   const expanded = expandedSuiteIds.has(suite.id)
                   return (
-                    <div key={suite.id} style={{ border: '1px solid var(--border-hairline)', borderRadius: 'var(--radius)' }}>
+                    <div key={suite.id} style={{ border: '1px solid var(--line)', borderRadius: 'var(--radius)' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px' }}>
                         <input
                           type="checkbox"
@@ -141,7 +145,7 @@ export function RunJourneysDialog({
                           onChange={() => toggleJourney(suite)}
                         />
                         <span
-                          style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: 'var(--ink)', cursor: 'pointer' }}
+                          style={{ flex: 1, fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', cursor: 'pointer' }}
                           onClick={() => toggleExpanded(suite.id)}
                         >
                           {suite.journey_name}
@@ -166,7 +170,7 @@ export function RunJourneysDialog({
                             flexDirection: 'column',
                             gap: 6,
                             padding: '4px 10px 10px 34px',
-                            borderTop: '1px solid var(--border-hairline)',
+                            borderTop: '1px solid var(--line)',
                           }}
                         >
                           {suite.test_cases.map((tc) => (

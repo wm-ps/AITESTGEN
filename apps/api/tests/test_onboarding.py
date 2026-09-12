@@ -456,6 +456,47 @@ def test_create_application_never_reachability_checks_login_url(
     assert response.status_code == 201
 
 
+def test_test_connection_reports_reachable_url() -> None:
+    init_db()
+    client = _signed_in_client("Org Test Connection Reachable")
+
+    response = client.post("/applications/test-connection", json={"url": "https://app.example.com"})
+
+    assert response.status_code == 200
+    assert response.json() == {"reachable": True, "detail": None}
+
+
+def test_test_connection_reports_unreachable_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    init_db()
+    monkeypatch.setattr(
+        "api.main.httpx.AsyncClient", lambda **kwargs: _FakeAsyncClient(unreachable=True)
+    )
+    client = _signed_in_client("Org Test Connection Unreachable")
+
+    response = client.post("/applications/test-connection", json={"url": "https://app.example.com"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reachable"] is False
+    assert "did not respond" in body["detail"]
+
+
+def test_test_connection_never_checks_login_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Same rule as application creation: only the Base URL is ever
+    reachability-checked, never login_url — this endpoint doesn't even
+    accept a login_url, so there's nothing to accidentally check."""
+    init_db()
+    client = _signed_in_client("Org Test Connection No Login Field")
+
+    response = client.post(
+        "/applications/test-connection",
+        json={"url": "https://app.example.com", "login_url": "https://app.example.com/login"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reachable"] is True
+
+
 def test_create_application_sets_discovery_stage_initializing() -> None:
     """Story 2.1 (CR-2): DiscoveryRun.stage is set to "initializing" in the
     same request, round-tripping through ApplicationRead.discovery_stage."""
@@ -621,3 +662,106 @@ def test_update_application_credentials_rejects_sso_session_reuse_app() -> None:
     )
 
     assert response.status_code == 422
+
+
+# --- Vantage V2 Settings — cross-application "Saved credentials" table ---
+
+
+def test_list_credentials_returns_username_and_has_password_flag() -> None:
+    init_db()
+    client = _signed_in_client("Org List Credentials")
+    _post_application(client, "Creds List App")
+
+    response = client.get("/credentials")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 1
+    assert body[0]["application_name"] == "Creds List App"
+    assert body[0]["username"] == "qa-test-account"
+    assert body[0]["has_password"] is True
+    assert "password" not in body[0]
+
+
+def test_list_credentials_omits_sso_session_reuse_apps() -> None:
+    init_db()
+    client = _signed_in_client("Org List Credentials SSO")
+    client.post(
+        "/applications",
+        json={
+            "name": "SSO App",
+            "url": "https://sso.example.com",
+            "environment": "staging",
+            "auth_method": "sso_session_reuse",
+            "session_state": json.dumps({"cookies": []}),
+        },
+    )
+
+    response = client.get("/credentials")
+
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_list_credentials_requires_admin() -> None:
+    init_db()
+    admin_client = _signed_in_client("Org List Credentials Non Admin")
+    _post_application(admin_client, "Non Admin List App")
+
+    member_client = _signed_in_client("Org List Credentials Non Admin", role="member")
+    response = member_client.get("/credentials")
+
+    assert response.status_code == 403
+
+
+def test_reveal_credential_returns_password() -> None:
+    init_db()
+    client = _signed_in_client("Org Reveal Credential")
+    created = _post_application(client, "Reveal App")
+    application_id = created.json()["id"]
+
+    response = client.post(f"/credentials/{application_id}/reveal")
+
+    assert response.status_code == 200
+    assert response.json() == {"password": "irrelevant"}
+
+
+def test_reveal_credential_requires_admin() -> None:
+    init_db()
+    admin_client = _signed_in_client("Org Reveal Credential Non Admin")
+    created = _post_application(admin_client, "Non Admin Reveal App")
+    application_id = created.json()["id"]
+
+    member_client = _signed_in_client("Org Reveal Credential Non Admin", role="member")
+    response = member_client.post(f"/credentials/{application_id}/reveal")
+
+    assert response.status_code == 403
+
+
+def test_verify_credential_reports_reachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    init_db()
+    client = _signed_in_client("Org Verify Credential")
+    created = _post_application(client, "Verify App")
+    application_id = created.json()["id"]
+
+    response = client.post(f"/credentials/{application_id}/verify")
+
+    assert response.status_code == 200
+    assert response.json() == {"reachable": True, "detail": None}
+
+
+def test_verify_credential_reports_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    init_db()
+    client = _signed_in_client("Org Verify Credential Unreachable")
+    created = _post_application(client, "Verify Unreachable App")
+    application_id = created.json()["id"]
+
+    monkeypatch.setattr(
+        "api.main.httpx.AsyncClient", lambda **kwargs: _FakeAsyncClient(unreachable=True)
+    )
+    response = client.post(f"/credentials/{application_id}/verify")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["reachable"] is False
+    assert "did not respond" in body["detail"]

@@ -1,168 +1,50 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api, type HealthTier, type OverviewRead } from '../../api'
-import { EmptyState, RunsIllustration } from '../EmptyState'
+import { useEffect, useState } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faClock, faCompass, faFlaskVial, faListCheck, faRoute, faTableList } from '@fortawesome/free-solid-svg-icons'
+import { api, type OverviewRead } from '../../api'
+import { EmptyState } from '../EmptyState'
 import { formatDuration, parseTrigger } from './RunsTab'
 import { RunSuiteButton } from './RunSuiteButton'
+import { faIcon } from '../../faIcon'
 
 const POLL_INTERVAL_MS = 5000
 
-const HEALTH_COLORS: Record<HealthTier, { background: string; foreground: string }> = {
-  healthy: { background: 'var(--good-wash)', foreground: 'var(--good-strong)' },
-  needs_attention: { background: 'var(--warn-wash)', foreground: 'var(--warn-strong)' },
-  critical: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },
-}
+// Same icons the sidebar nav uses for these same destinations (App.tsx's
+// JourneysIcon/ScenariosIcon, Workspace.tsx's SuiteIcon/RunsIcon/SchedulesIcon)
+// — these quick-action cards used to draw their own hand-rolled SVGs, a
+// second, inconsistent glyph for the same concept.
+const DiscoveryIcon = faIcon(faRoute)
+const LayersIcon = faIcon(faListCheck)
+const CheckCircleIcon = faIcon(faTableList)
+const RunHistoryIcon = faIcon(faFlaskVial)
+const ClockPauseIcon = faIcon(faClock)
 
-// Same gradient-badge formula GenerateSuite/TestSuiteResults already use for
-// their hero icon/banner (`135deg, <color> 0%, <color> 65%, rgba(0,0,0,0.22)
-// 100%`), just keyed by health tier instead of always `--accent` — the
-// health icon and the Pass rate tile are this tab's two "headline" moments,
-// so they get the system's own strongest treatment instead of a flat tint.
-const HEALTH_GRADIENT: Record<HealthTier, string> = {
-  healthy: 'linear-gradient(135deg, var(--good-strong) 0%, var(--good-strong) 65%, rgba(0,0,0,0.22) 100%)',
-  needs_attention: 'linear-gradient(135deg, var(--warn-strong) 0%, var(--warn-strong) 65%, rgba(0,0,0,0.22) 100%)',
-  critical: 'linear-gradient(135deg, var(--danger-strong) 0%, var(--danger-strong) 65%, rgba(0,0,0,0.22) 100%)',
-}
-
-function LayersIcon() {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 3 3 7.5 12 12l9-4.5z" />
-      <path d="M3 12l9 4.5 9-4.5" />
-      <path d="M3 16.5l9 4.5 9-4.5" />
-    </svg>
-  )
-}
-
-function CheckCircleIcon() {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx={12} cy={12} r={9} />
-      <path d="M8.5 12.5l2.3 2.3L15.5 9.5" />
-    </svg>
-  )
-}
-
-function XCircleIcon() {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx={12} cy={12} r={9} />
-      <path d="M9.5 9.5l5 5M14.5 9.5l-5 5" />
-    </svg>
-  )
-}
-
-function ClockPauseIcon() {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx={12} cy={12} r={9} />
-      <path d="M12 7.5v5l3 1.7" />
-    </svg>
-  )
-}
-
-// `StatTile`'s `muted` tone fills with `--canvas-wash-alt`, a pale green
-// (#eef5f3) — fine as a subtle accent elsewhere, but four of them in a row
-// read as a wall of green tiles. This mirrors StatTile's own layout (icon
-// chip + value/label) with strictly neutral gray instead, kept local to this
-// tab rather than changing the shared tone (other screens still want it).
-function NeutralStatTile({
-  icon,
-  value,
-  label,
-  delay = 0,
-}: {
-  icon: ReactNode
-  value: string | number
-  label: string
-  delay?: number
-}) {
+// Prototype's appStats tile recipe (Vantage v2 mockup, isAppHome.appStats) —
+// same label/value/sub tile used un-iconed on the Global overview page.
+function StatTile({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return (
     <div
-      className="stat-tile-hover"
       style={{
-        background: 'var(--canvas)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-lg)',
-        boxSizing: 'border-box',
-        padding: '12px 15px',
-        boxShadow: '0 1px 3px rgba(15,23,42,0.07)',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-        animation: `aitg-fade-up 0.35s ease-out ${delay}s both`,
+        background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
+        backdropFilter: 'blur(16px) saturate(1.25)',
+        border: '1px solid var(--border-1)',
+        borderRadius: 12,
+        padding: '16px 18px',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            color: 'var(--ink-muted)',
-          }}
-        >
-          {label}
-        </span>
-        <span aria-hidden="true" style={{ color: 'var(--ink-muted)', display: 'flex' }}>
-          {icon}
-        </span>
-      </div>
-      <div style={{ fontSize: 23, fontWeight: 800, color: 'var(--ink)', lineHeight: 1 }}>{value}</div>
+      <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>{label}</div>
+      <div style={{ fontSize: 28, lineHeight: '32px', color: 'var(--fg)', fontWeight: 600, letterSpacing: '-0.02em', marginTop: 8 }}>{value}</div>
+      {sub && <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 5 }}>{sub}</div>}
     </div>
   )
 }
 
-function AlertIcon() {
+function LegendDot({ color, label, value }: { color: string; label: string; value: number }) {
   return (
-    <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 9v4M12 17h.01" />
-      <path d="M10.3 3.6 2.5 17a1.8 1.8 0 0 0 1.5 2.7h16a1.8 1.8 0 0 0 1.5-2.7L13.7 3.6a1.8 1.8 0 0 0-3.4 0z" />
-    </svg>
-  )
-}
-
-function HeartPulseIcon() {
-  return (
-    <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M5 13l4 4L19 7" />
-    </svg>
-  )
-}
-
-function RunHistoryIcon() {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx={12} cy={12} r={9} />
-      <path d="M12 7v5l3.5 3.5" />
-    </svg>
-  )
-}
-
-// Same journey-path glyph TestSuiteResults' `JourneysIcon` uses — this row
-// now headlines the journey count, so it gets the journeys icon rather than
-// a generic search/magnifying-glass mark.
-function DiscoveryIcon() {
-  return (
-    <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="6" cy="5" r="2.2" />
-      <circle cx="6" cy="19" r="2.2" />
-      <circle cx="18" cy="12" r="2.2" />
-      <path d="M6 7.2V16.8" />
-      <path d="M6 9.5C6 12 8 12 10.5 12H15.8" />
-    </svg>
-  )
-}
-
-// Small labeled value used in the Activity/Discovery footer rows below —
-// same label styling as `SectionLabel`, just inline instead of block-level.
-function MetaField({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div style={{ minWidth: 0 }}>
-      <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--ink-faint)', marginBottom: 2 }}>
-        {label}
-      </div>
-      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{value}</div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+      <span style={{ width: 7, height: 7, borderRadius: 'var(--radius-full)', flexShrink: 0, background: color }} />
+      <span style={{ fontSize: 11.5, color: 'var(--fg-3)' }}>{label}</span>
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--fg-1)' }}>{value}</span>
     </div>
   )
 }
@@ -176,235 +58,118 @@ function formatDateTime(iso: string): string {
   })
 }
 
-// DESIGN.md's label-section typography (11px/700, uppercase, tracked 0.05em,
-// ink-faint permitted since it's a decorative eyebrow, not the information
-// itself) — used as the section-header rhythm for this whole tab.
-function SectionLabel({ children }: { children: ReactNode }) {
+// Prototype's lrTrend bar recipe: one bar per run, the most recent one
+// highlighted in accent, height rescaled over 40–100% so a chart full of
+// 90%+ runs doesn't look like a wall of near-identical full bars.
+function PassRateByRunBars({ trend }: { trend: OverviewRead['trend'] }) {
+  if (trend.length === 0) {
+    return (
+      <p className="caption" style={{ fontSize: 12.5, margin: 0 }}>
+        No runs yet.
+      </p>
+    )
+  }
+  const lastIndex = trend.length - 1
   return (
-    <div
-      style={{
-        fontSize: 11,
-        fontWeight: 700,
-        textTransform: 'uppercase',
-        letterSpacing: '0.05em',
-        color: 'var(--ink-faint)',
-        marginBottom: 12,
-      }}
-    >
-      {children}
+    <div style={{ flex: 1, minHeight: 120, display: 'flex', alignItems: 'flex-end', gap: 14 }}>
+      {trend.map((t, i) => {
+        const pct = t.pass_rate != null ? Math.round(t.pass_rate * 100) : null
+        const barHeight = pct == null ? 6 : Math.max(6, Math.round(((pct - 40) / 60) * 100))
+        const isLast = i === lastIndex
+        return (
+          <div
+            key={t.run_id}
+            style={{ flex: 1, minWidth: 0, height: '100%', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', gap: 6 }}
+          >
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-2)' }}>{pct == null ? '—' : `${pct}%`}</div>
+            <div
+              style={{
+                width: '100%',
+                height: `${barHeight}%`,
+                borderRadius: '5px 5px 0 0',
+                background: isLast ? 'var(--accent)' : 'var(--chip)',
+                border: `1px solid ${isLast ? 'var(--accent)' : 'var(--border-2)'}`,
+                borderBottom: 'none',
+              }}
+            />
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: isLast ? 'var(--fg-2)' : 'var(--fg-5)' }}>
+              {formatDateTime(t.created_at)}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }
 
-// Reference bands, not per-point color: the previous version painted each
-// dot by its own tier (good/warn/danger) while the line stayed accent —
-// two color systems on one series read as "which color means what" instead
-// of "is this going up." One accent hue for the whole series (identity);
-// the healthy/attention/critical zones are shown as horizontal background
-// bands instead, so "did this dip into the red" is a position judgment
-// against a fixed backdrop, not a color-decoding exercise per dot.
-const TREND_BANDS: { label: string; top: number; height: number; background: string }[] = [
-  { label: '≥90%', top: 0, height: 10, background: 'var(--good-wash)' },
-  { label: '70–89%', top: 10, height: 20, background: 'var(--warn-wash)' },
-  { label: '<70%', top: 30, height: 70, background: 'var(--danger-wash)' },
+// Quick-action shortcut tiles' destinations — the same tab keys
+// Workspace/AppShell already route on, kept as a local string union instead
+// of importing WorkspaceTab from Workspace.tsx to avoid a circular import
+// (Workspace.tsx already imports this file).
+type QuickActionTarget = 'journeys' | 'scenarios' | 'suite' | 'runs' | 'schedules'
+
+const QUICK_ACTIONS: { target: QuickActionTarget; label: string; hint: string; icon: () => React.JSX.Element }[] = [
+  { target: 'journeys', label: 'View journeys', hint: 'See every discovered page flow.', icon: DiscoveryIcon },
+  { target: 'scenarios', label: 'Review scenarios', hint: 'Approve or edit drafted test scenarios.', icon: LayersIcon },
+  { target: 'suite', label: 'View test cases', hint: "See this application's generated Playwright suite.", icon: CheckCircleIcon },
+  { target: 'runs', label: 'View test runs', hint: 'Browse past executions and results.', icon: RunHistoryIcon },
+  { target: 'schedules', label: 'Schedules and CI', hint: 'Automate discovery and suite runs on a cadence.', icon: ClockPauseIcon },
 ]
-const Y_GRIDLINES = [0, 25, 50, 75, 100]
 
-// A bar per run answers "how many passed" but not "is this trending up or
-// down" — a line is the chart people actually read as a trend. Built as a
-// stretched SVG polyline/polygon (fine for lines) plus separately
-// absolutely-positioned dot markers (so per-point radius/hit-target aren't
-// distorted by the non-uniform x/y scaling `preserveAspectRatio="none"`
-// produces on the SVG's own circles).
-function TrendChart({ trend }: { trend: OverviewRead['trend'] }) {
-  const [hoverIndex, setHoverIndex] = useState<number | null>(null)
-
-  const n = trend.length
-  const xPct = (i: number) => (n > 1 ? (i / (n - 1)) * 100 : 50)
-  const yPct = (rate: number | null) => 100 - (rate != null ? rate * 100 : 0)
-
-  // Never one label per point (crowds past ~6 runs) — first, last, and up
-  // to two evenly-spaced points between them.
-  const labeledIndices = useMemo(() => {
-    if (n <= 1) return [0]
-    if (n <= 4) return trend.map((_, i) => i)
-    return Array.from(new Set([0, Math.round((n - 1) / 3), Math.round(((n - 1) * 2) / 3), n - 1]))
-  }, [n, trend])
-
-  if (trend.length === 0) {
-    return (
-      <p className="caption" style={{ fontSize: 12.5, margin: 0 }}>
-        No runs yet — trend appears after your first "Run Suite".
-      </p>
-    )
-  }
-
-  const linePoints = trend.map((t, i) => `${xPct(i)},${yPct(t.pass_rate)}`).join(' ')
-  const areaPoints = `0,100 ${linePoints} 100,100`
-
-  const latest = trend[n - 1]
-  const previous = n > 1 ? trend[n - 2] : null
-  const latestPct = latest.pass_rate != null ? Math.round(latest.pass_rate * 100) : null
-  const deltaPct =
-    latestPct != null && previous?.pass_rate != null ? latestPct - Math.round(previous.pass_rate * 100) : null
-
+// Same right-pointing chevron every "navigate to" row in this app uses
+// (RunsTab's RightChevronIcon) — kept local since it's a one-line glyph, not
+// worth importing across files for.
+function ChevronRightIcon() {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%' }}>
-      {/* No repeat of the raw percentage here — the "Pass rate" stat tile
-          above already headlines that number. This chart's own job is the
-          trend itself, so only the run-over-run delta (info the tile
-          doesn't carry) gets called out. */}
-      {deltaPct != null && deltaPct !== 0 && (
-        <div
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            marginBottom: 10,
-            color: deltaPct > 0 ? 'var(--good-strong)' : 'var(--danger-strong)',
-          }}
-        >
-          {deltaPct > 0 ? '▲' : '▼'} {Math.abs(deltaPct)} pt{Math.abs(deltaPct) === 1 ? '' : 's'} vs previous run
-        </div>
-      )}
+    <svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="var(--fg-5)" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  )
+}
 
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', gap: 8, flex: 1, minHeight: 0 }}>
-          {/* Y-axis: an actual scale (0/25/50/75/100), not just the two
-              endpoints — reading "where between 0 and 100 is this line"
-              shouldn't require guessing the middle. */}
-          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', height: '100%', flexShrink: 0 }}>
-            {Y_GRIDLINES.slice()
-              .reverse()
-              .map((v, i) => (
-                <span key={v} className="caption" style={{ fontSize: 10, lineHeight: 1, transform: 'translateY(-50%)' }}>
-                  {i === 0 ? `${v}%` : v}
-                </span>
-              ))}
+function QuickActionsGrid({ onNavigate }: { onNavigate: (target: QuickActionTarget) => void }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 14 }}>
+      {QUICK_ACTIONS.map((action) => {
+        const Icon = action.icon
+        return (
+          <div
+            key={action.target}
+            role="button"
+            tabIndex={0}
+            onClick={() => onNavigate(action.target)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') onNavigate(action.target)
+            }}
+            className="card-clickable"
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 13,
+              background: 'var(--panel)',
+              border: '1px solid var(--border-2)',
+              borderRadius: 12,
+              padding: '16px 18px',
+              boxShadow: '0 1px 3px rgba(15,23,42,0.07)',
+              cursor: 'pointer',
+            }}
+          >
+            <span
+              aria-hidden="true"
+              style={{ width: 32, height: 32, flexShrink: 0, borderRadius: 8, background: 'var(--hover)', color: 'var(--accent)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Icon />
+            </span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>{action.label}</div>
+              <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 3 }}>{action.hint}</div>
+            </div>
+            <span aria-hidden="true" style={{ marginTop: 4, flexShrink: 0 }}>
+              <ChevronRightIcon />
+            </span>
           </div>
-
-          <div style={{ position: 'relative', flex: 1, height: '100%' }}>
-            {/* Threshold bands — the fixed backdrop the line is read against. */}
-            {TREND_BANDS.map((band) => (
-              <div
-                key={band.label}
-                aria-hidden="true"
-                style={{
-                  position: 'absolute',
-                  left: 0,
-                  right: 0,
-                  top: `${band.top}%`,
-                  height: `${band.height}%`,
-                  background: band.background,
-                }}
-              />
-            ))}
-            {Y_GRIDLINES.map((v) => (
-              <div
-                key={v}
-                aria-hidden="true"
-                style={{
-                  position: 'absolute',
-                  left: 0,
-                  right: 0,
-                  top: `${100 - v}%`,
-                  borderTop: '1px dashed var(--border-hairline)',
-                }}
-              />
-            ))}
-
-            {n > 1 && (
-              <svg
-                viewBox="0 0 100 100"
-                preserveAspectRatio="none"
-                aria-hidden="true"
-                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
-              >
-                <polygon points={areaPoints} fill="var(--accent-wash-soft)" stroke="none" />
-                <polyline
-                  points={linePoints}
-                  fill="none"
-                  stroke="var(--accent)"
-                  strokeWidth={2}
-                  strokeLinejoin="round"
-                  strokeLinecap="round"
-                  vectorEffect="non-scaling-stroke"
-                />
-              </svg>
-            )}
-
-            {trend.map((t, i) => (
-              <div
-                key={t.run_id}
-                onMouseEnter={() => setHoverIndex(i)}
-                onMouseLeave={() => setHoverIndex((cur) => (cur === i ? null : cur))}
-                style={{
-                  position: 'absolute',
-                  left: `${xPct(i)}%`,
-                  top: 0,
-                  bottom: 0,
-                  // A hit target wider than the visible dot — a 7px circle is
-                  // an unreliable mouse target; the invisible strip is what
-                  // actually catches hover.
-                  width: Math.max(16, 100 / Math.max(n - 1, 1)),
-                  transform: 'translateX(-50%)',
-                  cursor: 'pointer',
-                }}
-              >
-                <span
-                  style={{
-                    position: 'absolute',
-                    left: '50%',
-                    top: `${yPct(t.pass_rate)}%`,
-                    width: hoverIndex === i ? 9 : 6,
-                    height: hoverIndex === i ? 9 : 6,
-                    borderRadius: '50%',
-                    background: 'var(--accent)',
-                    border: '2px solid var(--canvas)',
-                    transform: 'translate(-50%, -50%)',
-                    boxShadow: '0 1px 2px rgba(15,23,42,0.25)',
-                    transition: 'width 0.1s ease, height 0.1s ease',
-                  }}
-                />
-                {hoverIndex === i && (
-                  <div
-                    role="tooltip"
-                    style={{
-                      position: 'absolute',
-                      left: '50%',
-                      top: `${yPct(t.pass_rate)}%`,
-                      transform: 'translate(-50%, calc(-100% - 12px))',
-                      background: 'var(--ink)',
-                      color: '#FFFFFF',
-                      borderRadius: 6,
-                      padding: '5px 9px',
-                      fontSize: 11,
-                      whiteSpace: 'nowrap',
-                      pointerEvents: 'none',
-                      boxShadow: '0 4px 10px rgba(15,23,42,0.25)',
-                      zIndex: 1,
-                    }}
-                  >
-                    <div style={{ fontWeight: 700 }}>
-                      {t.pass_rate != null ? `${Math.round(t.pass_rate * 100)}%` : 'No results'}
-                    </div>
-                    <div style={{ opacity: 0.8 }}>{formatDateTime(t.created_at)}</div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, marginLeft: 26, flexShrink: 0 }}>
-          {trend.map((t, i) =>
-            labeledIndices.includes(i) ? (
-              <span key={t.run_id} className="caption" style={{ fontSize: 10.5 }}>
-                {formatDateTime(t.created_at)}
-              </span>
-            ) : null,
-          )}
-        </div>
-      </div>
+        )
+      })}
     </div>
   )
 }
@@ -413,11 +178,13 @@ export function OverviewTab({
   applicationId,
   onRunSuite,
   onOpenJourneysDialog,
+  onNavigateTab,
   running,
 }: {
   applicationId: string
   onRunSuite: () => void
   onOpenJourneysDialog: () => void
+  onNavigateTab: (target: QuickActionTarget) => void
   running: boolean
 }) {
   const [overview, setOverview] = useState<OverviewRead | null>(null)
@@ -455,220 +222,115 @@ export function OverviewTab({
   // three separate cards each explaining their own absence of data.
   if (!overview.latest_run) {
     return (
-      <div className="card-panel" style={{ padding: 24 }}>
-        <EmptyState
-          illustration={<RunsIllustration />}
-          title="No test runs yet"
-          subtitle="Health, pass rate, and trend will show up here once your first run finishes."
-          action={
-            <RunSuiteButton running={running} onFullSuite={onRunSuite} onOpenJourneysDialog={onOpenJourneysDialog} />
-          }
-        />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div
+          style={{
+            background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
+            backdropFilter: 'blur(16px) saturate(1.25)',
+            border: '1px solid var(--border-1)',
+            borderRadius: 14,
+            boxShadow: 'var(--panel-shadow)',
+            padding: 24,
+          }}
+        >
+          <EmptyState
+            illustration={<FontAwesomeIcon icon={faCompass} style={{ fontSize: 19, color: 'var(--accent-2)' }} />}
+            title="No test runs yet"
+            subtitle="Health, pass rate, and trend will show up here once your first run finishes."
+            action={
+              <RunSuiteButton running={running} onFullSuite={onRunSuite} onOpenJourneysDialog={onOpenJourneysDialog} />
+            }
+          />
+        </div>
+        <QuickActionsGrid onNavigate={onNavigateTab} />
       </div>
     )
   }
 
-  const healthColors = HEALTH_COLORS[overview.health.tier]
+  const { passed_count, failed_count, blocked_count } = overview.latest_run
+  const total = passed_count + failed_count + blocked_count
+  const segPct = (n: number) => (total > 0 ? (n / total) * 100 : 0)
+  const trend = overview.trend
+  const deltaPts =
+    trend.length >= 2 && trend[trend.length - 1].pass_rate != null && trend[trend.length - 2].pass_rate != null
+      ? (trend[trend.length - 1].pass_rate! - trend[trend.length - 2].pass_rate!) * 100
+      : null
 
   return (
-    <div className="card-panel" style={{ padding: 24 }}>
-      <SectionLabel>Application health</SectionLabel>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 14 }}>
+        <StatTile
+          label="Journeys mapped"
+          value={overview.journey_count}
+          sub={overview.last_discovery_started_at ? `Last discovery ${formatDateTime(overview.last_discovery_started_at)}` : 'No discovery yet'}
+        />
+        <StatTile label="Test cases" value={overview.total_tests} sub={`${overview.not_run} not yet run`} />
+        <StatTile
+          label="Pass rate"
+          value={overview.pass_rate == null ? '—' : `${(overview.pass_rate * 100).toFixed(1)}%`}
+          sub={`Latest run · ${formatDuration(overview.latest_run.duration_ms)}`}
+        />
+        <StatTile label="Open failures" value={overview.failed} sub={`${blocked_count} skipped`} />
+      </div>
+
       <div
         style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 18,
+          background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
+          backdropFilter: 'blur(16px) saturate(1.25)',
+          border: '1px solid var(--border-1)',
+          borderRadius: 12,
           padding: '18px 20px',
-          marginBottom: 24,
-          borderRadius: 'var(--radius-lg)',
-          background: healthColors.background,
-          animation: 'aitg-fade-up 0.4s ease-out both',
-        }}
-      >
-        <span
-          aria-hidden="true"
-          style={{
-            display: 'inline-flex',
-            width: 52,
-            height: 52,
-            borderRadius: 'var(--radius-full)',
-            background: HEALTH_GRADIENT[overview.health.tier],
-            color: '#FFFFFF',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-            boxShadow: '0 8px 18px -6px rgba(15,23,42,0.35), inset 0 1px 0 rgba(255,255,255,0.35)',
-          }}
-        >
-          {overview.health.tier === 'healthy' ? <HeartPulseIcon /> : <AlertIcon />}
-        </span>
-        <div>
-          <div style={{ fontSize: 18, fontWeight: 800, color: healthColors.foreground, marginBottom: 3, letterSpacing: '-0.01em' }}>
-            {overview.health.tier === 'healthy'
-              ? 'Healthy'
-              : overview.health.tier === 'needs_attention'
-                ? 'Needs Attention'
-                : 'Critical'}
-          </div>
-          <div style={{ fontSize: 14, color: 'var(--ink-secondary)' }}>{overview.health.headline}</div>
-        </div>
-      </div>
-
-      {/* Test results leads — the numbers that matter most get top billing,
-          ahead of Activity/trend context below. */}
-      <SectionLabel>Test results</SectionLabel>
-      <div
-        style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(4, 1fr)',
-          gap: 12,
-          marginBottom: 20,
+          gridTemplateColumns: 'minmax(0,1fr) minmax(0,1.1fr)',
+          gap: 24,
+          alignItems: 'stretch',
         }}
       >
-        <NeutralStatTile icon={<LayersIcon />} value={overview.total_tests} label="Total tests" delay={0.05} />
-        <NeutralStatTile icon={<CheckCircleIcon />} value={overview.passed} label="Passed" delay={0.1} />
-        <NeutralStatTile icon={<XCircleIcon />} value={overview.failed} label="Failed" delay={0.15} />
-        <NeutralStatTile icon={<ClockPauseIcon />} value={overview.not_run} label="Not run" delay={0.2} />
-      </div>
-
-      {/* Activity and the trend chart side by side. Same border/shadow fix as
-          NeutralStatTile above: --border-hairline with no background reads as
-          invisible against this tab's white card-panel, so both panels get
-          --border + a soft shadow to read as distinct cards. No `alignItems`
-          override on the grid — default `stretch` gives both columns the
-          row's full height, and each column's own panel fills it via
-          `flex: 1`, so the shorter Activity panel matches the chart panel's
-          height instead of sitting next to empty space. */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1.5fr',
-          gap: 20,
-          animation: 'aitg-fade-up 0.4s ease-out 0.1s both',
-        }}
-      >
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <SectionLabel>Activity</SectionLabel>
-          <div
-            style={{
-              padding: '18px 20px',
-              flex: 1,
-              display: 'flex',
-              flexDirection: 'column',
-              justifyContent: 'center',
-              gap: 16,
-              borderRadius: 'var(--radius-lg)',
-              background: 'var(--canvas)',
-              border: '1px solid var(--border)',
-              boxShadow: '0 1px 3px rgba(15,23,42,0.07)',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span
-                aria-hidden="true"
-                style={{
-                  display: 'inline-flex',
-                  width: 32,
-                  height: 32,
-                  borderRadius: 9,
-                  background: 'var(--border-hairline)',
-                  color: 'var(--ink-secondary)',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                  alignSelf: 'center',
-                }}
-              >
-                <RunHistoryIcon />
-              </span>
-              <div style={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 16 }}>
-                <div style={{ minWidth: 0, flex: '1 1 50%' }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)', marginBottom: 6 }}>Latest run</div>
-                  {overview.latest_run ? (
-                    <div className="caption" style={{ fontSize: 12 }}>
-                      {formatDateTime(overview.latest_run.created_at)}
-                    </div>
-                  ) : (
-                    <p className="caption" style={{ fontSize: 12.5, margin: 0 }}>
-                      No runs yet.
-                    </p>
-                  )}
-                </div>
-                {/* Divider next to the existing content, "Run by"/"Duration"
-                    laid out beside it with its own breathing room instead of
-                    being crammed against the card's edge. Both sides get an
-                    equal 50% share (`flex: '1 1 50%'`) instead of the right
-                    side just being as wide as its content. */}
-                {overview.latest_run && (
-                  <>
-                    <div style={{ width: 2, alignSelf: 'stretch', background: 'var(--border)', borderRadius: 1, flexShrink: 0 }} />
-                    <div style={{ minWidth: 0, flex: '1 1 50%', display: 'flex', flexDirection: 'column', gap: 10, paddingLeft: 4, paddingRight: 8 }}>
-                      <MetaField label="Run by" value={parseTrigger(overview.latest_run.trigger).by} />
-                      <MetaField
-                        label="Duration"
-                        value={formatDuration(overview.latest_run.duration_ms)}
-                      />
-                    </div>
-                  </>
-                )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Last run pass rate</div>
+              <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
+                {parseTrigger(overview.latest_run.trigger).by} · {formatDateTime(overview.latest_run.created_at)}
               </div>
             </div>
-
-            <div style={{ borderTop: '1px solid var(--border-hairline)', paddingTop: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
-              <span
-                aria-hidden="true"
-                style={{
-                  display: 'inline-flex',
-                  width: 32,
-                  height: 32,
-                  borderRadius: 9,
-                  background: 'var(--border-hairline)',
-                  color: 'var(--ink-secondary)',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                  alignSelf: 'center',
-                }}
-              >
-                <DiscoveryIcon />
-              </span>
-              <div style={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 16 }}>
-                <div style={{ minWidth: 0, flex: '1 1 50%' }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)', marginBottom: 6 }}>Last discovery</div>
-                  <p className="caption" style={{ fontSize: 12.5, margin: 0 }}>
-                    {overview.last_discovery_started_at ? formatDateTime(overview.last_discovery_started_at) : 'Never run'}
-                  </p>
-                </div>
-                {overview.last_discovery_started_at && (
-                  <>
-                    <div style={{ width: 2, alignSelf: 'stretch', background: 'var(--border)', borderRadius: 1, flexShrink: 0 }} />
-                    <div style={{ minWidth: 0, flex: '1 1 50%', paddingLeft: 4, paddingRight: 8 }}>
-                      <MetaField label="Journeys" value={overview.journey_count} />
-                    </div>
-                  </>
-                )}
-              </div>
+            <span
+              onClick={() => onNavigateTab('runs')}
+              style={{ fontSize: 11.5, fontWeight: 500, color: 'var(--accent-2)', cursor: 'pointer', flex: 'none', paddingTop: 3, whiteSpace: 'nowrap' }}
+            >
+              View run
+            </span>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 40, lineHeight: '42px', fontWeight: 600, letterSpacing: '-0.03em', color: 'var(--fg)' }}>
+              {overview.pass_rate == null ? '—' : `${(overview.pass_rate * 100).toFixed(1)}%`}
             </div>
+            {deltaPts != null && (
+              <div style={{ fontSize: 11.5, fontWeight: 500, color: deltaPts >= 0 ? 'var(--ok)' : 'var(--bad)' }}>
+                {deltaPts >= 0 ? '+' : ''}
+                {deltaPts.toFixed(1)} pts vs previous run
+              </div>
+            )}
+          </div>
+          <div style={{ height: 10, borderRadius: 'var(--radius-full)', overflow: 'hidden', background: 'var(--chip)', display: 'flex' }}>
+            <div style={{ width: `${segPct(passed_count)}%`, background: 'var(--ok)' }} />
+            <div style={{ width: `${segPct(failed_count)}%`, background: 'var(--bad)' }} />
+            <div style={{ width: `${segPct(blocked_count)}%`, background: 'var(--border-2)' }} />
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 18px' }}>
+            <LegendDot color="var(--ok)" label="Passed" value={passed_count} />
+            <LegendDot color="var(--bad)" label="Failed" value={failed_count} />
+            <LegendDot color="var(--border-2)" label="Not run" value={blocked_count} />
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <SectionLabel>Pass rate trend</SectionLabel>
-          <div
-            style={{
-              padding: '18px 20px',
-              flex: 1,
-              display: 'flex',
-              borderRadius: 'var(--radius-lg)',
-              background: 'var(--canvas)',
-              border: '1px solid var(--border)',
-              boxShadow: '0 1px 3px rgba(15,23,42,0.07)',
-            }}
-          >
-            <TrendChart trend={overview.trend} />
-          </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0, borderLeft: '1px solid var(--line)', paddingLeft: 24 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)', letterSpacing: '0.02em' }}>Pass rate by run</div>
+          <PassRateByRunBars trend={trend} />
         </div>
       </div>
+
+      <QuickActionsGrid onNavigate={onNavigateTab} />
     </div>
   )
 }

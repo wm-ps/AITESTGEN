@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { faVial } from '@fortawesome/free-solid-svg-icons'
+import { faIcon } from '../faIcon'
+
+const FlaskConical = faIcon(faVial)
 import { api, type TestCaseRead, type TestSuiteRead } from '../api'
-import { Stepper, type StepKey } from './Stepper'
 import { LoadingDots } from './LoadingDots'
 import { GenerationLoader } from './GenerationLoader'
 import { ServiceError } from './ServiceError'
@@ -123,7 +126,7 @@ const STAT_TONE: Record<StatTone, { tileBackground: string; strong: string }> = 
   good: { tileBackground: 'var(--good-wash)', strong: 'var(--good-strong)' },
   danger: { tileBackground: 'var(--danger-wash)', strong: 'var(--danger-strong)' },
   warn: { tileBackground: 'var(--warn-wash)', strong: 'var(--warn-strong)' },
-  muted: { tileBackground: 'var(--canvas-wash-alt)', strong: 'var(--ink-muted)' },
+  muted: { tileBackground: 'var(--hover)', strong: 'var(--fg-4)' },
 }
 
 export function StatTile({
@@ -157,7 +160,7 @@ export function StatTile({
           width: 30,
           height: 30,
           borderRadius: 9,
-          background: 'var(--canvas)',
+          background: 'var(--panel)',
           color: colors.strong,
           display: 'flex',
           alignItems: 'center',
@@ -169,8 +172,8 @@ export function StatTile({
         {icon}
       </div>
       <div>
-        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)', lineHeight: 1.1 }}>{value}</div>
-        <div style={{ fontSize: 11, color: 'var(--ink-muted)', marginTop: 3 }}>{label}</div>
+        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--fg)', lineHeight: 1.1 }}>{value}</div>
+        <div style={{ fontSize: 11, color: 'var(--fg-4)', marginTop: 3 }}>{label}</div>
       </div>
     </div>
   )
@@ -215,7 +218,7 @@ export function CodeModal({ testCase, onClose }: { testCase: { name: string; cod
         onClick={(e) => e.stopPropagation()}
         style={{
           background: '#0F172A',
-          borderRadius: 'var(--radius)',
+          borderRadius: 16,
           width: 'min(720px, 92vw)',
           maxHeight: '80vh',
           display: 'flex',
@@ -272,15 +275,9 @@ export function CodeModal({ testCase, onClose }: { testCase: { name: string; cod
 export function TestSuiteResults({
   applicationId,
   onRunTests,
-  furthestCount,
-  onStepClick,
-  onPrevious,
 }: {
   applicationId: string
   onRunTests: () => void
-  furthestCount: number
-  onStepClick?: (key: StepKey) => void
-  onPrevious?: () => void
 }) {
   const [suites, setSuites] = useState<TestSuiteRead[]>([])
   const [expectedTestCaseCount, setExpectedTestCaseCount] = useState(0)
@@ -439,23 +436,32 @@ export function TestSuiteResults({
   const estRuntimeMin = Math.max(1, Math.ceil((testCaseCount * SECONDS_PER_TEST_CASE) / 60))
 
   if (!isComplete && generationUnavailable) {
-    return (
-      <>
-        <Stepper current="generate" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} />
-        <ServiceError code="GENERATION_UNAVAILABLE" onRetry={() => onStepClick?.('generate')} />
-      </>
-    )
+    return <ServiceError code="GENERATION_UNAVAILABLE" onRetry={() => window.location.reload()} />
   }
 
   if (!isComplete) {
     return (
       <>
-        <Stepper current="generate" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} />
         <main style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, boxSizing: 'border-box' }}>
+          <div
+            style={{
+              background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
+              backdropFilter: 'blur(16px) saturate(1.25)',
+              border: '1px solid var(--border-1)',
+              borderRadius: 14,
+              boxShadow: 'var(--panel-shadow)',
+              maxWidth: 480,
+              width: '100%',
+            }}
+          >
           <GenerationLoader
-            title="Generating your test suite…"
+            icon={FlaskConical}
+            title="Writing test cases…"
+            body="Vantage is turning approved scenarios into Playwright specs with generated fixtures. Nothing to review until the suite is written."
+            bullets={['Resolving locators', 'Writing specs', 'Generating fixtures']}
+            percent={expectedTestCaseCount > 0 ? (testCaseCount / expectedTestCaseCount) * 100 : undefined}
             caption={
-              <p className="caption" style={{ margin: 0, fontSize: 12.5 }}>
+              <p className="caption" style={{ margin: '2px 0 0', fontSize: 12.5 }}>
                 {testCaseCount}/{expectedTestCaseCount || '…'} test cases so far
               </p>
             }
@@ -484,6 +490,7 @@ export function TestSuiteResults({
               )
             }
           />
+          </div>
         </main>
       </>
     )
@@ -491,7 +498,6 @@ export function TestSuiteResults({
 
   return (
     <>
-      <Stepper current="generate" furthestCount={furthestCount} onStepClick={onStepClick} onPrevious={onPrevious} />
       <main style={{ width: '100%', boxSizing: 'border-box', flex: 1, display: 'flex', flexDirection: 'column' }}>
         <div
           style={{
@@ -655,7 +661,7 @@ export function TestSuiteResults({
 
           <div
             style={{
-              background: 'var(--canvas)',
+              background: 'var(--panel)',
               borderRadius: 'var(--radius-lg)',
               boxSizing: 'border-box',
               overflow: 'hidden',
@@ -681,9 +687,9 @@ export function TestSuiteResults({
               }}
             >
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)' }}>Generated Tests</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--fg)' }}>Generated Tests</div>
                 {testCaseCount === 0 && (
-                  <div style={{ fontSize: 12, color: 'var(--ink-muted)', marginTop: 2 }}>
+                  <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
                     No test cases generated
                   </div>
                 )}
@@ -730,7 +736,7 @@ export function TestSuiteResults({
                           style={{
                             fontSize: 13,
                             fontWeight: 700,
-                            color: 'var(--ink)',
+                            color: 'var(--fg)',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
@@ -738,7 +744,7 @@ export function TestSuiteResults({
                         >
                           {suite.journey_name}
                         </span>
-                        <span style={{ fontSize: 12, color: 'var(--ink-muted)', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                        <span style={{ fontSize: 12, color: 'var(--fg-4)', whiteSpace: 'nowrap', flexShrink: 0 }}>
                           {suite.test_cases.length} test{suite.test_cases.length === 1 ? '' : 's'}
                         </span>
                         {suite.status === 'incomplete' && (
@@ -764,8 +770,8 @@ export function TestSuiteResults({
                               fontWeight: 600,
                               padding: '2px 7px',
                               borderRadius: 6,
-                              background: 'var(--canvas-wash-alt)',
-                              color: 'var(--ink-muted)',
+                              background: 'var(--hover)',
+                              color: 'var(--fg-4)',
                               whiteSpace: 'nowrap',
                               flexShrink: 0,
                             }}
@@ -777,14 +783,14 @@ export function TestSuiteResults({
                       <span
                         style={{
                           fontSize: 11,
-                          color: 'var(--ink-faint)',
+                          color: 'var(--fg-5)',
                           fontFamily: 'var(--font-mono)',
                         }}
                       >
                         {journeyFolderPath(suite.journey_name)}
                       </span>
                       </div>
-                      <ChevronIcon size={14} color="var(--ink-faint)" open={suiteOpen} />
+                      <ChevronIcon size={14} color="var(--fg-5)" open={suiteOpen} />
                     </button>
 
                     {suite.status === 'incomplete' && (
@@ -798,12 +804,12 @@ export function TestSuiteResults({
                           onClick={() => handleTerminate(suite.id)}
                           style={{
                             padding: '4px 10px',
-                            background: 'var(--canvas)',
-                            border: '1px solid var(--border-strong)',
+                            background: 'var(--panel)',
+                            border: '1px solid var(--border-3)',
                             borderRadius: 6,
                             fontSize: 11.5,
                             fontWeight: 600,
-                            color: 'var(--ink-secondary)',
+                            color: 'var(--fg-2)',
                             fontFamily: 'inherit',
                             cursor: terminatingSuiteId === suite.id ? 'not-allowed' : 'pointer',
                             whiteSpace: 'nowrap',
@@ -856,7 +862,7 @@ export function TestSuiteResults({
                                     style={{
                                       fontSize: 11.5,
                                       fontWeight: 700,
-                                      color: 'var(--ink-faint)',
+                                      color: 'var(--fg-5)',
                                       minWidth: 16,
                                       flexShrink: 0,
                                     }}
@@ -867,7 +873,7 @@ export function TestSuiteResults({
                                     style={{
                                       fontSize: 13,
                                       fontWeight: 600,
-                                      color: 'var(--ink-secondary)',
+                                      color: 'var(--fg-2)',
                                       overflow: 'hidden',
                                       textOverflow: 'ellipsis',
                                       whiteSpace: 'nowrap',
@@ -899,7 +905,7 @@ export function TestSuiteResults({
                                 <div
                                   style={{
                                     fontSize: 11,
-                                    color: 'var(--ink-faint)',
+                                    color: 'var(--fg-5)',
                                     fontFamily: 'var(--font-mono)',
                                     marginTop: 3,
                                   }}
@@ -912,8 +918,8 @@ export function TestSuiteResults({
                                 onClick={() => setActiveCode(testCase)}
                                 style={{
                                   padding: '5px 12px',
-                                  background: 'var(--canvas)',
-                                  border: '1px solid var(--border-strong)',
+                                  background: 'var(--panel)',
+                                  border: '1px solid var(--border-3)',
                                   boxShadow: '0 1px 2px rgba(15,23,42,0.06)',
                                   borderRadius: 6,
                                   fontSize: 12,

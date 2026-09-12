@@ -12,6 +12,7 @@ re-implements this.
 
 import os
 import uuid
+from datetime import UTC, datetime
 from typing import Annotated
 
 import bcrypt
@@ -81,6 +82,12 @@ def current_user(
     # COOKIE_MAX_AGE's docstring) — every route depending on CurrentUserDep
     # gets this for free, one choke point.
     issue_session_cookie(response, user.id)
+    # Team members page's "Last active" column — same choke point, so it
+    # reflects real session activity rather than only login time.
+    user.last_active_at = datetime.now(UTC)
+    session.add(user)
+    session.commit()
+    session.refresh(user)
     return user
 
 

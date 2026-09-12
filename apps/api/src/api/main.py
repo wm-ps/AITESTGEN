@@ -9,7 +9,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 import httpx
@@ -42,6 +42,7 @@ from domain import (
     TestSuite,
     aggregation_key,
 )
+import hvac.exceptions
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from object_store import ObjectStore
@@ -72,6 +73,8 @@ from workflows import (
     HEALABLE_STATUSES,
     LIVE_EXPLORATION_TASK_QUEUE,
     ApplicationTestExecutionWorkflow,
+    AutofillScenarioTestDataActivityInput,
+    AutofillScenarioTestDataWorkflow,
     CleanupWorkflow,
     ExecutionWorkflowInput,
     GenerationWorkflow,
@@ -297,6 +300,72 @@ def accept_invite_route(
     return _to_user_read(user)
 
 
+# --- Vantage V2 Team members page ---
+# Previously only reachable via the Invite modal (pending invites, never the
+# existing roster). Keyed by email, not `PlatformUser.id` — that id is
+# deliberately never returned in a response (see the model's own docstring);
+# email is already unique/indexed and is the identity Invite matching itself
+# already uses.
+
+
+class TeamMemberRead(BaseModel):
+    name: str
+    email: str
+    role: str
+    created_at: datetime
+    # Null until this member's first authenticated request after the
+    # last_active_at column shipped (see `api.auth.current_user`) — an
+    # invited-but-never-signed-in member has no session activity yet.
+    last_active_at: datetime | None = None
+
+
+@app.get("/team", response_model=list[TeamMemberRead])
+def list_team(
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[TeamMemberRead]:
+    members = session.exec(
+        select(PlatformUser)
+        .where(PlatformUser.organization_id == organization_id)
+        .order_by(PlatformUser.created_at)  # type: ignore[arg-type]
+    ).all()
+    return [
+        TeamMemberRead(
+            name=m.name,
+            email=m.email,
+            role=m.role,
+            created_at=m.created_at,
+            last_active_at=m.last_active_at,
+        )
+        for m in members
+    ]
+
+
+@app.delete("/team/{email}", status_code=204)
+def remove_team_member(
+    email: str,
+    session: SessionDep,
+    admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> None:
+    # No separate "last admin" guard: this endpoint already requires an
+    # admin caller, and self-removal is blocked outright below — so the only
+    # way to reach the delete is a *different* admin acting on someone else,
+    # which means at least one admin (the caller) always remains after it.
+    if email == admin.email:
+        raise HTTPException(status_code=422, detail="you cannot remove yourself")
+    member = session.exec(
+        select(PlatformUser).where(
+            PlatformUser.email == email, PlatformUser.organization_id == organization_id
+        )
+    ).first()
+    if member is None:
+        raise HTTPException(status_code=404, detail="member not found")
+    session.delete(member)
+    session.commit()
+
+
 # --- Forgot password ---
 # Public (no session required) — a user enters their email, and if it
 # belongs to an account gets a one-time reset link. The response never
@@ -398,11 +467,28 @@ class ApplicationRenamePayload(BaseModel):
 class ApplicationCredentialsUpdatePayload(BaseModel):
     username: str
     password: str
+    # Settings' "Account uses an MFA challenge" toggle — stored alongside
+    # username/password in the same Vault secret blob (never a DB column;
+    # nothing today needs to query "does this application use MFA" outside
+    # of the run that resolves this exact secret to sign in).
+    mfa_enabled: bool = False
+    totp_seed: str | None = None
 
     @field_validator("username", "password", mode="before")
     @classmethod
     def _strip_credential_whitespace(cls, value: str) -> str:
         return value.strip() if isinstance(value, str) else value
+
+    @field_validator("totp_seed", mode="before")
+    @classmethod
+    def _strip_totp_seed_whitespace(cls, value: str | None) -> str | None:
+        return value.strip() if isinstance(value, str) else value
+
+    @model_validator(mode="after")
+    def _require_totp_seed_when_mfa_enabled(self) -> "ApplicationCredentialsUpdatePayload":
+        if self.mfa_enabled and not self.totp_seed:
+            raise ValueError("totp_seed is required when mfa_enabled is set")
+        return self
 
 
 class ApplicationRead(BaseModel):
@@ -458,6 +544,11 @@ class HomeApplicationRead(ApplicationRead):
     last_test_run_status: str | None
     last_test_run_created_at: datetime | None
     last_test_run_pass_rate: float | None
+    # Global overview's "Latest run outcome" donut legend (Passed/Failed) —
+    # real counts, not derived from the rate, so they add up exactly the way
+    # the prototype's own legend does.
+    last_test_run_passed_count: int | None
+    last_test_run_failed_count: int | None
     # Only meaningful once `last_test_run_status == "completed"` — mirrors
     # TestRunRead.health so the card's post-execution badge and the Runs tab
     # badge for the same run never disagree.
@@ -478,6 +569,11 @@ class HomeApplicationRead(ApplicationRead):
     # finished. This is the same suite.status-based signal TestSuiteResults.tsx's
     # `isComplete` was fixed to use: a suite still mid-run, not a count.
     suites_generating_count: int
+    # Global overview's "Last discovery" card — same rule get_overview uses
+    # for this same field: DiscoveryRun has no completion timestamp, so this
+    # is honestly the most recent *completed* run's start time, not when it
+    # finished.
+    last_discovery_started_at: datetime | None
 
 
 def _coverage_counts(session: Session, discovery_run: DiscoveryRun) -> dict[str, int]:
@@ -593,6 +689,33 @@ async def create_application(
     await _seed_default_schedules(session, application)
 
     return _to_application_read(session, application, discovery_run)
+
+
+class ConnectionTestPayload(BaseModel):
+    url: str
+
+
+class ConnectionTestResult(BaseModel):
+    reachable: bool
+    detail: str | None = None
+
+
+# Vantage V2 Add-application wizard's "Test connection" button. Only checks
+# `url` (Base URL), same as `_check_reachable` used in `create_application` —
+# `login_url` is deliberately never reachability-checked (see
+# test_create_application_never_reachability_checks_login_url): a login page
+# can legitimately 500 without prior session state.
+@app.post("/applications/test-connection", response_model=ConnectionTestResult)
+async def test_application_connection(
+    payload: ConnectionTestPayload,
+    organization_id: CurrentOrgIdDep,
+) -> ConnectionTestResult:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
+        try:
+            await _check_reachable(client, payload.url)
+        except HTTPException as exc:
+            return ConnectionTestResult(reachable=False, detail=str(exc.detail))
+    return ConnectionTestResult(reachable=True)
 
 
 def _latest_discovery_run(session: Session, application_id: uuid.UUID) -> DiscoveryRun | None:
@@ -803,15 +926,80 @@ def get_home(
                 last_test_run_status=last_test_run.status if last_test_run else None,
                 last_test_run_created_at=last_test_run.created_at if last_test_run else None,
                 last_test_run_pass_rate=last_test_run_pass_rate,
+                last_test_run_passed_count=last_test_run.passed_count if last_test_run else None,
+                last_test_run_failed_count=last_test_run.failed_count if last_test_run else None,
                 last_test_run_health=_health_tier(last_test_run_pass_rate),
                 test_run_count=len(runs),
                 recent_pass_rates=[
                     (r.passed_count / r.total_count) if r.total_count else None
                     for r in reversed(runs[:8])
                 ],
+                last_discovery_started_at=(
+                    discovery_run.created_at if discovery_run.status == "complete" else None
+                ),
             )
         )
     return result
+
+
+class GlobalStatsRead(BaseModel):
+    # Global overview's two remaining prototype sidebar cards ("Avg run
+    # duration", "Self-healed locators") — org-wide, not per-application, so
+    # they don't fit HomeApplicationRead's per-row shape and get their own
+    # endpoint instead.
+    avg_run_duration_ms: float | None
+    run_count: int
+    self_healed_count: int
+    self_healed_since: datetime
+
+
+@app.get("/overview-stats", response_model=GlobalStatsRead)
+def get_overview_stats(
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> GlobalStatsRead:
+    since = datetime.now(UTC) - timedelta(days=7)
+    app_ids = session.exec(
+        select(Application.id).where(
+            Application.organization_id == organization_id,
+            Application.deleted_at.is_(None),  # type: ignore[attr-defined]
+        )
+    ).all()
+    if not app_ids:
+        return GlobalStatsRead(avg_run_duration_ms=None, run_count=0, self_healed_count=0, self_healed_since=since)
+
+    # Same trigger-name exclusion get_home's own TestRun query uses — a
+    # self-heal verification run is never a real, user-visible run.
+    runs = session.exec(
+        select(TestRun.started_at, TestRun.completed_at).where(
+            TestRun.application_id.in_(app_ids),  # type: ignore[attr-defined]
+            TestRun.status == "completed",
+            TestRun.started_at.is_not(None),  # type: ignore[union-attr]
+            TestRun.completed_at.is_not(None),  # type: ignore[union-attr]
+            TestRun.triggered_by_name.is_distinct_from(_INTERNAL_VERIFICATION_TRIGGER_NAME),  # type: ignore[union-attr]
+        )
+    ).all()
+    durations_ms = [
+        (completed - started).total_seconds() * 1000 for started, completed in runs if started and completed
+    ]
+    avg_run_duration_ms = sum(durations_ms) / len(durations_ms) if durations_ms else None
+
+    self_healed_count = session.exec(
+        select(func.count(TestResult.id))  # type: ignore[arg-type]
+        .join(TestRun, TestResult.test_run_id == TestRun.id)  # type: ignore[arg-type]
+        .where(
+            TestRun.application_id.in_(app_ids),  # type: ignore[attr-defined]
+            TestResult.healed_test_asset_id.is_not(None),  # type: ignore[union-attr]
+            TestResult.completed_at >= since,  # type: ignore[operator]
+        )
+    ).one()
+
+    return GlobalStatsRead(
+        avg_run_duration_ms=avg_run_duration_ms,
+        run_count=len(durations_ms),
+        self_healed_count=self_healed_count,
+        self_healed_since=since,
+    )
 
 
 @app.post("/applications/{external_id}/pause-discovery", response_model=ApplicationRead)
@@ -901,11 +1089,108 @@ def update_application_credentials(
         raise HTTPException(
             status_code=422, detail="credential update is only supported for standard_login"
         )
-    creds = {"username": payload.username, "password": payload.password}
+    creds: dict[str, str | bool | None] = {"username": payload.username, "password": payload.password}
+    if payload.mfa_enabled:
+        creds["mfa_enabled"] = True
+        creds["totp_seed"] = payload.totp_seed
     VaultSecretsClient().update(SecretRef(path=application.secret_ref), json.dumps(creds).encode())
     discovery_run = _latest_discovery_run(session, application.id)
     assert discovery_run is not None
     return _to_application_read(session, application, discovery_run)
+
+
+class CredentialListEntry(BaseModel):
+    application_id: uuid.UUID
+    application_name: str
+    environment: str
+    username: str
+    has_password: bool
+
+
+# Vantage V2 Settings' cross-application "Saved credentials" table.
+# `Application` stores only `secret_ref` (an opaque Vault path) — username
+# lives inside the encrypted blob too, same as password — so listing even
+# just usernames means resolving every standard_login Application's secret.
+# The password itself never rides along here, only whether one is set;
+# `reveal_credential` below is the one place that returns it, on demand.
+@app.get("/credentials", response_model=list[CredentialListEntry])
+def list_credentials(
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> list[CredentialListEntry]:
+    applications = session.exec(
+        select(Application)
+        .where(
+            Application.organization_id == organization_id,
+            Application.deleted_at.is_(None),  # type: ignore[attr-defined]
+            Application.auth_method == "standard_login",
+        )
+        .order_by(Application.created_at.desc())  # type: ignore[arg-type]
+    ).all()
+    result = []
+    for application in applications:
+        try:
+            creds = json.loads(VaultSecretsClient().resolve(SecretRef(path=application.secret_ref)))
+        except hvac.exceptions.VaultError:
+            # One application's secret being unresolvable (e.g. a dev-mode
+            # Vault wiped on restart) must not 500 the whole list — every
+            # other application's credentials are still valid and worth
+            # showing.
+            continue
+        result.append(
+            CredentialListEntry(
+                application_id=application.external_id,
+                application_name=application.name,
+                environment=application.environment,
+                username=creds.get("username", ""),
+                has_password=bool(creds.get("password")),
+            )
+        )
+    return result
+
+
+class CredentialReveal(BaseModel):
+    password: str
+
+
+@app.post("/credentials/{external_id}/reveal", response_model=CredentialReveal)
+def reveal_credential(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> CredentialReveal:
+    application = _get_org_application(session, organization_id, external_id)
+    if application.auth_method != "standard_login":
+        raise HTTPException(status_code=422, detail="credential reveal is only supported for standard_login")
+    creds = json.loads(VaultSecretsClient().resolve(SecretRef(path=application.secret_ref)))
+    return CredentialReveal(password=creds.get("password", ""))
+
+
+class CredentialVerifyResult(BaseModel):
+    reachable: bool
+    detail: str | None = None
+
+
+# Same lightweight Base-URL reachability check as the Add-application
+# wizard's "Test connection" (`_check_reachable`) — a real login-credential
+# verification would need discovery-worker browser automation, which is a
+# separately-scoped, bigger piece of work (not this pass).
+@app.post("/credentials/{external_id}/verify", response_model=CredentialVerifyResult)
+async def verify_credential(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> CredentialVerifyResult:
+    application = _get_org_application(session, organization_id, external_id)
+    async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
+        try:
+            await _check_reachable(client, application.url)
+        except HTTPException as exc:
+            return CredentialVerifyResult(reachable=False, detail=str(exc.detail))
+    return CredentialVerifyResult(reachable=True)
 
 
 @app.delete("/applications/{external_id}", status_code=204)
@@ -1862,6 +2147,95 @@ async def get_regenerate_test_asset_status(
     )
 
 
+# --- Scenarios tab "Auto-generate" (test data) ---
+# Same deterministic default-value fill PlaywrightGenerationActivity applies
+# implicitly at suite-generation time, triggered early on demand. Distinct
+# from "Edit Test Data" above (that's an AI-backed *code* regeneration after
+# a manual edit) — this one only ever fills still-blank fields, no AI call.
+
+
+class AutofillScenarioTestDataStatusRead(BaseModel):
+    status: str  # running | complete | failed
+    # Full Scenario, not just its test_data — `test_data_complete()` is
+    # computed from test_data at read time (never a stored column), so the
+    # frontend needs the freshly-converted Scenario to see an accurate
+    # readiness pill, the same way update_scenario_test_data's response
+    # already does.
+    scenario: ScenarioRead | None = None
+    error_message: str | None = None
+
+
+def _autofill_scenario_test_data_workflow_id(scenario_external_id: uuid.UUID) -> str:
+    return f"autofill-{scenario_external_id}"
+
+
+@app.post("/scenarios/{external_id}/test-data/auto-fill", status_code=202)
+async def autofill_scenario_test_data(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> dict[str, bool]:
+    _get_org_scenario(session, organization_id, external_id)
+
+    client = await get_temporal_client()
+    if not await has_pollers(client, GENERATION_TASK_QUEUE):
+        raise HTTPException(status_code=503, detail="GENERATION_UNAVAILABLE")
+
+    try:
+        await client.start_workflow(
+            AutofillScenarioTestDataWorkflow.run,
+            AutofillScenarioTestDataActivityInput(scenario_id=str(external_id)),
+            id=_autofill_scenario_test_data_workflow_id(external_id),
+            task_queue=GENERATION_TASK_QUEUE,
+        )
+    except WorkflowAlreadyStartedError:
+        # Already filling for this Scenario — the frontend polls the same
+        # deterministic-id status endpoint either way.
+        pass
+    return {"started": True}
+
+
+@app.get(
+    "/scenarios/{external_id}/test-data/auto-fill",
+    response_model=AutofillScenarioTestDataStatusRead,
+)
+async def get_autofill_scenario_test_data_status(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> AutofillScenarioTestDataStatusRead:
+    scenario, journey = _get_org_scenario(session, organization_id, external_id)
+    client = await get_temporal_client()
+    handle = client.get_workflow_handle_for(
+        AutofillScenarioTestDataWorkflow.run, _autofill_scenario_test_data_workflow_id(external_id)
+    )
+    try:
+        desc = await handle.describe()
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="AUTOFILL_REQUEST_NOT_FOUND") from exc
+
+    if desc.status == WorkflowExecutionStatus.RUNNING:
+        return AutofillScenarioTestDataStatusRead(status="running")
+
+    if desc.status == WorkflowExecutionStatus.COMPLETED:
+        result = await handle.result()
+        if result.status != "complete":
+            return AutofillScenarioTestDataStatusRead(status=result.status, error_message=result.error_message)
+        # Re-read: the workflow persisted the fill itself
+        # (_resolve_scenario_defaults_sync), so `scenario` here (fetched
+        # above, before the workflow's own write) is stale.
+        session.refresh(scenario)
+        return AutofillScenarioTestDataStatusRead(
+            status="complete",
+            scenario=_to_scenario_read(scenario, journey.external_id, journey.name),
+        )
+
+    return AutofillScenarioTestDataStatusRead(
+        status="failed",
+        error_message=f"the request did not finish normally (workflow status: {desc.status.name})",
+    )
+
+
 # --- Generate Suite (Story 4.2) ---
 # One `SuiteGenerationWorkflow` per candidate Journey with current Scenarios
 # — mirrors generate_scenarios' "one GenerationWorkflow per candidate
@@ -2570,6 +2944,11 @@ def update_execution_policy(
 class TestResultRead(BaseModel):
     id: uuid.UUID
     scenario_name: str
+    # Which Journey this Scenario belongs to — lets the frontend group a
+    # run's results "by suite" (one Journey's Scenarios compile into one
+    # spec file/suite). Falls back to "" the same way scenario_name does,
+    # if the Scenario was hard-deleted since this TestResult ran.
+    journey_name: str
     # Test Case Number feature: persistent, sequential, per-Application
     # display id — None only if the Scenario itself was hard-deleted since
     # this TestResult ran (scenario_name falls back to "" the same way).
@@ -3603,11 +3982,25 @@ def get_test_run(
         if scenario_ids
         else {}
     )
+    journey_ids = {s.journey_id for s in scenarios_by_id.values()}
+    journey_names_by_id = (
+        {
+            j.id: j.name
+            for j in session.exec(
+                select(Journey).where(Journey.id.in_(journey_ids))  # type: ignore[attr-defined]
+            ).all()
+        }
+        if journey_ids
+        else {}
+    )
     max_heal_attempts = session.exec(select(DiscoverySettings)).one().max_heal_attempts
     result_reads = [
         TestResultRead(
             id=r.external_id,
             scenario_name=scenarios_by_id[r.scenario_id].name
+            if r.scenario_id in scenarios_by_id
+            else "",
+            journey_name=journey_names_by_id.get(scenarios_by_id[r.scenario_id].journey_id, "")
             if r.scenario_id in scenarios_by_id
             else "",
             test_case_number=scenarios_by_id[r.scenario_id].test_case_number

@@ -29,16 +29,16 @@ export function ServiceError({
         boxSizing: 'border-box',
       }}
     >
-      <svg width={72} height={72} viewBox="0 0 24 24" fill="none" stroke="var(--ink-faint)" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <svg width={72} height={72} viewBox="0 0 24 24" fill="none" stroke="var(--fg-5)" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <path d="M9.5 9.5 3 3M14.5 14.5 21 21" />
         <path d="M8 16H5a4 4 0 0 1-.5-7.97" />
         <path d="M9 9h6a4 4 0 0 1 3.96 4.55" />
         <path d="M12 12v.01" />
       </svg>
       <div>
-        <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)', margin: '0 0 6px' }}>{title}</h1>
-        <p style={{ fontSize: 14.5, color: 'var(--ink-muted)', margin: 0, maxWidth: 380 }}>{message}</p>
-        <p style={{ fontSize: 11.5, color: 'var(--ink-faint)', fontFamily: 'var(--font-mono)', margin: '10px 0 0' }}>
+        <h1 style={{ fontSize: 20, fontWeight: 700, color: 'var(--fg)', margin: '0 0 6px' }}>{title}</h1>
+        <p style={{ fontSize: 14.5, color: 'var(--fg-4)', margin: 0, maxWidth: 380 }}>{message}</p>
+        <p style={{ fontSize: 11.5, color: 'var(--fg-5)', fontFamily: 'var(--font-mono)', margin: '10px 0 0' }}>
           Error code: {code}
         </p>
       </div>
