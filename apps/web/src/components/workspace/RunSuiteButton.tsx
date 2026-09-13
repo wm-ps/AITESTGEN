@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faChevronRight, faListCheck, faPlay } from '@fortawesome/free-solid-svg-icons'
-import { LoadingDots } from '../LoadingDots'
+import { Spinner } from '../LoadingDots'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 
 const RUN_MODES: { key: 'full' | 'selective'; icon: typeof faPlay; title: string; body: string }[] = [
@@ -23,7 +23,7 @@ export function RunSuiteButton({
   onOpenJourneysDialog: () => void
 }) {
   const [open, setOpen] = useState(false)
-  useEscapeToClose(open ? () => setOpen(false) : () => {})
+  useEscapeToClose(() => setOpen(false), open)
 
   return (
     <>
@@ -49,13 +49,14 @@ export function RunSuiteButton({
           flex: 'none',
           whiteSpace: 'nowrap',
           color: '#fff',
-          background: running ? 'var(--fg-4)' : 'var(--accent)',
+          background: 'var(--accent)',
+          opacity: running ? 0.65 : 1,
           boxShadow: running ? 'none' : '0 4px 14px rgba(30,150,138,0.3)',
           cursor: running ? 'not-allowed' : 'pointer',
         }}
       >
-        <FontAwesomeIcon icon={faPlay} style={{ fontSize: 11 }} />
-        {running ? <LoadingDots label="Running" /> : 'Run'}
+        {running ? <Spinner size={12} /> : <FontAwesomeIcon icon={faPlay} style={{ fontSize: 11 }} />}
+        {running ? 'Running…' : 'Run'}
       </button>
 
       {open && (

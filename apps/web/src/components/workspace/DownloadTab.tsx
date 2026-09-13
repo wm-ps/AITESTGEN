@@ -67,8 +67,7 @@ export function DownloadTab({ applicationId, applicationName }: { applicationId:
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
         <div style={{ minWidth: 0 }}>
-          <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Download project</h1>
-          <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 4 }}>A ready-to-run Playwright repository for {applicationName}.</div>
+          <div style={{ fontSize: 13.5, color: 'var(--fg-3)' }}>A ready-to-run Playwright repository for {applicationName}.</div>
         </div>
         <div style={{ flex: 1 }} />
         {hasSuites && (
@@ -108,6 +107,7 @@ export function DownloadTab({ applicationId, applicationName }: { applicationId:
       {suites !== null && suites.length === 0 ? (
         <EmptyState
           illustration={<DownloadIllustration />}
+          variant="scene"
           title="No test cases generated yet"
           subtitle="Once test cases are generated, the project structure and download appear here."
         />

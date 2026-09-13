@@ -91,8 +91,8 @@ function App() {
   // isn't an ApiError, so it can't mean "not signed in". Route it to the
   // generic error screen instead of silently bouncing to SignIn.
   const [serviceDown, setServiceDown] = useState(false)
-  const [view, setView] = useState<View>('home')
-  const [previousView, setPreviousView] = useState<View>('home')
+  const [view, setView] = useState<View>('overview')
+  const [previousView, setPreviousView] = useState<View>('overview')
   const [application, setApplication] = useState<ApplicationRead | null>(null)
   const [inviteToken, setInviteToken] = useState(getInviteTokenFromUrl)
   const [resetToken, setResetToken] = useState(getResetTokenFromUrl)
@@ -113,40 +113,11 @@ function App() {
   // behavior the old 'test-suite-results' view had.
   const [justGeneratedSuite, setJustGeneratedSuite] = useState(false)
   const [autoTriggerRun, setAutoTriggerRun] = useState(false)
-  // Gates the sidebar's "Overview" link (and the view itself) — the
-  // dashboard is all pass-rate/trend/history, which is meaningless before
-  // any application has ever finished a run. Polled independently of
-  // Home.tsx/Overview.tsx's own `getHome` calls (each screen already fetches
-  // its own copy today) since this needs to be known on every screen, not
-  // just while Home or Overview happen to be mounted.
-  const [hasAnyRun, setHasAnyRun] = useState(false)
-
-  useEffect(() => {
-    if (!user) return
-    let cancelled = false
-    async function poll() {
-      try {
-        const rows = await api.getHome()
-        if (!cancelled) setHasAnyRun(rows.some((a) => a.test_run_count > 0))
-      } catch {
-        // best-effort — Overview just stays hidden until the next poll succeeds
-      }
-    }
-    poll()
-    const interval = setInterval(poll, 15000)
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
-  }, [user])
-
-  // Overview is only reachable via the sidebar link this same flag hides —
-  // this is just a defensive fallback in case some other path (e.g. a future
-  // deep link) ever lands here while hasAnyRun is still false.
-  useEffect(() => {
-    if (view === 'overview' && !hasAnyRun) setView('home')
-  }, [view, hasAnyRun])
-
+  // Same one-shot idea for Scenarios: journeys existing is not evidence
+  // generation was triggered (Scenarios is a standing sidebar tab, reachable
+  // without ever clicking Journeys' Continue) — only this deliberate
+  // transition means generation actually started.
+  const [justStartedScenarios, setJustStartedScenarios] = useState(false)
   useEffect(() => {
     if (!errorToast) return
     const timeout = setTimeout(() => setErrorToast(null), 3000)
@@ -218,7 +189,7 @@ function App() {
     try {
       await api.logout()
       setUser(null)
-      setView('home')
+      setView('overview')
       setApplication(null)
     } catch {
       setErrorToast('Failed to log out. Please try again.')
@@ -277,11 +248,12 @@ function App() {
 
   function selectAppTab(tab: string) {
     // A deliberate sidebar click is never the one-shot "just generated /
-    // just triggered a run" transition — only the two programmatic
-    // transitions below (Scenarios' Generate, the results screen's Run
-    // Tests) set those flags.
+    // just triggered a run" transition — only the programmatic transitions
+    // below (Journeys' Continue, Scenarios' Generate, the results screen's
+    // Run Tests) set those flags.
     setJustGeneratedSuite(false)
     setAutoTriggerRun(false)
+    setJustStartedScenarios(false)
     setAppTab(tab as AppTab)
   }
 
@@ -323,7 +295,10 @@ function App() {
           discoveryStatus={application.discovery_status}
           discoveryStage={application.discovery_stage ?? null}
           discoveryFailureReason={application.discovery_failure_reason ?? null}
-          onContinueToScenarios={() => setAppTab('scenarios')}
+          onContinueToScenarios={() => {
+            setJustStartedScenarios(true)
+            setAppTab('scenarios')
+          }}
         />
       )}
       {view === 'app' && application && appTab === 'scenarios' && (
@@ -331,6 +306,7 @@ function App() {
           applicationId={application.id}
           applicationName={application.name}
           applicationUrl={application.url}
+          generationJustStarted={justStartedScenarios}
           onGoToJourneys={() => setAppTab('journeys')}
           onContinueToGenerate={async () => {
             if (globalLoading) return
@@ -386,7 +362,6 @@ function App() {
             ? (mergedAppTabs.find((t) => t.key === appTab)?.label ?? '')
             : (SHELL_CRUMB_FOR_VIEW[view] ?? '')
         }
-        showOverview={hasAnyRun}
         onGoOverview={() => setView('overview')}
         onGoApps={() => setView('home')}
         onAddApplication={goAddApplication}

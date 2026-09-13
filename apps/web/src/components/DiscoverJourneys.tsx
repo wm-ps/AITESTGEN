@@ -189,7 +189,7 @@ export function DiscoverJourneys({
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(0)
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
-  useEscapeToClose(() => lightboxUrl && setLightboxUrl(null))
+  useEscapeToClose(() => setLightboxUrl(null), lightboxUrl != null)
   // Per-card screenshot fade-in — each journey's image loads independently
   // now that every card on the page renders its own (no more single
   // selected-journey detail pane to fade in and out of).
@@ -389,7 +389,7 @@ export function DiscoverJourneys({
             <h2 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Journeys</h2>
             <AppIdentityLine name={applicationName} url={applicationUrl} />
             <div className="caption" style={{ fontSize: 13, marginTop: 3 }}>
-              {journeys.length} Journey{journeys.length === 1 ? '' : 's'} Discovered
+              {journeys.length} journey{journeys.length === 1 ? '' : 's'} discovered
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)', flexShrink: 0 }}>
@@ -553,7 +553,8 @@ export function DiscoverJourneys({
                                   alignItems: 'center',
                                   justifyContent: 'center',
                                   gap: 6,
-                                  background: 'linear-gradient(90deg, var(--chip) 25%, var(--border-2) 50%, var(--chip) 75%)',
+                                  background:
+                                    'linear-gradient(90deg, var(--chip) 30%, color-mix(in srgb, var(--border-2) 60%, var(--chip)) 50%, var(--chip) 70%)',
                                   backgroundSize: '200% 100%',
                                 }}
                               >

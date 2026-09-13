@@ -127,7 +127,7 @@ export function TeamMembers({ user }: { user: UserRead }) {
     api
       .listTeam()
       .then(setMembers)
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'Loading team members failed.'))
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load team members.'))
   }
 
   useEffect(refresh, [])

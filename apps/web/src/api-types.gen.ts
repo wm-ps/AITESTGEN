@@ -284,6 +284,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/overview-stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Overview Stats */
+        get: operations["get_overview_stats_overview_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications/{external_id}/pause-discovery": {
         parameters: {
             query?: never;
@@ -1380,6 +1397,20 @@ export interface components {
             /** Email */
             email: string;
         };
+        /** GlobalStatsRead */
+        GlobalStatsRead: {
+            /** Avg Run Duration Ms */
+            avg_run_duration_ms: number | null;
+            /** Run Count */
+            run_count: number;
+            /** Self Healed Count */
+            self_healed_count: number;
+            /**
+             * Self Healed Since
+             * Format: date-time
+             */
+            self_healed_since: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1444,6 +1475,10 @@ export interface components {
             last_test_run_created_at: string | null;
             /** Last Test Run Pass Rate */
             last_test_run_pass_rate: number | null;
+            /** Last Test Run Passed Count */
+            last_test_run_passed_count: number | null;
+            /** Last Test Run Failed Count */
+            last_test_run_failed_count: number | null;
             last_test_run_health: components["schemas"]["HealthRead"];
             /** Test Run Count */
             test_run_count: number;
@@ -1455,6 +1490,8 @@ export interface components {
             test_case_count: number;
             /** Suites Generating Count */
             suites_generating_count: number;
+            /** Last Discovery Started At */
+            last_discovery_started_at: string | null;
         };
         /** InviteCreate */
         InviteCreate: {
@@ -2031,6 +2068,8 @@ export interface components {
             id: string;
             /** Scenario Name */
             scenario_name: string;
+            /** Journey Name */
+            journey_name: string;
             /** Test Case Number */
             test_case_number: number | null;
             /** Status */
@@ -2782,6 +2821,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HomeApplicationRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_overview_stats_overview_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalStatsRead"];
                 };
             };
             /** @description Validation Error */

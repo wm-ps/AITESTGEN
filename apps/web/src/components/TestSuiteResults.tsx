@@ -4,11 +4,11 @@ import { faIcon } from '../faIcon'
 
 const FlaskConical = faIcon(faVial)
 import { api, type TestCaseRead, type TestSuiteRead } from '../api'
-import { LoadingDots } from './LoadingDots'
+import { LoadingDots, Spinner } from './LoadingDots'
 import { GenerationLoader } from './GenerationLoader'
 import { ServiceError } from './ServiceError'
 import { Pagination } from './Pagination'
-import { useEscapeToClose } from '../hooks/useEscapeToClose'
+import { CodeModal } from './workspace/TestSuiteTab'
 
 const POLL_INTERVAL_MS = 3000
 const STUCK_MS = 15 * 60 * 1000
@@ -193,84 +193,6 @@ export function StatTile({
 //   edge: { label: 'Edge Case', background: 'var(--warn-wash)', color: 'var(--warn-strong)' },
 // }
 
-// Loosened to `{ name, code }` rather than the full `TestCaseRead` so the
-// Application Workspace's Test Suite tab (which only has a lazily-fetched
-// code string, not a whole TestCaseRead) can reuse this modal too.
-export function CodeModal({ testCase, onClose }: { testCase: { name: string; code: string }; onClose: () => void }) {
-  useEscapeToClose(onClose)
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${testCase.name} code`}
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(15,23,42,0.55)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 100,
-      }}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: '#0F172A',
-          borderRadius: 16,
-          width: 'min(720px, 92vw)',
-          maxHeight: '80vh',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            padding: '12px 16px',
-            borderBottom: '1px solid rgba(255,255,255,0.1)',
-          }}
-        >
-          <span style={{ color: '#E2E8F0', fontSize: 13, fontWeight: 600 }}>{testCase.name}</span>
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: '#94A3B8',
-              cursor: 'pointer',
-              fontSize: 16,
-              lineHeight: 1,
-              padding: 4,
-            }}
-          >
-            ✕
-          </button>
-        </div>
-        <pre
-          style={{
-            margin: 0,
-            padding: 20,
-            overflow: 'auto',
-            fontSize: 12.5,
-            lineHeight: 1.6,
-            color: '#D1D5DB',
-            fontFamily: "'SFMono-Regular',Consolas,monospace",
-            whiteSpace: 'pre',
-          }}
-        >
-          {testCase.code}
-        </pre>
-      </div>
-    </div>
-  )
-}
 
 export function TestSuiteResults({
   applicationId,
@@ -465,7 +387,7 @@ export function TestSuiteResults({
           <GenerationLoader
             icon={FlaskConical}
             title="Writing test cases…"
-            body="Vantage is turning approved scenarios into test cases with generated fixtures. Nothing to review until the suite is written."
+            body="Vantage is converting approved scenarios into test cases and fixtures."
             bullets={['Resolving locators', 'Writing test cases', 'Generating fixtures']}
             percent={expectedTestCaseCount > 0 ? (testCaseCount / expectedTestCaseCount) * 100 : undefined}
             caption={
@@ -480,6 +402,9 @@ export function TestSuiteResults({
                   disabled={regenerating}
                   onClick={handleRegenerate}
                   style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
                     marginTop: 16,
                     padding: '8px 18px',
                     background: 'var(--accent)',
@@ -490,10 +415,11 @@ export function TestSuiteResults({
                     fontWeight: 700,
                     fontFamily: 'inherit',
                     cursor: regenerating ? 'not-allowed' : 'pointer',
-                    opacity: regenerating ? 0.75 : 1,
+                    opacity: regenerating ? 0.65 : 1,
                   }}
                 >
-                  {regenerating ? <LoadingDots label="Regenerating" /> : 'Regenerate'}
+                  {regenerating && <Spinner size={11} />}
+                  {regenerating ? 'Regenerating…' : 'Regenerate'}
                 </button>
               )
             }
@@ -972,7 +898,13 @@ export function TestSuiteResults({
             )}
           </div>
 
-          {activeCode && <CodeModal testCase={activeCode} onClose={() => setActiveCode(null)} />}
+          {activeCode && (
+            <CodeModal
+              specFile={testCaseFileName(activeCode.name)}
+              code={activeCode.code}
+              onClose={() => setActiveCode(null)}
+            />
+          )}
         </div>
       </main>
     </>

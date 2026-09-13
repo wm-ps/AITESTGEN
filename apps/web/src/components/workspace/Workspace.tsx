@@ -136,7 +136,9 @@ export function Workspace({
         const latest = page.items[0]
         const active = !!latest && RUN_IS_ACTIVE(latest.status)
         setRunning(active || Date.now() < suppressReenableUntilRef.current)
-        if (page.items.length > 0) setHasRunEver(true)
+        // Only a finished run (completed or blocked) unlocks the Overview
+        // tab — a run still pending/running has nothing for it to show yet.
+        if (latest && !active) setHasRunEver(true)
       } catch {
         // best-effort poll — a transient failure just skips this tick
       }

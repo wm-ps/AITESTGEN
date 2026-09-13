@@ -42,7 +42,6 @@ export function AppShell({
   user,
   route,
   crumb,
-  showOverview,
   onGoOverview,
   onGoApps,
   onAddApplication,
@@ -56,8 +55,6 @@ export function AppShell({
   route: ShellRoute
   /** Current screen's label, shown in the top bar. */
   crumb: string
-  /** Overview is pass-rate/trend history — meaningless (and hidden) until some application has run at least once. */
-  showOverview: boolean
   onGoOverview: () => void
   onGoApps: () => void
   onAddApplication: () => void
@@ -148,12 +145,10 @@ export function AppShell({
 
         <div style={{ padding: '14px 10px', display: 'flex', flexDirection: 'column', gap: 1, overflowY: 'auto', flex: 1 }}>
           <div style={sectionLabelStyle}>Global</div>
-          {showOverview && (
-            <div style={navItemStyle(route === 'overview')} onClick={onGoOverview}>
-              <FontAwesomeIcon icon={faChartPie} style={{ width: 16, fontSize: 13, textAlign: 'center' }} />
-              <span style={{ flex: 1 }}>Overview</span>
-            </div>
-          )}
+          <div style={navItemStyle(route === 'overview')} onClick={onGoOverview}>
+            <FontAwesomeIcon icon={faChartPie} style={{ width: 16, fontSize: 13, textAlign: 'center' }} />
+            <span style={{ flex: 1 }}>Overview</span>
+          </div>
           <div style={navItemStyle(route === 'apps')} onClick={onGoApps}>
             <FontAwesomeIcon icon={faLayerGroup} style={{ width: 16, fontSize: 13, textAlign: 'center' }} />
             <span style={{ flex: 1 }}>Applications</span>
@@ -343,6 +338,7 @@ export function AppShell({
         </div>
 
         <div
+          id="app-shell-scroll"
           style={{
             flex: 1,
             overflowY: 'auto',

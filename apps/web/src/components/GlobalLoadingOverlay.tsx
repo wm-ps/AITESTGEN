@@ -15,12 +15,10 @@ export function AppBootLoader() {
         flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 22,
         background: 'var(--bg)',
       }}
     >
       <VantageBrand markSize={30} />
-      <FontAwesomeIcon icon={faCircleNotch} style={{ fontSize: 16, color: 'var(--accent-2)', animation: 'aitg-spin 0.8s linear infinite' }} />
     </div>
   )
 }

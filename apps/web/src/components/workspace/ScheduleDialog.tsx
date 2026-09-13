@@ -1,11 +1,20 @@
 import { useState } from 'react'
+import { faClock, faPlus, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type ScheduleCadenceType, type ScheduleCreate, type ScheduleRead } from '../../api'
 import { LoadingDots } from '../LoadingDots'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
+import { faIcon } from '../../faIcon'
+
+const Clock = faIcon(faClock)
+const Plus = faIcon(faPlus)
+const Xmark = faIcon(faXmark)
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return (
-    <span className="label-required" style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-2)' }}>
+    <span
+      className="label-required"
+      style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}
+    >
       {children}
     </span>
   )
@@ -135,37 +144,71 @@ export function ScheduleDialog({
       style={{
         position: 'fixed',
         inset: 0,
-        background: 'rgba(15,23,42,0.35)',
+        zIndex: 90,
+        background: 'rgba(10,12,16,0.46)',
+        backdropFilter: 'blur(3px)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        zIndex: 50,
+        padding: 24,
       }}
     >
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
         style={{
+          width: '100%',
+          maxWidth: 440,
+          position: 'relative',
+          overflow: 'hidden',
           background: 'linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,255,255,0.82))',
           backdropFilter: 'blur(20px) saturate(1.3)',
-          border: '1px solid var(--border-2)',
+          border: '1px solid var(--border)',
           borderRadius: 16,
           boxShadow: '0 30px 80px rgba(8,12,20,0.34), var(--panel-shadow)',
-          width: '100%',
-          maxWidth: 480,
-          padding: '24px 28px',
+          maxHeight: 'calc(100vh - 48px)',
+          overflowY: 'auto',
           boxSizing: 'border-box',
         }}
       >
-        <h2 style={{ fontSize: 17, fontWeight: 600, color: 'var(--fg)', margin: '0 0 4px' }}>
-          {initial ? 'Edit schedule' : 'New schedule'}
-        </h2>
-        <p style={{ fontSize: 13.5, color: 'var(--fg-4)', margin: '10px 0 18px' }}>
-          Automatically runs "Run All Tests" for this Application on the cadence below.
-        </p>
+        <div style={{ position: 'absolute', left: -60, top: -120, width: 320, height: 320, borderRadius: 1000, background: 'var(--glow)', pointerEvents: 'none' }} />
+
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', gap: 13, padding: '22px 22px 18px', borderBottom: '1px solid var(--line)' }}>
+          <div
+            style={{
+              width: 38,
+              height: 38,
+              flex: 'none',
+              borderRadius: 11,
+              background: 'linear-gradient(160deg,var(--accent),var(--accent-deep))',
+              color: '#fff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              boxShadow: 'var(--accent-glow)',
+            }}
+          >
+            <Clock size={14} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.015em' }}>
+              {initial ? 'Edit schedule' : 'New schedule'}
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 3 }}>
+              Run discovery or the suite automatically on a cadence.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{ width: 28, height: 28, flex: 'none', border: 'none', background: 'transparent', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-4)', cursor: 'pointer' }}
+          >
+            <Xmark size={13} />
+          </button>
+        </div>
 
         <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 16, padding: '20px 22px 22px' }}>
             <label className="field">
               <FieldLabel>Name</FieldLabel>
               <input
@@ -297,20 +340,61 @@ export function ScheduleDialog({
                 {error}
               </div>
             )}
+          </div>
 
-            <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={onClose}
-                style={{ flex: 1, padding: 11, fontSize: 14 }}
-              >
-                Cancel
-              </button>
-              <button type="submit" className="button-primary" disabled={submitting} style={{ flex: 1, padding: 11, fontSize: 14 }}>
-                {submitting ? <LoadingDots label="Saving" /> : initial ? 'Save changes' : 'Create schedule'}
-              </button>
-            </div>
+          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 10, padding: '14px 22px', borderTop: '1px solid var(--line)', background: 'var(--panel-2)' }}>
+            <div style={{ flex: 1 }} />
+            <button
+              type="button"
+              onClick={onClose}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                height: 36,
+                padding: '0 16px',
+                borderRadius: 9,
+                border: '1px solid var(--border-2)',
+                background: 'var(--panel)',
+                color: 'var(--fg-2)',
+                fontSize: 13,
+                fontWeight: 500,
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                flex: 'none',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                height: 36,
+                padding: '0 18px',
+                borderRadius: 9,
+                border: 'none',
+                background: 'var(--accent)',
+                color: '#fff',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: submitting ? 'not-allowed' : 'pointer',
+                boxShadow: 'var(--accent-glow)',
+                whiteSpace: 'nowrap',
+                flex: 'none',
+              }}
+            >
+              {submitting ? (
+                <LoadingDots label="Saving" />
+              ) : (
+                <>
+                  <Plus size={11} />
+                  {initial ? 'Save changes' : 'Create schedule'}
+                </>
+              )}
+            </button>
           </div>
         </fieldset>
       </form>

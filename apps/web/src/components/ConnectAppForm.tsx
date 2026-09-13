@@ -92,7 +92,7 @@ export function ConnectAppForm({
       })
       onConnected(application)
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Connecting the Application failed.')
+      setError(err instanceof ApiError ? err.message : 'Failed to connect the application.')
     } finally {
       setSubmitting(false)
     }
@@ -222,7 +222,7 @@ export function ConnectAppForm({
 
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
               <div
-                title="Sign-in is required for every application today"
+                title="Sign-in is required for every application"
                 style={{ width: 36, height: 20, flex: 'none', borderRadius: 1000, padding: 2, display: 'flex', background: 'var(--ok)' }}
               >
                 <div style={{ width: 16, height: 16, borderRadius: 1000, background: 'var(--on-ok)', transform: 'translateX(16px)' }} />

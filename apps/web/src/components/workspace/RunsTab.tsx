@@ -505,7 +505,7 @@ function TestResultRow({
               (status passed vs. non-passed), so only one chip ever renders
               per row. */}
           {wasAutoHealed && (
-            <span title="This test failed on initial execution and was automatically remediated by self-healing test automation." style={healChipStyle('var(--good)')}>
+            <span title="Failed on first run — automatically remediated by self-healing." style={healChipStyle('var(--good)')}>
               <AutoHealedIcon />
               Self-healed
             </span>
@@ -1424,6 +1424,7 @@ export function RunsTab({
       ) : runs.length === 0 ? (
         <EmptyState
           illustration={<RunsIllustration />}
+          variant="scene"
           title="No test runs yet"
           subtitle="Once discovery finishes and the suite is generated, every execution shows up here with results, traces and per-case re-runs."
         />

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBrain, faChevronDown, faChevronRight, faRoute, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
+import { faBrain, faChevronDown, faChevronRight, faRoute, faTableList } from '@fortawesome/free-solid-svg-icons'
 import { api, formatTestCaseNumber, type JourneyRead, type ScenarioRead } from '../api'
 import { AppIdentityLine } from './AppIdentityLine'
 import { GenerationLoader } from './GenerationLoader'
@@ -9,7 +9,7 @@ import { EmptyState, ScenariosIllustration } from './EmptyState'
 import { faIcon } from '../faIcon'
 
 const Route = faIcon(faRoute)
-const WandSparkles = faIcon(faWandMagicSparkles)
+const TableList = faIcon(faTableList)
 const Brain = faIcon(faBrain)
 
 // Matches the prototype's disclosure pattern exactly — a closed group/scenario
@@ -166,12 +166,17 @@ export function ReviewScenarios({
   applicationId,
   applicationName,
   applicationUrl,
+  generationJustStarted,
   onContinueToGenerate,
   onGoToJourneys,
 }: {
   applicationId: string
   applicationName: string
   applicationUrl: string
+  // One-shot flag from the Journeys "Continue" transition — journeys
+  // existing isn't evidence generation was triggered, since Scenarios is a
+  // standing sidebar tab reachable without ever clicking Continue.
+  generationJustStarted: boolean
   onContinueToGenerate: () => void
   onGoToJourneys: () => void
 }) {
@@ -209,6 +214,11 @@ export function ReviewScenarios({
 
   const journeysCovered = new Set(scenarios.map((s) => s.journey_id)).size
   const isComplete = journeys.length > 0 && journeysCovered >= journeys.length
+  // Real evidence generation is running: something has already landed, or
+  // this mount is the direct result of clicking Continue on Journeys. Absent
+  // either, zero Scenarios means generation was never kicked off, not that
+  // it's silently in progress.
+  const generationStarted = scenarios.length > 0 || generationJustStarted
 
   useEffect(() => {
     let cancelled = false
@@ -375,15 +385,16 @@ export function ReviewScenarios({
                   boxShadow: canContinue ? 'var(--shadow-button-primary)' : 'none',
                 }}
               >
-                <WandSparkles size={14} />
+                <TableList size={14} />
                 Generate test cases
               </button>
           </div>
         </div>
 
-        {scenarios.length === 0 && isComplete ? (
+        {scenarios.length === 0 && !generationStarted ? (
           <EmptyState
             illustration={<ScenariosIllustration />}
+            variant="scene"
             title={hadScenariosRef.current ? 'No scenarios remain' : 'No scenarios yet'}
             subtitle={
               hadScenariosRef.current

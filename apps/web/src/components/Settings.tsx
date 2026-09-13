@@ -288,7 +288,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
     api
       .getSettings()
       .then(setSettings)
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'Loading settings failed.'))
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load settings.'))
       .finally(() => setLoading(false))
   }, [isAdmin])
 
@@ -484,7 +484,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
           <div style={{ height: 1, background: 'var(--line)' }} />
 
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-            <div title="Every removed project is cleaned up automatically today" style={{ width: 36, height: 20, flex: 'none', borderRadius: 1000, padding: 2, display: 'flex', background: 'var(--ok)' }}>
+            <div title="Every removed project is cleaned up automatically" style={{ width: 36, height: 20, flex: 'none', borderRadius: 1000, padding: 2, display: 'flex', background: 'var(--ok)' }}>
               <div style={{ width: 16, height: 16, borderRadius: 1000, background: 'var(--on-ok)', transform: 'translateX(16px)' }} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>

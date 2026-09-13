@@ -376,7 +376,7 @@ describe('DiscoverJourneys', () => {
     renderScreen()
 
     await waitFor(() => {
-      expect(screen.getByText('1 Journey Discovered')).toBeTruthy()
+      expect(screen.getByText('1 journey discovered')).toBeTruthy()
     })
     const button = screen.getByRole('button', {
       name: 'Continue to Test Cases',
@@ -416,7 +416,7 @@ describe('DiscoverJourneys', () => {
     renderScreen(() => {
       navigated = true
     })
-    await waitFor(() => screen.getByText('1 Journey Discovered'))
+    await waitFor(() => screen.getByText('1 journey discovered'))
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue to Test Cases' }))
 

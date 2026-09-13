@@ -32,13 +32,22 @@ const COMPLETE_SCENARIO = {
 // "still generating" loader.
 function stubFetch(
   scenarios: (typeof INCOMPLETE_SCENARIO)[],
-  overrides: { onTestDataUpdate?: (body: unknown) => void } = {},
+  overrides: {
+    onTestDataUpdate?: (body: unknown) => void
+    // Only needed when a test wants Journeys to exist without a matching
+    // Scenario yet (e.g. "generation started but nothing has landed") —
+    // scenarios alone can't express that, since the default below derives
+    // Journeys from the Scenarios themselves.
+    journeys?: { id: string; name: string; step_count: number }[]
+  } = {},
 ) {
-  const journeys = [...new Set(scenarios.map((s) => s.journey_id))].map((id) => ({
-    id,
-    name: scenarios.find((s) => s.journey_id === id)!.journey_name,
-    step_count: 1,
-  }))
+  const journeys =
+    overrides.journeys ??
+    [...new Set(scenarios.map((s) => s.journey_id))].map((id) => ({
+      id,
+      name: scenarios.find((s) => s.journey_id === id)!.journey_name,
+      step_count: 1,
+    }))
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit) => {
@@ -121,8 +130,15 @@ describe('ReviewScenarios', () => {
   })
 
   it('keeps Continue disabled only when there are zero scenarios', async () => {
-    stubFetch([])
-    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
+    stubFetch([], { journeys: [{ id: 'journey-1', name: 'Checkout', step_count: 1 }] })
+    render(
+      <ReviewScenarios
+        applicationId="app-1"
+        generationJustStarted
+        onContinueToGenerate={() => {}}
+        onGoToJourneys={() => {}}
+      />,
+    )
 
     await waitFor(() => screen.getByText(/Modelling scenarios/))
     const button = screen.getByRole('button', {
@@ -194,13 +210,28 @@ describe('ReviewScenarios', () => {
   })
 
   it('shows the shared generation-loader animation, not the scenario list, while scenarios are still generating', async () => {
-    stubFetch([])
-    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
+    stubFetch([], { journeys: [{ id: 'journey-1', name: 'Checkout', step_count: 1 }] })
+    render(
+      <ReviewScenarios
+        applicationId="app-1"
+        generationJustStarted
+        onContinueToGenerate={() => {}}
+        onGoToJourneys={() => {}}
+      />,
+    )
 
     await waitFor(() => {
       expect(screen.getByRole('status').textContent).toContain('Modelling scenarios')
     })
     expect(screen.queryByRole('progressbar')).toBeNull()
+  })
+
+  it('shows "No scenarios yet" (not the generation loader) when discovery has not found any journeys', async () => {
+    stubFetch([])
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
+
+    await waitFor(() => screen.getByText('No scenarios yet'))
+    expect(screen.queryByRole('status')).toBeNull()
   })
 
   it('keeps showing the loader — not a partial list — once some Scenarios have landed but their Journeys are not all covered yet', async () => {

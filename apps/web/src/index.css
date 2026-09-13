@@ -528,7 +528,7 @@ textarea:focus-visible,
 }
 
 .aitg-skeleton {
-  animation: aitg-skeleton-shimmer 1.4s ease-in-out infinite;
+  animation: aitg-skeleton-shimmer 2.2s ease-in-out infinite;
 }
 
 @keyframes aitg-skeleton-shimmer {

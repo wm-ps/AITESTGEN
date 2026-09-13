@@ -307,6 +307,7 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
       ) : schedules.length === 0 ? (
         <EmptyState
           illustration={<SchedulesIllustration />}
+          variant="scene"
           title="No schedules yet"
           subtitle="Create one to run this Application's tests automatically on a recurring cadence."
         />

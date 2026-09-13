@@ -129,7 +129,9 @@ function ApplicationRow({
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  useEscapeToClose(() => confirmingDelete && !deleting && setConfirmingDelete(false))
+  useEscapeToClose(() => {
+    if (!deleting) setConfirmingDelete(false)
+  }, confirmingDelete)
   const skipBlurRef = useRef(false)
 
   const { stage, isRunning, scenariosGenerating, suiteGenerating, testRunRunning } = applicationStage(application)
@@ -242,12 +244,12 @@ function ApplicationRow({
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--fg-4)', marginTop: 3 }}>{application.url}</div>
       </td>
       <td
-        style={{ ...cellStyle, textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-3)' }}
+        style={{ ...cellStyle, textAlign: 'center', fontFamily: 'var(--font-mono)', color: 'var(--fg-3)' }}
         title={hasJourneys ? `${Math.round(coveragePct * 100)}% of journeys covered by scenarios` : undefined}
       >
         {application.journey_count}
       </td>
-      <td style={{ ...cellStyle, textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--fg-1)' }}>
+      <td style={{ ...cellStyle, textAlign: 'center', fontFamily: 'var(--font-mono)', color: 'var(--fg-1)' }}>
         {testCasesComplete ? application.test_case_count : '–'}
       </td>
       <td style={cellStyle}>
@@ -537,7 +539,7 @@ export function Home({
                   <th
                     key={h || i}
                     style={{
-                      textAlign: i === 1 || i === 2 ? 'right' : 'left',
+                      textAlign: i === 1 || i === 2 ? 'center' : 'left',
                       padding: i === 0 ? '11px 20px' : '11px',
                       fontSize: 10.5,
                       fontWeight: 600,

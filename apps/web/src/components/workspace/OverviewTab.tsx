@@ -238,25 +238,15 @@ export function OverviewTab({
   if (!overview.latest_run) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-        <div
-          style={{
-            background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
-            backdropFilter: 'blur(16px) saturate(1.25)',
-            border: '1px solid var(--border-1)',
-            borderRadius: 14,
-            boxShadow: 'var(--panel-shadow)',
-            padding: 24,
-          }}
-        >
-          <EmptyState
-            illustration={<RunsIllustration />}
-            title="No test runs yet"
-            subtitle="Health, pass rate, and trend will show up here once your first run finishes."
-            action={
-              <RunSuiteButton running={running} onFullSuite={onRunSuite} onOpenJourneysDialog={onOpenJourneysDialog} />
-            }
-          />
-        </div>
+        <EmptyState
+          illustration={<RunsIllustration />}
+          variant="scene"
+          title="No test runs yet"
+          subtitle="Health, pass rate, and trend will show up here once your first run finishes."
+          action={
+            <RunSuiteButton running={running} onFullSuite={onRunSuite} onOpenJourneysDialog={onOpenJourneysDialog} />
+          }
+        />
         <QuickActionsGrid onNavigate={onNavigateTab} />
       </div>
     )

@@ -151,7 +151,7 @@ export function Overview({
       <div>
         <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Overview</h1>
         <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 4 }}>
-          Give Vantage a deployed URL. It discovers the app and writes the Playwright suite for it.
+          Discovers your application from a deployed URL and generates its Playwright test suite.
         </div>
       </div>
 
@@ -285,7 +285,7 @@ export function Overview({
           </div>
           <div style={{ fontSize: 19, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.015em' }}>No applications yet</div>
           <div style={{ fontSize: 13, color: 'var(--fg-3)', marginTop: 9, maxWidth: 470, lineHeight: '21px' }}>
-            Once you onboard your first application, this page shows pass rate over time, latest run outcome and suite size for every app in the workspace.
+            Pass rate over time, latest run outcome, and suite size for every application appear here once you onboard your first one.
           </div>
           <button
             type="button"
@@ -300,22 +300,12 @@ export function Overview({
         // No application has ever been run yet — the stat grid/trend/donut
         // below would all just be dashes and zeros, so show one
         // illustration instead of a wall of empty-looking cards.
-        <div
-          style={{
-            background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
-            backdropFilter: 'blur(16px) saturate(1.25)',
-            border: '1px solid var(--border-1)',
-            borderRadius: 14,
-            boxShadow: 'var(--panel-shadow)',
-            padding: 24,
-          }}
-        >
-          <EmptyState
-            illustration={<RunsIllustration />}
-            title="No test runs yet"
-            subtitle="Pass rate, trend and suite size show up here once any application finishes its first run."
-          />
-        </div>
+        <EmptyState
+          illustration={<RunsIllustration />}
+          variant="scene"
+          title="No test runs yet"
+          subtitle="Pass rate, trend and suite size show up here once any application finishes its first run."
+        />
       ) : apps.length > 0 ? (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,minmax(180px,1fr))', gap: 14 }}>
