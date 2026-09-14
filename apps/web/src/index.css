@@ -540,19 +540,6 @@ textarea:focus-visible,
   }
 }
 
-@keyframes aitg-dot-bounce {
-  0%,
-  80%,
-  100% {
-    transform: translateY(0);
-    opacity: 0.35;
-  }
-  40% {
-    transform: translateY(-6px);
-    opacity: 1;
-  }
-}
-
 @keyframes aitg-transition-icon {
   0% {
     opacity: 0;
