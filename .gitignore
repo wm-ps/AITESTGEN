@@ -38,6 +38,7 @@ venv/
 .pyright/
 .coverage
 htmlcov/
+.scannerwork/
 # Note: uv.lock and .python-version are intentionally committed (reproducible
 # installs + pinned Python 3.14.6) — do NOT add them here.
 # Alembic migration scripts live in migrations/versions/ and ARE committed;
