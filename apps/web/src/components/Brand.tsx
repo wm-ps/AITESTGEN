@@ -32,5 +32,9 @@ export function VantageBrand({ markSize = 44 }: { markSize?: number }) {
 // just the icon) at a size tall enough for the wordmark to actually read, and in its own
 // brand red (not mask-recolored like VantageBrand) — it's a third-party mark, not our theme.
 export function OmnewaveBrand({ markSize = 22 }: { markSize?: number }) {
-  return <img src={omnewaveLogo} alt="Omnewave" style={{ display: 'inline-block', height: markSize, width: 'auto', verticalAlign: 'middle' }} />
+  return (
+    <a href="https://omnewave.com" target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', lineHeight: 0 }}>
+      <img src={omnewaveLogo} alt="Omnewave" style={{ display: 'inline-block', height: markSize, width: 'auto', verticalAlign: 'middle' }} />
+    </a>
+  )
 }
