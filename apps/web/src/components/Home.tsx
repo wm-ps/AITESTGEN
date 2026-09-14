@@ -149,6 +149,7 @@ function ApplicationRow({
         : testRunRunning
           ? 'A test run is still running'
           : undefined
+  const isActive = testRunRunning || isRunning || scenariosGenerating || suiteGenerating
   const passRate = application.last_test_run_pass_rate
   const hasCompletedRun = application.last_test_run_status === 'completed' && passRate != null
   const readyToExecute = stage === 'suite_generated' && !testRunRunning && !hasCompletedRun
@@ -268,11 +269,7 @@ function ApplicationRow({
       </td>
       <td style={{ ...cellStyle, color: 'var(--fg-3)' }}>{activityLabel}</td>
       <td style={cellStyle}>
-        <StatusPill
-          status={displayStatus}
-          pulsing={testRunRunning || isRunning || scenariosGenerating || suiteGenerating}
-          dot={false}
-        />
+        <StatusPill status={displayStatus} pulsing={isActive} dot={isActive} />
       </td>
       <td style={{ ...cellStyle, padding: '13px 16px', textAlign: 'right' }}>
         {isAdmin && !editing && (

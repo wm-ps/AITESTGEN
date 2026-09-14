@@ -12,16 +12,16 @@ let previousOverflow = ''
 
 function lockScroll() {
   const scrollEl = document.getElementById('app-shell-scroll') ?? document.body
-  if (lockCount === 0) previousOverflow = scrollEl.style.overflow
+  if (lockCount === 0) previousOverflow = scrollEl.style.overflowY
   lockCount++
-  scrollEl.style.overflow = 'hidden'
+  scrollEl.style.overflowY = 'hidden'
 }
 
 function unlockScroll() {
   lockCount = Math.max(0, lockCount - 1)
   if (lockCount === 0) {
     const scrollEl = document.getElementById('app-shell-scroll') ?? document.body
-    scrollEl.style.overflow = previousOverflow
+    scrollEl.style.overflowY = previousOverflow
   }
 }
 
