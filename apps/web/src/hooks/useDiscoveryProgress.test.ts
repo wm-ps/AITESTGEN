@@ -21,9 +21,7 @@ describe('useDiscoveryProgress', () => {
       }),
     )
 
-    const { result } = renderHook(() =>
-      useDiscoveryProgress('app-1', 'running', 'initializing', null, false),
-    )
+    const { result } = renderHook(() => useDiscoveryProgress('app-1', 'running', 'initializing', null))
 
     expect(result.current).toEqual({
       status: 'running',
@@ -51,9 +49,7 @@ describe('useDiscoveryProgress', () => {
       }),
     )
 
-    const { result } = renderHook(() =>
-      useDiscoveryProgress('app-1', 'running', 'discovering', null, false),
-    )
+    const { result } = renderHook(() => useDiscoveryProgress('app-1', 'running', 'discovering', null))
 
     await waitFor(() => {
       expect(result.current.status).toBe('failed')
@@ -62,19 +58,34 @@ describe('useDiscoveryProgress', () => {
     expect(result.current.failureReason).toBe('session_expired')
   })
 
-  it('does not poll once hasJourneys is true', async () => {
+  it('keeps polling while Journeys exist but analysis is not finished yet', async () => {
+    // Regression guard: a run that fails after Journey #1 must still be
+    // observable — stopping as soon as any Journey existed hid that failure.
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       json: async () => ({
-        discovery_status: 'running',
-        discovery_stage: 'discovering',
-        discovery_failure_reason: null,
+        discovery_status: 'failed',
+        discovery_stage: 'analyzing',
+        discovery_failure_reason: 'worker_unavailable',
       }),
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    renderHook(() => useDiscoveryProgress('app-1', 'running', 'initializing', null, true))
+    const { result } = renderHook(() => useDiscoveryProgress('app-1', 'running', 'analyzing', null))
+
+    await waitFor(() => expect(result.current.status).toBe('failed'))
+  })
+
+  it('does not poll once stage reaches analyzed', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    renderHook(() => useDiscoveryProgress('app-1', 'complete', 'analyzed', null))
 
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(fetchMock).not.toHaveBeenCalled()
@@ -88,7 +99,7 @@ describe('useDiscoveryProgress', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    renderHook(() => useDiscoveryProgress('app-1', 'failed', null, 'session_expired', false))
+    renderHook(() => useDiscoveryProgress('app-1', 'failed', null, 'session_expired'))
 
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(fetchMock).not.toHaveBeenCalled()

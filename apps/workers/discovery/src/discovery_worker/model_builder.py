@@ -44,9 +44,19 @@ def _url_template(url: str) -> str:
     that's purely numeric or a UUID becomes `{id}` (e.g. `/customers/123`
     and `/customers/456` both become `/customers/{id}`). A sound,
     non-binding default, same framing as the crawler's own traversal
-    algorithm."""
+    algorithm.
+
+    A hash-routed SPA (e.g. `#/Dashboard`, `#/SalesPipeline`) puts its whole
+    route in `urlparse().fragment`, not `.path` — every one of those URLs
+    parses to the same bare `.path`, which merged every in-app view of such
+    an app onto a single canonical Page. Folding the fragment's route back
+    in (stripping trailing `?`/`&`-delimited state) fixes that without
+    touching path-routed apps, where `.fragment` is just empty."""
     parsed = urlparse(url)
-    segments = ["{id}" if _SEGMENT_RE.match(seg) else seg for seg in parsed.path.split("/")]
+    path = parsed.path
+    if parsed.fragment.startswith("/"):
+        path = path.rstrip("/") + re.split(r"[?&]", parsed.fragment, maxsplit=1)[0]
+    segments = ["{id}" if _SEGMENT_RE.match(seg) else seg for seg in path.split("/")]
     return "/".join(segments)
 
 

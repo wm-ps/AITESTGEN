@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowRight } from '@fortawesome/free-solid-svg-icons'
+import { faArrowRight, faEllipsisVertical } from '@fortawesome/free-solid-svg-icons'
 import { faImage } from '@fortawesome/free-regular-svg-icons'
 import { api, type JourneyRead, type JourneyStepRead } from '../api'
 import { useDiscoveryProgress } from '../hooks/useDiscoveryProgress'
@@ -92,7 +92,7 @@ function JourneyRowMenu({ onRename, onDelete }: { onRename: () => void; onDelete
           lineHeight: 1,
         }}
       >
-        ⋯
+        <FontAwesomeIcon icon={faEllipsisVertical} />
       </button>
       {open && (
         <>
@@ -196,8 +196,7 @@ export function DiscoverJourneys({
   const [loadedImgIds, setLoadedImgIds] = useState<Set<string>>(new Set())
   // Story 2.17: pause/resume already round-trips through the API — this
   // just reflects the response immediately rather than waiting for
-  // useDiscoveryProgress's next poll tick (which stops polling entirely
-  // once Journeys exist, so it may never pick the change up on its own).
+  // useDiscoveryProgress's next poll tick.
   const [statusOverride, setStatusOverride] = useState<string | null>(null)
   const [pauseResumeBusy, setPauseResumeBusy] = useState(false)
   const [pauseResumeError, setPauseResumeError] = useState<string | null>(null)
@@ -215,13 +214,7 @@ export function DiscoverJourneys({
     failureReason: liveFailureReason,
     workerAvailable,
     retryCount,
-  } = useDiscoveryProgress(
-    applicationId,
-    discoveryStatus,
-    discoveryStage,
-    discoveryFailureReason,
-    journeys.length > 0,
-  )
+  } = useDiscoveryProgress(applicationId, discoveryStatus, discoveryStage, discoveryFailureReason)
 
   useEffect(() => setStatusOverride(null), [liveStatus])
   const status = statusOverride ?? liveStatus

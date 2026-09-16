@@ -12,7 +12,6 @@ export function useDiscoveryProgress(
   initialStatus: string,
   initialStage: string | null,
   initialFailureReason: string | null,
-  hasJourneys: boolean,
 ) {
   const [status, setStatus] = useState(initialStatus)
   const [stage, setStage] = useState(initialStage)
@@ -21,11 +20,12 @@ export function useDiscoveryProgress(
   const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
-    // `status` flips to "complete" as soon as the crawl finishes — well
-    // before Analysis (stage=analyzing) runs — so gating on `hasJourneys`
-    // (not `status !== 'running'`) is what keeps progress visible through
-    // the whole pipeline, not just the crawl.
-    if (hasJourneys || status === 'failed') return
+    // Stop only on the two real terminal states. Used to also stop as soon
+    // as the first Journey existed — but InferenceActivity can still fail
+    // after writing Journey #1, and that stopped condition meant the UI
+    // never learned about it (stuck showing "running" forever). "analyzed"
+    // is the same terminal marker DiscoverJourneys.tsx's own poll waits for.
+    if (stage === 'analyzed' || status === 'failed') return
 
     let cancelled = false
 
@@ -62,7 +62,7 @@ export function useDiscoveryProgress(
       cancelled = true
       clearInterval(interval)
     }
-  }, [applicationId, hasJourneys, status])
+  }, [applicationId, stage, status])
 
   return { status, stage, failureReason, workerAvailable, retryCount }
 }
