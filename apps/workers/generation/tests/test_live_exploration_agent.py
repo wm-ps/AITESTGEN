@@ -62,6 +62,7 @@ async def test_stops_when_goal_satisfied() -> None:
         start_url="https://app.example.com/",
         max_turns=10,
         heartbeat=lambda: heartbeats.append(1),
+        settle_retries=0,
     )
 
     assert live_flow.goal_satisfied is True
@@ -96,6 +97,7 @@ async def test_stops_at_turn_cap_without_goal_satisfied() -> None:
         requirement="x",
         start_url="https://app.example.com/",
         max_turns=3,
+        settle_retries=0,
     )
 
     assert live_flow.goal_satisfied is False
@@ -122,6 +124,7 @@ async def test_navigates_to_start_url_before_the_first_observe() -> None:
         requirement="The tenants page shows a table of tenants.",
         start_url="https://app.example.com/tenants",
         max_turns=3,
+        settle_retries=0,
     )
 
     assert mcp_client.calls[0] == (
@@ -164,6 +167,7 @@ async def test_logs_whether_each_turn_resolved_a_locator(caplog: pytest.LogCaptu
             requirement="Create a new MCP connection.",
             start_url="https://app.example.com/",
             max_turns=10,
+            settle_retries=0,
         )
 
     turn_logs = [r.message for r in caplog.records if "live-exploration turn" in r.message]
@@ -219,6 +223,7 @@ async def test_page_elements_accumulate_across_turns_on_the_same_url() -> None:
         requirement="x",
         start_url="https://app.example.com/mcp",
         max_turns=5,
+        settle_retries=0,
     )
 
     swept_values = {el["value"] for el in live_flow.page_elements["https://app.example.com/mcp"]}
@@ -243,6 +248,68 @@ async def test_passes_is_heal_through_to_ai_provider() -> None:
         start_url="https://app.example.com/tenants",
         is_heal=True,
         max_turns=3,
+        settle_retries=0,
     )
 
     assert ai_provider.is_heal_calls == [True]
+
+
+async def test_settles_after_a_click_before_the_next_observe() -> None:
+    """`[FIXED]` regression: a click that triggers a client-side route change
+    (no full page load) could still be mid-transition when the next turn's
+    `observe` snapshotted the page — the LLM then saw an apparently-unchanged
+    page and reissued the exact same click a second time (observed live: the
+    same "MCP connections" link clicked twice in a row against a real
+    application). `act` must keep re-snapshotting after a click until the
+    page actually changes, so `observe`'s next snapshot is never stale."""
+    snapshots = iter(
+        [
+            # Turn 1's observe() — pre-click.
+            '- generic [ref=e1]:\n'
+            '  - Page URL: https://app.example.com/tenants\n'
+            '  - link "MCP connections" [ref=e2]\n',
+            # act()'s first settle check — still mid-transition, unchanged.
+            '- generic [ref=e1]:\n'
+            '  - Page URL: https://app.example.com/tenants\n'
+            '  - link "MCP connections" [ref=e2]\n',
+            # act()'s second settle check — the route has now changed.
+            '- generic [ref=e1]:\n'
+            '  - Page URL: https://app.example.com/mcp\n',
+            # Turn 2's observe() — same settled snapshot.
+            '- generic [ref=e1]:\n'
+            '  - Page URL: https://app.example.com/mcp\n',
+        ]
+    )
+
+    class _FakeMCPClientWithChangingSnapshot:
+        async def call_tool(self, name: str, args: dict) -> str:
+            return next(snapshots) if name == "browser_snapshot" else ""
+
+    ai_provider = _FakeAIProvider(
+        [
+            LiveExplorationDecision(
+                tool_name="browser_click",
+                tool_args={"ref": "e2"},
+                rationale="follow the MCP connections link",
+                goal_satisfied=False,
+            ),
+            LiveExplorationDecision(
+                tool_name="browser_snapshot", tool_args={}, rationale="verify", goal_satisfied=True
+            ),
+        ]
+    )
+
+    await run_exploration(
+        mcp_client=_FakeMCPClientWithChangingSnapshot(),
+        ai_provider=ai_provider,
+        requirement="x",
+        start_url="https://app.example.com/tenants",
+        max_turns=5,
+        settle_retries=3,
+        settle_delay_seconds=0,
+    )
+
+    # goal_satisfied on turn 2 proves the LLM was shown the settled
+    # (post-navigation) snapshot, not the stale pre-navigation one it would
+    # have seen without the settle retry.
+    assert next(snapshots, None) is None

@@ -9,12 +9,12 @@ import type { LiveTestCaseRequestStatusRead } from '../../api'
 import { GenerationLoader } from '../GenerationLoader'
 
 const POLL_INTERVAL_MS = 3000
-const TERMINAL_STATUSES = new Set(['complete', 'failed', 'rejected'])
+export const TERMINAL_STATUSES = new Set(['complete', 'failed', 'rejected'])
 
 // Persisted so a page refresh, or closing and reopening this panel, can
 // reconnect to an already-running request instead of losing it — the
 // backend workflow keeps going regardless of whether anything is polling it.
-function requestIdStorageKey(applicationId: string) {
+export function requestIdStorageKey(applicationId: string) {
   return `live-exploration-request:${applicationId}`
 }
 
@@ -51,9 +51,16 @@ const IN_PROGRESS_COPY: Record<string, string> = {
 export function LiveExplorationPanel({
   applicationId,
   onClose,
+  onComplete,
 }: {
   applicationId: string
   onClose: () => void
+  // Fired once, the moment a request reaches 'complete' — TestSuiteTab's
+  // own test case list is fetched once on mount and otherwise never polled
+  // again once it already has rows, so without this its new test cases
+  // stayed invisible until something else (a tab switch, a refresh)
+  // happened to remount it.
+  onComplete?: () => void
 }) {
   const [prompt, setPrompt] = useState('')
   const [requestId, setRequestId] = useState<string | null>(() => {
@@ -74,7 +81,31 @@ export function LiveExplorationPanel({
     async function poll() {
       try {
         const row = await api.getLiveTestCaseRequest(applicationId, requestId as string)
-        if (!cancelled) setStatusRow(row)
+        if (cancelled) return
+        // `statusRow` here is still the value from before this fetch (a
+        // status change re-runs this whole effect with a fresh closure) —
+        // exactly the "first time we've seen it turn complete" signal, so
+        // this fires once per request, not once per remaining poll tick.
+        if (row.status === 'complete' && statusRow?.status !== 'complete') {
+          onComplete?.()
+        }
+        setStatusRow(row)
+        // Clear the persisted id as soon as the request reaches a terminal
+        // status, not only on a 404 — otherwise it sits in storage
+        // indefinitely (nothing else ever clears it short of "Try again"/
+        // "+Explore another"), and TestSuiteTab's own "reopen if a request
+        // is in flight" check (which only looks at whether *a* id is
+        // stored, not its status) then reopens this panel to the old
+        // complete/failed screen on every future visit to the tab — even
+        // long after this run actually finished.
+        if (TERMINAL_STATUSES.has(row.status)) {
+          try {
+            localStorage.removeItem(requestIdStorageKey(applicationId))
+          } catch {
+            // best-effort — worst case TestSuiteTab reopens this panel once
+            // more next visit, which clears it again right here
+          }
+        }
       } catch (err) {
         // A stale persisted request id (expired workflow retention, or from
         // a different environment) 404s forever otherwise, leaving the panel

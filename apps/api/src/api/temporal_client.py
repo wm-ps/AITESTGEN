@@ -15,11 +15,43 @@ from workflows import GENERATION_TASK_QUEUE
 
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 
-__all__ = ["GENERATION_TASK_QUEUE", "TEMPORAL_ADDRESS", "get_temporal_client", "has_pollers"]
+# `_live_exploration_workflow_id` (api/main.py) always writes this shape:
+# f"live-exploration-{application_external_id}-{request_id}", both UUIDs —
+# a UUID's string form is always exactly 36 characters, so slicing right
+# after this fixed prefix recovers the application id exactly, no second
+# lookup needed.
+_LIVE_EXPLORATION_WORKFLOW_ID_PREFIX = "live-exploration-"
+
+__all__ = [
+    "GENERATION_TASK_QUEUE",
+    "TEMPORAL_ADDRESS",
+    "get_temporal_client",
+    "has_pollers",
+    "running_live_exploration_application_ids",
+]
 
 
 async def get_temporal_client() -> Client:
     return await Client.connect(TEMPORAL_ADDRESS)
+
+
+async def running_live_exploration_application_ids(client: Client) -> set[str]:
+    """Application external ids with a `LiveExplorationTestWorkflow` running
+    right now — the only "is NL test-case generation in progress" signal
+    that exists at all: no Journey/Scenario row is written until well into
+    the run (`ScenarioGenerationActivity`), so there is nothing in Postgres
+    for the Home/Overview cards to query the way they already do for
+    discovery/suite generation. Queried live from Temporal's own visibility
+    store rather than adding a persisted status column for this."""
+    application_ids: set[str] = set()
+    async for execution in client.list_workflows(
+        "WorkflowType='LiveExplorationTestWorkflow' AND ExecutionStatus='Running'"
+    ):
+        workflow_id = execution.id
+        if workflow_id.startswith(_LIVE_EXPLORATION_WORKFLOW_ID_PREFIX):
+            start = len(_LIVE_EXPLORATION_WORKFLOW_ID_PREFIX)
+            application_ids.add(workflow_id[start : start + 36])
+    return application_ids
 
 
 async def has_pollers(

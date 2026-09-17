@@ -215,6 +215,17 @@ describe an action the recorded session didn't itself take (e.g. submitting the 
 an invalid value instead of the valid one that was actually typed) — ground the SURROUNDING \
 navigation/element steps in the transcript, only vary the specific input under test.
 
+Wording precedence — when the request text already describes or names an element (even \
+loosely, by its visible label, purpose, or icon), phrase that step using the request's own \
+words for it, never the recorded session's raw resolved name for the same element — e.g. if \
+the request says "click the bell icon to open notifications" and the recorded session resolved \
+that click to an element it internally labeled "Notifications for user #4821 (3 unread)", the \
+step should read "Click the bell icon to open notifications", not the resolved label. Fall back \
+to the recorded session's own element name only for elements the request never described at \
+all. Every scenario generated for the same Journey must describe the same element the same way \
+— never phrase one scenario's click on an element differently from another's click on that \
+same element.
+
 Grounded-outcome rule — Discovery never captures a page's visual layout or presentation \
 mechanism (whether results render as a table, a list, cards, or plain text; whether an error \
 shows in an alert/toast/modal or as an inline message next to a field) — only its pages, \
@@ -370,7 +381,15 @@ generated code. This sequence only tells you WHAT to interact with and in what O
 every one of these interactions, including intermediate/prerequisite ones, must still be
 resolved via `page.getByRole(...)`/etc. and routed through `ensureVisible` exactly like any
 other interaction in this test, never a raw, unwrapped `.hover()`/`.click()`/`.fill()` call
-just because it came from this sequence:
+just because it came from this sequence. When two or more entries below resolve to the exact
+same locator value (common for an unlabeled combobox/input role that has no distinguishing
+accessible name), they are NOT interchangeable — each still targets a specific, different
+element. Use that entry's own parenthesized description and its position in this sequence
+relative to the others to write a locator that actually distinguishes it (e.g. scope the
+selector to the dialog/section/label the description names, or locate it relative to a
+nearby element the description or an earlier entry identifies) rather than defaulting straight
+to `.first()`/`.nth()`/`.last()`. Positional selection is a last resort, only once no other
+distinguishing evidence exists anywhere in this sequence or the Known locators above:
 
 {action_sequence_listing}"""
 
@@ -910,17 +929,24 @@ def _describe_live_locators(locator_candidates: list[dict] | None) -> str:
 def _describe_live_action_sequence(steps: list[dict] | None) -> str:
     """`LiveHealActivity`'s ordered replay: each entry is one live MCP
     action (`tool_name` + the same strategy/value/fragile/element_tag shape
-    `_describe_live_locators` uses) — order matters here, unlike
-    `_describe_live_locators`'s flat candidate list, since an earlier entry
-    is often a prerequisite (opening a dropdown/menu/tab) the later target
-    only becomes interactable after."""
+    `_describe_live_locators` uses, plus `element_description`) — order
+    matters here, unlike `_describe_live_locators`'s flat candidate list,
+    since an earlier entry is often a prerequisite (opening a dropdown/
+    menu/tab) the later target only becomes interactable after.
+    `element_description` (when present) is the decide-agent's own
+    free-text account of what it acted on — the only evidence available to
+    this listing that can distinguish two entries whose `value` is
+    otherwise identical (e.g. two unlabeled combobox roles); rendered here
+    so it actually reaches the model, unlike before this was added."""
     if not steps:
         return "(none)"
 
     def _describe_one(step: dict, index: int) -> str:
         tool = step.get("tool_name", "?")
         tag = step.get("element_tag", "")
-        return f"{index}. {tool} on <{tag}> -> {step.get('value', '')}"
+        description = step.get("element_description")
+        described = f' ("{description}")' if description else ""
+        return f"{index}. {tool} on <{tag}>{described} -> {step.get('value', '')}"
 
     return "\n".join(_describe_one(step, i) for i, step in enumerate(steps, start=1))
 
@@ -1090,9 +1116,42 @@ Available tools (call exactly one per turn):
 - browser_wait_for({{"text": "..."}}) or ({{"time": <seconds>}})
 - browser_go_back({{}})
 
+The requirement describes the user's intent and expected outcome in their own words — it \
+names no DOM locator, HTML tag, ARIA role, or CSS selector, and never assume its wording IS \
+one. Treat it only as intent to satisfy against what the CURRENT snapshot actually shows.
+
+Semantic matching — for each instruction in the requirement:
+- Find the real interactive element that satisfies it by its accessible name, visible text, \
+label, placeholder, associated field, role, and surrounding context in the snapshot — not by \
+re-finding the requirement's own wording verbatim. "Click Login" said about a snapshot where \
+that's a role="link" or a custom component, not a <button>, still means click that actual \
+link/component — the requirement's phrasing never overrides what the snapshot shows is \
+actually there.
+- Never pick an element merely because its text matches somewhere in the snapshot — confirm \
+it's the interactive element that actually corresponds to the requirement's target, not \
+incidental matching text elsewhere on the page (a label, a status value, an unrelated row).
+- If more than one element could match, use the surrounding context (nearby text, the \
+current dialog/section, parent/child structure) to pick the one the requirement actually \
+means. If you truly cannot tell which, use `browser_snapshot` or `browser_hover` to gather \
+more evidence rather than guessing.
+
+Pick the interaction the element's actual current state calls for, not whatever the \
+requirement's verb literally says — a combobox/listbox/menu needs opening before any option \
+inside it is choosable. Never call `browser_select_option`/`browser_click` on an option that \
+isn't yet visible in the snapshot: first `browser_click` (or the relevant tool) on the closed \
+control to open it, observe the snapshot that reveals its options, then act on the one that \
+matches. e.g. instructed to set a field to some value and the snapshot shows a closed select — \
+open it first, read back the options the next snapshot reveals, then choose the matching one; \
+do not look for that value's text before the control has been opened.
+
+After every action, treat the next snapshot as the check for whether it actually did what you \
+expected (the field now holds the typed value, the option is now selected, the dialog closed) \
+before deciding the next step — never assume an action worked just because you performed it.
+
 Rules:
 - Every "ref" you use must be copied verbatim from a node in the CURRENT snapshot given \
-below — never a ref from an earlier turn, never invented.
+below — never a ref from an earlier turn, never invented, never a placeholder for an element \
+you expect to exist but haven't actually seen.
 - Prefer the fewest, most direct steps. Do not explore tangential UI.
 - Set "goal_satisfied" to true only once you have observed, in the current snapshot or the \
 result of your last action, direct evidence the requirement is fully met (e.g. the created \

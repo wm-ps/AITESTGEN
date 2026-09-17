@@ -13,7 +13,7 @@ import { GenerationLoader } from '../GenerationLoader'
 import { Spinner } from '../LoadingDots'
 import { SkeletonRows } from '../Skeleton'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
-import { LiveExplorationPanel } from './LiveExplorationPanel'
+import { LiveExplorationPanel, requestIdStorageKey, TERMINAL_STATUSES } from './LiveExplorationPanel'
 
 const ASSETS_PER_PAGE = 10
 
@@ -548,8 +548,62 @@ export function TestSuiteTab({
   // still generating, right as the loading illustration disappeared.
   const [suiteGenerating, setSuiteGenerating] = useState<boolean | null>(null)
   // "Author a test case" (natural language) — lives on this tab per the
-  // prototype's isData screen (toggleAuthor), not on Scenarios.
+  // prototype's isData screen (toggleAuthor), not on Scenarios. Switching to
+  // another workspace tab and back (or leaving the application entirely)
+  // remounts this component, which used to always collapse the panel back
+  // to closed — hiding an in-progress generation even though the backend
+  // workflow kept running regardless.
   const [authoringOpen, setAuthoringOpen] = useState(false)
+
+  // Reopen automatically, but only once we've actually confirmed the
+  // persisted request is still in flight — `[FIXED]` regression: opening
+  // synchronously off mere key *presence* (before this had a chance to
+  // check) reopened the panel to a stale complete/failed screen for every
+  // fresh mount of this tab, because nothing here ever un-opens it again
+  // once true, even after the request underneath finishes — that only
+  // stopped the *next* mount from reopening, not the current one.
+  useEffect(() => {
+    let requestId: string | null
+    try {
+      requestId = localStorage.getItem(requestIdStorageKey(applicationId))
+    } catch {
+      return
+    }
+    if (!requestId) return
+    let cancelled = false
+    api.getLiveTestCaseRequest(applicationId, requestId).then(
+      (row) => {
+        if (cancelled) return
+        if (TERMINAL_STATUSES.has(row.status)) {
+          // Already finished — never reopen the panel for it, and stop
+          // paying for this probe on every future mount too.
+          try {
+            localStorage.removeItem(requestIdStorageKey(applicationId))
+          } catch {
+            // best-effort — worst case this gets probed again next mount
+          }
+        } else {
+          setAuthoringOpen(true)
+        }
+      },
+      (err) => {
+        // A stale/expired request id can't ever resolve — sweep it here too
+        // (not just from inside the panel, which won't even mount to do it
+        // itself unless this already decided to open) so it stops costing
+        // this probe on every future mount of this tab.
+        if (!cancelled && err instanceof ApiError && err.status === 404) {
+          try {
+            localStorage.removeItem(requestIdStorageKey(applicationId))
+          } catch {
+            // best-effort — worst case this 404s again next mount
+          }
+        }
+      },
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [applicationId])
   const totalPages = Math.max(1, Math.ceil(total / ASSETS_PER_PAGE))
   const scenariosById = Object.fromEntries(scenarios.map((s) => [s.id, s]))
   const journeyCount = new Set(scenarios.map((s) => s.journey_id)).size
@@ -565,6 +619,10 @@ export function TestSuiteTab({
       setAssets(body.items)
       setTotal(body.total)
     })
+  }
+
+  function refreshScenarios() {
+    return api.listScenarios(applicationId).then(setScenarios)
   }
 
   useEffect(() => {
@@ -669,7 +727,14 @@ export function TestSuiteTab({
         </button>
       </div>
       {authoringOpen && (
-        <LiveExplorationPanel applicationId={applicationId} onClose={() => setAuthoringOpen(false)} />
+        <LiveExplorationPanel
+          applicationId={applicationId}
+          onClose={() => setAuthoringOpen(false)}
+          onComplete={() => {
+            refreshAssets()
+            refreshScenarios()
+          }}
+        />
       )}
       {!assetsLoaded ? (
         <SkeletonRows count={4} height={80} gap={12} />

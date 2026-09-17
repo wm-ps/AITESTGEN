@@ -789,11 +789,13 @@ def test_playwright_generation_activity_passes_live_action_sequence_from_capture
                 "tool_name": "browser_click",
                 "element_tag": "button",
                 "value": 'get_by_role("button", name="Notifications")',
+                "element_description": "Notifications menu button",
             },
             {
                 "tool_name": "browser_click",
                 "element_tag": "menuitem",
                 "value": 'get_by_role("menuitem", name="Mark all as read")',
+                "element_description": "Mark all as read menu item",
             },
         ]
     ]

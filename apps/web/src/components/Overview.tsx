@@ -188,9 +188,28 @@ export function Overview({
           </div>
           {pipeOpen &&
             pipeRows.map(({ app, stageIndex }) => {
+              // A live-exploration ("Author a test case") request lands on
+              // stageIndex 1 while it's still writing the Scenario, then
+              // stageIndex 2 once it moves on to compiling Playwright code
+              // for it (EnsureTestSuiteActivity flips that one Journey's
+              // TestSuite to 'generating', same signal a bulk discovery-flow
+              // suite generation uses) — `[FIXED]` regression: this only
+              // covered stageIndex 1, so the row silently reverted to the
+              // generic "Test cases"/"Generating suite…" label the moment
+              // generation moved past the scenario-writing stage, right when
+              // you'd actually be watching it run. Cover both stages here.
+              // The journeys-covered coverage bar/percentage below is a
+              // discovery-flow metric that says nothing about one prompt's
+              // Journey either way, so it reads as either stale or actively
+              // wrong here — label and show this as its own thing instead of
+              // pretending it's regular coverage progress.
+              const isAuthoring = (stageIndex === 1 || stageIndex === 2) && app.live_exploration_generating
               const coveragePct = app.journey_count > 0 ? (app.scenario_journeys_covered / app.journey_count) * 100 : 0
-              const detail =
-                stageIndex === 1
+              const detail = isAuthoring
+                ? stageIndex === 2
+                  ? 'Generating test cases from prompt…'
+                  : 'Authoring from prompt…'
+                : stageIndex === 1
                   ? `${app.scenario_journeys_covered}/${app.journey_count} journeys`
                   : stageIndex === 0
                     ? 'Discovery in progress'
@@ -220,9 +239,9 @@ export function Overview({
                       flex: 'none',
                     }}
                   >
-                    {PIPE_STAGE_LABELS[stageIndex]}
+                    {isAuthoring ? 'Author test cases' : PIPE_STAGE_LABELS[stageIndex]}
                   </span>
-                  {stageIndex === 1 ? (
+                  {stageIndex === 1 && !isAuthoring ? (
                     <div style={{ flex: 1, height: 4, borderRadius: 1000, background: 'var(--chip)', overflow: 'hidden', minWidth: 60 }}>
                       <div style={{ width: `${coveragePct}%`, height: '100%', background: 'var(--accent-2)' }} />
                     </div>
@@ -233,7 +252,7 @@ export function Overview({
                   )}
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-3)', flex: 'none', whiteSpace: 'nowrap' }}>{detail}</span>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 500, color: 'var(--accent-2)', width: 32, textAlign: 'right', flex: 'none' }}>
-                    {stageIndex === 1 ? `${Math.round(coveragePct)}%` : ''}
+                    {stageIndex === 1 && !isAuthoring ? `${Math.round(coveragePct)}%` : ''}
                   </span>
                 </div>
               )

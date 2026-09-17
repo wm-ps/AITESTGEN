@@ -1516,6 +1516,8 @@ export interface components {
             suites_generating_count: number;
             /** Last Discovery Started At */
             last_discovery_started_at: string | null;
+            /** Live Exploration Generating */
+            live_exploration_generating: boolean;
         };
         /** InviteCreate */
         InviteCreate: {

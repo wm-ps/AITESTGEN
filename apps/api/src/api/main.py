@@ -115,7 +115,11 @@ from api.schedule_spec import (
     build_schedule_spec,
     validate_cadence,
 )
-from api.temporal_client import get_temporal_client, has_pollers
+from api.temporal_client import (
+    get_temporal_client,
+    has_pollers,
+    running_live_exploration_application_ids,
+)
 from api.test_suite_export import (
     TestSuiteExportError,
     assemble_test_suite_project,
@@ -575,6 +579,10 @@ class HomeApplicationRead(ApplicationRead):
     # is honestly the most recent *completed* run's start time, not when it
     # finished.
     last_discovery_started_at: datetime | None
+    # "Author a test case" (live-exploration/NL) generation in progress —
+    # unlike suites_generating_count above, there is no persisted status to
+    # query for this; see running_live_exploration_application_ids.
+    live_exploration_generating: bool
 
 
 def _coverage_counts(session: Session, discovery_run: DiscoveryRun) -> dict[str, int]:
@@ -768,13 +776,23 @@ def list_applications(
 
 
 @app.get("/home", response_model=list[HomeApplicationRead])
-def get_home(
+async def get_home(
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
 ) -> list[HomeApplicationRead]:
     """Home screen used to poll `/applications` plus journeys/scenarios/
     test-suites per application (1+3N calls every tick). One aggregate
     query set instead — the cards only ever needed counts, never the items."""
+    # Best-effort: a Temporal hiccup should degrade this one badge, not take
+    # down the whole dashboard poll the way it would if this raised.
+    try:
+        live_exploration_generating_ids = await running_live_exploration_application_ids(
+            await get_temporal_client()
+        )
+    except (RPCError, RuntimeError):
+        logger.warning("could not query Temporal for running live-exploration workflows")
+        live_exploration_generating_ids = set()
+
     applications = session.exec(
         select(Application)
         .where(
@@ -922,6 +940,9 @@ def get_home(
                 ],
                 last_discovery_started_at=(
                     discovery_run.created_at if discovery_run.status == "complete" else None
+                ),
+                live_exploration_generating=(
+                    str(application.external_id) in live_exploration_generating_ids
                 ),
             )
         )

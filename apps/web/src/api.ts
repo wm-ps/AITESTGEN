@@ -31,6 +31,7 @@ export type HomeApplicationRead = ApplicationRead & {
   last_discovery_started_at: string | null
   last_test_run_passed_count: number | null
   last_test_run_failed_count: number | null
+  live_exploration_generating: boolean
 }
 // Global overview's org-wide "Avg run duration"/"Self-healed locators"
 // sidebar cards — not per-application, so a separate endpoint from /home.

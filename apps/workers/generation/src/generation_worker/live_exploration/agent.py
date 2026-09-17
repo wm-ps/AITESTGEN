@@ -8,6 +8,7 @@ decides what to do next. Neither this module nor its state ever reads
 crawler/discovery DB data.
 """
 
+import asyncio
 import logging
 from collections.abc import Callable
 from typing import TypedDict
@@ -31,6 +32,11 @@ logger = logging.getLogger(__name__)
 _ELEMENT_TOOLS = frozenset(
     {"browser_click", "browser_type", "browser_select_option", "browser_hover"}
 )
+
+# Tools that can trigger a client-side route change or other DOM mutation
+# with no full page load — nothing else here waits for that to finish, so
+# the very next `observe` can snapshot the page mid-transition.
+_SETTLE_AFTER_TOOLS = frozenset({"browser_click", "browser_select_option"})
 
 
 class _AgentState(TypedDict):
@@ -68,6 +74,8 @@ async def run_exploration(
     is_heal: bool = False,
     max_turns: int = 30,
     heartbeat: Callable[[], None] | None = None,
+    settle_retries: int = 3,
+    settle_delay_seconds: float = 0.4,
 ) -> LiveFlowModel:
     live_flow = LiveFlowModel(requirement=requirement)
     history: list[dict] = []
@@ -126,7 +134,26 @@ async def run_exploration(
             if node is not None:
                 locator_candidate = snapshot_node_to_locator_candidate(node)
 
+        pre_action_snapshot = state["last_snapshot"]
         await mcp_client.call_tool(tool_name, tool_args)
+
+        # `[FIXED]` A click/select that triggers a client-side route change
+        # (no full page load, so nothing above waits for it) could still be
+        # mid-transition when the next turn's `observe` snapshots the page —
+        # the LLM then saw an apparently-unchanged page and reissued the
+        # exact same action a second time (observed live: the same "MCP
+        # connections" link clicked twice in a row against a real
+        # application). Settle here, once, right after acting: re-snapshot
+        # with a short backoff until the page visibly moves on, so the next
+        # observe never hands the LLM a stale snapshot it can mistake for
+        # its action having done nothing.
+        if tool_name in _SETTLE_AFTER_TOOLS:
+            for _ in range(settle_retries):
+                if settle_delay_seconds:
+                    await asyncio.sleep(settle_delay_seconds)
+                settled_snapshot = await mcp_client.call_tool("browser_snapshot", {})
+                if settled_snapshot != pre_action_snapshot:
+                    break
 
         step = LiveFlowStep(
             tool_name=tool_name,
