@@ -24,6 +24,7 @@ const BASE_APP = {
   suite_count: 1,
   test_case_count: 5,
   suites_generating_count: 0,
+  live_exploration_generating: false,
 }
 
 const HEALTHY_APP = {

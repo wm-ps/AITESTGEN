@@ -349,8 +349,17 @@ async def live_heal_activity(input: LiveHealActivityInput) -> LiveHealActivityRe
     # locator" with no signal that it must also replicate the interaction
     # that revealed it, so it kept failing on the exact same
     # not-visible-until-a-prior-action error the heal was meant to fix.
+    # `element` (the decide-agent's own free-text account of what it acted
+    # on, e.g. "Tenant dropdown in the Filters dialog") is the only evidence
+    # that distinguishes two steps whose locator `value` is otherwise
+    # identical — see the sibling comprehension in `activities.py`'s
+    # `PlaywrightGenerationActivity` for the full rationale.
     action_sequence = [
-        {"tool_name": step.tool_name, **step.locator_candidate}
+        {
+            "tool_name": step.tool_name,
+            "element_description": step.tool_args.get("element"),
+            **step.locator_candidate,
+        }
         for step in live_flow.steps
         if step.locator_candidate is not None
     ]

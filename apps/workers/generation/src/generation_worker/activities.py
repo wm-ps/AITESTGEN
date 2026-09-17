@@ -788,8 +788,20 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
     # generation pick a locator for an option inside a still-closed dropdown
     # (observed live: `getByRole('option', ...)` with no prior click to open
     # it) — `LiveHealActivity` already avoids this the same way.
+    # `element_description` carries the live-exploration decide-agent's own
+    # free-text account of what it acted on (e.g. "Tenant dropdown in the
+    # Filters dialog") — the only evidence that distinguishes two steps
+    # whose `value` locator is otherwise identical (a common case for
+    # unlabeled combobox/input roles). Dropping it here left the code-gen
+    # prompt with no way to tell such steps apart except position, which is
+    # exactly what pushed it toward fragile `.first()`/`.last()` locators.
     live_action_sequence = [
-        {"tool_name": step["tool_name"], "element_tag": step.get("element_tag", ""), "value": step["value"]}
+        {
+            "tool_name": step["tool_name"],
+            "element_tag": step.get("element_tag", ""),
+            "value": step["value"],
+            "element_description": step.get("element_description"),
+        }
         for step in (captured_flow or [])
         if step.get("value")
     ] or None

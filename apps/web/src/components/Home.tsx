@@ -40,17 +40,20 @@ export function applicationStage(application: HomeApplicationRead): {
   // its TestAssets do) — `suites_generating_count` is the suite.status-based
   // signal that fixes that: whether any suite is still actually mid-run.
   const suiteGenerating = application.suite_count > 0 && application.suites_generating_count > 0
-  // ponytail: coverage-based proxy, not a live status — unlike suite
-  // generation, scenario generation has no `status`/in-progress column on
-  // Scenario or a generating-count field (it fires one Temporal workflow per
-  // Journey with nothing written back to SQL until it finishes), so this
-  // can't tell "still generating" from "generation was triggered for some
-  // journeys and never finished/retried for the rest." Upgrade path: a real
-  // signal needs either a Scenario-generation status column the workflow
-  // updates, or a live Temporal query endpoint — either is a backend change
-  // beyond this UI pass.
+  // ponytail: the discovery-triggered half of this is still a coverage-based
+  // proxy, not a live status — that flow's GenerationWorkflow fires one
+  // Temporal workflow per Journey with nothing written back to SQL until it
+  // finishes, so this can't tell "still generating" from "generation was
+  // triggered for some journeys and never finished/retried for the rest."
+  // Upgrade path: a Scenario-generation status column that workflow itself
+  // updates. `live_exploration_generating` doesn't have this problem — it's
+  // a live Temporal query (`running_live_exploration_application_ids`), not
+  // a proxy, because live-exploration's Journey/Scenario rows don't even
+  // exist yet for most of that run's duration.
   const scenariosGenerating =
-    application.scenario_count > 0 && application.scenario_journeys_covered < application.journey_count
+    (application.scenario_count > 0 &&
+      application.scenario_journeys_covered < application.journey_count) ||
+    application.live_exploration_generating
   const stage: ApplicationStage =
     discoveryStatus === 'failed' || discoveryStatus === 'paused'
       ? discoveryStatus

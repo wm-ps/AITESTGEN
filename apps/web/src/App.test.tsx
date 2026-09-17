@@ -119,6 +119,7 @@ describe('App', () => {
       suite_count: 0,
       test_case_count: 0,
       suites_generating_count: 0,
+      live_exploration_generating: false,
       last_test_run_status: null,
       last_test_run_created_at: null,
       last_test_run_pass_rate: null,
