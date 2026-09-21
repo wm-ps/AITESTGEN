@@ -101,9 +101,8 @@ export function Workspace({
   // can sit next to this page's own "Test Runs" title instead of RunsTab
   // rendering a second, duplicate heading of its own.
   const [runsBack, setRunsBack] = useState<(() => void) | null>(null)
-  // Run Suite Flow: "Run Journey(s)…" wizard, opened from either
-  // RunSuiteButton instance (this page's toolbar, or OverviewTab's
-  // empty-state action).
+  // Run Suite Flow: "Run Journey(s)…" wizard, opened from this page's
+  // toolbar RunSuiteButton.
   const [journeysDialogOpen, setJourneysDialogOpen] = useState(false)
   // Snapshotted at mount — App.tsx only ever mounts this component fresh
   // right after a "Run All Tests" click, so the effect below should fire
@@ -246,13 +245,7 @@ export function Workspace({
         )}
 
         {activeTab === 'overview' && (
-          <OverviewTab
-            applicationId={applicationId}
-            onRunSuite={() => handleRunSuite()}
-            onOpenJourneysDialog={() => setJourneysDialogOpen(true)}
-            onNavigateTab={onActiveTabChange}
-            running={running}
-          />
+          <OverviewTab applicationId={applicationId} onNavigateTab={onActiveTabChange} />
         )}
         {activeTab === 'suite' && <TestSuiteTab applicationId={applicationId} />}
         {activeTab === 'schedules' && <SchedulesTab applicationId={applicationId} />}

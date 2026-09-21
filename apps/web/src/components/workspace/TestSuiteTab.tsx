@@ -540,8 +540,13 @@ export function TestSuiteTab({
   // Distinguishes "generation hasn't started" from "generation is running
   // but hasn't produced a test case yet" — same GenerationLoader-vs-EmptyState
   // split ReviewScenarios.tsx already makes for scenarios, so this screen's
-  // empty state doesn't lie while a suite is actively being written.
-  const [suiteGenerating, setSuiteGenerating] = useState(false)
+  // empty state doesn't lie while a suite is actively being written. `null`
+  // is its own state (not yet known) — every mount (including a tab switch
+  // away and back) starts here again since this whole component unmounts,
+  // and defaulting straight to `false` briefly rendered the "No test cases
+  // generated yet" empty state for one frame while a suite was actually
+  // still generating, right as the loading illustration disappeared.
+  const [suiteGenerating, setSuiteGenerating] = useState<boolean | null>(null)
   // "Author a test case" (natural language) — lives on this tab per the
   // prototype's isData screen (toggleAuthor), not on Scenarios.
   const [authoringOpen, setAuthoringOpen] = useState(false)
@@ -671,6 +676,8 @@ export function TestSuiteTab({
       ) : assets.length === 0 ? (
         search ? (
           <p style={{ fontSize: 13, color: 'var(--fg-4)' }}>No test cases match this search.</p>
+        ) : suiteGenerating == null ? (
+          <SkeletonRows count={4} height={80} gap={12} />
         ) : suiteGenerating ? (
           <div
             style={{

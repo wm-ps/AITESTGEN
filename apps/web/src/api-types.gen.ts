@@ -900,6 +900,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/reconcile-stale-runs/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Trigger Stale Run Reconciliation
+         * @description Manual trigger for the same `ReconcileStaleTestRunsWorkflow` the
+         *     every-15-min Schedule (`api/scripts/create_stale_test_run_reconciliation_schedule.py`)
+         *     runs — force-completes any `TestRun` stuck `"running"` past
+         *     `TEST_RUN_STALE_AFTER` without waiting for the next scheduled tick.
+         *     Unique per-call id, same convention as `trigger_cleanup` above.
+         */
+        post: operations["trigger_stale_run_reconciliation_admin_reconcile_stale_runs_run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications/{external_id}/execution-status": {
         parameters: {
             query?: never;
@@ -4139,6 +4163,39 @@ export interface operations {
         };
     };
     trigger_cleanup_admin_cleanup_run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: boolean;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    trigger_stale_run_reconciliation_admin_reconcile_stale_runs_run_post: {
         parameters: {
             query?: never;
             header?: never;

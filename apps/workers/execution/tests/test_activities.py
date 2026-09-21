@@ -12,6 +12,7 @@ ponytail note) — every current TestAsset is executable unconditionally.
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import execution_worker.activities as activities_module
 import pytest
@@ -34,6 +35,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 from workflows import (
+    TEST_RUN_STALE_AFTER,
     ExecuteTestActivityInput,
     FinalizeTestRunActivityInput,
     ForceCompleteTestRunActivityInput,
@@ -693,3 +695,58 @@ def test_force_complete_falls_back_to_bare_status_flip_when_finalize_itself_fail
         ).one()
         assert test_run.status == "completed"
         assert test_run.completed_at is not None
+
+
+def test_reconcile_stale_test_runs_completes_only_runs_past_the_cutoff() -> None:
+    """The catch-all for a TestRun that never reached either Finalize or
+    ForceComplete at all (worker died before either ran, or a Temporal
+    outage spanned the whole run) — a TestRun still "running" well past
+    TEST_RUN_STALE_AFTER must get force-completed, and one still safely
+    within a normal run's duration must be left untouched."""
+    init_db()
+    application = _seed_application()
+
+    with Session(engine) as session:
+        stale_run = TestRun(
+            application_id=application.id,
+            run_number=1,
+            status="running",
+            environment_snapshot=application.environment,
+            target_base_url_snapshot=application.url,
+            started_at=datetime.now(UTC) - TEST_RUN_STALE_AFTER - timedelta(minutes=1),
+        )
+        fresh_run = TestRun(
+            application_id=application.id,
+            run_number=2,
+            status="running",
+            environment_snapshot=application.environment,
+            target_base_url_snapshot=application.url,
+            started_at=datetime.now(UTC) - timedelta(minutes=5),
+        )
+        session.add(stale_run)
+        session.add(fresh_run)
+        session.commit()
+        session.refresh(stale_run)
+        session.refresh(fresh_run)
+        stale_external_id = stale_run.external_id
+        fresh_external_id = fresh_run.external_id
+
+    reconciled_ids = activities_module._reconcile_stale_test_runs_sync()
+
+    # Not an exact-list assertion: this dev DB is shared across test runs, so
+    # a genuinely stale "running" TestRun left over from earlier manual
+    # testing may also legitimately get reconciled here — that's correct
+    # behavior, not test pollution.
+    assert str(stale_external_id) in reconciled_ids
+    assert str(fresh_external_id) not in reconciled_ids
+    with Session(engine) as session:
+        stale_run = session.exec(
+            select(TestRun).where(TestRun.external_id == stale_external_id)
+        ).one()
+        fresh_run = session.exec(
+            select(TestRun).where(TestRun.external_id == fresh_external_id)
+        ).one()
+        assert stale_run.status == "completed"
+        assert stale_run.completed_at is not None
+        assert fresh_run.status == "running"
+        assert fresh_run.completed_at is None

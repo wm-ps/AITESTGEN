@@ -4,7 +4,6 @@ import { api, type OverviewRead } from '../../api'
 import { EmptyState, RunsIllustration } from '../EmptyState'
 import { Skeleton } from '../Skeleton'
 import { formatDuration, parseTrigger } from './RunsTab'
-import { RunSuiteButton } from './RunSuiteButton'
 import { faIcon } from '../../faIcon'
 
 const POLL_INTERVAL_MS = 5000
@@ -183,16 +182,10 @@ function QuickActionsGrid({ onNavigate }: { onNavigate: (target: QuickActionTarg
 
 export function OverviewTab({
   applicationId,
-  onRunSuite,
-  onOpenJourneysDialog,
   onNavigateTab,
-  running,
 }: {
   applicationId: string
-  onRunSuite: () => void
-  onOpenJourneysDialog: () => void
   onNavigateTab: (target: QuickActionTarget) => void
-  running: boolean
 }) {
   const [overview, setOverview] = useState<OverviewRead | null>(null)
 
@@ -243,9 +236,6 @@ export function OverviewTab({
           variant="scene"
           title="No test runs yet"
           subtitle="Health, pass rate, and trend will show up here once your first run finishes."
-          action={
-            <RunSuiteButton running={running} onFullSuite={onRunSuite} onOpenJourneysDialog={onOpenJourneysDialog} />
-          }
         />
         <QuickActionsGrid onNavigate={onNavigateTab} />
       </div>

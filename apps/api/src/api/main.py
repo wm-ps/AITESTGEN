@@ -82,6 +82,7 @@ from workflows import (
     HealTestExecutionWorkflow,
     LiveExplorationTestWorkflow,
     LiveExplorationWorkflowInput,
+    ReconcileStaleTestRunsWorkflow,
     RegenerateTestAssetActivityInput,
     RegenerateTestAssetWorkflow,
     ScheduledExecutionWorkflow,
@@ -3110,6 +3111,24 @@ async def trigger_cleanup(admin: CurrentAdminDep) -> dict[str, bool]:
     await client.start_workflow(
         CleanupWorkflow.run,
         id=f"cleanup-manual-{uuid.uuid4()}",
+        task_queue=EXECUTION_TASK_QUEUE,
+    )
+    return {"started": True}
+
+
+@app.post("/admin/reconcile-stale-runs/run", status_code=202)
+async def trigger_stale_run_reconciliation(admin: CurrentAdminDep) -> dict[str, bool]:
+    """Manual trigger for the same `ReconcileStaleTestRunsWorkflow` the
+    every-15-min Schedule (`api/scripts/create_stale_test_run_reconciliation_schedule.py`)
+    runs — force-completes any `TestRun` stuck `"running"` past
+    `TEST_RUN_STALE_AFTER` without waiting for the next scheduled tick.
+    Unique per-call id, same convention as `trigger_cleanup` above."""
+    client = await get_temporal_client()
+    if not await has_pollers(client, EXECUTION_TASK_QUEUE):
+        raise HTTPException(status_code=503, detail="EXECUTION_UNAVAILABLE")
+    await client.start_workflow(
+        ReconcileStaleTestRunsWorkflow.run,
+        id=f"reconcile-stale-test-runs-manual-{uuid.uuid4()}",
         task_queue=EXECUTION_TASK_QUEUE,
     )
     return {"started": True}

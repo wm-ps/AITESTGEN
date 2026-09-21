@@ -65,6 +65,7 @@ from workflows import (
     AUTO_HEAL_ATTEMPT_CAP,
     HEAL_CLAIM_STALE_AFTER,
     HEALABLE_STATUSES,
+    TEST_RUN_STALE_AFTER,
     ExecutableTest,
     ExecuteTestActivityInput,
     FinalizeTestRunActivityInput,
@@ -1552,3 +1553,44 @@ def _force_complete_test_run_sync(input: ForceCompleteTestRunActivityInput) -> N
             "ForceCompleteTestRunActivity: bare status flip also failed for test_run_id=%s",
             input.test_run_id,
         )
+
+
+@activity.defn(name="ReconcileStaleTestRunsActivity")
+def reconcile_stale_test_runs_activity() -> list[str]:
+    return _reconcile_stale_test_runs_sync()
+
+
+def _reconcile_stale_test_runs_sync() -> list[str]:
+    """Periodic catch-all for the gap `_force_complete_test_run_sync`'s own
+    docstring names: nothing re-scans a `TestRun` that never reached either
+    `FinalizeTestRunActivity` or `ForceCompleteTestRunActivity` at all — a
+    worker killed before either ran, or a Temporal cluster outage spanning
+    the whole run. Finds every `TestRun` still `"running"` past
+    `TEST_RUN_STALE_AFTER` and reuses `_force_complete_test_run_sync`
+    unchanged (full finalize first, bare status flip as its own fallback,
+    never raises) rather than a second implementation of "how to close out a
+    TestRun."
+    """
+    cutoff = datetime.now(UTC) - TEST_RUN_STALE_AFTER
+    with Session(engine) as session:
+        stale_ids = [
+            str(run.external_id)
+            for run in session.exec(
+                select(TestRun).where(
+                    TestRun.status == "running",
+                    TestRun.started_at.is_not(None),
+                    TestRun.started_at <= cutoff,  # type: ignore[operator]
+                )
+            ).all()
+        ]
+
+    for test_run_id in stale_ids:
+        _force_complete_test_run_sync(ForceCompleteTestRunActivityInput(test_run_id=test_run_id))
+
+    if stale_ids:
+        logger.info(
+            "ReconcileStaleTestRunsActivity: reconciled %d stale test run(s): %s",
+            len(stale_ids),
+            stale_ids,
+        )
+    return stale_ids

@@ -12,7 +12,7 @@ from io import BytesIO
 
 from domain import Application, Journey, TestAsset, TestSuite
 from test_suite_assembler import assemble_test_suite_project, assemble_test_suite_project_to_dir
-from test_suite_assembler.assembler import _build_interactions_helper_script
+from test_suite_assembler.assembler import _build_interactions_helper_script, _playwright_locator_call
 
 
 def _application(**overrides) -> Application:
@@ -105,3 +105,15 @@ def test_ensure_visible_surfaces_strict_mode_violation_instead_of_masking_it() -
     # for it — a violation on the second attempt must not fall through to
     # the generic message either.
     assert script.count("strict mode violation") == 2
+
+
+def test_playwright_locator_call_scopes_selector_locators_to_first_match() -> None:
+    # `[FIXED]` regression: a custom element that mirrors an attribute (e.g.
+    # `name`) onto an inner native input makes any selector built from that
+    # attribute match two elements — Playwright's strict mode then fails the
+    # `.fill()` outright instead of picking one. `getByLabel` locates by
+    # visible text, not a shared attribute, so it isn't exposed to that.
+    assert _playwright_locator_call("css", '[name="j_username"]') == (
+        "page.locator('[name=\"j_username\"]').first()"
+    )
+    assert _playwright_locator_call("label", "Username") == "page.getByLabel('Username')"

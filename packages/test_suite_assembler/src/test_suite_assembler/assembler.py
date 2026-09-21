@@ -126,7 +126,13 @@ def _playwright_locator_call(strategy: str, value: str) -> str:
     is one."""
     if strategy == "label":
         return f"page.getByLabel({value!r})"
-    return f"page.locator({value!r})"
+    # `.first()`: a selector-based locator (css/xpath/etc, unlike getByLabel)
+    # can resolve to more than one element — e.g. a custom element that
+    # mirrors its `name`/`id` onto an inner native input renders both under
+    # the same attribute. The `captured_selector` fallback below already
+    # appends `.first()` for this reason; this makes the preferred
+    # `ComponentLocator` path match it instead of trusting DOM uniqueness.
+    return f"page.locator({value!r}).first()"
 
 
 def _field_locator_call(session: Session, field: FormField | None) -> str | None:
@@ -565,20 +571,30 @@ def _build_auth_helper_script(login_evidence: LoginPageEvidence | None) -> str:
         else 'page.locator(\'input[type="password"]\').first()'
     )
     return (
-        "import type { Page } from '@playwright/test'\n"
+        "import type { Locator, Page } from '@playwright/test'\n"
         "import { CREDENTIALS } from './config'\n\n"
+        "// Some apps (e.g. WaveMaker's `wm-input`) wrap the real `<input>` inside a\n"
+        "// custom element that carries the captured `name`/`id` itself — the discovered\n"
+        "// locator then resolves to that wrapper, which `.fill()`/`.press()` reject since\n"
+        "// it isn't a native form control. Matches the locator itself or its nearest\n"
+        "// native descendant, whichever it actually resolved to.\n"
+        "function nativeField(locator: Locator): Locator {\n"
+        "  return locator\n"
+        "    .locator('xpath=self::input | self::textarea | .//input | .//textarea')\n"
+        "    .first()\n"
+        "}\n\n"
         "export async function fillCredentials(\n"
         "  page: Page,\n"
         "  username: string = CREDENTIALS.username,\n"
         "  password: string = CREDENTIALS.password,\n"
         "): Promise<void> {\n"
-        f"  await {username_locator}.fill(username)\n"
-        f"  await {password_locator}.fill(password)\n"
+        f"  await nativeField({username_locator}).fill(username)\n"
+        f"  await nativeField({password_locator}).fill(password)\n"
         "  const submit = page.locator('button[type=\"submit\"], input[type=\"submit\"]').first()\n"
         "  if (await submit.count() > 0) {\n"
         "    await submit.click()\n"
         "  } else {\n"
-        f"    await {password_locator}.press('Enter')\n"
+        f"    await nativeField({password_locator}).press('Enter')\n"
         "  }\n"
         "}\n\n"
         "// `[FIXED]` Shared by auth.setup.ts (verifying the initial login) and\n"
@@ -622,8 +638,17 @@ def _build_auth_helper_script(login_evidence: LoginPageEvidence | None) -> str:
         "  /an\\s+unexpected\\s+error\\s+(has\\s+)?occurred/i,\n"
         "]\n\n"
         "export async function isAuthenticated(page: Page, loginUrl: string): Promise<boolean> {\n"
-        "  const loginPath = new URL(loginUrl, page.url()).pathname\n"
-        "  if (new URL(page.url()).pathname === loginPath) {\n"
+        "  // `pathname` alone is not enough: a hash-routed SPA (e.g. `#/Login` ->\n"
+        "  // `#/Dashboard`) keeps the same server `pathname` for every route, so a\n"
+        "  // pathname-only check never leaves \"the login page\" even after a real,\n"
+        "  // successful login. The hash is part of the route there, so it must match\n"
+        "  // too before this counts as \"still on the login page\".\n"
+        "  const loginRoute = new URL(loginUrl, page.url())\n"
+        "  const currentRoute = new URL(page.url())\n"
+        "  if (\n"
+        "    currentRoute.pathname === loginRoute.pathname &&\n"
+        "    currentRoute.hash === loginRoute.hash\n"
+        "  ) {\n"
         "    return false\n"
         "  }\n"
         "  const passwordFieldVisible = await page\n"

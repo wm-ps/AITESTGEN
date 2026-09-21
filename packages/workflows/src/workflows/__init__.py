@@ -86,6 +86,12 @@ from workflows.live_exploration_workflow import (
     LiveHealActivityInput,
     LiveHealActivityResult,
 )
+from workflows.reconcile_stale_runs_workflow import (
+    RECONCILE_STALE_TEST_RUNS_ACTIVITY_NAME,
+    TEST_RUN_STALE_AFTER,
+    ReconcileStaleTestRunsResult,
+    ReconcileStaleTestRunsWorkflow,
+)
 from workflows.regenerate_test_asset_workflow import (
     REGENERATE_TEST_ASSET_ACTIVITY_NAME,
     RegenerateTestAssetActivityInput,
@@ -142,8 +148,10 @@ __all__ = [
     "PREPARE_TEST_RUN_ACTIVITY_NAME",
     "PURGE_APPLICATION_ACTIVITY_NAME",
     "READ_TEST_RESULT_STATUS_ACTIVITY_NAME",
+    "RECONCILE_STALE_TEST_RUNS_ACTIVITY_NAME",
     "REGENERATE_TEST_ASSET_ACTIVITY_NAME",
     "SCENARIO_GENERATION_ACTIVITY_NAME",
+    "TEST_RUN_STALE_AFTER",
     "AnalyzePromptActivityInput",
     "AutofillScenarioTestDataActivityInput",
     "AutofillScenarioTestDataResult",
@@ -187,6 +195,8 @@ __all__ = [
     "PurgeApplicationResult",
     "ReadTestResultStatusActivityInput",
     "ReadTestResultStatusResult",
+    "ReconcileStaleTestRunsResult",
+    "ReconcileStaleTestRunsWorkflow",
     "RegenerateTestAssetActivityInput",
     "RegenerateTestAssetResult",
     "RegenerateTestAssetStatus",

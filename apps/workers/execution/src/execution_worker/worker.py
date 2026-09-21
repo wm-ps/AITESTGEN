@@ -14,7 +14,10 @@ has (`secrets-client`, `object-store`, `sqlmodel`/`psycopg`), so it doesn't
 warrant its own deployment. Same reasoning for `ScheduledExecutionWorkflow`
 and `CheckScheduleGateActivity` (Schedules feature) — the gate is two
 indexed DB reads, light enough to ride along here rather than get its own
-deployment.
+deployment — and for `ReconcileStaleTestRunsWorkflow`/
+`ReconcileStaleTestRunsActivity`, a periodic sweep that force-completes any
+`TestRun` stuck `"running"` past `TEST_RUN_STALE_AFTER` (see that module's
+docstring for what it's closing the gap on).
 
 `max_workers` on the activity executor doubles as this worker's
 cross-TestRun concurrency ceiling (decision: bounded independently of the
@@ -39,6 +42,7 @@ from workflows import (
     ApplicationTestExecutionWorkflow,
     CleanupWorkflow,
     HealTestExecutionWorkflow,
+    ReconcileStaleTestRunsWorkflow,
     ScheduledExecutionWorkflow,
 )
 
@@ -48,6 +52,7 @@ from execution_worker.activities import (
     force_complete_test_run_activity,
     heal_test_activity,
     prepare_test_run_activity,
+    reconcile_stale_test_runs_activity,
 )
 from execution_worker.add_test_case_activities import (
     discard_test_run_activity,
@@ -80,6 +85,7 @@ async def main() -> None:
             HealTestExecutionWorkflow,
             CleanupWorkflow,
             ScheduledExecutionWorkflow,
+            ReconcileStaleTestRunsWorkflow,
         ],
         activities=[
             prepare_test_run_activity,
@@ -90,6 +96,7 @@ async def main() -> None:
             find_purge_candidates_activity,
             purge_application_activity,
             check_schedule_gate_activity,
+            reconcile_stale_test_runs_activity,
             # Shared NLM building blocks — `LiveExplorationTestWorkflow`
             # itself runs on GENERATION_TASK_QUEUE (see
             # generation_worker/worker.py), but dispatches these here with an
