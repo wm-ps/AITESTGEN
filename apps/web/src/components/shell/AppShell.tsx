@@ -232,7 +232,7 @@ export function AppShell({
         </div>
       </div>
 
-      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
         <div
           style={{
             height: 60,
@@ -341,6 +341,7 @@ export function AppShell({
           id="app-shell-scroll"
           style={{
             flex: 1,
+            minHeight: 0,
             overflowY: 'auto',
             padding: '26px clamp(18px, 2.4vw, 40px) 44px',
             boxSizing: 'border-box',

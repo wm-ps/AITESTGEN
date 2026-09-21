@@ -39,6 +39,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
+from urllib.parse import urlsplit
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -198,8 +199,32 @@ def find_login_page_evidence(
             ),
             None,
         )
+        # `[FIXED]` For an OAuth/OIDC app (Keycloak, Okta, Auth0, ...), the
+        # captured login page is the identity provider's OWN authorization-
+        # redirect URL — a different origin from the application itself,
+        # carrying one-time query params (`state`, `code_challenge`, `nonce`,
+        # ...) that the IdP generated fresh for that one crawl-time redirect.
+        # Replaying that exact URL verbatim on every later test run reuses
+        # an already-consumed, single-use authorization request: the IdP can
+        # still accept a valid username/password against it (so a naive
+        # "did the login form disappear" check passes), while the token
+        # exchange back to the application never completes with the right
+        # scope/claims — observed live: the test account authenticates but
+        # lands in a real, empty, zero-tenant account state, not an error.
+        # A cross-origin login page relative to the application is the
+        # generic signal for this, true for any OAuth/OIDC provider — fall
+        # back to the application's own stable entry point instead, which
+        # redirects through a FRESH authorization request every time it's
+        # visited, the same way a real user's browser (and this project's
+        # own crawler — see `discovery_worker.session.establish_session`,
+        # which never hardcodes a redirected URL for exactly this reason)
+        # already does. A same-origin login form (the common case) keeps
+        # using the captured URL exactly as before.
+        login_url = page.url
+        if urlsplit(login_url).netloc != urlsplit(application.url).netloc:
+            login_url = application.login_url or application.url
         return LoginPageEvidence(
-            url=page.url,
+            url=login_url,
             username_locator=_field_locator_call(session, username_field),
             password_locator=(
                 _field_locator_call(session, password_field)
