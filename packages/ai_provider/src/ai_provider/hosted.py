@@ -550,6 +550,31 @@ if (!response || response.status() >= 400) {{
   throw new Error(`Failed to load page. HTTP status: ${{response?.status()}}`);
 }}
 await page.waitForLoadState('domcontentloaded', {{ timeout: NAVIGATION_TIMEOUT_MS }});
+This applies just as much when a step reaches a new page by clicking a link/button instead of \
+`page.goto(...)` (the normal way an `@auth` test moves around, per rule 1 above) — a client-side \
+route change has no `page.goto()` response to check, but still needs the same settle wait \
+before touching anything on the page it lands on; call `page.waitForLoadState('domcontentloaded', \
+{{ timeout: NAVIGATION_TIMEOUT_MS }})` right after confirming the navigation (e.g. an \
+`expect(page).toHaveURL(...)` check), before locating anything on the new page.
+
+First-content-after-navigation rule — `domcontentloaded` only confirms the initial HTML parsed; \
+it says nothing about whether the SPECIFIC content a test is about to touch has actually \
+finished rendering. A real page routinely renders its static layout (nav, headings, page chrome) \
+immediately but loads one or more of its own sections afterward — a table, a chart, a \
+count/summary, anything backed by its own fetch — and there is no reliable, framework-agnostic \
+way to name or detect that moment from outside the app (a network-quiet heuristic like \
+`networkidle` is NOT safe here — how "settled" ever looks depends entirely on that application's \
+own background-request behavior, which is exactly the per-app special-casing this must avoid). \
+The one thing that generalizes across every application: give the FIRST element you locate or \
+assert on after landing on a new page (from `page.goto(...)` or a client-side route change alike) \
+the same generous `NAVIGATION_TIMEOUT_MS` budget the navigation itself got, in its \
+`ensureVisible(...)` call or its polling `expect(...)`, rather than the tighter \
+`ASSERTION_TIMEOUT_MS` every other step uses — that first target is the one most exposed to \
+however long this specific page's own content takes to become real, and a longer window there \
+costs nothing when the page is already fast, but is the difference between a false "not visible" \
+failure and a passing test when it is not. Once that first target is confirmed visible, the page \
+is demonstrably rendered enough that every later step on it can go back to the normal, tighter \
+`ASSERTION_TIMEOUT_MS`.
 
 3. Before locating or asserting on any element, confirm the page did not render a server \
 error page in place of real application markup (this can happen even after a 200 \
@@ -700,6 +725,29 @@ and even then prefer `page.getByText(..., {{ exact: true }})` over `page.getByRo
 {{ name: ... }})` unless you have specific evidence the option element genuinely carries \
 `role="option"` on the real, visible node (many component libraries keep `role="option"` only on \
 a hidden, zero-size accessibility duplicate — see below).
+
+Dependent-element settle rule — choosing a value, checking a box, or opening a section can \
+change what a LATER step's target actually is: enable it, repopulate its options, or re-render \
+it while the app loads data for the choice just made. This is common wherever one field's value \
+drives another's (a cascading dropdown/filter, an "other" input that only appears once its \
+owning radio/checkbox is picked, any step that only makes sense once an earlier one has taken \
+effect). Acting on that dependent target immediately after the triggering step, with no allowance \
+for this, is exactly what produces a real generated test flapping between "element is not \
+stable"/"element is not visible" until it times out — not because the locator is wrong, but \
+because the target was resolved and acted on before the app's own async update to it actually \
+finished. There is no reliable, framework-agnostic way to detect that update from outside the \
+app (a network-quiet heuristic like `networkidle` is NOT safe here either — it depends entirely \
+on that specific application's own background-request behavior). What generalizes: give that \
+dependent target's own `ensureVisible(...)`/polling `expect(...)` the same generous \
+`NAVIGATION_TIMEOUT_MS` budget a fresh page navigation gets, instead of the tighter \
+`ASSERTION_TIMEOUT_MS` every ordinary step uses, whenever the step immediately before it chose a \
+value, checked a box, or opened a section that could plausibly be driving this target's content — \
+never for an ordinary step with no such preceding trigger. That target is the one step most \
+exposed to how long THIS application's own update actually takes; a longer window there costs \
+nothing when it settles quickly, and is the difference between a false failure and a passing \
+test when it does not. Never rely on the dependent action's own default, tighter timeout alone \
+to absorb this — that is the same failure a stale reference to the pre-update element would \
+produce.
 
 Generic-role rule — a captured/known locator's element role of "generic" (a plain `<div>`/`<span>` \
 with no real ARIA semantics — the common shape of a custom dropdown/menu/tab option) is a signal \
@@ -1644,9 +1692,14 @@ class HostedAIProvider:
         initial_navigation_rule = (
             "This test already has that authenticated session applied — do NOT visit the "
             "application's base URL or any login page first. Navigate directly to the "
-            "Scenario's actual target page as the very first action (via `page.goto(...)` to "
-            "its known URL — see Known pages above — or by clicking a discovered link/button), "
-            "exactly the way an already-logged-in user's browser would."
+            "Scenario's actual target page as the very first action, using EXACTLY ONE of: "
+            "`page.goto(...)` to its known URL (see Known pages above), OR clicking a "
+            "discovered link/button — never both in sequence for the same destination. "
+            "Re-navigating to a page you already just reached (e.g. `page.goto(url)` followed "
+            "moments later by clicking a nav link to that identical URL) can force the page to "
+            "reload/refetch its content a second time — itself a source of exactly the kind of "
+            "flakiness these rules exist to prevent, not a safer double-check. Pick the one "
+            "method that gets you there, then move on."
             if requires_auth
             else (
                 f"Before navigating anywhere else, first visit the application's base URL "
@@ -1654,9 +1707,11 @@ class HostedAIProvider:
                 "finish loading with `await page.waitForLoadState('networkidle', "
                 "{ timeout: NAVIGATION_TIMEOUT_MS })`. This establishes the session/cookies a "
                 "real user's browser would already have. Only after that initial visit should "
-                "the test navigate on to whatever page the Scenario's steps actually need (via "
-                "`page.goto`, or by clicking a discovered link/button). Never `page.goto()` "
-                "straight to a deep URL as the first action of the test."
+                "the test navigate on to whatever page the Scenario's steps actually need, using "
+                "EXACTLY ONE of `page.goto` or clicking a discovered link/button for that "
+                "step — never both in sequence for the same destination (see the note on this "
+                "in the `requires_auth` case above). Never `page.goto()` straight to a deep URL "
+                "as the first action of the test."
             )
         )
         if changed_test_data is not None:
