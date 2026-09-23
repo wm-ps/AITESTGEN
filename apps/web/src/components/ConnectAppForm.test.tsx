@@ -55,6 +55,51 @@ describe('ConnectAppForm', () => {
     expect(body.password).toBe('qa-password')
   })
 
+  it('submits notes typed during onboarding so they reach create_application', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: '1', name: 'My App' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    fillCommonFields()
+    fireEvent.change(
+      screen.getByPlaceholderText('Describe the primary purpose of the application and the outcomes it should deliver'),
+      { target: { value: 'Manage clients, accounts and investments.' } },
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.application_context).toMatchObject({
+      business_goal: 'Manage clients, accounts and investments.',
+    })
+  })
+
+  it('submits application_context as all-null when no notes were typed', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: '1', name: 'My App' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    fillCommonFields()
+    fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    expect(body.application_context).toEqual({
+      business_goal: null,
+      business_domain: null,
+      business_rules: null,
+      additional_context: null,
+    })
+  })
+
   it('keeps the form on Connect App and shows the backend-provided inline error when the reachability check fails (FR-31)', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,

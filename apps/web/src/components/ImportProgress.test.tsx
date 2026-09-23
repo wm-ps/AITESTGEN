@@ -6,7 +6,7 @@ describe('ImportProgress', () => {
   it('shows the shared generation-loader animation, without naming any internal stage or a progress bar', () => {
     render(<ImportProgress />)
 
-    expect(screen.getByRole('status').textContent).toContain('Discovering journeys')
+    expect(screen.getByRole('status').textContent).toContain('Mapping journeys')
     expect(screen.queryByRole('progressbar')).toBeNull()
     for (const stageName of ['Initialization', 'Authentication', 'Discovery', 'Analysis']) {
       expect(screen.queryByText(stageName)).toBeNull()
@@ -14,13 +14,13 @@ describe('ImportProgress', () => {
     expect(document.body.textContent).not.toMatch(/crawl|queue|fingerprint/i)
   })
 
-  it('names the Application in the heading when applicationName is given', () => {
+  it('names the Application in the body text when applicationName is given', () => {
     render(<ImportProgress applicationName="Claims Processing" />)
-    expect(screen.getByText('Discovering journeys in Claims Processing')).toBeTruthy()
+    expect(screen.getByText(/grouping discovered pages into journeys in Claims Processing\./)).toBeTruthy()
   })
 
-  it('omits the Application name from the heading when not given', () => {
+  it('omits the Application name from the body text when not given', () => {
     render(<ImportProgress />)
-    expect(screen.getByText('Discovering journeys')).toBeTruthy()
+    expect(screen.getByText(/grouping discovered pages into journeys\./)).toBeTruthy()
   })
 })

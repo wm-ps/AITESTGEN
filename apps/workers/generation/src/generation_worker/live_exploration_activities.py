@@ -77,6 +77,7 @@ def _captured_flow_from(live_flow: LiveFlowModel) -> list[dict]:
             "page_url": step.page_url,
             "page_heading": step.page_heading,
             "rationale": step.rationale,
+            "semantic_target": step.semantic_target,
             **(step.locator_candidate or {}),
         }
         for step in live_flow.steps
@@ -181,6 +182,7 @@ async def live_explore_activity(input: LiveExploreActivityInput) -> LiveExploreA
                 start_url=application.url,
                 max_turns=_EXPLORE_MAX_TURNS,
                 heartbeat=activity.heartbeat,
+                application_context=application.application_context,
             )
     finally:
         storage_state_path.unlink(missing_ok=True)
@@ -307,6 +309,10 @@ async def live_heal_activity(input: LiveHealActivityInput) -> LiveHealActivityRe
         requires_auth,
         primary_page_id,
         _captured_flow,
+        # Unused here — `application` above (from `_load_heal_context_sync`)
+        # is the same row and already in scope, so `application.
+        # application_context` is used directly below instead of this one.
+        _application_context,
     ) = await asyncio.to_thread(_resolve_scenario_defaults_sync, scenario_external_id)
 
     goal = (
@@ -330,6 +336,7 @@ async def live_heal_activity(input: LiveHealActivityInput) -> LiveHealActivityRe
                 is_heal=True,
                 max_turns=_HEAL_MAX_TURNS,
                 heartbeat=activity.heartbeat,
+                application_context=application.application_context,
             )
     finally:
         storage_state_path.unlink(missing_ok=True)
@@ -358,6 +365,7 @@ async def live_heal_activity(input: LiveHealActivityInput) -> LiveHealActivityRe
         {
             "tool_name": step.tool_name,
             "element_description": step.tool_args.get("element"),
+            "semantic_target": step.semantic_target,
             **step.locator_candidate,
         }
         for step in live_flow.steps
@@ -376,6 +384,7 @@ async def live_heal_activity(input: LiveHealActivityInput) -> LiveHealActivityRe
         failure_stack_trace=test_result.stack_trace,
         failure_console_output=test_result.console_output,
         live_action_sequence=action_sequence,
+        application_context=application.application_context,
     )
     typecheck_errors = await typecheck_playwright_code(code.code)
     if typecheck_errors:

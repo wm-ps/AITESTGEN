@@ -94,14 +94,16 @@ afterEach(() => {
 })
 
 describe('DiscoverJourneys', () => {
-  it('renders a journey card with name, step count and description, no confidence/risk signal', async () => {
+  it('renders a journey card with name and description, no confidence/risk signal', async () => {
+    // Step-by-step navigation is shown inline as stage-flow chips, not a
+    // text count — see "shows each Journey's step-by-step navigation
+    // inline, no click needed" below.
     stubFetch()
     renderScreen()
 
     await waitFor(() => {
       expect(screen.getByText('Checkout')).toBeTruthy()
     })
-    expect(screen.getByText('2 navigation steps')).toBeTruthy()
     expect(screen.getByText('Customer adds an item to the cart and completes payment.')).toBeTruthy()
     expect(screen.queryByText(/confidence/i)).toBeNull()
     expect(screen.queryByText(/risk/i)).toBeNull()
@@ -371,7 +373,7 @@ describe('DiscoverJourneys', () => {
     expect(deleted).toBe(false)
   })
 
-  it('shows the Journeys-discovered count and an enabled Continue to Test Cases button', async () => {
+  it('shows the Journeys-discovered count and an enabled Review scenarios button', async () => {
     stubFetch()
     renderScreen()
 
@@ -379,12 +381,12 @@ describe('DiscoverJourneys', () => {
       expect(screen.getByText('1 journey discovered')).toBeTruthy()
     })
     const button = screen.getByRole('button', {
-      name: 'Continue to Test Cases',
+      name: 'Review scenarios',
     }) as HTMLButtonElement
     expect(button.disabled).toBe(false)
   })
 
-  it('disables Continue to Test Cases when there are no candidate Journeys', async () => {
+  it('hides the Review scenarios button when there are no candidate Journeys', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
@@ -397,15 +399,14 @@ describe('DiscoverJourneys', () => {
     renderScreen()
 
     await waitFor(() => {
-      expect(screen.getByText('0 Journeys Discovered')).toBeTruthy()
+      expect(screen.getByText('0 journeys discovered')).toBeTruthy()
     })
-    const button = screen.getByRole('button', {
-      name: 'Continue to Test Cases',
-    }) as HTMLButtonElement
-    expect(button.disabled).toBe(true)
+    // Nothing to review yet — the button doesn't render at all, not merely
+    // disabled (see DiscoverJourneys.tsx: `{journeys.length > 0 && (...)}`).
+    expect(screen.queryByRole('button', { name: 'Review scenarios' })).toBeNull()
   })
 
-  it('clicking Continue to Test Cases triggers generation then navigates onward', async () => {
+  it('clicking Review scenarios triggers generation then navigates onward', async () => {
     let generated = false
     stubFetch({
       onGenerate: () => {
@@ -418,7 +419,7 @@ describe('DiscoverJourneys', () => {
     })
     await waitFor(() => screen.getByText('1 journey discovered'))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Continue to Test Cases' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Review scenarios' }))
 
     await waitFor(() => {
       expect(navigated).toBe(true)

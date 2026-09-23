@@ -59,8 +59,12 @@ pytestmark = pytest.mark.skipif(
 class _FakeAIProvider:
     def __init__(self, candidates: list[JourneyCandidate]) -> None:
         self._candidates = candidates
+        self.application_context_calls: list[dict | None] = []
 
-    async def infer_journeys(self, pages: list[Page]) -> list[JourneyCandidate]:
+    async def infer_journeys(
+        self, pages: list[Page], application_context: dict | None = None
+    ) -> list[JourneyCandidate]:
+        self.application_context_calls.append(application_context)
         return self._candidates
 
 
@@ -224,6 +228,36 @@ async def test_inference_activity_creates_journeys_and_attributes_pages(
     # GenerationWorkflow — Story 4.1 moved that to an explicit
     # "Continue to Scenarios" trigger. Nothing to assert about Temporal here
     # anymore; see apps/api's generate-scenarios endpoint tests instead.
+
+
+@pytest.mark.asyncio
+async def test_inference_activity_passes_application_context_to_ai_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Application's own persisted context (see `domain.Application.
+    application_context`) must reach `infer_journeys` — `application` is
+    already loaded here (from `discovery_run.application_id`), so this is
+    purely about that value actually being passed through."""
+    init_db()
+    application_id, discovery_run_external_id, _pages, _checkout_api = _seed_completed_run()
+    with Session(engine) as session:
+        application = session.get(Application, application_id)
+        application.application_context = {
+            "business_rules": ["Engagement depends on selected tenant."]
+        }
+        session.add(application)
+        session.commit()
+
+    fake_provider = _FakeAIProvider([])
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    await activities_module.inference_activity(
+        InferenceActivityInput(discovery_run_id=str(discovery_run_external_id))
+    )
+
+    assert fake_provider.application_context_calls == [
+        {"business_rules": ["Engagement depends on selected tenant."]}
+    ]
 
 
 @pytest.mark.asyncio

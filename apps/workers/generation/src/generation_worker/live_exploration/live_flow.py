@@ -155,6 +155,116 @@ def snapshot_node_to_locator_candidate(node: dict[str, str]) -> dict[str, Any]:
     }
 
 
+# Ancestor-chain depth cap for `extract_snapshot_context` — a handful of
+# levels is enough to name the enclosing dialog/section/group; unbounded
+# would let one deeply-nested page balloon every step's stored context for
+# no added value (the nearest 1-2 ancestors are what a "Filters dialog" or
+# "Tenant section" label actually lives on).
+_MAX_CONTEXT_ANCESTORS = 4
+
+
+def _line_indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _node_at_line(line: str) -> dict[str, str] | None:
+    # A snapshot's own "Page URL: ..."/"Page Title: ..." lines (the exact
+    # convention `_extract_url`/`_extract_title` in agent.py already parse)
+    # are page metadata, never real tree content — without this they'd
+    # otherwise coincidentally match `_LINE_ROLE` (role="Page") and leak
+    # into a later step's ancestors/preceding_sibling as meaningless noise.
+    stripped = line.strip().lstrip("-").strip().lower()
+    if stripped.startswith("page url:") or stripped.startswith("page title:"):
+        return None
+    role_match = _LINE_ROLE.match(line)
+    if role_match is None:
+        return None
+    name_match = _QUOTED_NAME.search(line)
+    return {"role": role_match.group("role"), "name": name_match.group(1) if name_match else ""}
+
+
+def extract_snapshot_context(snapshot_text: str, ref: str) -> dict[str, Any]:
+    """Best-effort structural context for one `ref` — the nearest ancestor
+    chain, the immediately preceding sibling, and this node's own non-`ref`
+    bracket attributes (`[expanded=true]`, `[checked=true]`, etc, whatever
+    the snapshot happens to report — never a fixed list of attribute names)
+    — reconstructed purely from the indentation the raw snapshot text
+    already encodes (it's a nested outline, one node per line; deeper
+    nodes are more indented — see the module-level format note above).
+
+    This exists because `snapshot_node_to_locator_candidate` intentionally
+    reduces a node to bare role+name to build a portable locator string —
+    correct for that job, but it throws away the surrounding "which
+    dialog/section/label is this actually inside" evidence the exploration
+    LLM had directly in front of it the turn it acted. Two elements with
+    an identical role and no accessible name (an unlabeled combobox is the
+    common case) produce an identical locator candidate either way; this
+    function is what lets a later step still tell them apart by where they
+    actually sit, instead of by which one happened to be observed first.
+
+    Always additive and best-effort: a caller that ignores this result
+    behaves exactly as it did before this function existed — the existing
+    locator candidate is never altered or removed, and an element with no
+    useful ancestor/sibling/attribute evidence just returns `{}`."""
+    lines = snapshot_text.splitlines()
+    target_index: int | None = None
+    target_indent: int | None = None
+    for index, line in enumerate(lines):
+        if _LINE_ROLE.match(line) is None:
+            continue
+        line_ref = next(
+            (value for key, value in _BRACKET_ATTR.findall(line) if key == "ref"), None
+        )
+        if line_ref == ref:
+            target_index = index
+            target_indent = _line_indent(line)
+            break
+    if target_index is None or target_indent is None:
+        return {}
+
+    # Ancestors: walk backward, recording the nearest line seen so far at
+    # each strictly smaller indent than the last one recorded — the
+    # standard technique for recovering a breadcrumb path from an indented
+    # outline, since indentation is the only structure this text format has.
+    ancestors: list[dict[str, str]] = []
+    current_indent = target_indent
+    for index in range(target_index - 1, -1, -1):
+        if current_indent <= 0 or len(ancestors) >= _MAX_CONTEXT_ANCESTORS:
+            break
+        line_indent = _line_indent(lines[index])
+        if line_indent < current_indent:
+            node = _node_at_line(lines[index])
+            if node is not None:
+                ancestors.append(node)
+            current_indent = line_indent
+
+    # Preceding sibling: the nearest earlier line at exactly the target's
+    # own indent — a common "label text right before its control" pattern
+    # (both children of the same parent), the cheapest available signal for
+    # a control that has no accessible name of its own.
+    preceding_sibling: dict[str, str] | None = None
+    for index in range(target_index - 1, -1, -1):
+        line_indent = _line_indent(lines[index])
+        if line_indent < target_indent:
+            break
+        if line_indent == target_indent:
+            preceding_sibling = _node_at_line(lines[index])
+            break
+
+    attributes = {
+        key: value for key, value in _BRACKET_ATTR.findall(lines[target_index]) if key != "ref"
+    }
+
+    context: dict[str, Any] = {}
+    if ancestors:
+        context["ancestors"] = ancestors
+    if preceding_sibling is not None:
+        context["preceding_sibling"] = preceding_sibling
+    if attributes:
+        context["attributes"] = attributes
+    return context
+
+
 @dataclass
 class LiveFlowStep:
     """One agent turn: the tool call it made and what it was acting on."""
@@ -167,6 +277,12 @@ class LiveFlowStep:
     # Populated only for element-targeting tools (click/type/select_option/
     # hover) — the node the agent's `ref` resolved to in the turn's snapshot.
     locator_candidate: dict[str, Any] | None = None
+    # `[ADDED semantic-target]` What the decide-agent said this turn's action
+    # MEANS (see `ai_provider.LiveExplorationDecision.semantic_target`) —
+    # the user-intent identity (action/target name/value/relationship),
+    # carried alongside `locator_candidate` (the DOM realization of that
+    # intent) rather than merged into it. Optional and best-effort.
+    semantic_target: dict[str, Any] | None = None
 
 
 @dataclass

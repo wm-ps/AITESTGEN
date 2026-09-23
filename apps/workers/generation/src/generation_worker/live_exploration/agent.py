@@ -19,6 +19,7 @@ from langgraph.graph import END, StateGraph
 from generation_worker.live_exploration.live_flow import (
     LiveFlowModel,
     LiveFlowStep,
+    extract_snapshot_context,
     find_snapshot_node,
     snapshot_node_to_locator_candidate,
     sweep_interactive_nodes,
@@ -45,7 +46,23 @@ class _AgentState(TypedDict):
     decision_tool_name: str
     decision_tool_args: dict
     decision_rationale: str
+    decision_semantic_target: dict | None
     done: bool
+
+
+def _summarize_semantic_target(semantic_target: dict | None) -> str:
+    """One-line debug summary — see `_AgentState.decision_semantic_target`.
+    Never raises on a malformed/hallucinated shape; worst case is a blank
+    summary, not a crashed turn."""
+    if not semantic_target:
+        return "(none)"
+    target = semantic_target.get("target")
+    target_name = target.get("name") if isinstance(target, dict) else None
+    parts = [str(p) for p in (semantic_target.get("action"), target_name) if p]
+    value = semantic_target.get("value")
+    if value:
+        parts.append(f"value={value!r}")
+    return " ".join(parts) if parts else "(none)"
 
 
 def _extract_url(snapshot_text: str) -> str | None:
@@ -76,6 +93,13 @@ async def run_exploration(
     heartbeat: Callable[[], None] | None = None,
     settle_retries: int = 3,
     settle_delay_seconds: float = 0.4,
+    # `[ADDED application-context]` `Application.application_context`,
+    # verbatim — given to every turn's `decide()` call alongside the
+    # requirement and live snapshot, so the agent can reason with business
+    # rules/session behavior it can't discover from the DOM alone (e.g.
+    # "Engagement options depend on the selected tenant"). Optional; `None`
+    # behaves exactly as this call did before the parameter existed.
+    application_context: dict | None = None,
 ) -> LiveFlowModel:
     live_flow = LiveFlowModel(requirement=requirement)
     history: list[dict] = []
@@ -107,11 +131,16 @@ async def run_exploration(
 
     async def decide(state: _AgentState) -> _AgentState:
         decision = await ai_provider.decide_live_exploration_action(
-            requirement, history, {"text": state["last_snapshot"]}, is_heal=is_heal
+            requirement,
+            history,
+            {"text": state["last_snapshot"]},
+            is_heal=is_heal,
+            application_context=application_context,
         )
         state["decision_tool_name"] = decision.tool_name
         state["decision_tool_args"] = decision.tool_args
         state["decision_rationale"] = decision.rationale
+        state["decision_semantic_target"] = decision.semantic_target
         state["done"] = decision.goal_satisfied
         return state
 
@@ -133,6 +162,16 @@ async def run_exploration(
             node = find_snapshot_node(state["last_snapshot"], tool_args["ref"])
             if node is not None:
                 locator_candidate = snapshot_node_to_locator_candidate(node)
+                # Additive only — `value`/`strategy`/`fragile`/`element_tag`
+                # above are unchanged and still what actually resolves this
+                # element; `context` is surrounding structural evidence
+                # (ancestor chain, preceding sibling, non-`ref` attributes)
+                # a later stage can use to disambiguate two steps that
+                # otherwise resolve to the exact same locator — never
+                # required, always safe to ignore.
+                context = extract_snapshot_context(state["last_snapshot"], tool_args["ref"])
+                if context:
+                    locator_candidate["context"] = context
 
         pre_action_snapshot = state["last_snapshot"]
         await mcp_client.call_tool(tool_name, tool_args)
@@ -155,6 +194,7 @@ async def run_exploration(
                 if settled_snapshot != pre_action_snapshot:
                     break
 
+        semantic_target = state["decision_semantic_target"]
         step = LiveFlowStep(
             tool_name=tool_name,
             tool_args=tool_args,
@@ -162,18 +202,26 @@ async def run_exploration(
             page_url=_extract_url(state["last_snapshot"]),
             page_heading=_extract_title(state["last_snapshot"]),
             locator_candidate=locator_candidate,
+            semantic_target=semantic_target,
         )
         live_flow.steps.append(step)
         logger.info(
-            "live-exploration turn %d: tool=%s ref_resolved=%s page=%s rationale=%r",
+            "live-exploration turn %d: tool=%s ref_resolved=%s page=%s semantic_target=%s "
+            "rationale=%r",
             state["turn"],
             tool_name,
             tool_name in _ELEMENT_TOOLS and "ref" in tool_args and locator_candidate is not None,
             step.page_url,
+            _summarize_semantic_target(semantic_target),
             step.rationale[:120],
         )
         history.append(
-            {"tool_name": tool_name, "tool_args": tool_args, "rationale": step.rationale}
+            {
+                "tool_name": tool_name,
+                "tool_args": tool_args,
+                "rationale": step.rationale,
+                "semantic_target": semantic_target,
+            }
         )
         return state
 
@@ -211,6 +259,7 @@ async def run_exploration(
         "decision_tool_name": "",
         "decision_tool_args": {},
         "decision_rationale": "",
+        "decision_semantic_target": None,
         "done": False,
     }
     await compiled.ainvoke(final_state, config={"recursion_limit": max_turns * 4})

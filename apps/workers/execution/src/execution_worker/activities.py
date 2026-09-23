@@ -1377,6 +1377,10 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
                     live_inspection_locators=(
                         live_inspection_result.locator_candidates if live_inspection_result else None
                     ),
+                    live_inspection_aria_snapshot=(
+                        live_inspection_result.aria_snapshot if live_inspection_result else None
+                    ),
+                    application_context=ctx.application.application_context,
                 )
             except Exception:
                 logger.exception(

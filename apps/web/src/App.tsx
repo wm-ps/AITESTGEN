@@ -62,7 +62,7 @@ function RecordIcon() {
 const JOURNEYS_TAB = { key: 'journeys', label: 'Journeys', heading: 'Discover Journeys', icon: JourneysIcon }
 const SCENARIOS_TAB = { key: 'scenarios', label: 'Scenarios', heading: 'Review Scenarios', icon: ScenariosIcon }
 const RECORD_TAB = { key: 'record', label: 'Record and play', heading: 'Record and play', icon: RecordIcon }
-const TAB_ORDER = ['overview', 'journeys', 'scenarios', 'suite', 'runs', 'record', 'schedules', 'export']
+const TAB_ORDER = ['overview', 'journeys', 'scenarios', 'suite', 'runs', 'record', 'schedules', 'export', 'notes']
 
 // Invite links point at /accept-invite?token=... — handled before the
 // signed-in check below since accepting an invite never requires an

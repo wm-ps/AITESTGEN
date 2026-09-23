@@ -109,8 +109,10 @@ describe('ReviewScenarios', () => {
 
     await waitFor(() => screen.getByText('Guest checkout'))
     fireEvent.click(screen.getByText('Guest checkout'))
+    // Per-field hint on the missing mandatory field (`username`) — there's
+    // no separate list-level readiness pill/badge anymore.
     await waitFor(() => {
-      expect(screen.getAllByText('Test Data Required').length).toBeGreaterThan(0)
+      expect(screen.getAllByText('Required to generate this test').length).toBeGreaterThan(0)
     })
     const button = screen.getByRole('button', {
       name: 'Generate test cases',

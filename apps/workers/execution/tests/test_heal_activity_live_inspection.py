@@ -197,6 +197,7 @@ async def test_live_inspection_runs_and_heal_attempt_count_increments_exactly_on
         url=application.url,
         locator_candidates=[{"strategy": "testid", "value": '[data-testid="save"]'}],
         page_title="Checkout",
+        aria_snapshot='- generic [ref=e1]:\n  - button "Save" [ref=e2]\n',
     )
     fake_run_live_inspection = AsyncMock(return_value=inspection_result)
     monkeypatch.setattr(activities_module, "run_live_inspection", fake_run_live_inspection)
@@ -219,6 +220,10 @@ async def test_live_inspection_runs_and_heal_attempt_count_increments_exactly_on
     assert (
         _FakeAIProvider.calls[0]["live_inspection_locators"]
         == inspection_result.locator_candidates
+    )
+    assert (
+        _FakeAIProvider.calls[0]["live_inspection_aria_snapshot"]
+        == inspection_result.aria_snapshot
     )
 
     with Session(engine) as session:

@@ -2,6 +2,7 @@ from generation_worker.live_exploration.live_flow import (
     FIELD_ROLES,
     LiveFlowModel,
     LiveFlowStep,
+    extract_snapshot_context,
     find_snapshot_node,
     snapshot_node_to_locator_candidate,
     sweep_interactive_nodes,
@@ -169,3 +170,62 @@ def test_ordered_pages_collapses_consecutive_same_page_steps() -> None:
     )
 
     assert model.ordered_pages() == [("/tenants", "Tenants"), ("/tenants/mcp", "MCP Connections")]
+
+
+# Same shape as the real Tenant/Engagement case this was built for: two
+# elements with an identical role and no accessible name of their own
+# (`snapshot_node_to_locator_candidate` alone would produce the exact same
+# locator candidate for both) — `extract_snapshot_context` is what lets a
+# later stage still tell them apart.
+_DIALOG_SNAPSHOT = (
+    '- generic [ref=e1]:\n'
+    '  - dialog "Filters" [ref=e2]:\n'
+    '    - generic [ref=e3]:\n'
+    '      - text "Tenant" [ref=e4]\n'
+    '      - combobox [ref=e5] [expanded=false]\n'
+    '      - text "Engagement" [ref=e6]\n'
+    '      - combobox [ref=e7] [expanded=false] [disabled=true]\n'
+)
+
+
+def test_extract_snapshot_context_distinguishes_same_role_siblings_by_preceding_label() -> None:
+    tenant = extract_snapshot_context(_DIALOG_SNAPSHOT, "e5")
+    engagement = extract_snapshot_context(_DIALOG_SNAPSHOT, "e7")
+
+    assert tenant["preceding_sibling"] == {"role": "text", "name": "Tenant"}
+    assert engagement["preceding_sibling"] == {"role": "text", "name": "Engagement"}
+    # Distinct despite `snapshot_node_to_locator_candidate` producing the
+    # identical `get_by_role("combobox")` locator for both.
+    assert tenant["preceding_sibling"] != engagement["preceding_sibling"]
+
+
+def test_extract_snapshot_context_includes_the_enclosing_dialog_as_an_ancestor() -> None:
+    context = extract_snapshot_context(_DIALOG_SNAPSHOT, "e5")
+
+    assert any(a["role"] == "dialog" and a["name"] == "Filters" for a in context["ancestors"])
+
+
+def test_extract_snapshot_context_carries_non_ref_attributes_generically() -> None:
+    # No fixed schema/allowlist of attribute names — whatever the snapshot
+    # reports comes through as-is, `ref` excluded since it's already the
+    # locator candidate's own identity, not context.
+    context = extract_snapshot_context(_DIALOG_SNAPSHOT, "e7")
+
+    assert context["attributes"] == {"expanded": "false", "disabled": "true"}
+    assert "ref" not in context["attributes"]
+
+
+def test_extract_snapshot_context_returns_empty_for_an_unknown_ref() -> None:
+    assert extract_snapshot_context(_DIALOG_SNAPSHOT, "e999") == {}
+
+
+def test_extract_snapshot_context_handles_the_real_mcp_wrapper_format() -> None:
+    # Same `_REAL_SNAPSHOT` fixture above (verified live against a real
+    # `@playwright/mcp@0.0.41` server) — confirms the wrapper's preamble
+    # (` ### Page state`, `- Page URL: ...`, the ```yaml fence) doesn't
+    # break the indentation walk for a node nested well within the real
+    # tree.
+    context = extract_snapshot_context(_REAL_SNAPSHOT, "e6")
+
+    assert any(a["role"] == "paragraph" for a in context["ancestors"])
+    assert context["attributes"] == {"cursor": "pointer"}

@@ -73,6 +73,7 @@ class _FakeAIProvider:
         # blow up on an unexpected keyword argument.
         previous_code: str | None = None,
         changed_test_data: list[dict] | None = None,
+        application_context: dict | None = None,
     ) -> TestAssetCode:
         self.calls.append(str(scenario.external_id))
         self.known_pages_calls.append(known_pages or [])
@@ -790,12 +791,16 @@ def test_playwright_generation_activity_passes_live_action_sequence_from_capture
                 "element_tag": "button",
                 "value": 'get_by_role("button", name="Notifications")',
                 "element_description": "Notifications menu button",
+                "context": None,
+                "semantic_target": None,
             },
             {
                 "tool_name": "browser_click",
                 "element_tag": "menuitem",
                 "value": 'get_by_role("menuitem", name="Mark all as read")',
                 "element_description": "Mark all as read menu item",
+                "context": None,
+                "semantic_target": None,
             },
         ]
     ]

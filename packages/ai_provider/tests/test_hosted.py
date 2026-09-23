@@ -236,6 +236,40 @@ async def test_infer_journeys_live_call() -> None:
     assert all(isinstance(c.name, str) and c.name for c in candidates)
 
 
+async def test_infer_journeys_includes_relevant_application_context_sections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(
+        monkeypatch,
+        json.dumps({"journeys": []}),
+    )
+
+    await HostedAIProvider().infer_journeys(
+        [_fake_page("https://app.example.com/items")],
+        application_context={
+            "business_goal": "Manage clients, accounts and investments.",
+            "additional_context": "Prefer business-perspective workflows.",
+        },
+    )
+
+    content = captured["json"]["messages"][1]["content"]
+    assert "APPLICATION CONTEXT" in content
+    assert "Manage clients, accounts and investments." in content
+    # `additional_context` isn't in infer_journeys' relevant section list —
+    # present in the stored context but not this prompt.
+    assert "business-perspective workflows" not in content
+
+
+async def test_infer_journeys_omits_application_context_section_when_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(monkeypatch, json.dumps({"journeys": []}))
+
+    await HostedAIProvider().infer_journeys([_fake_page("https://app.example.com/items")])
+
+    assert "APPLICATION CONTEXT" not in captured["json"]["messages"][1]["content"]
+
+
 def _fake_scenario(**overrides) -> Scenario:
     defaults = dict(
         journey_id=uuid.uuid4(),
@@ -571,6 +605,25 @@ async def test_generate_scenarios_omits_live_session_section_when_absent(
     assert "Recorded live browser session" not in captured["json"]["messages"][1]["content"]
 
 
+async def test_generate_scenarios_includes_relevant_application_context_sections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(monkeypatch, _scenario_body("Happy scenario"))
+
+    await HostedAIProvider().generate_scenarios(
+        _fake_journey(),
+        [_fake_page("https://a.example.com")],
+        limit=1,
+        application_context={
+            "business_rules": ["Engagements shown depend on the selected tenant."],
+        },
+    )
+
+    content = captured["json"]["messages"][1]["content"]
+    assert "APPLICATION CONTEXT" in content
+    assert "Engagements shown depend on the selected tenant." in content
+
+
 async def test_generate_playwright_returns_code(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _monkeypatch_post(
         monkeypatch,
@@ -894,6 +947,124 @@ async def test_generate_playwright_includes_ordered_live_action_sequence_in_prom
     assert '1. browser_click on <combobox> -> get_by_role("combobox", name="Server type")' \
         in content
     assert '2. browser_click on <option> -> get_by_role("option", name="GIT")' in content
+
+
+async def test_generate_playwright_includes_action_sequence_context_when_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[ADDED semantic-context]` Two steps with the identical locator value
+    (the real Tenant/Engagement case: both unlabeled comboboxes) must still
+    reach the prompt distinguishably via each entry's structural `context`
+    (see `live_flow.extract_snapshot_context`) — not just its prose
+    `element_description`."""
+    captured = _monkeypatch_post(monkeypatch, "test('filter', async ({ page }) => {})")
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(
+        scenario,
+        live_action_sequence=[
+            {
+                "tool_name": "browser_click",
+                "value": 'get_by_role("combobox")',
+                "element_tag": "combobox",
+                "element_description": None,
+                "context": {
+                    "ancestors": [{"role": "dialog", "name": "Filters"}],
+                    "preceding_sibling": {"role": "text", "name": "Tenant"},
+                },
+            },
+            {
+                "tool_name": "browser_click",
+                "value": 'get_by_role("combobox")',
+                "element_tag": "combobox",
+                "element_description": None,
+                "context": {
+                    "ancestors": [{"role": "dialog", "name": "Filters"}],
+                    "preceding_sibling": {"role": "text", "name": "Engagement"},
+                    "attributes": {"disabled": "true"},
+                },
+            },
+        ],
+    )
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert 'preceded by text "Tenant"' in content
+    assert 'preceded by text "Engagement"' in content
+    assert "disabled=true" in content
+    # The two entries must render distinguishably despite the identical
+    # locator value — this is the whole point.
+    tenant_line = next(line for line in content.splitlines() if "Tenant" in line)
+    engagement_line = next(line for line in content.splitlines() if "Engagement" in line)
+    assert tenant_line != engagement_line
+
+
+async def test_generate_playwright_includes_live_aria_snapshot_when_provided(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[ADDED semantic-context]` `live_inspection.LiveInspectionResult
+    .aria_snapshot` was already captured during a heal attempt but only
+    ever logged — this confirms it now actually reaches the healing
+    prompt as supplementary structural evidence alongside the flat
+    candidate list, when the caller provides it."""
+    captured = _monkeypatch_post(monkeypatch, "test('add connection', async ({ page }) => {})")
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(
+        scenario,
+        previous_code="// old code",
+        failure_error_message="element not found",
+        live_inspection_locators=[
+            {"strategy": "role", "value": 'get_by_role("button")', "element_tag": "button"}
+        ],
+        live_inspection_aria_snapshot='- button "IND" [ref=e399]',
+    )
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert 'button "IND" [ref=e399]' in content
+
+
+async def test_generate_playwright_omits_live_aria_snapshot_section_when_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backward compatibility: a caller that never passes
+    `live_inspection_aria_snapshot` (every call site before this session,
+    and any heal attempt where the live inspection itself failed) gets
+    exactly the same prompt as before this parameter existed."""
+    captured = _monkeypatch_post(monkeypatch, "test('add connection', async ({ page }) => {})")
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(
+        scenario,
+        previous_code="// old code",
+        failure_error_message="element not found",
+        live_inspection_locators=[
+            {"strategy": "role", "value": 'get_by_role("button")', "element_tag": "button"}
+        ],
+    )
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "accessibility tree below" not in content
+
+
+async def test_generate_playwright_includes_relevant_application_context_sections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(monkeypatch, "test('guest checkout', async ({ page }) => {})")
+    scenario = _fake_scenario()
+
+    await HostedAIProvider().generate_playwright(
+        scenario,
+        application_context={
+            "additional_context": "Prefer testing workflows from the business perspective.",
+            # Not in PLAYWRIGHT_GENERATION_SECTIONS — must not reach this prompt.
+            "business_domain": "Wealth management for retail investors.",
+        },
+    )
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "APPLICATION CONTEXT" in content
+    assert "Prefer testing workflows from the business perspective." in content
+    assert "Wealth management for retail investors." not in content
 
 
 async def test_generate_playwright_prompt_requires_ensure_visible_for_sequence_steps_too(
@@ -1302,3 +1473,254 @@ async def test_heal_prompt_allows_a_click_to_confirm_a_dropdown_option(
     assert "your NEXT turn must be \"browser_click\"" in system_prompt
     assert "not destructive" in system_prompt
     assert "never submits" in system_prompt or "never goes on to submit" in system_prompt
+
+
+async def test_decide_live_exploration_action_parses_semantic_target_for_a_value_in_a_named_dropdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[ADDED semantic-target]` "Select Mango in the Fruits dropdown" — the
+    target/value relationship must come back as its own explicit structure,
+    independent of whatever DOM role/tag the model saw ("dropdown" in the
+    prompt is semantic language, never a forced ARIA role)."""
+    captured = _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {
+                "semantic_target": {
+                    "action": "select",
+                    "target": {"name": "Fruits"},
+                    "value": "Mango",
+                    "relationship": {"type": "value_belongs_to_target"},
+                },
+                "tool_name": "browser_click",
+                "tool_args": {"element": "Mango option", "ref": "e9"},
+                "rationale": "select Mango from the now-open Fruits control",
+                "goal_satisfied": False,
+            }
+        ),
+    )
+
+    result = await HostedAIProvider().decide_live_exploration_action(
+        requirement="Select Mango in the Fruits dropdown.",
+        history=[],
+        snapshot={"role": "main"},
+    )
+
+    assert result.semantic_target == {
+        "action": "select",
+        "target": {"name": "Fruits"},
+        "value": "Mango",
+        "relationship": {"type": "value_belongs_to_target"},
+    }
+    # The identity carries no DOM vocabulary at all — no role/tag/selector.
+    assert "role" not in result.semantic_target
+    assert "semantic_target" in captured["json"]["messages"][0]["content"]
+
+
+async def test_decide_live_exploration_action_parses_semantic_target_for_server_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """"Select GIT as the server type" — target name is "Server Type", not
+    whatever role/tag the real control happens to use (verified live:
+    a no-ARIA-role `<div>`, in the real case this was built for)."""
+    captured = _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {
+                "semantic_target": {
+                    "action": "select",
+                    "target": {"name": "Server Type"},
+                    "value": "GIT",
+                    "relationship": {"type": "value_belongs_to_target"},
+                },
+                "tool_name": "browser_click",
+                "tool_args": {"element": "GIT option", "ref": "e7"},
+                "rationale": "select GIT",
+                "goal_satisfied": False,
+            }
+        ),
+    )
+
+    result = await HostedAIProvider().decide_live_exploration_action(
+        requirement="Select GIT as the server type.", history=[], snapshot={"role": "main"}
+    )
+
+    assert result.semantic_target["target"] == {"name": "Server Type"}
+    assert result.semantic_target["value"] == "GIT"
+    assert captured["json"]["response_format"] == {"type": "json_object"}
+
+
+async def test_decide_live_exploration_action_parses_contextual_semantic_target(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """"For the first tenant, click the settings icon" — the container
+    qualifier must survive as explicit context, never collapsed into a
+    positional `.first()`/`.nth()` instruction anywhere in this layer."""
+    _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {
+                "semantic_target": {
+                    "action": "click",
+                    "target": {"name": "settings"},
+                    "context": {"container": "first tenant"},
+                },
+                "tool_name": "browser_click",
+                "tool_args": {"element": "settings icon for Acme tenant row", "ref": "e4"},
+                "rationale": "click the settings icon on the first tenant row",
+                "goal_satisfied": False,
+            }
+        ),
+    )
+
+    result = await HostedAIProvider().decide_live_exploration_action(
+        requirement="For the first tenant, click the settings icon.",
+        history=[],
+        snapshot={"role": "main"},
+    )
+
+    assert result.semantic_target["target"] == {"name": "settings"}
+    assert result.semantic_target["context"] == {"container": "first tenant"}
+
+
+async def test_decide_live_exploration_action_semantic_target_is_optional_and_backward_compatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two ways an older/uncooperative response shape must degrade safely:
+    the key entirely absent (any response shaped exactly like it was before
+    this field existed), and a hallucinated non-dict value — both must
+    produce `semantic_target=None`, never a crash or a trusted garbage
+    value."""
+    _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {
+                "tool_name": "browser_snapshot",
+                "tool_args": {},
+                "rationale": "look around",
+                "goal_satisfied": False,
+            }
+        ),
+    )
+    absent = await HostedAIProvider().decide_live_exploration_action(
+        requirement="x", history=[], snapshot={"role": "main"}
+    )
+    assert absent.semantic_target is None
+
+    _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {
+                "semantic_target": "Fruits",
+                "tool_name": "browser_snapshot",
+                "tool_args": {},
+                "rationale": "look around",
+                "goal_satisfied": False,
+            }
+        ),
+    )
+    malformed = await HostedAIProvider().decide_live_exploration_action(
+        requirement="x", history=[], snapshot={"role": "main"}
+    )
+    assert malformed.semantic_target is None
+
+
+async def test_decide_live_exploration_action_renders_semantic_target_from_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A later turn (e.g. choosing "Mango" after an earlier turn opened
+    "Fruits") must still see that earlier turn's semantic identity in its
+    own prompt — this is what lets a multi-step interaction stay anchored to
+    the same target across turns instead of re-guessing it from scratch."""
+    captured = _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {
+                "tool_name": "browser_click",
+                "tool_args": {"ref": "e9"},
+                "rationale": "select Mango",
+                "goal_satisfied": True,
+            }
+        ),
+    )
+
+    await HostedAIProvider().decide_live_exploration_action(
+        requirement="Select Mango in the Fruits dropdown.",
+        history=[
+            {
+                "tool_name": "browser_click",
+                "tool_args": {"ref": "e5"},
+                "rationale": "open the Fruits control",
+                "semantic_target": {"action": "click", "target": {"name": "Fruits"}},
+            }
+        ],
+        snapshot={"role": "main"},
+    )
+
+    user_prompt = captured["json"]["messages"][1]["content"]
+    assert 'click "Fruits"' in user_prompt
+
+
+async def test_decide_live_exploration_action_includes_relevant_application_context_sections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured = _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {"tool_name": "browser_snapshot", "tool_args": {}, "rationale": "x", "goal_satisfied": False}
+        ),
+    )
+
+    await HostedAIProvider().decide_live_exploration_action(
+        requirement="Select the engagement for the first tenant.",
+        history=[],
+        snapshot={"role": "main"},
+        application_context={
+            "business_rules": ["Engagements shown depend on the selected tenant."],
+            # Not in LIVE_EXPLORATION_SECTIONS — must not reach this prompt.
+            "business_goal": "Manage clients, accounts and investments.",
+        },
+    )
+
+    user_prompt = captured["json"]["messages"][1]["content"]
+    assert "APPLICATION CONTEXT" in user_prompt
+    assert "Engagements shown depend on the selected tenant." in user_prompt
+    assert "Manage clients, accounts and investments." not in user_prompt
+
+
+async def test_decide_live_exploration_action_combines_semantic_target_and_application_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """§19 — Semantic Target and Application Context must coexist: a
+    "select the engagement for the first tenant" request still gets its own
+    per-turn semantic_target extraction AND sees the persisted business rule
+    explaining why Engagement depends on Tenant, in the same call."""
+    captured = _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {
+                "semantic_target": {
+                    "action": "select",
+                    "target": {"name": "Engagement"},
+                    "relationship": {"type": "value_belongs_to_target"},
+                },
+                "tool_name": "browser_click",
+                "tool_args": {"ref": "e9"},
+                "rationale": "open the Engagement control for the first tenant",
+                "goal_satisfied": False,
+            }
+        ),
+    )
+
+    result = await HostedAIProvider().decide_live_exploration_action(
+        requirement="Select the engagement for the first tenant.",
+        history=[],
+        snapshot={"role": "main"},
+        application_context={
+            "business_rules": ["Engagement options depend on the selected tenant."],
+        },
+    )
+
+    assert result.semantic_target["target"] == {"name": "Engagement"}
+    user_prompt = captured["json"]["messages"][1]["content"]
+    assert "Engagement options depend on the selected tenant." in user_prompt

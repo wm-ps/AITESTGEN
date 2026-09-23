@@ -34,6 +34,7 @@ pytestmark = pytest.mark.skipif(
 class _FakeAIProvider:
     def __init__(self, candidates: list[ScenarioCandidate]) -> None:
         self._candidates = candidates
+        self.application_context_calls: list[dict | None] = []
 
     async def generate_scenarios(
         self,
@@ -41,11 +42,13 @@ class _FakeAIProvider:
         pages: list[Page],
         limit: int | None = None,
         requested_counts: dict[str, int] | None = None,
+        application_context: dict | None = None,
     ) -> list[ScenarioCandidate]:
+        self.application_context_calls.append(application_context)
         return self._candidates if limit is None else self._candidates[:limit]
 
 
-def _seed_journey() -> Journey:
+def _seed_journey(application_context: dict | None = None) -> Journey:
     with Session(engine) as session:
         org = Organization(name=f"Org {uuid.uuid4()}")
         session.add(org)
@@ -58,6 +61,7 @@ def _seed_journey() -> Journey:
             environment="test",
             auth_method="standard_login",
             secret_ref="applications/irrelevant/secret",
+            application_context=application_context,
         )
         session.add(application)
         session.flush()
@@ -154,6 +158,51 @@ def test_scenario_generation_activity_creates_scenarios_with_blank_test_data(
 
         negative = next(s for s in scenarios if s.type == "negative")
         assert negative.name == "Checkout with expired card"
+
+
+def test_scenario_generation_activity_passes_application_context_to_ai_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Application's own persisted context (business goal/rules/etc, see
+    `domain.Application.application_context`) must reach `generate_scenarios`
+    — loaded fresh via `journey.application_id`, since `ScenarioGenerationActivity`
+    doesn't otherwise touch the Application row at all."""
+    init_db()
+    journey = _seed_journey(
+        application_context={"business_rules": ["Engagement depends on selected tenant."]}
+    )
+    fake_provider = _FakeAIProvider([])
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    asyncio.run(
+        activities_module.scenario_generation_activity(
+            ScenarioGenerationActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+
+    assert fake_provider.application_context_calls == [
+        {"business_rules": ["Engagement depends on selected tenant."]}
+    ]
+
+
+def test_scenario_generation_activity_works_without_application_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backward compatibility: an Application with no saved context (every
+    existing Application, and any new one before this feature is used) must
+    keep generating scenarios exactly as before."""
+    init_db()
+    journey = _seed_journey()
+    fake_provider = _FakeAIProvider([])
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: fake_provider)
+
+    asyncio.run(
+        activities_module.scenario_generation_activity(
+            ScenarioGenerationActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+
+    assert fake_provider.application_context_calls == [None]
 
 
 def test_scenario_generation_activity_applies_provided_test_data_to_happy_path_only(

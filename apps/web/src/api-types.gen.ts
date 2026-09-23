@@ -338,6 +338,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/{external_id}/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Application Context
+         * @description Persistent, user-authored Application Context (business goal/domain,
+         *     workflows, session/auth behavior, business rules, entity relationships,
+         *     app-specific behavior, testing guidance, additional context) — complements
+         *     crawler/live-exploration knowledge with what the AI can't reliably
+         *     discover on its own. A full replace of the stored context (see
+         *     `ApplicationContext`'s docstring) — every field optional, `None`/blank
+         *     fields simply aren't rendered into any prompt (`ai_provider.
+         *     application_context.build_application_context_block`). Never contains
+         *     credentials/secrets — this is business/domain prose, not connection
+         *     config, and nothing here is ever treated as a system-level instruction.
+         */
+        patch: operations["update_application_context_applications__external_id__context_patch"];
+        trace?: never;
+    };
     "/applications/{external_id}/credentials": {
         parameters: {
             query?: never;
@@ -1237,6 +1266,36 @@ export interface components {
             /** Password */
             password: string;
         };
+        /**
+         * ApplicationContext
+         * @description User-authored, persistent application knowledge (see
+         *     `domain.Application.application_context`) — every field optional, so a
+         *     user can fill in only what they know (§5). Used both as the shape
+         *     `ApplicationRead` returns and as the update endpoint's payload: an
+         *     update is a full replace of the stored context, not a per-field PATCH
+         *     merge — the edit UI always shows/saves the whole form at once, so
+         *     there's no partial-update case to support yet.
+         */
+        ApplicationContext: {
+            /** Business Goal */
+            business_goal?: string | null;
+            /** Business Domain */
+            business_domain?: string | null;
+            /** Important Workflows */
+            important_workflows?: string[] | null;
+            /** Session Behavior */
+            session_behavior?: string | null;
+            /** Business Rules */
+            business_rules?: string[] | null;
+            /** Entity Relationships */
+            entity_relationships?: string[] | null;
+            /** Application Behavior */
+            application_behavior?: string[] | null;
+            /** Testing Guidance */
+            testing_guidance?: string | null;
+            /** Additional Context */
+            additional_context?: string | null;
+        };
         /** ApplicationCreate */
         ApplicationCreate: {
             /** Name */
@@ -1326,6 +1385,7 @@ export interface components {
             discovery_coverage_summary?: {
                 [key: string]: number;
             } | null;
+            application_context?: components["schemas"]["ApplicationContext"] | null;
         };
         /** ApplicationRenamePayload */
         ApplicationRenamePayload: {
@@ -1487,6 +1547,7 @@ export interface components {
             discovery_coverage_summary?: {
                 [key: string]: number;
             } | null;
+            application_context?: components["schemas"]["ApplicationContext"] | null;
             /** Journey Count */
             journey_count: number;
             /** Scenario Count */
@@ -2946,6 +3007,43 @@ export interface operations {
                     "application/json": {
                         [key: string]: boolean | number;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_application_context_applications__external_id__context_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplicationContext"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationRead"];
                 };
             };
             /** @description Validation Error */

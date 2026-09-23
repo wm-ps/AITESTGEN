@@ -586,13 +586,15 @@ export function ReviewScenarios({
                                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 13 }}>
                                           {scenario.test_data.map((field) => {
                                             const missing = field.mandatory && !field.value
+                                            const fieldId = `test-data-${scenario.id}-${field.name}`
                                             return (
                                               <div key={field.name} style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
-                                                <label style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)' }}>
+                                                <label htmlFor={fieldId} style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)' }}>
                                                   {field.name}
                                                   {field.mandatory && <span style={{ color: 'var(--bad)' }}> *</span>}
                                                 </label>
                                                 <input
+                                                  id={fieldId}
                                                   defaultValue={field.value ?? ''}
                                                   placeholder={`Enter ${field.name}`}
                                                   onBlur={(e) => handleTestDataChange(scenario.id, field.name, e.target.value)}

@@ -57,6 +57,7 @@ class _FakeAIProvider:
         target_url: str | None = None,
         failure_screenshot_png: bytes | None = None,
         live_inspection_locators: list[dict] | None = None,
+        application_context: dict | None = None,
     ) -> TestAssetCode:
         self.previous_code_calls.append(previous_code)
         self.changed_test_data_calls.append(changed_test_data)

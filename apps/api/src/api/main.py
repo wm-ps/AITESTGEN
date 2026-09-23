@@ -416,6 +416,43 @@ def reset_password_route(payload: ResetPasswordRequest, session: SessionDep) -> 
     return _to_user_read(user)
 
 
+_APPLICATION_CONTEXT_FIELD_MAX_LENGTH = 2000
+
+
+class ApplicationContext(BaseModel):
+    """User-authored, persistent application knowledge (see
+    `domain.Application.application_context`), shown in the UI as "Notes" —
+    every field optional, so a user can fill in only what they know. Used
+    as the shape `ApplicationRead` returns, as the context-update endpoint's
+    payload (a full replace, not a per-field PATCH merge — the edit UI
+    always shows/saves the whole form at once), and optionally on
+    `ApplicationCreate` (Add-application onboarding) — that path exists so
+    the very first `InferenceActivity` run (chained automatically after the
+    initial crawl, before there's ever a chance to visit the Notes tab) can
+    already see it. Each field is capped at 2,000 characters — the
+    browser's own `maxLength` is the primary gate (matches the UI's live
+    counter); this is the server-side backstop for a direct API call."""
+
+    business_goal: str | None = Field(default=None, max_length=_APPLICATION_CONTEXT_FIELD_MAX_LENGTH)
+    business_domain: str | None = Field(default=None, max_length=_APPLICATION_CONTEXT_FIELD_MAX_LENGTH)
+    business_rules: list[str] | None = None
+    additional_context: str | None = Field(
+        default=None, max_length=_APPLICATION_CONTEXT_FIELD_MAX_LENGTH
+    )
+
+    @field_validator("business_rules")
+    @classmethod
+    def _business_rules_within_field_length(cls, value: list[str] | None) -> list[str] | None:
+        # `business_rules` arrives as already-split lines (one rule per line
+        # in the UI's own textarea) — the 2,000-character budget applies to
+        # that original joined text, same as every other field's raw input.
+        if value and len("\n".join(value)) > _APPLICATION_CONTEXT_FIELD_MAX_LENGTH:
+            raise ValueError(
+                f"business_rules must be at most {_APPLICATION_CONTEXT_FIELD_MAX_LENGTH} characters"
+            )
+        return value
+
+
 class ApplicationCreate(BaseModel):
     name: str
     url: str
@@ -445,6 +482,10 @@ class ApplicationCreate(BaseModel):
         "auth_method is 'sso_session_reuse'. The platform never performs the SSO/MFA "
         "handshake itself — it only reuses a session the customer supplies.",
     )
+    # Optional — lets onboarding provide Notes before the very first
+    # discovery run's InferenceActivity fires (see `ApplicationContext`'s
+    # docstring). Omitting it behaves exactly as before this field existed.
+    application_context: ApplicationContext | None = None
 
     @field_validator("username", "password", mode="before")
     @classmethod
@@ -514,6 +555,9 @@ class ApplicationRead(BaseModel):
     # (AD-15 is deliberate, non-exhaustive sampling). `None` for every other
     # status, where the full report is more useful than a partial count.
     discovery_coverage_summary: dict[str, int] | None = None
+    # `None` for every application that has never had context saved (the
+    # column's own default) — backward compatible, no migration backfill.
+    application_context: ApplicationContext | None = None
 
 
 class HealthRead(BaseModel):
@@ -616,6 +660,11 @@ def _to_application_read(
         discovery_coverage_summary=(
             _coverage_counts(session, discovery_run) if discovery_run.status == "complete" else None
         ),
+        application_context=(
+            ApplicationContext(**application.application_context)
+            if application.application_context
+            else None
+        ),
     )
 
 
@@ -670,6 +719,14 @@ async def create_application(
         environment=payload.environment,
         auth_method=payload.auth_method,
         secret_ref=secret_ref.path,
+        # Set before `start_discovery_run` below so the very first
+        # `InferenceActivity` run (chained automatically after the initial
+        # crawl) already has it — see `ApplicationContext`'s docstring.
+        application_context=(
+            payload.application_context.model_dump(exclude_none=True) or None
+            if payload.application_context
+            else None
+        ),
     )
     session.add(application)
     session.flush()
@@ -1071,6 +1128,33 @@ def rename_application(
 ) -> ApplicationRead:
     application = _get_org_application(session, organization_id, external_id)
     application.name = payload.name
+    session.add(application)
+    session.commit()
+    discovery_run = _latest_discovery_run(session, application.id)
+    assert discovery_run is not None
+    return _to_application_read(session, application, discovery_run)
+
+
+@app.patch("/applications/{external_id}/context", response_model=ApplicationRead)
+def update_application_context(
+    external_id: uuid.UUID,
+    payload: ApplicationContext,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> ApplicationRead:
+    """Persistent, user-authored Application Context (shown in the UI as
+    "Notes": business goal, business domain, business rules, additional
+    context) — complements crawler/live-exploration knowledge with what the
+    AI can't reliably discover on its own. A full replace of the stored
+    context (see
+    `ApplicationContext`'s docstring) — every field optional, `None`/blank
+    fields simply aren't rendered into any prompt (`ai_provider.
+    application_context.build_application_context_block`). Never contains
+    credentials/secrets — this is business/domain prose, not connection
+    config, and nothing here is ever treated as a system-level instruction."""
+    application = _get_org_application(session, organization_id, external_id)
+    application.application_context = payload.model_dump(exclude_none=True) or None
     session.add(application)
     session.commit()
     discovery_run = _latest_discovery_run(session, application.id)

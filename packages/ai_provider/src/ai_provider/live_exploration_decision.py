@@ -21,3 +21,13 @@ class LiveExplorationDecision:
     # audit, never shown to the end user as-is.
     rationale: str = ""
     goal_satisfied: bool = False
+    # `[ADDED semantic-target]` What this turn's action MEANS, independent of
+    # how it ends up implemented in the DOM — e.g. {"action": "select",
+    # "target": {"name": "Fruits"}, "value": "Mango", "relationship":
+    # {"type": "value_belongs_to_target"}}. Extracted by the same call that
+    # picks `tool_name`/`tool_args`, but kept as its own field so it stays
+    # the stable identity across turns (open a dropdown, then pick an option
+    # from it) even as `tool_args`/the resolved locator change turn to turn.
+    # Optional and best-effort — never required, never a replacement for
+    # `tool_args`/the locator candidate it resolves to.
+    semantic_target: dict[str, Any] | None = None

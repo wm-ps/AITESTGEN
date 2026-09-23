@@ -11,10 +11,31 @@ export type AcceptInviteRequest = { token: string; name: string; password: strin
 export type ForgotPasswordRequest = { email: string }
 export type ResetPasswordTarget = { name: string; email: string }
 export type ResetPasswordRequest = { token: string; password: string }
-export type ApplicationCreate = components['schemas']['ApplicationCreate']
-export type ApplicationRead = components['schemas']['ApplicationRead']
-// Not in api-types.gen.ts yet (backend schema is new, regenerate via
-// `npm run generate:api-types` once the API is running) — added by hand.
+// `application_context` isn't in api-types.gen.ts yet — added by hand
+// (regenerate via `npm run generate:api-types` once the API is running).
+// Optional: lets onboarding provide Notes before the very first
+// InferenceActivity run, which fires automatically right after the initial
+// crawl — before there's ever a chance to visit the Notes tab.
+export type ApplicationCreate = components['schemas']['ApplicationCreate'] & {
+  application_context?: ApplicationContext | null
+}
+// Every field optional — the user fills in only what they know
+// (`apps/api/src/api/main.py`'s `ApplicationContext`). Business/domain
+// knowledge the AI can't reliably discover from the DOM/crawler alone —
+// complements crawler + live-exploration knowledge, never replaces either.
+// Shown in the UI as "Notes" (NotesTab.tsx).
+export type ApplicationContext = {
+  business_goal: string | null
+  business_domain: string | null
+  business_rules: string[] | null
+  additional_context: string | null
+}
+// `application_context` isn't in api-types.gen.ts yet (backend schema is
+// new, regenerate via `npm run generate:api-types` once the API is
+// running) — added by hand, same convention as HomeApplicationRead below.
+export type ApplicationRead = components['schemas']['ApplicationRead'] & {
+  application_context: ApplicationContext | null
+}
 export type HomeApplicationRead = ApplicationRead & {
   journey_count: number
   scenario_count: number
@@ -375,6 +396,11 @@ export const api = {
     request<ApplicationRead>(`/applications/${applicationId}`, {
       method: 'PATCH',
       body: JSON.stringify({ name }),
+    }),
+  updateApplicationContext: (applicationId: string, context: ApplicationContext) =>
+    request<ApplicationRead>(`/applications/${applicationId}/context`, {
+      method: 'PATCH',
+      body: JSON.stringify(context),
     }),
   updateApplicationCredentials: (
     applicationId: string,

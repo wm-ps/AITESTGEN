@@ -30,6 +30,14 @@ from typing import Any
 import httpx
 from domain import Journey, Page, Scenario
 
+from ai_provider.application_context import (
+    JOURNEY_INFERENCE_SECTIONS,
+    LIVE_EXPLORATION_SECTIONS,
+    PLAYWRIGHT_GENERATION_SECTIONS,
+    SCENARIO_GENERATION_SECTIONS,
+    build_application_context_block,
+    present_sections,
+)
 from ai_provider.journey_candidate import JourneyCandidate, JourneyCandidateStep
 from ai_provider.live_exploration_decision import LiveExplorationDecision
 from ai_provider.scenario_candidate import ScenarioCandidate, TestDataFieldCandidate
@@ -47,6 +55,20 @@ _AI_TEMPERATURE_RAW = os.environ.get("AI_TEMPERATURE", "0.2")
 AI_TEMPERATURE = float(_AI_TEMPERATURE_RAW) if _AI_TEMPERATURE_RAW else None
 
 logger = logging.getLogger(__name__)
+
+
+def _log_application_context_usage(call_site: str, application_context: dict | None) -> None:
+    """§21 debug visibility — whether Application Context was present and,
+    if so, which recognized sections actually had content. Never logs the
+    content itself (it may be sensitive user-authored text)."""
+    sections = present_sections(application_context)
+    logger.debug(
+        "%s: application_context present=%s relevant_sections=%s",
+        call_site,
+        bool(sections),
+        sections,
+    )
+
 
 # AC1 backstop: a Journey name must be business language, never a raw route/
 # page identifier — this regex only catches the obvious case (starts with a
@@ -80,7 +102,8 @@ Respond with ONLY a JSON object of this shape, no prose: \
 {{"page_index": 0, "stage_label": "..."}}, {{"page_index": 2, "stage_label": "..."}}]}}, ...]}}"""
 
 _PROMPT_USER = """Pages (indexed):
-{page_listing}"""
+{page_listing}
+{application_context_section}"""
 
 
 def _describe_form(form) -> dict:
@@ -246,7 +269,8 @@ _SCENARIO_PROMPT_USER = """Journey: "{journey_name}"
 Steps (in order — each is a business-language stage of this Journey, with the captured \
 page/form/API/component detail behind it):
 {step_listing}
-{live_session_section}"""
+{live_session_section}
+{application_context_section}"""
 
 _PLAYWRIGHT_PROMPT_USER = """Application base URL: {base_url}
 
@@ -309,7 +333,8 @@ substring of a longer one on the same page (e.g. "New password" vs. "Confirm new
 "Amount" vs. "Loan Amount") resolves to BOTH elements and fails with a strict-mode violation \
 instead of the one you meant. `page.getByLabel("New password", {{ exact: true }})` — never a \
 bare `page.getByLabel("New password")` — is what actually isolates the field you want.
-{known_locators_listing}{failure_context}{live_inspection_context}{live_action_sequence_context}"""
+{known_locators_listing}{failure_context}{live_inspection_context}{live_action_sequence_context}\
+{application_context_section}"""
 
 _PLAYWRIGHT_FAILURE_CONTEXT = """
 
@@ -367,7 +392,25 @@ test's own authenticated session. These locator candidates were observed
 on the page at the time of this heal attempt — more reliable than the
 possibly-stale known locators above when they disagree:
 
-{live_locator_listing}"""
+{live_locator_listing}
+{live_aria_snapshot_section}"""
+
+# Only populated when a live inspection captured a real accessibility tree
+# (see `live_inspection.py`'s `LiveInspectionResult.aria_snapshot` — always
+# available whenever the candidates above are, so this and
+# `live_locator_listing` are gated the same way). Previously captured and
+# only ever logged, never given to this prompt — the flat candidate list
+# above says WHAT was found but not WHERE, which is exactly the evidence
+# needed when two candidates share the same role/value and only their
+# surrounding dialog/section/label tells them apart.
+_PLAYWRIGHT_LIVE_ARIA_SNAPSHOT_SECTION = """
+The full accessibility tree below is this same live page, captured at the same moment as the \
+candidates above. Use it the way you'd use any other structural context in this prompt: to see \
+which dialog/section/group an ambiguous candidate actually sits inside, or what label-like text \
+sits next to it, when the flat candidate list alone doesn't distinguish two otherwise-identical \
+options. Never invent an element that isn't present here.
+
+{live_aria_snapshot}"""
 
 _PLAYWRIGHT_LIVE_ACTION_SEQUENCE_CONTEXT = """
 
@@ -384,12 +427,14 @@ other interaction in this test, never a raw, unwrapped `.hover()`/`.click()`/`.f
 just because it came from this sequence. When two or more entries below resolve to the exact
 same locator value (common for an unlabeled combobox/input role that has no distinguishing
 accessible name), they are NOT interchangeable — each still targets a specific, different
-element. Use that entry's own parenthesized description and its position in this sequence
-relative to the others to write a locator that actually distinguishes it (e.g. scope the
-selector to the dialog/section/label the description names, or locate it relative to a
-nearby element the description or an earlier entry identifies) rather than defaulting straight
-to `.first()`/`.nth()`/`.last()`. Positional selection is a last resort, only once no other
-distinguishing evidence exists anywhere in this sequence or the Known locators above:
+element. Use that entry's own parenthesized description and its bracketed context (when
+present — its nearest enclosing dialog/section/group, the label-like element immediately
+before it, or attributes like expanded/checked/disabled observed on it live) to write a
+locator that actually distinguishes it — e.g. scope the selector to the dialog/section/label
+that context names, or locate it relative to a nearby element the context or an earlier entry
+identifies — rather than defaulting straight to `.first()`/`.nth()`/`.last()`. Positional
+selection is a last resort, only once no other distinguishing evidence exists anywhere in this
+sequence, its context, or the Known locators above:
 
 {action_sequence_listing}"""
 
@@ -957,6 +1002,31 @@ def _describe_known_locators(known_locators: list[dict[str, str]] | None) -> str
     return "\n".join(_describe_one(loc) for loc in known_locators)
 
 
+def _describe_semantic_target(semantic_target: dict | None) -> str:
+    """Renders a `LiveExplorationDecision.semantic_target` dict (see that
+    dataclass and the live-exploration/heal system prompts above) into a
+    short bracketed note — the "what this means" identity, kept visually
+    distinct from `_describe_context`'s "where it sits in the DOM" note so
+    a reader (human or model) can tell intent from implementation apart at
+    a glance. Never raises on a malformed/hallucinated shape."""
+    if not semantic_target:
+        return ""
+    target = semantic_target.get("target")
+    target_name = target.get("name") if isinstance(target, dict) else None
+    action = semantic_target.get("action")
+    head = f'{action} "{target_name}"' if action and target_name else action or target_name
+    if not head:
+        return ""
+    parts = [head]
+    value = semantic_target.get("value")
+    if value:
+        parts.append(f'value="{value}"')
+    context = semantic_target.get("context")
+    if isinstance(context, dict) and context:
+        parts.append(", ".join(f"{k}={v}" for k, v in context.items()))
+    return f" (intent: {'; '.join(parts)})"
+
+
 def _describe_live_locators(locator_candidates: list[dict] | None) -> str:
     """Live-inspection candidates (`locator_capture.extract_page_locator_
     snapshot`'s shape: strategy/value/fragile/element_tag) are structurally
@@ -977,24 +1047,55 @@ def _describe_live_locators(locator_candidates: list[dict] | None) -> str:
 def _describe_live_action_sequence(steps: list[dict] | None) -> str:
     """`LiveHealActivity`'s ordered replay: each entry is one live MCP
     action (`tool_name` + the same strategy/value/fragile/element_tag shape
-    `_describe_live_locators` uses, plus `element_description`) — order
-    matters here, unlike `_describe_live_locators`'s flat candidate list,
-    since an earlier entry is often a prerequisite (opening a dropdown/
-    menu/tab) the later target only becomes interactable after.
-    `element_description` (when present) is the decide-agent's own
-    free-text account of what it acted on — the only evidence available to
-    this listing that can distinguish two entries whose `value` is
-    otherwise identical (e.g. two unlabeled combobox roles); rendered here
-    so it actually reaches the model, unlike before this was added."""
+    `_describe_live_locators` uses, plus `element_description`/`context`/
+    `semantic_target`) — order matters here, unlike `_describe_live_locators`'s
+    flat candidate list, since an earlier entry is often a prerequisite
+    (opening a dropdown/menu/tab) the later target only becomes interactable
+    after. `element_description` (when present) is the decide-agent's own
+    free-text account of what it acted on; `context` (when present, see
+    `live_flow.extract_snapshot_context`) is structural evidence from the
+    live snapshot at that moment — its nearest ancestor(s), the label-like
+    node immediately before it, and its own non-ref attributes.
+    `semantic_target` (see `ai_provider.LiveExplorationDecision.semantic_target`)
+    is the decide-agent's own explicit intent — action/target name/value/
+    relationship — kept separate from `context` since one is identity ("what
+    this means") and the other is implementation evidence ("where it sits in
+    the DOM"). Together these are the evidence available to this listing
+    that can distinguish two entries whose `value` is otherwise identical
+    (e.g. two unlabeled combobox roles); rendered here so they actually
+    reach the model."""
     if not steps:
         return "(none)"
+
+    def _describe_context(context: dict | None) -> str:
+        if not context:
+            return ""
+        parts = []
+        ancestors = context.get("ancestors")
+        if ancestors:
+            trail = " < ".join(
+                f'{a["role"]} "{a["name"]}"' if a.get("name") else a["role"] for a in ancestors
+            )
+            parts.append(f"inside {trail}")
+        sibling = context.get("preceding_sibling")
+        if sibling and sibling.get("name"):
+            parts.append(f'preceded by {sibling["role"]} "{sibling["name"]}"')
+        attributes = context.get("attributes")
+        if attributes:
+            parts.append(", ".join(f"{k}={v}" for k, v in attributes.items()))
+        return f" [{'; '.join(parts)}]" if parts else ""
 
     def _describe_one(step: dict, index: int) -> str:
         tool = step.get("tool_name", "?")
         tag = step.get("element_tag", "")
         description = step.get("element_description")
         described = f' ("{description}")' if description else ""
-        return f"{index}. {tool} on <{tag}>{described} -> {step.get('value', '')}"
+        context_note = _describe_context(step.get("context"))
+        semantic_note = _describe_semantic_target(step.get("semantic_target"))
+        return (
+            f"{index}. {tool} on <{tag}>{described}{semantic_note}{context_note} "
+            f"-> {step.get('value', '')}"
+        )
 
     return "\n".join(_describe_one(step, i) for i, step in enumerate(steps, start=1))
 
@@ -1183,6 +1284,20 @@ current dialog/section, parent/child structure) to pick the one the requirement 
 means. If you truly cannot tell which, use `browser_snapshot` or `browser_hover` to gather \
 more evidence rather than guessing.
 
+Semantic target — before picking a tool call, state explicitly what this turn's action MEANS, \
+separately from how the page happens to implement it: an "action" (e.g. "select", "click", \
+"type"), the "target" the requirement names (its own "name", e.g. "Fruits", "Server Type", \
+"settings icon" — never a DOM role, tag, or CSS/ARIA selector), a "value" when the instruction \
+involves one (e.g. "Mango", "GIT"), a "relationship" when that value belongs to the named \
+target rather than standing alone (e.g. {{"type": "value_belongs_to_target"}}), and a \
+"context" only when the requirement itself qualifies which instance of a repeated target it \
+means (e.g. "the first tenant") — never invent context the requirement doesn't state. This \
+semantic target is the turn's identity: it stays the same across every turn still working \
+toward the same instruction (e.g. one turn opening the "Fruits" control and a later turn \
+choosing "Mango" from it share the same target name), even as the ref/tool_args/locator that \
+realize it change turn to turn as the DOM changes. Leave semantic_target null for turns that \
+don't act on a named target (e.g. a bare `browser_snapshot` taken only to look around).
+
 Pick the interaction the element's actual current state calls for, not whatever the \
 requirement's verb literally says — a combobox/listbox/menu needs opening before any option \
 inside it is choosable. Never call `browser_select_option`/`browser_click` on an option that \
@@ -1206,11 +1321,13 @@ result of your last action, direct evidence the requirement is fully met (e.g. t
 item visibly appears in a list) — never assume success from an action alone.
 - If a form/dialog appears, fill only the fields necessary to proceed.
 
-Respond with ONLY a JSON object of this shape, no prose: {{"tool_name": "...", "tool_args": \
-{{...}}, "rationale": "<one sentence>", "goal_satisfied": false}}"""
+Respond with ONLY a JSON object of this shape, no prose: {{"semantic_target": {{"action": \
+"...", "target": {{"name": "..."}}, "value": null, "relationship": null, "context": null}}, \
+"tool_name": "...", "tool_args": {{...}}, "rationale": "<one sentence>", "goal_satisfied": \
+false}}"""
 
 _LIVE_EXPLORATION_PROMPT_USER = """Requirement: {requirement}
-
+{application_context_section}
 Turns so far (oldest first):
 {history}
 
@@ -1233,6 +1350,15 @@ Available tools (call exactly one per turn):
 - browser_type({{"element": "...", "ref": "...", "text": "...", "submit": false}})
 - browser_hover({{"element": "...", "ref": "..."}})
 - browser_wait_for({{"text": "..."}}) or ({{"time": <seconds>}})
+
+Semantic target — state explicitly what the failed step MEANS, separately from any DOM role/ \
+selector: an "action" (e.g. "select", "click"), the "target" name the failed step describes \
+(e.g. "Server Type"), a "value" when it involves one (e.g. "GIT"), a "relationship" when that \
+value belongs to the named target (e.g. {{"type": "value_belongs_to_target"}}), and "context" \
+only when the failed step itself names which instance of a repeated target it means. This \
+identity stays the same across every turn of this heal, even as the ref/locator you find for \
+it changes. Leave it null for a turn that isn't yet acting on the target (e.g. an exploratory \
+`browser_snapshot`).
 
 Rules:
 - Every "ref" must come from the CURRENT snapshot below, never invented or reused from an \
@@ -1263,12 +1389,13 @@ hover for everything else) on the exact element first.
 are investigating, not executing the rest of the step. Selecting a dropdown/listbox/menu option \
 (see above) is the one confirming action that is not destructive and is always allowed.
 
-Respond with ONLY a JSON object of this shape, no prose: {{"tool_name": "...", "tool_args": \
-{{...}}, "rationale": "<one sentence, or the element identification once goal_satisfied>", \
-"goal_satisfied": false}}"""
+Respond with ONLY a JSON object of this shape, no prose: {{"semantic_target": {{"action": \
+"...", "target": {{"name": "..."}}, "value": null, "relationship": null, "context": null}}, \
+"tool_name": "...", "tool_args": {{...}}, "rationale": "<one sentence, or the element \
+identification once goal_satisfied>", "goal_satisfied": false}}"""
 
 _LIVE_HEAL_PROMPT_USER = """Failed step: {requirement}
-
+{application_context_section}
 Turns so far (oldest first):
 {history}
 
@@ -1322,12 +1449,23 @@ async def _chat_completion(
 class HostedAIProvider:
     """`AIProvider` (Protocol) adapter backed by a LiteLLM proxy server."""
 
-    async def infer_journeys(self, pages: list[Page]) -> list[JourneyCandidate]:
+    async def infer_journeys(
+        self, pages: list[Page], application_context: dict | None = None
+    ) -> list[JourneyCandidate]:
+        _log_application_context_usage("infer_journeys", application_context)
         listing = "\n".join(f"{i}: {_describe_page(p)}" for i, p in enumerate(pages))
         content = await _chat_completion(
             [
                 {"role": "system", "content": _PROMPT_SYSTEM},
-                {"role": "user", "content": _PROMPT_USER.format(page_listing=listing)},
+                {
+                    "role": "user",
+                    "content": _PROMPT_USER.format(
+                        page_listing=listing,
+                        application_context_section=build_application_context_block(
+                            application_context, JOURNEY_INFERENCE_SECTIONS
+                        ),
+                    ),
+                },
             ],
             response_format={"type": "json_object"},
             timeout=240,
@@ -1385,7 +1523,12 @@ class HostedAIProvider:
         pages: list[Page],
         limit: int | None = None,
         requested_counts: dict[str, int] | None = None,
+        application_context: dict | None = None,
     ) -> list[ScenarioCandidate]:
+        _log_application_context_usage("generate_scenarios", application_context)
+        application_context_section = build_application_context_block(
+            application_context, SCENARIO_GENERATION_SECTIONS
+        )
         # `pages` is already in step order, each carrying a transient
         # `.stage_label` (attached by ScenarioGenerationActivity the same way
         # InferenceActivity attaches `.forms`/`.components`/etc) — so the
@@ -1453,6 +1596,7 @@ class HostedAIProvider:
                                 journey_description_section=description_section,
                                 step_listing=listing,
                                 live_session_section=live_session_section,
+                                application_context_section=application_context_section,
                             ),
                         },
                     ],
@@ -1611,13 +1755,16 @@ class HostedAIProvider:
         snapshot: dict,
         *,
         is_heal: bool = False,
+        application_context: dict | None = None,
     ) -> LiveExplorationDecision:
+        _log_application_context_usage("decide_live_exploration_action", application_context)
         system_prompt = _LIVE_HEAL_PROMPT_SYSTEM if is_heal else _LIVE_EXPLORATION_PROMPT_SYSTEM
         user_template = _LIVE_HEAL_PROMPT_USER if is_heal else _LIVE_EXPLORATION_PROMPT_USER
         history_text = (
             "\n".join(
                 f"{i}. called {turn.get('tool_name')}({turn.get('tool_args')}) — "
                 f"{turn.get('rationale', '')}"
+                f"{_describe_semantic_target(turn.get('semantic_target'))}"
                 for i, turn in enumerate(history)
             )
             or "(none yet)"
@@ -1631,6 +1778,9 @@ class HostedAIProvider:
                         requirement=requirement,
                         history=history_text,
                         snapshot=json.dumps(snapshot),
+                        application_context_section=build_application_context_block(
+                            application_context, LIVE_EXPLORATION_SECTIONS
+                        ),
                     ),
                 },
             ],
@@ -1638,11 +1788,22 @@ class HostedAIProvider:
             timeout=60,
         )
         parsed = json.loads(content)
+        # Hallucination guard, same spirit as elsewhere in this file: only a
+        # genuine (non-empty) object is trusted as a semantic target — a
+        # malformed/omitted value degrades to `None`, exactly like it
+        # behaved before this field existed.
+        raw_semantic_target = parsed.get("semantic_target")
+        semantic_target = (
+            raw_semantic_target
+            if isinstance(raw_semantic_target, dict) and raw_semantic_target
+            else None
+        )
         return LiveExplorationDecision(
             tool_name=parsed["tool_name"],
             tool_args=parsed.get("tool_args") or {},
             rationale=parsed.get("rationale", ""),
             goal_satisfied=bool(parsed.get("goal_satisfied", False)),
+            semantic_target=semantic_target,
         )
 
     async def generate_playwright(
@@ -1667,7 +1828,16 @@ class HostedAIProvider:
         failure_screenshot_png: bytes | None = None,
         live_inspection_locators: list[dict] | None = None,
         live_action_sequence: list[dict] | None = None,
+        # `[ADDED semantic-context]` The same live inspection's own real
+        # accessibility tree (`live_inspection.LiveInspectionResult.
+        # aria_snapshot`) — already captured, previously only ever logged.
+        # Purely additive supplementary evidence alongside
+        # `live_inspection_locators`; omitting it leaves this call
+        # byte-for-byte what it was before this parameter existed.
+        live_inspection_aria_snapshot: str | None = None,
+        application_context: dict | None = None,
     ) -> TestAssetCode:
+        _log_application_context_usage("generate_playwright", application_context)
         step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
         base_url = getattr(scenario, "base_url", None) or ""
         # `[FIXED]` requires_auth used to tell the model to call
@@ -1729,9 +1899,17 @@ class HostedAIProvider:
             )
         else:
             failure_context = ""
+        live_aria_snapshot_section = (
+            _PLAYWRIGHT_LIVE_ARIA_SNAPSHOT_SECTION.format(
+                live_aria_snapshot=live_inspection_aria_snapshot
+            )
+            if live_inspection_aria_snapshot
+            else ""
+        )
         live_inspection_context = (
             _PLAYWRIGHT_LIVE_INSPECTION_CONTEXT.format(
-                live_locator_listing=_describe_live_locators(live_inspection_locators)
+                live_locator_listing=_describe_live_locators(live_inspection_locators),
+                live_aria_snapshot_section=live_aria_snapshot_section,
             )
             if live_inspection_locators
             else ""
@@ -1763,6 +1941,9 @@ class HostedAIProvider:
             failure_context=failure_context,
             live_inspection_context=live_inspection_context,
             live_action_sequence_context=live_action_sequence_context,
+            application_context_section=build_application_context_block(
+                application_context, PLAYWRIGHT_GENERATION_SECTIONS
+            ),
         )
         messages: list[dict[str, Any]] = [
             system_message,

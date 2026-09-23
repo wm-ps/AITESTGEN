@@ -49,13 +49,24 @@ describe('SchedulesTab', () => {
     )
 
     render(<SchedulesTab applicationId="app-1" />)
-    await waitFor(() => expect(screen.getByText('No schedules yet. Create one to run this Application\'s tests automatically on a recurring cadence.')).toBeInTheDocument())
+    // EmptyState renders title/subtitle as two separate elements, not one string.
+    await waitFor(() => expect(screen.getByText('No schedules yet')).toBeInTheDocument())
+    expect(
+      screen.getByText("Create one to run this Application's tests automatically on a recurring cadence."),
+    ).toBeInTheDocument()
 
     fireEvent.click(screen.getByText('New schedule'))
-    await waitFor(() => expect(screen.getByText('New schedule', { selector: 'h2' })).toBeInTheDocument())
+    // The dialog's own heading is a styled <div>, not an <h2> — and its text
+    // ("New schedule") duplicates the trigger button's, so disambiguate via
+    // the dialog's unique subtitle instead of the (now ambiguous) heading text.
+    await waitFor(() =>
+      expect(screen.getByText('Run discovery or the suite automatically on a cadence.')).toBeInTheDocument(),
+    )
 
     fireEvent.keyDown(document, { key: 'Escape' })
-    await waitFor(() => expect(screen.queryByText('New schedule', { selector: 'h2' })).not.toBeInTheDocument())
+    await waitFor(() =>
+      expect(screen.queryByText('Run discovery or the suite automatically on a cadence.')).not.toBeInTheDocument(),
+    )
   })
 
   it('the enable/disable toggle calls the right endpoint and re-lists', async () => {

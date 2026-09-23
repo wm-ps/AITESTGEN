@@ -45,7 +45,7 @@ describe('ScheduleDialog', () => {
 
     render(<ScheduleDialog applicationId="app-1" initial={null} onClose={() => {}} onSaved={onSaved} />)
 
-    fireEvent.change(screen.getByPlaceholderText('Nightly Regression'), {
+    fireEvent.change(screen.getByPlaceholderText('Enter a name for this schedule'), {
       target: { value: 'My Weekly Run' },
     })
     fireEvent.change(screen.getByText('Cadence').nextElementSibling as Element, {
@@ -79,7 +79,7 @@ describe('ScheduleDialog', () => {
     const onSaved = vi.fn()
 
     render(<ScheduleDialog applicationId="app-1" initial={null} onClose={() => {}} onSaved={onSaved} />)
-    fireEvent.change(screen.getByPlaceholderText('Nightly Regression'), { target: { value: 'X' } })
+    fireEvent.change(screen.getByPlaceholderText('Enter a name for this schedule'), { target: { value: 'X' } })
     fireEvent.click(screen.getByText('Create schedule'))
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('day_of_month must be 1-28'))

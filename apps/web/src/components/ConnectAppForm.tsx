@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBolt, faPlay, faPlugCircleCheck } from '@fortawesome/free-solid-svg-icons'
+import { faBolt, faPen, faPlay, faPlugCircleCheck } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type ApplicationCreate, type ApplicationRead } from '../api'
 import { LoadingDots } from './LoadingDots'
+import { EMPTY_NOTES_FORM, NotesFields, toNotesPayload, type NotesFormState } from './NotesFields'
 
 const KNOWN_ENVIRONMENTS = ['staging', 'production', 'qa']
 
@@ -57,6 +58,7 @@ export function ConnectAppForm({
   )
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [notes, setNotes] = useState<NotesFormState>(EMPTY_NOTES_FORM)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [testingConnection, setTestingConnection] = useState(false)
@@ -89,6 +91,9 @@ export function ConnectAppForm({
         auth_method: 'standard_login' as ApplicationCreate['auth_method'],
         username,
         password,
+        // Backend collapses an all-blank object to `null` — safe to always
+        // include, no need to check whether anything was actually typed.
+        application_context: toNotesPayload(notes),
       })
       onConnected(application)
     } catch (err) {
@@ -272,6 +277,20 @@ export function ConnectAppForm({
                 </Field>
               </div>
             </div>
+
+            {!readOnly && (
+              <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, padding: 14, background: 'var(--panel-2)', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <FontAwesomeIcon icon={faPen} style={{ fontSize: 12, color: 'var(--accent)' }} />
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-1)' }}>Notes (optional)</span>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: -8 }}>
+                  Business knowledge the AI can't discover on its own — available to the very first discovery run,
+                  before you'd otherwise get a chance to add it. You can always add or edit this later too.
+                </div>
+                <NotesFields form={notes} onChange={setNotes} />
+              </div>
+            )}
 
             {!readOnly && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', border: '1px solid var(--border-2)', borderRadius: 10, background: 'var(--panel-2)' }}>

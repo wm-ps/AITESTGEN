@@ -511,11 +511,13 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
             ordered_pages.append(page)
 
         settings = session.exec(select(DiscoverySettings)).one()
+        application = session.get(Application, journey.application_id)
         candidates = await HostedAIProvider().generate_scenarios(
             journey,
             ordered_pages,
             limit=settings.max_scenarios_per_journey,
             requested_counts=input.requested_scenario_counts or None,
+            application_context=application.application_context if application else None,
         )
 
         scenario_external_ids: list[str] = []
@@ -697,6 +699,7 @@ async def _generate_and_typecheck(
     live_action_sequence: list[dict] | None = None,
     previous_code: str | None = None,
     changed_test_data: list[dict] | None = None,
+    application_context: dict | None = None,
 ) -> TestAssetCode:
     """Shared AI-call + typecheck-retry loop — used by both
     `PlaywrightGenerationActivity` (fresh generation) and
@@ -718,6 +721,7 @@ async def _generate_and_typecheck(
             live_action_sequence=live_action_sequence,
             previous_code=previous_code,
             changed_test_data=changed_test_data,
+            application_context=application_context,
         )
         typecheck_errors = await typecheck_playwright_code(code.code)
         if not typecheck_errors:
@@ -778,6 +782,7 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
         requires_auth,
         primary_page_id,
         captured_flow,
+        application_context,
     ) = await asyncio.to_thread(_resolve_scenario_defaults_sync, input.scenario_id)
 
     # The proven-working ordered path through the app from live exploration
@@ -801,6 +806,18 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
             "element_tag": step.get("element_tag", ""),
             "value": step["value"],
             "element_description": step.get("element_description"),
+            # Ancestor/sibling/attribute evidence from the live snapshot at
+            # the moment this step acted (see `extract_snapshot_context`) —
+            # same rationale as `element_description` above: the only other
+            # thing that can distinguish two steps whose `value` is
+            # otherwise identical.
+            "context": step.get("context"),
+            # The decide-agent's own explicit intent for this step (see
+            # `ai_provider.LiveExplorationDecision.semantic_target`) —
+            # action/target name/value/relationship, independent of DOM
+            # shape. Additive: `None` for any step recorded before this
+            # field existed.
+            "semantic_target": step.get("semantic_target"),
         }
         for step in (captured_flow or [])
         if step.get("value")
@@ -824,6 +841,7 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
         field_input_types=field_input_types,
         log_label=f"PlaywrightGenerationActivity: scenario_id={input.scenario_id}",
         live_action_sequence=live_action_sequence,
+        application_context=application_context,
     )
 
     # Ground truth beats an LLM guess for the auth tag the same way it does
@@ -889,6 +907,7 @@ async def regenerate_test_asset_activity(input: RegenerateTestAssetActivityInput
         requires_auth,
         primary_page_id,
         _captured_flow,
+        application_context,
     ) = await asyncio.to_thread(_resolve_scenario_defaults_sync, input.scenario_id)
 
     current_asset_id, previous_code = await asyncio.to_thread(
@@ -912,6 +931,7 @@ async def regenerate_test_asset_activity(input: RegenerateTestAssetActivityInput
         log_label=f"RegenerateTestAssetActivity: scenario_id={input.scenario_id}",
         previous_code=previous_code,
         changed_test_data=scenario.test_data,
+        application_context=application_context,
     )
     tagged_code = spec_linter.apply_auth_tag(code.code, requires_auth)
 
@@ -1145,6 +1165,7 @@ _ScenarioDefaults = tuple[
     bool,
     uuid.UUID | None,
     list[dict] | None,
+    dict | None,
 ]
 
 
@@ -1163,6 +1184,7 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
 
         journey = session.get(Journey, scenario.journey_id)
         captured_flow = journey.captured_flow if journey else None
+        application = session.get(Application, journey.application_id) if journey else None
 
         required_fields: dict[str, bool] = {}
         field_input_types: dict[str, str] = {}
@@ -1170,7 +1192,6 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
         if primary_page_id is not None:
             required_fields = spec_linter.required_fields_for_pages(session, known_page_ids)
             field_input_types = spec_linter.field_input_types_for_pages(session, known_page_ids)
-            application = session.get(Application, journey.application_id) if journey else None
             primary_page = session.get(Page, primary_page_id)
             if application is not None:
                 requires_auth = spec_linter.resolve_requires_auth(
@@ -1255,6 +1276,7 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
             requires_auth,
             primary_page_id,
             captured_flow,
+            application.application_context if application else None,
         )
 
 

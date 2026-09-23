@@ -1212,7 +1212,9 @@ async def inference_activity(input: InferenceActivityInput) -> list[str]:
         )
 
         for batch in batches:
-            candidates = await HostedAIProvider().infer_journeys(batch)
+            candidates = await HostedAIProvider().infer_journeys(
+                batch, application_context=application.application_context
+            )
 
             for candidate in candidates:
                 if candidates_processed >= max_journeys:

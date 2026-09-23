@@ -32,7 +32,7 @@ class _FakeAIProvider:
         self.is_heal_calls: list[bool] = []
 
     async def decide_live_exploration_action(
-        self, requirement, history, snapshot, *, is_heal=False
+        self, requirement, history, snapshot, *, is_heal=False, application_context=None
     ) -> LiveExplorationDecision:
         self.is_heal_calls.append(is_heal)
         return self._decisions[len(self.is_heal_calls) - 1]
@@ -73,6 +73,11 @@ async def test_stops_when_goal_satisfied() -> None:
         "value": 'get_by_role("button", name="Create connection")',
         "fragile": False,
         "element_tag": "button",
+        # `context`: the button's only real ancestor in `_SNAPSHOT` below is
+        # the outer `generic [ref=e1]:` wrapper — the fixture's own
+        # "Page URL: ..." line is filtered out as page metadata, not a real
+        # sibling/ancestor (see `extract_snapshot_context`).
+        "context": {"ancestors": [{"role": "generic", "name": ""}]},
     }
     assert len(heartbeats) == 3  # one for the deterministic first navigation + one per observe turn
 
@@ -252,6 +257,119 @@ async def test_passes_is_heal_through_to_ai_provider() -> None:
     )
 
     assert ai_provider.is_heal_calls == [True]
+
+
+async def test_passes_application_context_through_to_ai_provider() -> None:
+    """`[ADDED application-context]` `Application.application_context` given
+    to `run_exploration` must reach every turn's `decide_live_exploration_action`
+    call — the mechanism that lets the agent reason with business rules
+    ("Engagement depends on selected Tenant") it can't discover from the DOM
+    alone."""
+    mcp_client = _FakeMCPClient()
+
+    class _RecordingAIProvider:
+        def __init__(self) -> None:
+            self.application_context_calls: list[dict | None] = []
+
+        async def decide_live_exploration_action(
+            self, requirement, history, snapshot, *, is_heal=False, application_context=None
+        ) -> LiveExplorationDecision:
+            self.application_context_calls.append(application_context)
+            return LiveExplorationDecision(
+                tool_name="browser_snapshot", tool_args={}, rationale="x", goal_satisfied=True
+            )
+
+    ai_provider = _RecordingAIProvider()
+    context = {"business_rules": ["Engagement depends on selected Tenant."]}
+
+    await run_exploration(
+        mcp_client=mcp_client,
+        ai_provider=ai_provider,
+        requirement="Select the engagement for the first tenant.",
+        start_url="https://app.example.com/tenants",
+        max_turns=3,
+        settle_retries=0,
+        application_context=context,
+    )
+
+    assert ai_provider.application_context_calls == [context]
+
+
+async def test_semantic_target_carries_from_decision_into_step_and_next_turns_history() -> None:
+    """`[ADDED semantic-target]` A two-turn "open Fruits, then select Mango"
+    interaction: each decision's `semantic_target` must land on its own
+    `LiveFlowStep` (the explicit identity, separate from the resolved
+    `locator_candidate`), and the first turn's target must still be visible
+    in `history` by the time the second turn's decision is requested — the
+    mechanism that lets a later turn stay anchored to the same target
+    instead of re-guessing it."""
+    mcp_client = _FakeMCPClient()
+
+    class _RecordingAIProvider:
+        def __init__(self, decisions: list[LiveExplorationDecision]) -> None:
+            self._decisions = decisions
+            self.history_calls: list[list[dict]] = []
+
+        async def decide_live_exploration_action(
+            self, requirement, history, snapshot, *, is_heal=False, application_context=None
+        ) -> LiveExplorationDecision:
+            self.history_calls.append(history)
+            return self._decisions[len(self.history_calls) - 1]
+
+    ai_provider = _RecordingAIProvider(
+        [
+            LiveExplorationDecision(
+                tool_name="browser_click",
+                tool_args={"element": "Fruits control", "ref": "e12"},
+                rationale="open the Fruits control",
+                goal_satisfied=False,
+                semantic_target={"action": "click", "target": {"name": "Fruits"}},
+            ),
+            LiveExplorationDecision(
+                tool_name="browser_click",
+                tool_args={"element": "Mango option", "ref": "e12"},
+                rationale="select Mango",
+                goal_satisfied=False,
+                semantic_target={
+                    "action": "select",
+                    "target": {"name": "Fruits"},
+                    "value": "Mango",
+                    "relationship": {"type": "value_belongs_to_target"},
+                },
+            ),
+            LiveExplorationDecision(
+                tool_name="browser_snapshot",
+                tool_args={},
+                rationale="verify Mango is now selected",
+                goal_satisfied=True,
+            ),
+        ]
+    )
+
+    live_flow = await run_exploration(
+        mcp_client=mcp_client,
+        ai_provider=ai_provider,
+        requirement="Select Mango in the Fruits dropdown.",
+        start_url="https://app.example.com/",
+        max_turns=10,
+        settle_retries=0,
+    )
+
+    assert live_flow.steps[0].semantic_target == {"action": "click", "target": {"name": "Fruits"}}
+    assert live_flow.steps[1].semantic_target == {
+        "action": "select",
+        "target": {"name": "Fruits"},
+        "value": "Mango",
+        "relationship": {"type": "value_belongs_to_target"},
+    }
+    # Second turn's decide() call saw the first turn's semantic target in
+    # its history — the identity survived the DOM-changing action between
+    # turns (opening the dropdown), not just the locator.
+    second_turn_history = ai_provider.history_calls[1]
+    assert second_turn_history[0]["semantic_target"] == {
+        "action": "click",
+        "target": {"name": "Fruits"},
+    }
 
 
 async def test_settles_after_a_click_before_the_next_observe() -> None:

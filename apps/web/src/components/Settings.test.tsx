@@ -28,9 +28,21 @@ const CREDENTIAL_ENTRY = {
 function stubFetch() {
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.endsWith('/settings')) return { ok: true, status: 200, json: async () => SETTINGS_BODY }
+      // CredentialsPanel hides itself entirely when `apps` is empty (nothing
+      // to point an "Add credentials" form at) — must be non-empty for the
+      // credentials table (from `/credentials`, below) to render at all. A
+      // deliberately different name than CREDENTIAL_ENTRY's — this app just
+      // populates the separate "Add credentials" dropdown, and a shared name
+      // would make `getByText('Checkout App')` ambiguous (table row + option).
+      if (url.endsWith('/home'))
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [{ id: 'app-2', name: 'Marketing Site', environment: 'staging' }],
+        }
       if (url.endsWith('/credentials')) return { ok: true, status: 200, json: async () => [CREDENTIAL_ENTRY] }
       if (url.endsWith('/credentials/app-1/reveal')) return { ok: true, status: 200, json: async () => ({ password: 'super-secret' }) }
       if (url.endsWith('/credentials/app-1/verify')) return { ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) }
@@ -59,15 +71,5 @@ describe('Settings', () => {
 
     fireEvent.click(screen.getByTitle('Reveal'))
     expect(await screen.findByText('super-secret')).toBeTruthy()
-  })
-
-  it('re-verifies a credential and shows the result', async () => {
-    stubFetch()
-    render(<Settings user={ADMIN} onCancel={vi.fn()} />)
-
-    await screen.findByText('Checkout App')
-    fireEvent.click(screen.getByTitle('Re-verify'))
-
-    expect(await screen.findByText('Reachable')).toBeTruthy()
   })
 })

@@ -16,9 +16,10 @@ exclusive, so one column suffices — switching `auth_method` repoints
 
 import uuid
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -107,4 +108,17 @@ class Application(SQLModel, table=True):
     deleted_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    # User-authored, persistent application knowledge that can't reliably be
+    # discovered from the DOM/crawler/live exploration (business goal/domain,
+    # important workflows, session/auth behavior, business rules, entity
+    # relationships, app-specific behavior, testing guidance, free-form
+    # additional context) — see `ai_provider.application_context` for the
+    # fixed set of recognized keys and how it's rendered into prompts. Every
+    # key is optional; `None`/`{}` means "no context provided yet", exactly
+    # today's behavior for every existing Application. Untrusted, informational
+    # only — never treated as a system instruction (see the prompt wording
+    # that wraps it).
+    application_context: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSONB, nullable=True)
     )

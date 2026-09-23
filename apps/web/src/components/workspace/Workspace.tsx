@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faClock, faDownload, faFlaskVial, faGauge, faTableList } from '@fortawesome/free-solid-svg-icons'
+import { faClock, faDownload, faFlaskVial, faGauge, faPen, faTableList } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api } from '../../api'
 import { AppIdentityLine } from '../AppIdentityLine'
 import { ServiceErrorNote } from '../ServiceError'
 import { Toast } from '../Toast'
 import { DownloadTab } from './DownloadTab'
+import { NotesTab } from './NotesTab'
 import { OverviewTab } from './OverviewTab'
 import { RunJourneysDialog } from './RunJourneysDialog'
 import { RunSuiteButton } from './RunSuiteButton'
@@ -13,7 +14,7 @@ import { SchedulesTab } from './SchedulesTab'
 import { TestSuiteTab } from './TestSuiteTab'
 import { RunsTab } from './RunsTab'
 
-export type WorkspaceTab = 'overview' | 'suite' | 'runs' | 'schedules' | 'export'
+export type WorkspaceTab = 'overview' | 'suite' | 'runs' | 'schedules' | 'export' | 'notes'
 
 // Matches the prototype's per-application nav (fa-gauge/fa-table-list/
 // fa-flask-vial/fa-clock/fa-download), replacing the previous hand-drawn SVGs.
@@ -37,6 +38,10 @@ function DownloadIcon() {
   return <FontAwesomeIcon icon={faDownload} style={{ fontSize: 15 }} />
 }
 
+function NotesIcon() {
+  return <FontAwesomeIcon icon={faPen} style={{ fontSize: 15 }} />
+}
+
 const RUN_IS_ACTIVE = (status: string) => status === 'pending' || status === 'running'
 const RUN_POLL_MS = 2000
 
@@ -48,6 +53,7 @@ export const WORKSPACE_TABS: { key: WorkspaceTab; label: string; heading: string
   { key: 'runs', label: 'Test runs', heading: 'Test runs', icon: RunsIcon },
   { key: 'schedules', label: 'Schedules and CI', heading: 'Schedules and CI', icon: SchedulesIcon },
   { key: 'export', label: 'Download project', heading: 'Download project', icon: DownloadIcon },
+  { key: 'notes', label: 'Notes', heading: 'Notes', icon: NotesIcon },
 ]
 
 export function Workspace({
@@ -221,7 +227,14 @@ export function Workspace({
                 <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>
                   {WORKSPACE_TABS.find((tab) => tab.key === activeTab)?.heading}
                 </h1>
-                <AppIdentityLine name={applicationName} url={applicationUrl} />
+                {activeTab === 'notes' ? (
+                  <div style={{ fontSize: 13.5, color: 'var(--fg-3)' }}>
+                    Application context Vantage reads whenever it generates scenarios and test cases for{' '}
+                    {applicationName}.
+                  </div>
+                ) : (
+                  <AppIdentityLine name={applicationName} url={applicationUrl} />
+                )}
               </>
             )}
           </div>
@@ -249,6 +262,7 @@ export function Workspace({
         )}
         {activeTab === 'suite' && <TestSuiteTab applicationId={applicationId} />}
         {activeTab === 'schedules' && <SchedulesTab applicationId={applicationId} />}
+        {activeTab === 'notes' && <NotesTab applicationId={applicationId} />}
         {activeTab === 'export' && <DownloadTab applicationId={applicationId} applicationName={applicationName} />}
         {activeTab === 'runs' && (
           <RunsTab

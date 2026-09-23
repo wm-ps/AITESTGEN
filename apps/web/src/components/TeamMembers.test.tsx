@@ -37,7 +37,9 @@ describe('TeamMembers', () => {
     await screen.findByText('Bob Builder')
     expect(screen.getByText('(you)')).toBeTruthy()
     expect(screen.getByText('Admin')).toBeTruthy()
-    expect(screen.getByText('Member')).toBeTruthy()
+    // { selector: 'span' } disambiguates the role pill from the table's own
+    // "Member" column header (a <div>), which shares the literal text.
+    expect(screen.getByText('Member', { selector: 'span' })).toBeTruthy()
   })
 
   it('does not offer a remove action on your own row', async () => {
@@ -51,7 +53,10 @@ describe('TeamMembers', () => {
   it('removes a teammate', async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
-      if (url.endsWith('/team') && !init) return { ok: true, status: 200, json: async () => MEMBERS }
+      // `api.ts`'s `request()` always passes a truthy options object (it
+      // merges in `credentials`/`headers` unconditionally) — `!init` never
+      // actually matches a real GET call; check the unset `method` instead.
+      if (url.endsWith('/team') && !init?.method) return { ok: true, status: 200, json: async () => MEMBERS }
       if (url.includes('/team/bob%40example.com') && init?.method === 'DELETE') {
         return { ok: true, status: 204, json: async () => undefined }
       }

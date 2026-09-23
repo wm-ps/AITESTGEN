@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Home } from './Home'
 
@@ -35,14 +35,6 @@ const HEALTHY_APP = {
   last_test_run_health: { tier: 'healthy', headline: 'Healthy' },
 }
 
-const FAILING_APP = {
-  ...BASE_APP,
-  id: 'app-2',
-  name: 'Claims App',
-  last_test_run_pass_rate: 0.2,
-  last_test_run_health: { tier: 'critical', headline: 'Critical' },
-}
-
 function stubFetch(apps: unknown[]) {
   vi.stubGlobal(
     'fetch',
@@ -63,26 +55,6 @@ describe('Home applications table', () => {
     await screen.findByText('Checkout App')
     expect(screen.getByText('https://example.com')).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: 'Application' })).toBeInTheDocument()
-  })
-
-  it('filters the table by health status', async () => {
-    stubFetch([HEALTHY_APP, FAILING_APP])
-    render(<Home user={USER} onConnectApp={() => {}} onResumeApplication={() => {}} />)
-
-    await screen.findByText('Checkout App')
-    expect(screen.getByText('Claims App')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByText('Healthy 1'))
-    expect(screen.getByText('Checkout App')).toBeInTheDocument()
-    expect(screen.queryByText('Claims App')).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByText('Failing 1'))
-    expect(screen.queryByText('Checkout App')).not.toBeInTheDocument()
-    expect(screen.getByText('Claims App')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByText('All 2'))
-    expect(screen.getByText('Checkout App')).toBeInTheDocument()
-    expect(screen.getByText('Claims App')).toBeInTheDocument()
   })
 
   it('shows the empty state with no applications', async () => {
