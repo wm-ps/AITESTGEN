@@ -1,0 +1,42 @@
+# Same ALB ingress shape as 06-api-ingress.yaml/07-web-ingress.yaml — this
+# repo's ingress controller is AWS ALB, not nginx-ingress, so a websocket
+# upgrade needs no special annotation (ALB proxies it transparently over
+# the HTTP listener). idle_timeout is raised well above the other two
+# ingresses' 300s default: a VNC/control connection can sit idle mid-
+# recording (a human reading, not clicking) for longer than that — verify
+# during rollout whether websockify's/the browser's own keepalive traffic
+# makes this unnecessary, don't assume either way (Record and Play plan §9).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: aitestgen-recording-ing
+  namespace: aitestgen
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/backend-protocol: HTTP
+    alb.ingress.kubernetes.io/group.name: ps-team-app-stage-alb
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    # alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:us-east-1:<account-id>:certificate/<certificate-id>
+    # alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/load-balancer-attributes: idle_timeout.timeout_seconds=1800
+
+spec:
+  ingressClassName: alb
+
+  rules:
+    - host: vantage-recording.omnewave.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: recording-worker
+                port:
+                  number: 8100
+
+  tls:
+    - hosts:
+        - vantage-recording.omnewave.com

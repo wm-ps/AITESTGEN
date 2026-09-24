@@ -1,0 +1,105 @@
+# Unlike discovery/generation/execution, this worker DOES need a Service —
+# it's not a Temporal poller, it's a plain FastAPI/websocket process the
+# web app connects to directly (Record and Play plan). Resource requests
+# are higher than every other worker: each active recording session is a
+# full isolated process tree (Xvfb + a real headed Chromium + the separate
+# Playwright Inspector window + x11vnc), not the headless single-Chromium
+# footprint discovery/execution size for. Size these for real once
+# per-session RSS/CPU is measured live — this is a starting point, not a
+# measured ceiling (see recording_worker/config.py's own MAX_CONCURRENT_SESSIONS).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: recording-worker
+  namespace: aitestgen
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: recording-worker
+  template:
+    metadata:
+      labels:
+        app: recording-worker
+    spec:
+      containers:
+        - name: recording-worker
+          image: REPLACE_IMAGE
+          ports:
+            - containerPort: 8100
+          env:
+            # $(VAR) below only expands against vars defined in this *env*
+            # list (not envFrom), so POSTGRES_USER/HOST/PORT/DB are
+            # re-declared here from the ConfigMap even though envFrom also
+            # brings them in.
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: aitestgen-config
+                  key: POSTGRES_USER
+            - name: POSTGRES_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: aitestgen-config
+                  key: POSTGRES_HOST
+            - name: POSTGRES_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: aitestgen-config
+                  key: POSTGRES_PORT
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: aitestgen-config
+                  key: POSTGRES_DB
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: POSTGRES_PASSWORD
+            # Postgres is externally hosted (e.g. RDS) — not a Service in
+            # this cluster. The password never gets written to the ConfigMap.
+            - name: DATABASE_URL
+              value: "postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
+            - name: VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: VAULT_TOKEN
+          envFrom:
+            - configMapRef:
+                name: aitestgen-config
+            - secretRef:
+                name: aitestgen-secrets
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8100
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8100
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+            limits:
+              cpu: "4"
+              memory: "8Gi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: recording-worker
+  namespace: aitestgen
+spec:
+  type: ClusterIP
+  selector:
+    app: recording-worker
+  ports:
+    - port: 8100
+      targetPort: 8100

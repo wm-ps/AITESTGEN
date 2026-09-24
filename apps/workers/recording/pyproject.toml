@@ -1,0 +1,44 @@
+[project]
+name = "recording-worker"
+version = "0.1.0"
+description = "apps/workers/recording — Record and Play: a worker-hosted, human-driven playwright codegen session, streamed over a VNC-family remote desktop. Not a Temporal worker (see module docstring) — a plain FastAPI/websocket process, the first in this repo with inbound network surface of its own."
+requires-python = ">=3.14"
+dependencies = [
+    "domain",
+    "secrets-client",
+    "discovery-worker",
+    "playwright-typecheck",
+    "sqlmodel>=0.0.24",
+    "psycopg[binary]>=3.2",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    # Only used to mint a pre-authenticated storage_state before launching
+    # Codegen (auth_mode="authenticated", see auth_mode.py) — the actual
+    # recording browser is always Codegen's own, never driven by this
+    # package directly.
+    "playwright>=1.57",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.uv.sources]
+domain = { workspace = true }
+secrets-client = { workspace = true }
+# Second cross-worker-app dependency in this repo (the first is
+# execution-worker -> generation-worker, per that worker's own pyproject.toml
+# comment) — reuses discovery_worker.session.establish_session for
+# auth_mode="authenticated" sessions rather than duplicating its
+# standard_login/sso_session_reuse handling here.
+discovery-worker = { workspace = true }
+playwright-typecheck = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/recording_worker"]

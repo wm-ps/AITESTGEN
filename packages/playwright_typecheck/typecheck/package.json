@@ -1,0 +1,10 @@
+{
+  "name": "generation-worker-typecheck",
+  "private": true,
+  "description": "Rule 3 checklist gate: real typescript + @playwright/test types to typecheck LLM-generated Playwright specs against, before they're persisted as a TestAsset.",
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@playwright/test": "^1.48.0",
+    "@types/node": "^22.0.0"
+  }
+}
