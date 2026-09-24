@@ -47,7 +47,26 @@ class _AgentState(TypedDict):
     decision_tool_args: dict
     decision_rationale: str
     decision_semantic_target: dict | None
+    decision_exploration_scope: dict | None
     done: bool
+
+
+def _is_redundant_representative_action(
+    exploration_scope: dict | None, explored_collections: set[str]
+) -> bool:
+    """The deterministic half of the exploration-scope policy (see
+    `ai_provider.LiveExplorationDecision.exploration_scope` and the
+    "representative" prompt policy in hosted.py) — the LLM is asked to stop
+    sampling a collection after one representative item, but a prompt is
+    only ever a suggestion. This is the actual bounded guard: once one
+    "representative"-scoped action against a named collection has run this
+    exploration, a second one for the *same* collection is refused
+    regardless of what the model decides next. "specific_item"/"dataset"
+    scopes, or a turn with no named collection, are never blocked here."""
+    if not exploration_scope or exploration_scope.get("scope") != "representative":
+        return False
+    collection = exploration_scope.get("collection")
+    return bool(collection) and collection in explored_collections
 
 
 def _summarize_semantic_target(semantic_target: dict | None) -> str:
@@ -103,6 +122,12 @@ async def run_exploration(
 ) -> LiveFlowModel:
     live_flow = LiveFlowModel(requirement=requirement)
     history: list[dict] = []
+    # Exploration-scope guard state (see `_is_redundant_representative_action`)
+    # — collection names already sampled once at "representative" scope this
+    # run. Deliberately run-scoped, not turn-scoped: the whole point is
+    # remembering across turns that Tenant's one representative row has
+    # already been explored.
+    explored_collections: set[str] = set()
 
     async def observe(state: _AgentState) -> _AgentState:
         if heartbeat:
@@ -141,6 +166,7 @@ async def run_exploration(
         state["decision_tool_args"] = decision.tool_args
         state["decision_rationale"] = decision.rationale
         state["decision_semantic_target"] = decision.semantic_target
+        state["decision_exploration_scope"] = decision.exploration_scope
         state["done"] = decision.goal_satisfied
         return state
 
@@ -154,6 +180,28 @@ async def run_exploration(
                 state["decision_rationale"][:120],
             )
             return state
+
+        exploration_scope = state["decision_exploration_scope"]
+        if _is_redundant_representative_action(exploration_scope, explored_collections):
+            collection = exploration_scope["collection"]  # type: ignore[index]
+            rationale = (
+                f"Skipped: already explored one representative {collection} this run — "
+                "exploration scope is 'representative', not 'dataset', so no further "
+                f"{collection} items are sampled."
+            )
+            logger.info(
+                "live-exploration turn %d: blocked redundant representative action for %r",
+                state["turn"],
+                collection,
+            )
+            history.append(
+                {"tool_name": None, "tool_args": {}, "rationale": rationale, "semantic_target": None}
+            )
+            return state
+        if exploration_scope and exploration_scope.get("scope") == "representative":
+            collection = exploration_scope.get("collection")
+            if collection:
+                explored_collections.add(collection)
 
         tool_name = state["decision_tool_name"]
         tool_args = state["decision_tool_args"]
@@ -260,6 +308,7 @@ async def run_exploration(
         "decision_tool_args": {},
         "decision_rationale": "",
         "decision_semantic_target": None,
+        "decision_exploration_scope": None,
         "done": False,
     }
     await compiled.ainvoke(final_state, config={"recursion_limit": max_turns * 4})

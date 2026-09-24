@@ -109,6 +109,45 @@ describe('DiscoverJourneys', () => {
     expect(screen.queryByText(/risk/i)).toBeNull()
   })
 
+  it('falls back to the "no screenshot yet" placeholder when a screenshot fails to load', async () => {
+    // `[FIXED]` A broken/expired presigned URL used to leave the browser's
+    // native broken-image icon showing forever, with no fallback — must
+    // read the same as a Journey that never got a screenshot at all.
+    const stepsWithScreenshot = [
+      STEPS[0],
+      { ...STEPS[1], screenshot_url: 'https://s3.example.com/broken.png' },
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.endsWith('/steps')) {
+          return { ok: true, status: 200, json: async () => stepsWithScreenshot }
+        }
+        if (url.includes('/journeys')) {
+          return { ok: true, status: 200, json: async () => JOURNEYS }
+        }
+        if (url.endsWith('/applications/app-1')) {
+          return { ok: true, status: 200, json: async () => APPLICATION }
+        }
+        if (url.includes('/discovery-status')) {
+          return { ok: true, status: 200, json: async () => ({ available: true }) }
+        }
+        return { ok: true, status: 200, json: async () => [] }
+      }),
+    )
+    renderScreen()
+
+    const img = await screen.findByAltText("Checkout's final step screenshot")
+    expect(screen.queryByText('no screenshot yet')).toBeNull()
+
+    fireEvent.error(img)
+
+    await waitFor(() => {
+      expect(screen.getByText('no screenshot yet')).toBeTruthy()
+      expect(screen.queryByAltText("Checkout's final step screenshot")).toBeNull()
+    })
+  })
+
   it('keeps polling for more Journeys after the first one appears', async () => {
     // Regression: inference writes Journeys one at a time (its own commit
     // per candidate) — the poll used to stop dead the instant `journeys.length

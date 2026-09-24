@@ -884,6 +884,11 @@ async def get_home(
         .where(
             TestRun.application_id.in_(app_ids),  # type: ignore[attr-defined]
             TestRun.triggered_by_name.is_distinct_from(_INTERNAL_VERIFICATION_TRIGGER_NAME),  # type: ignore[union-attr]
+            # `[FIXED]` same fix as get_overview below: a scoped "Run
+            # Journey(s)" run (including a single test case run alone) sets
+            # `suite_name` and must not stand in for the whole suite's
+            # "Last run"/pass-rate/trend here either.
+            TestRun.suite_name.is_(None),  # type: ignore[union-attr]
         )
         .order_by(TestRun.created_at.desc())  # type: ignore[arg-type]
     ).all():
@@ -1705,18 +1710,35 @@ def list_journey_steps(
     # Only the final step gets a screenshot (product decision — not every
     # step, just the journey's end state). Form/API-endpoint steps have no
     # associated Page, so no screenshot is available for those.
+    #
+    # `[FIXED journey-screenshot]` Used to always use the last step's page
+    # regardless of whether it actually rendered — `page_settled=False`
+    # (Story 2.9's own readiness gate, checked right before the crawler
+    # takes the screenshot) correlates strongly with a blank/mid-load
+    # capture. Prefer the last step's page when it settled (today's choice
+    # — the journey's end state is the most representative shot); otherwise
+    # walk backward through the journey's earlier steps for a settled one
+    # instead of showing a blank screenshot. Falls back to the closest
+    # available screenshot at all if none of them settled, rather than
+    # showing nothing.
+    def _step_page(step: JourneyStep) -> Page | None:
+        if step.page_id:
+            return pages.get(step.page_id)
+        if step.component_id:
+            component = components.get(step.component_id)
+            return pages.get(component.page_id) if component else None
+        return None
+
     if result:
-        last_step = steps[-1]
-        last_page = (
-            pages.get(last_step.page_id)
-            if last_step.page_id
-            else pages.get(components[last_step.component_id].page_id)
-            if last_step.component_id
-            else None
-        )
-        if last_page is not None and last_page.object_storage_key:
+        candidates = [
+            p
+            for p in (_step_page(s) for s in reversed(steps))
+            if p is not None and p.object_storage_key
+        ]
+        chosen = next((p for p in candidates if p.page_settled), candidates[0] if candidates else None)
+        if chosen is not None and chosen.object_storage_key:
             result[-1].screenshot_url = ObjectStore().presigned_get_url(
-                last_page.object_storage_key,
+                chosen.object_storage_key,
                 response_content_type="image/png",
                 filename="screenshot.png",
             )
@@ -4578,6 +4600,13 @@ class LatestRunSummaryRead(BaseModel):
     created_at: datetime
     passed_count: int
     failed_count: int
+    # `[FIXED]` `timed_out_count`/`errored_count` were missing entirely —
+    # the frontend's own pass-rate tile computed its denominator from just
+    # passed+failed+blocked, undercounting real outcomes and inflating the
+    # shown percentage above what the same run's own trend-chart bar
+    # correctly computes from the full `total_count`.
+    timed_out_count: int
+    errored_count: int
     blocked_count: int
     duration_ms: int | None
     # Same format as TestRunRead.trigger (both built by `_trigger_label`) —
@@ -4641,6 +4670,14 @@ def get_overview(
         .where(
             TestRun.application_id == application.id,
             TestRun.triggered_by_name.is_distinct_from(_INTERNAL_VERIFICATION_TRIGGER_NAME),  # type: ignore[union-attr]
+            # `[FIXED]` A "Run Journey(s)" run (including running a single
+            # test case alone) sets `suite_name` — see `TriggerTestRunRequest`
+            # — and creates a real `TestRun` scoped to just those test cases.
+            # Counting it here made a lone test case's pass/fail become this
+            # tab's "latest run" and a 100%/0% bar in the trend, even though
+            # it never touched the rest of the suite. Only an unscoped Full
+            # Suite run (`suite_name IS NULL`) represents the suite's health.
+            TestRun.suite_name.is_(None),  # type: ignore[union-attr]
         )
         .order_by(TestRun.created_at.desc())  # type: ignore[arg-type]
         .limit(_OVERVIEW_TREND_RUN_COUNT)
@@ -4665,6 +4702,8 @@ def get_overview(
             created_at=latest.created_at,
             passed_count=latest.passed_count,
             failed_count=latest.failed_count,
+            timed_out_count=latest.timed_out_count,
+            errored_count=latest.errored_count,
             blocked_count=latest.blocked_count,
             duration_ms=duration_ms,
             trigger=_trigger_label(latest),

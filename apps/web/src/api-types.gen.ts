@@ -353,11 +353,11 @@ export interface paths {
         head?: never;
         /**
          * Update Application Context
-         * @description Persistent, user-authored Application Context (business goal/domain,
-         *     workflows, session/auth behavior, business rules, entity relationships,
-         *     app-specific behavior, testing guidance, additional context) — complements
-         *     crawler/live-exploration knowledge with what the AI can't reliably
-         *     discover on its own. A full replace of the stored context (see
+         * @description Persistent, user-authored Application Context (shown in the UI as
+         *     "Notes": business goal, business domain, business rules, additional
+         *     context) — complements crawler/live-exploration knowledge with what the
+         *     AI can't reliably discover on its own. A full replace of the stored
+         *     context (see
          *     `ApplicationContext`'s docstring) — every field optional, `None`/blank
          *     fields simply aren't rendered into any prompt (`ai_provider.
          *     application_context.build_application_context_block`). Never contains
@@ -1286,30 +1286,25 @@ export interface components {
         /**
          * ApplicationContext
          * @description User-authored, persistent application knowledge (see
-         *     `domain.Application.application_context`) — every field optional, so a
-         *     user can fill in only what they know (§5). Used both as the shape
-         *     `ApplicationRead` returns and as the update endpoint's payload: an
-         *     update is a full replace of the stored context, not a per-field PATCH
-         *     merge — the edit UI always shows/saves the whole form at once, so
-         *     there's no partial-update case to support yet.
+         *     `domain.Application.application_context`), shown in the UI as "Notes" —
+         *     every field optional, so a user can fill in only what they know. Used
+         *     as the shape `ApplicationRead` returns, as the context-update endpoint's
+         *     payload (a full replace, not a per-field PATCH merge — the edit UI
+         *     always shows/saves the whole form at once), and optionally on
+         *     `ApplicationCreate` (Add-application onboarding) — that path exists so
+         *     the very first `InferenceActivity` run (chained automatically after the
+         *     initial crawl, before there's ever a chance to visit the Notes tab) can
+         *     already see it. Each field is capped at 2,000 characters — the
+         *     browser's own `maxLength` is the primary gate (matches the UI's live
+         *     counter); this is the server-side backstop for a direct API call.
          */
         ApplicationContext: {
             /** Business Goal */
             business_goal?: string | null;
             /** Business Domain */
             business_domain?: string | null;
-            /** Important Workflows */
-            important_workflows?: string[] | null;
-            /** Session Behavior */
-            session_behavior?: string | null;
             /** Business Rules */
             business_rules?: string[] | null;
-            /** Entity Relationships */
-            entity_relationships?: string[] | null;
-            /** Application Behavior */
-            application_behavior?: string[] | null;
-            /** Testing Guidance */
-            testing_guidance?: string | null;
             /** Additional Context */
             additional_context?: string | null;
         };
@@ -1347,6 +1342,7 @@ export interface components {
              * @description A previously-authenticated session the customer already produced (e.g. Playwright storageState.json contents), pasted as-is. Required when auth_method is 'sso_session_reuse'. The platform never performs the SSO/MFA handshake itself — it only reuses a session the customer supplies.
              */
             session_state?: string | null;
+            application_context?: components["schemas"]["ApplicationContext"] | null;
         };
         /** ApplicationCredentialsUpdatePayload */
         ApplicationCredentialsUpdatePayload: {
@@ -1672,6 +1668,10 @@ export interface components {
             passed_count: number;
             /** Failed Count */
             failed_count: number;
+            /** Timed Out Count */
+            timed_out_count: number;
+            /** Errored Count */
+            errored_count: number;
             /** Blocked Count */
             blocked_count: number;
             /** Duration Ms */

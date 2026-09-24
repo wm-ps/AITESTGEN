@@ -21,6 +21,7 @@ never as an instruction that could override system/tool rules — see the
 wrapping wording below.
 """
 
+import re
 from typing import Any
 
 # The fixed, recognized keys — anything else in a stored context dict is
@@ -95,4 +96,34 @@ def build_application_context_block(
         "-------------------\n"
         f"{body}\n"
         "END APPLICATION CONTEXT\n"
+    )
+
+
+# Exploration-scope feature: initial discovery is an unattended batch crawl —
+# there's no per-request user instruction to weigh (scope precedence's tier
+# 1 doesn't exist here), so `business_rules` (tier 2) is the only signal
+# that can expand discovery's default "representative" collection sampling
+# to "dataset". A rule needs an explicit totality quantifier to count — a
+# rule that merely *mentions* a collection ("Transactions are important")
+# must never expand scope on its own; only "every transaction must be
+# validated"-shaped language does.
+_DATASET_WIDE_RULE_RE = re.compile(r"\b(every|all|each|entire|complete(ly)?)\b", re.IGNORECASE)
+
+
+def business_rules_require_dataset_wide_exploration(context: dict[str, Any] | None) -> bool:
+    """True if any `business_rules` entry states a concrete, totality-worded
+    reason discovery must cover every item of some collection, rather than
+    just sampling one representative item (the default — see
+    `discovery_worker.crawler.run_discovery_crawl`'s `exploration_scope`).
+    ponytail: a literal-quantifier match, not semantic understanding — will
+    miss a rule that means the same thing without one of these words.
+    Upgrade path: route business_rules through the same AI classification
+    call sites journey inference already uses, if that proves too narrow."""
+    if not context:
+        return False
+    business_rules = context.get("business_rules")
+    if not isinstance(business_rules, list):
+        return False
+    return any(
+        isinstance(rule, str) and _DATASET_WIDE_RULE_RE.search(rule) for rule in business_rules
     )

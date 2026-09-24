@@ -31,3 +31,13 @@ class LiveExplorationDecision:
     # Optional and best-effort — never required, never a replacement for
     # `tool_args`/the locator candidate it resolves to.
     semantic_target: dict[str, Any] | None = None
+    # `[ADDED exploration-scope]` How much of a repeated collection (table
+    # rows, list/grid items, paginated data) this turn's action should
+    # cover — separate from `semantic_target`, which answers *which* item,
+    # never *how many*: {"collection": "Tenant", "scope": "representative"}.
+    # `scope` is one of "representative" (default — sample one item, then
+    # stop), "specific_item" (the requirement names/bounds a particular
+    # item), or "dataset" (the requirement, or a concrete Application
+    # Context reason, requires broad/all-item coverage). `None` when this
+    # turn isn't acting on a collection at all.
+    exploration_scope: dict[str, Any] | None = None

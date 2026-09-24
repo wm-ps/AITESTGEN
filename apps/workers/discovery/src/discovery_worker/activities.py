@@ -22,6 +22,7 @@ import os
 import uuid
 from dataclasses import dataclass, field
 
+from ai_provider.application_context import business_rules_require_dataset_wide_exploration
 from ai_provider.hosted import HostedAIProvider
 from domain import (
     Action,
@@ -436,6 +437,7 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                 heading=item.heading,
                 structural_tokens=item.structural_tokens,
                 variant_of_page_id=variant_of_page_id,
+                page_settled=item.page_settled,
             )
             session.add(page)
             session.commit()
@@ -964,6 +966,19 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                     # behaviour.
                     already_confirmed_urls=already_confirmed_urls or None,
                     resume_seed=resume_seed or None,
+                    # Exploration-scope feature: discovery is an unattended
+                    # batch crawl — there's no per-request user instruction
+                    # to weigh, so a relevant Application Context
+                    # business_rule is the only thing that can expand the
+                    # default "representative" collection sampling to
+                    # "dataset" (see scope precedence tiers 2/3).
+                    exploration_scope=(
+                        "dataset"
+                        if business_rules_require_dataset_wide_exploration(
+                            application.application_context
+                        )
+                        else "representative"
+                    ),
                 )
                 await context.close()
                 await browser.close()

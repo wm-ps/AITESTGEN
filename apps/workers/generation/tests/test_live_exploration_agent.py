@@ -431,3 +431,260 @@ async def test_settles_after_a_click_before_the_next_observe() -> None:
     # (post-navigation) snapshot, not the stale pre-navigation one it would
     # have seen without the settle retry.
     assert next(snapshots, None) is None
+
+
+class TestExplorationScope:
+    """`[ADDED exploration-scope]` The deterministic half of the policy (see
+    `agent._is_redundant_representative_action` and
+    `ai_provider.LiveExplorationDecision.exploration_scope`) — whatever the
+    model decides, a second "representative"-scoped action against a
+    collection already sampled once this run must never actually execute."""
+
+    async def test_representative_scope_action_executes_normally(self) -> None:
+        """Scenario: "Open tenant settings." — representative exploration is
+        sufficient; the one action for it executes like any other."""
+        mcp_client = _FakeMCPClient()
+        ai_provider = _FakeAIProvider(
+            [
+                LiveExplorationDecision(
+                    tool_name="browser_click",
+                    tool_args={"ref": "e12"},
+                    rationale="open the first tenant's settings",
+                    goal_satisfied=False,
+                    exploration_scope={"collection": "Tenant", "scope": "representative"},
+                ),
+                LiveExplorationDecision(
+                    tool_name="browser_snapshot",
+                    tool_args={},
+                    rationale="verify",
+                    goal_satisfied=True,
+                ),
+            ]
+        )
+
+        live_flow = await run_exploration(
+            mcp_client=mcp_client,
+            ai_provider=ai_provider,
+            requirement="Open tenant settings.",
+            start_url="https://app.example.com/tenants",
+            max_turns=5,
+            settle_retries=0,
+        )
+
+        assert len(live_flow.steps) == 1
+        assert live_flow.steps[0].tool_name == "browser_click"
+
+    async def test_second_representative_action_for_same_collection_is_blocked(self) -> None:
+        """The deterministic circuit breaker: once one "representative"
+        action against "Tenant" has run, a second one for the same
+        collection is refused regardless of what the model decides next —
+        an actual bounded policy, not just an LLM instruction."""
+        mcp_client = _FakeMCPClient()
+        ai_provider = _FakeAIProvider(
+            [
+                LiveExplorationDecision(
+                    tool_name="browser_click",
+                    tool_args={"ref": "e12"},
+                    rationale="open the first tenant row",
+                    goal_satisfied=False,
+                    exploration_scope={"collection": "Tenant", "scope": "representative"},
+                ),
+                LiveExplorationDecision(
+                    tool_name="browser_click",
+                    tool_args={"ref": "e12"},
+                    rationale="open a second tenant row",
+                    goal_satisfied=False,
+                    exploration_scope={"collection": "Tenant", "scope": "representative"},
+                ),
+            ]
+        )
+
+        live_flow = await run_exploration(
+            mcp_client=mcp_client,
+            ai_provider=ai_provider,
+            requirement="Open tenant settings.",
+            start_url="https://app.example.com/tenants",
+            max_turns=2,
+            settle_retries=0,
+        )
+
+        click_calls = [c for c in mcp_client.calls if c[0] == "browser_click"]
+        assert len(click_calls) == 1
+        assert len(live_flow.steps) == 1
+
+    async def test_specific_item_scope_is_never_blocked(self) -> None:
+        """Scenario: "Open the third tenant's settings." — a bounded/
+        specific request is never refused by the representative-collision
+        guard, even naming the same collection as an earlier representative
+        sample."""
+        mcp_client = _FakeMCPClient()
+        ai_provider = _FakeAIProvider(
+            [
+                LiveExplorationDecision(
+                    tool_name="browser_click",
+                    tool_args={"ref": "e12"},
+                    rationale="open the first tenant row (representative)",
+                    goal_satisfied=False,
+                    exploration_scope={"collection": "Tenant", "scope": "representative"},
+                ),
+                LiveExplorationDecision(
+                    tool_name="browser_click",
+                    tool_args={"ref": "e12"},
+                    rationale="open the third tenant row, as explicitly requested",
+                    goal_satisfied=False,
+                    exploration_scope={"collection": "Tenant", "scope": "specific_item"},
+                ),
+            ]
+        )
+
+        live_flow = await run_exploration(
+            mcp_client=mcp_client,
+            ai_provider=ai_provider,
+            requirement="Open the third tenant's settings.",
+            start_url="https://app.example.com/tenants",
+            max_turns=2,
+            settle_retries=0,
+        )
+
+        click_calls = [c for c in mcp_client.calls if c[0] == "browser_click"]
+        assert len(click_calls) == 2
+        assert len(live_flow.steps) == 2
+
+    async def test_dataset_scope_is_never_blocked(self) -> None:
+        """Scenario: "Validate every tenant's settings." — dataset-wide
+        coverage means every action against the collection runs, not just
+        one representative."""
+        mcp_client = _FakeMCPClient()
+        ai_provider = _FakeAIProvider(
+            [
+                LiveExplorationDecision(
+                    tool_name="browser_click",
+                    tool_args={"ref": "e12"},
+                    rationale=f"open tenant row {i}",
+                    goal_satisfied=False,
+                    exploration_scope={"collection": "Tenant", "scope": "dataset"},
+                )
+                for i in range(3)
+            ]
+        )
+
+        live_flow = await run_exploration(
+            mcp_client=mcp_client,
+            ai_provider=ai_provider,
+            requirement="Validate every tenant's settings.",
+            start_url="https://app.example.com/tenants",
+            max_turns=3,
+            settle_retries=0,
+        )
+
+        click_calls = [c for c in mcp_client.calls if c[0] == "browser_click"]
+        assert len(click_calls) == 3
+        assert len(live_flow.steps) == 3
+
+    async def test_dataset_scope_allows_pagination_traversal(self) -> None:
+        """Scenario: "Check all pages of the transaction history." —
+        pagination is just more of the same collection under dataset scope;
+        clicking through multiple pages must not be blocked."""
+        mcp_client = _FakeMCPClient()
+        ai_provider = _FakeAIProvider(
+            [
+                LiveExplorationDecision(
+                    tool_name="browser_click",
+                    tool_args={"ref": "e12"},
+                    rationale=f"go to page {i}",
+                    goal_satisfied=False,
+                    exploration_scope={"collection": "TransactionHistoryPage", "scope": "dataset"},
+                )
+                for i in range(1, 4)
+            ]
+        )
+
+        await run_exploration(
+            mcp_client=mcp_client,
+            ai_provider=ai_provider,
+            requirement="Check all pages of the transaction history.",
+            start_url="https://app.example.com/transactions",
+            max_turns=3,
+            settle_retries=0,
+        )
+
+        click_calls = [c for c in mcp_client.calls if c[0] == "browser_click"]
+        assert len(click_calls) == 3
+
+    async def test_fresh_exploration_run_is_not_restricted_by_prior_discovery_sampling(
+        self,
+    ) -> None:
+        """Scenario: initial discovery samples one representative row, then
+        Live Exploration explicitly requests a specific row — this module
+        never reads crawler/discovery DB data at all (see the module
+        docstring) and the guard's `explored_collections` set is created
+        fresh inside `run_exploration` every call, so nothing from any
+        other run (discovery's or a prior Live Exploration run) can ever
+        restrict this one."""
+        mcp_client = _FakeMCPClient()
+        ai_provider = _FakeAIProvider(
+            [
+                LiveExplorationDecision(
+                    tool_name="browser_click",
+                    tool_args={"ref": "e12"},
+                    rationale="open the specific tenant requested",
+                    goal_satisfied=False,
+                    exploration_scope={"collection": "Tenant", "scope": "specific_item"},
+                ),
+                LiveExplorationDecision(
+                    tool_name="browser_snapshot",
+                    tool_args={},
+                    rationale="verify",
+                    goal_satisfied=True,
+                ),
+            ]
+        )
+
+        live_flow = await run_exploration(
+            mcp_client=mcp_client,
+            ai_provider=ai_provider,
+            requirement="Open the tenant named Acme Corp.",
+            start_url="https://app.example.com/tenants",
+            max_turns=3,
+            settle_retries=0,
+        )
+
+        assert len(live_flow.steps) == 1
+        assert live_flow.steps[0].tool_name == "browser_click"
+
+    async def test_non_collection_action_with_no_exploration_scope_is_unaffected(self) -> None:
+        """Backward compatibility: a decision with no `exploration_scope` at
+        all (ordinary, non-collection navigation) executes exactly as it did
+        before this feature existed."""
+        mcp_client = _FakeMCPClient()
+        ai_provider = _FakeAIProvider(
+            [
+                LiveExplorationDecision(
+                    tool_name="browser_click",
+                    tool_args={"ref": "e12"},
+                    rationale="click the settings link",
+                    goal_satisfied=False,
+                    exploration_scope=None,
+                ),
+                LiveExplorationDecision(
+                    tool_name="browser_click",
+                    tool_args={"ref": "e12"},
+                    rationale="click the save button",
+                    goal_satisfied=False,
+                    exploration_scope=None,
+                ),
+            ]
+        )
+
+        live_flow = await run_exploration(
+            mcp_client=mcp_client,
+            ai_provider=ai_provider,
+            requirement="Open settings and save.",
+            start_url="https://app.example.com/settings",
+            max_turns=2,
+            settle_retries=0,
+        )
+
+        click_calls = [c for c in mcp_client.calls if c[0] == "browser_click"]
+        assert len(click_calls) == 2
+        assert len(live_flow.steps) == 2

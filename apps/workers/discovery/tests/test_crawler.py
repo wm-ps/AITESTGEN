@@ -73,6 +73,136 @@ async def _crawl(
     return result, object_store
 
 
+async def _crawl_from(target_app_url: str, start_path: str, **crawl_kwargs):
+    """Like `_crawl`, but starts `run_discovery_crawl` at an isolated entry
+    page (`target_app_url + start_path`) instead of the app root — lets a
+    collection fixture be crawled standalone without perturbing any other
+    test's page/link counts from `/`. Login still happens against the app
+    root (the app-wide `/login` route works regardless of path)."""
+    credential = json.dumps({"username": "qa", "password": "qa-pass"}).encode()
+    object_store = FakeObjectStore()
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch()
+        context = await establish_session(
+            browser,
+            auth_method="standard_login",
+            credential=credential,
+            base_url=target_app_url,
+        )
+        result = await run_discovery_crawl(
+            context,
+            f"{target_app_url}{start_path}",
+            object_store,
+            uuid.uuid4(),
+            auth_method="standard_login",
+            credential=credential,
+            **crawl_kwargs,
+        )
+        await context.close()
+        await browser.close()
+    return result, object_store
+
+
+class TestExplorationScope:
+    """`[ADDED exploration-scope]` By default AITestGen explores a data
+    table's structure/representative behavior, not its entire dataset — see
+    `run_discovery_crawl`'s `exploration_scope` parameter and
+    `_maybe_enqueue`'s route-template gate. Each fixture page is isolated
+    (never linked from `/`), so these crawl it standalone as `base_url`.
+
+    `[FIXED]` regression, scope narrowed: an earlier version deduped by
+    route template alone regardless of where a candidate URL came from, and
+    that silently ate legitimate distinct app sections — a persistent nav
+    menu's sibling items routinely have numeric/module-style paths too, and
+    plenty of real nav menus navigate via a button/div rather than a plain
+    `<a href>` at all. Route-template dedup is now ONLY applied to a link
+    whose nearest DOM ancestor is a real `<tr>` (table markup is essentially
+    never used for navigation chrome) — never to list/grid/card links, and
+    never to button-click or form-submit destinations. See
+    `test_nav_menu_items_are_all_crawled_even_with_templated_paths` below."""
+
+    @pytest.mark.asyncio
+    async def test_table_with_many_rows_samples_one_representative_row(
+        self, target_app_url: str
+    ) -> None:
+        result, _ = await _crawl_from(target_app_url, "table-collection")
+
+        row_pages = [p for p in result.pages if "/table-row/" in p.url]
+        assert len(row_pages) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_and_grid_collections_are_fully_enumerated(
+        self, target_app_url: str
+    ) -> None:
+        """`[FIXED]` scope narrowed: a `<li>`/card link is never inside a
+        `<tr>`, so it's no longer deduped by URL template at all — same
+        reasoning as the nav-menu fix (no safe way to tell a list/grid
+        collection apart from a small handful of genuinely distinct
+        destinations without a real DOM-repetition signal this codebase
+        doesn't have). Every item is visited, today's/pre-feature
+        behavior."""
+        list_result, _ = await _crawl_from(target_app_url, "list-collection")
+        grid_result, _ = await _crawl_from(target_app_url, "grid-collection")
+
+        assert len([p for p in list_result.pages if "/list-item/" in p.url]) == 6
+        assert len([p for p in grid_result.pages if "/grid-item/" in p.url]) == 8
+
+    @pytest.mark.asyncio
+    async def test_paginated_table_pagination_not_auto_traversed(
+        self, target_app_url: str
+    ) -> None:
+        """A `1 2 3 4 5 Next` pager is real DOM the crawler still sees (page
+        metadata capture is unaffected) — it just must not turn into
+        following every page link, by default. Same path, only the `?page=`
+        query differs — always safe to dedupe regardless of DOM position, a
+        nav item is never the same path with a different query."""
+        result, _ = await _crawl_from(target_app_url, "paginated-collection")
+
+        paginated_pages = [p for p in result.pages if "/paginated-collection" in p.url]
+        assert len(paginated_pages) == 1  # only the entry page itself, no ?page=2/3/...
+
+    @pytest.mark.asyncio
+    async def test_nav_menu_items_are_all_crawled_even_with_templated_paths(
+        self, target_app_url: str
+    ) -> None:
+        """The regression itself: 5 persistent-nav-style sibling destinations
+        whose paths happen to share a route-template shape (`/nav-section/1`
+        .. `/nav-section/5`, plain `<a href>`, not inside a `<tr>`) must all
+        still be crawled — a nav menu is not a data table, and losing 4 of 5
+        real app sections (and every journey reachable only from them) is
+        exactly the bug being fixed here."""
+        result, _ = await _crawl_from(target_app_url, "nav-menu")
+
+        section_pages = [p for p in result.pages if "/nav-section/" in p.url]
+        assert len(section_pages) == 5
+
+    @pytest.mark.asyncio
+    async def test_button_triggered_nav_items_are_all_crawled(
+        self, target_app_url: str
+    ) -> None:
+        """Same regression, button-driven variant: many real nav menus
+        navigate via an onclick'd button/div rather than a plain `<a href>`
+        — that path has no `<tr>` signal (or any DOM signal) available at
+        all, so route-template dedup must never apply to button-discovered
+        destinations, full stop."""
+        result, _ = await _crawl_from(target_app_url, "nav-menu-buttons")
+
+        section_pages = [p for p in result.pages if "/nav-section-btn/" in p.url]
+        assert len(section_pages) == 5
+
+    @pytest.mark.asyncio
+    async def test_dataset_scope_restores_full_enumeration(self, target_app_url: str) -> None:
+        """The opt-in escape hatch — `exploration_scope="dataset"` restores
+        today's exact "visit every discovered URL" behavior, unchanged."""
+        result, _ = await _crawl_from(
+            target_app_url, "table-collection", exploration_scope="dataset"
+        )
+
+        row_pages = [p for p in result.pages if "/table-row/" in p.url]
+        assert len(row_pages) == 10
+
+
 @pytest.mark.asyncio
 async def test_crawl_captures_every_typed_capture(target_app_url: str) -> None:
     result, object_store = await _crawl(target_app_url)

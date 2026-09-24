@@ -465,21 +465,21 @@ export function Overview({
 
             const miniTiles = [
               {
-                key: 'duration',
+                id: 'duration',
                 icon: faClock,
                 label: 'Avg run duration',
                 value: stats == null ? '—' : formatDuration(stats.avg_run_duration_ms),
                 sub: stats == null ? '—' : `Across ${stats.run_count} run${stats.run_count === 1 ? '' : 's'}`,
               },
               {
-                key: 'healed',
+                id: 'healed',
                 icon: faWandMagicSparkles,
                 label: 'Self-healed locators',
                 value: stats == null ? '—' : String(stats.self_healed_count),
                 sub: 'In the last 7 days',
               },
               {
-                key: 'discovery',
+                id: 'discovery',
                 icon: faCompass,
                 label: 'Last discovery',
                 value: lastDiscoveryAt == null ? '—' : relativeTime(lastDiscoveryAt),
@@ -512,7 +512,7 @@ export function Overview({
                 {testCasesCard}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
                   {miniTiles.map((t) => (
-                    <MiniTile key={t.key} {...t} flex={1} />
+                    <MiniTile key={t.id} {...t} flex={1} />
                   ))}
                 </div>
               </div>

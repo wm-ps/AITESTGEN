@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBolt, faPen, faPlay, faPlugCircleCheck } from '@fortawesome/free-solid-svg-icons'
+import { faBolt, faChevronDown, faChevronRight, faPen, faPlay, faPlugCircleCheck } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type ApplicationCreate, type ApplicationRead } from '../api'
 import { LoadingDots } from './LoadingDots'
 import { EMPTY_NOTES_FORM, NotesFields, toNotesPayload, type NotesFormState } from './NotesFields'
@@ -59,6 +59,13 @@ export function ConnectAppForm({
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [notes, setNotes] = useState<NotesFormState>(EMPTY_NOTES_FORM)
+  // Collapsed by default — Notes is optional and secondary to the required
+  // connection fields above it. `notes` itself stays lifted in this
+  // component regardless of collapse state, so toggling never loses what
+  // was typed.
+  const [notesExpanded, setNotesExpanded] = useState(false)
+  const notesSectionCount = Object.keys(EMPTY_NOTES_FORM).length
+  const notesFilledCount = Object.values(notes).filter((v) => v.trim().length > 0).length
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [testingConnection, setTestingConnection] = useState(false)
@@ -279,16 +286,34 @@ export function ConnectAppForm({
             </div>
 
             {!readOnly && (
-              <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, padding: 14, background: 'var(--panel-2)', display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, padding: 14, background: 'var(--panel-2)', display: 'flex', flexDirection: 'column', gap: notesExpanded ? 14 : 0 }}>
+                <button
+                  type="button"
+                  onClick={() => setNotesExpanded((v) => !v)}
+                  aria-expanded={notesExpanded}
+                  style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', textAlign: 'left' }}
+                >
                   <FontAwesomeIcon icon={faPen} style={{ fontSize: 12, color: 'var(--accent)' }} />
                   <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-1)' }}>Notes (optional)</span>
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: -8 }}>
-                  Business knowledge the AI can't discover on its own — available to the very first discovery run,
-                  before you'd otherwise get a chance to add it. You can always add or edit this later too.
-                </div>
-                <NotesFields form={notes} onChange={setNotes} />
+                  {!notesExpanded && notesFilledCount > 0 && (
+                    <span style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>
+                      — {notesFilledCount} of {notesSectionCount} filled in
+                    </span>
+                  )}
+                  <FontAwesomeIcon
+                    icon={notesExpanded ? faChevronDown : faChevronRight}
+                    style={{ fontSize: 11, color: 'var(--fg-4)', marginLeft: 'auto' }}
+                  />
+                </button>
+                {notesExpanded && (
+                  <>
+                    <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: -8 }}>
+                      Business knowledge the AI can't discover on its own — available to the very first discovery run,
+                      before you'd otherwise get a chance to add it. You can always add or edit this later too.
+                    </div>
+                    <NotesFields form={notes} onChange={setNotes} />
+                  </>
+                )}
               </div>
             )}
 

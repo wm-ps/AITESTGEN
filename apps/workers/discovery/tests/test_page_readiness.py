@@ -37,7 +37,7 @@ async def _authenticated_page(target_app_url: str):
     return playwright, browser, context, page
 
 
-async def _crawl_route(target_app_url: str, route: str):
+async def _crawl_route(target_app_url: str, route: str, **crawl_kwargs):
     credential = json.dumps({"username": "qa", "password": "qa-pass"}).encode()
     captured: list = []
     diagnostics: list[tuple[str, dict]] = []
@@ -55,6 +55,7 @@ async def _crawl_route(target_app_url: str, route: str):
             credential=credential,
             on_capture=captured.append,
             on_diagnostic=lambda kind, payload: diagnostics.append((kind, payload)),
+            **crawl_kwargs,
         )
         await context.close()
         await browser.close()
@@ -65,7 +66,12 @@ async def _crawl_route(target_app_url: str, route: str):
 async def test_load_more_sampling_stops_on_confirmed_pattern_not_at_cap_or_first_click(
     target_app_url: str,
 ) -> None:
-    _, diagnostics = await _crawl_route(target_app_url, "load-more")
+    """`[ADDED exploration-scope]` This bounded infinite-scroll/pagination
+    sampling itself is now gated to `exploration_scope="dataset"` — the
+    default `"representative"` scope skips it entirely (see
+    `run_discovery_crawl`'s own docstring). This test exercises the sampler
+    mechanism itself, so it opts into dataset scope explicitly."""
+    _, diagnostics = await _crawl_route(target_app_url, "load-more", exploration_scope="dataset")
     sampled = [
         payload
         for kind, payload in diagnostics
@@ -168,7 +174,26 @@ async def test_near_zero_timeout_returns_false_not_raises(target_app_url: str) -
 @pytest.mark.asyncio
 async def test_load_more_control_excluded_from_generic_button_loop(target_app_url: str) -> None:
     """AC: the matched Load-More control isn't also clicked by the generic
-    single-click action loop as an ordinary standalone button."""
-    captured, _ = await _crawl_route(target_app_url, "load-more")
+    single-click action loop as an ordinary standalone button.
+    `[ADDED exploration-scope]` requires `exploration_scope="dataset"` —
+    see the sampling test above."""
+    captured, _ = await _crawl_route(target_app_url, "load-more", exploration_scope="dataset")
     actions = [item for item in captured if isinstance(item, CapturedAction)]
     assert not any(a.description == "Load More" for a in actions), actions
+
+
+@pytest.mark.asyncio
+async def test_default_representative_scope_does_not_sample_load_more(
+    target_app_url: str,
+) -> None:
+    """The default scope must not click "Load More"/scroll for more of a
+    collection just because the control exists — see the spec's own
+    "must NOT automatically page 1 -> page 2 -> page 3" requirement."""
+    _, diagnostics = await _crawl_route(target_app_url, "load-more")
+
+    sampled = [
+        payload
+        for kind, payload in diagnostics
+        if kind == "page_readiness" and payload.get("type") == "scroll_sampled"
+    ]
+    assert not sampled, diagnostics

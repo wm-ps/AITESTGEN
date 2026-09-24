@@ -655,13 +655,21 @@ export function TestSuiteTab({
     }
   }, [applicationId])
 
-  // Only while the page is genuinely empty (no search/pagination in play) —
-  // polls for a suite still writing its first test case, and picks up the
-  // asset list itself the moment one lands, rather than waiting on the
-  // page/search-keyed effect above to happen to re-run.
+  // Only while unsearched/unpaginated — polls suite generation status so a
+  // remount mid-generation (tab switch away and back) re-derives the real
+  // "still writing" state instead of trusting whatever partial asset list
+  // the other effect above already loaded. `[FIXED]` used to also bail once
+  // `assets.length > 0`, which is exactly wrong: test cases are written
+  // incrementally, so a suite that's 5-of-20 done already has a non-empty
+  // asset list — that early return meant a remount mid-generation skipped
+  // this poll entirely, left `suiteGenerating` stuck at `null`/its stale
+  // value, and the render below fell straight through to the partial list
+  // instead of the progress template. Self-stops once generation is
+  // confirmed finished, rather than polling forever.
   useEffect(() => {
-    if (!assetsLoaded || assets.length > 0 || search || page !== 0) return
+    if (!assetsLoaded || search || page !== 0) return
     let cancelled = false
+    let interval: ReturnType<typeof setInterval> | undefined
     async function poll() {
       try {
         const [suites, statusPage] = await Promise.all([
@@ -669,22 +677,22 @@ export function TestSuiteTab({
           api.getTestSuiteStatus(applicationId, 1, ASSETS_PER_PAGE, ''),
         ])
         if (cancelled) return
-        setSuiteGenerating(suites.some((s) => s.status === 'generating'))
-        if (statusPage.items.length > 0) {
-          setAssets(statusPage.items)
-          setTotal(statusPage.total)
-        }
+        const generating = suites.some((s) => s.status === 'generating')
+        setSuiteGenerating(generating)
+        setAssets(statusPage.items)
+        setTotal(statusPage.total)
+        if (!generating) clearInterval(interval)
       } catch {
-        // best-effort poll — a transient failure just leaves the empty state as-is
+        // best-effort poll — a transient failure just leaves the state as-is
       }
     }
     poll()
-    const interval = setInterval(poll, REGENERATE_POLL_INTERVAL_MS)
+    interval = setInterval(poll, REGENERATE_POLL_INTERVAL_MS)
     return () => {
       cancelled = true
       clearInterval(interval)
     }
-  }, [applicationId, assetsLoaded, assets.length, search, page])
+  }, [applicationId, assetsLoaded, search, page])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -737,30 +745,71 @@ export function TestSuiteTab({
           }}
         />
       )}
-      {!assetsLoaded ? (
-        <SkeletonRows count={4} height={80} gap={12} />
-      ) : assets.length === 0 ? (
-        search ? (
-          <p style={{ fontSize: 13, color: 'var(--fg-4)' }}>No test cases match this search.</p>
-        ) : suiteGenerating == null ? (
-          <SkeletonRows count={4} height={80} gap={12} />
-        ) : suiteGenerating ? (
-          <div
-            style={{
-              background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
-              backdropFilter: 'blur(16px) saturate(1.25)',
-              border: '1px solid var(--border-1)',
-              borderRadius: 14,
-              boxShadow: 'var(--panel-shadow)',
-            }}
-          >
-            <GenerationLoader
-              icon={Vial}
-              title="Writing test cases…"
-              body="Vantage is converting approved scenarios into test cases and fixtures."
+      {(() => {
+        const assetList = (
+          <>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {assets.map((asset) => (
+                <AssetCard
+                  key={asset.id}
+                  asset={asset}
+                  scenario={asset.scenario_id ? (scenariosById[asset.scenario_id] ?? null) : null}
+                  onScenarioUpdated={(updated) =>
+                    setScenarios((rows) => rows.map((s) => (s.id === updated.id ? updated : s)))
+                  }
+                  onRegenerated={refreshAssets}
+                />
+              ))}
+            </div>
+            <Pagination
+              page={page}
+              totalPages={totalPages}
+              totalItems={total}
+              pageSize={ASSETS_PER_PAGE}
+              onPrev={() => setPage((p) => p - 1)}
+              onNext={() => setPage((p) => p + 1)}
+              onPage={setPage}
             />
-          </div>
-        ) : (
+          </>
+        )
+        if (!assetsLoaded) return <SkeletonRows count={4} height={80} gap={12} />
+        // A search implies the user wants whatever currently matches,
+        // generating or not — bypasses the generating check below entirely.
+        if (search) {
+          return assets.length === 0 ? (
+            <p style={{ fontSize: 13, color: 'var(--fg-4)' }}>No test cases match this search.</p>
+          ) : (
+            assetList
+          )
+        }
+        // `[FIXED]` "still generating" must win over an already non-empty
+        // asset list — a suite writes test cases incrementally, so
+        // `assets.length === 0` alone can't tell "done" from "5 of 20
+        // written so far". Without this, a remount mid-generation (tab
+        // switch away and back) showed the partial list instead of the
+        // progress template, since `assets.length > 0` was already true.
+        if (suiteGenerating === false && assets.length > 0) return assetList
+        if (suiteGenerating == null) return <SkeletonRows count={4} height={80} gap={12} />
+        if (suiteGenerating) {
+          return (
+            <div
+              style={{
+                background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
+                backdropFilter: 'blur(16px) saturate(1.25)',
+                border: '1px solid var(--border-1)',
+                borderRadius: 14,
+                boxShadow: 'var(--panel-shadow)',
+              }}
+            >
+              <GenerationLoader
+                icon={Vial}
+                title="Writing test cases…"
+                body="Vantage is converting approved scenarios into test cases and fixtures."
+              />
+            </div>
+          )
+        }
+        return (
           <EmptyState
             illustration={<TestCasesIllustration />}
             variant="scene"
@@ -768,32 +817,7 @@ export function TestSuiteTab({
             subtitle="Test cases appear here once discovery finds journeys and the suite is generated."
           />
         )
-      ) : (
-        <>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            {assets.map((asset) => (
-              <AssetCard
-                key={asset.id}
-                asset={asset}
-                scenario={asset.scenario_id ? (scenariosById[asset.scenario_id] ?? null) : null}
-                onScenarioUpdated={(updated) =>
-                  setScenarios((rows) => rows.map((s) => (s.id === updated.id ? updated : s)))
-                }
-                onRegenerated={refreshAssets}
-              />
-            ))}
-          </div>
-          <Pagination
-            page={page}
-            totalPages={totalPages}
-            totalItems={total}
-            pageSize={ASSETS_PER_PAGE}
-            onPrev={() => setPage((p) => p - 1)}
-            onNext={() => setPage((p) => p + 1)}
-            onPage={setPage}
-          />
-        </>
-      )}
+      })()}
     </div>
   )
 }

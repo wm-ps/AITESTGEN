@@ -242,8 +242,17 @@ export function OverviewTab({
     )
   }
 
-  const { passed_count, failed_count, blocked_count } = overview.latest_run
-  const total = passed_count + failed_count + blocked_count
+  const { passed_count, failed_count, timed_out_count, errored_count, blocked_count } = overview.latest_run
+  // `[FIXED]` used to total only passed+failed+blocked — silently dropping
+  // timed_out/errored from the denominator, which inflated this tile's
+  // percentage above what the same run's own bar below shows (that one
+  // already divides by the run's real `total_count`, every outcome
+  // included). `_collapse_to_suite_row_status` (main.py) already treats
+  // timed_out/errored as reading like "Failed" for this exact kind of
+  // summary — folded into the Failed segment/legend below for the same
+  // reason, not shown as their own segments.
+  const failedLike = failed_count + timed_out_count + errored_count
+  const total = passed_count + failedLike + blocked_count
   const segPct = (n: number) => (total > 0 ? (n / total) * 100 : 0)
   // Same denominator as the "Pass rate by run" bars below (this run's own
   // passed/total) — not `overview.pass_rate` (latest-known status per
@@ -316,12 +325,12 @@ export function OverviewTab({
           </div>
           <div style={{ height: 10, borderRadius: 'var(--radius-full)', overflow: 'hidden', background: 'var(--chip)', display: 'flex' }}>
             <div style={{ width: `${segPct(passed_count)}%`, background: 'var(--ok)' }} />
-            <div style={{ width: `${segPct(failed_count)}%`, background: 'var(--bad)' }} />
+            <div style={{ width: `${segPct(failedLike)}%`, background: 'var(--bad)' }} />
             <div style={{ width: `${segPct(blocked_count)}%`, background: 'var(--border-2)' }} />
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px 18px' }}>
             <LegendDot color="var(--ok)" label="Passed" value={passed_count} />
-            <LegendDot color="var(--bad)" label="Failed" value={failed_count} />
+            <LegendDot color="var(--bad)" label="Failed" value={failedLike} />
             <LegendDot color="var(--border-2)" label="Not run" value={blocked_count} />
           </div>
         </div>

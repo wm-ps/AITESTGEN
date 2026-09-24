@@ -254,6 +254,155 @@ def test_journey_steps_returns_screenshot_url_on_final_step_only(monkeypatch) ->
     assert body[1]["screenshot_url"] == "https://fake-store/discovery-runs/some-run/some-key"
 
 
+def test_journey_steps_falls_back_to_an_earlier_settled_screenshot(monkeypatch) -> None:
+    """`[FIXED journey-screenshot]` regression: the last step's screenshot
+    used to be shown unconditionally, blank or not. When its Page never
+    settled (`page_settled=False` — Story 2.9's readiness gate, checked
+    right before the crawler's screenshot), the endpoint must walk
+    backward through the journey's earlier steps for one that did settle,
+    instead of showing what's very likely a blank capture."""
+    import api.main as main_module
+
+    class _FakeObjectStore:
+        def presigned_get_url(
+            self,
+            key: str,
+            expires_seconds: int = 900,
+            *,
+            response_content_type: str | None = None,
+            filename: str | None = None,
+        ) -> str:
+            return f"https://fake-store/{key}"
+
+    monkeypatch.setattr(main_module, "ObjectStore", _FakeObjectStore)
+
+    init_db()
+    client = _signed_in_client("Org Journey Screenshot Fallback")
+    application = _create_application(client, "Journey Screenshot Fallback App")
+
+    with Session(engine) as session:
+        discovery_run = session.exec(
+            select(DiscoveryRun).where(
+                DiscoveryRun.external_id == uuid.UUID(application["discovery_run_id"])
+            )
+        ).one()
+        login_page = Page(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            url="https://staging.example.com/login",
+            title="Login",
+            object_storage_key="discovery-runs/some-run/login-key",
+            page_settled=True,
+        )
+        blank_checkout_page = Page(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            url="https://staging.example.com/checkout",
+            title="Checkout",
+            object_storage_key="discovery-runs/some-run/blank-checkout-key",
+            page_settled=False,
+        )
+        session.add_all([login_page, blank_checkout_page])
+        session.flush()
+
+        journey = Journey(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            name="Checkout Flow",
+            identity_key=f"identity-{uuid.uuid4()}",
+        )
+        session.add(journey)
+        session.flush()
+
+        session.add_all(
+            [
+                JourneyStep(
+                    journey_id=journey.id, page_id=login_page.id, step_order=1, stage_label="Login"
+                ),
+                JourneyStep(
+                    journey_id=journey.id,
+                    page_id=blank_checkout_page.id,
+                    step_order=2,
+                    stage_label="Checkout",
+                ),
+            ]
+        )
+        session.commit()
+        session.refresh(journey)
+        journey_id = str(journey.external_id)
+
+    response = client.get(f"/journeys/{journey_id}/steps")
+    assert response.status_code == 200
+    body = response.json()
+    # Still attached to the LAST step's response object (unchanged API
+    # contract/frontend read path) — just sourced from the earlier,
+    # actually-settled page's screenshot instead of the blank one.
+    assert body[1]["screenshot_url"] == "https://fake-store/discovery-runs/some-run/login-key"
+
+
+def test_journey_steps_uses_the_only_screenshot_even_if_unsettled(monkeypatch) -> None:
+    """No settled page exists anywhere in the journey — still show the
+    closest available screenshot rather than nothing at all."""
+    import api.main as main_module
+
+    class _FakeObjectStore:
+        def presigned_get_url(
+            self,
+            key: str,
+            expires_seconds: int = 900,
+            *,
+            response_content_type: str | None = None,
+            filename: str | None = None,
+        ) -> str:
+            return f"https://fake-store/{key}"
+
+    monkeypatch.setattr(main_module, "ObjectStore", _FakeObjectStore)
+
+    init_db()
+    client = _signed_in_client("Org Journey Screenshot Only Blank")
+    application = _create_application(client, "Journey Screenshot Only Blank App")
+
+    with Session(engine) as session:
+        discovery_run = session.exec(
+            select(DiscoveryRun).where(
+                DiscoveryRun.external_id == uuid.UUID(application["discovery_run_id"])
+            )
+        ).one()
+        blank_page = Page(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            url="https://staging.example.com/checkout",
+            title="Checkout",
+            object_storage_key="discovery-runs/some-run/only-blank-key",
+            page_settled=False,
+        )
+        session.add(blank_page)
+        session.flush()
+
+        journey = Journey(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            name="Checkout Flow",
+            identity_key=f"identity-{uuid.uuid4()}",
+        )
+        session.add(journey)
+        session.flush()
+
+        session.add(
+            JourneyStep(
+                journey_id=journey.id, page_id=blank_page.id, step_order=1, stage_label="Checkout"
+            )
+        )
+        session.commit()
+        session.refresh(journey)
+        journey_id = str(journey.external_id)
+
+    response = client.get(f"/journeys/{journey_id}/steps")
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["screenshot_url"] == "https://fake-store/discovery-runs/some-run/only-blank-key"
+
+
 def test_rename_journey_updates_name() -> None:
     init_db()
     client = _signed_in_client("Org Journey Rename")

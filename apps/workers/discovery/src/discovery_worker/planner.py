@@ -219,6 +219,34 @@ class LoopGuardState:
         route_key = (candidate.source_route_template, candidate.in_landmark, candidate.label)
         self._route_family_counts[route_key] = self._route_family_counts.get(route_key, 0) + 1
 
+    def forget_executed(self, candidate: ActionCandidate) -> None:
+        """`[FIXED]` Undoes a `record_executed` call for one candidate.
+
+        `record_executed` fires as soon as an Execution Decision is
+        confirmed EXECUTE — deliberately *before* the click itself is even
+        attempted (see its own docstring), since the decision and the click
+        outcome are separate concerns. That leaves exactly one gap: a
+        caller that discovers the click never actually happened at all (not
+        "executed with an unwanted effect" — genuinely never landed, e.g.
+        crawler.py's ancestor-collapsed case, where the target was
+        mid-layout-transition and the fix is a full reload-and-retry) has
+        no way to undo the premature `record_executed` bookkeeping. Without
+        this, that exact candidate is already in `_executed` by the time
+        the retry re-reaches `guard()`, which skips it as "already executed
+        from this state" — permanently defeating the retry the caller just
+        went to the trouble of setting up. Only call this for a click that
+        is *known* never to have taken effect; a click that executed and
+        merely had an undesirable result (crawler.py's shrink-detected
+        case) must stay recorded, so it isn't retried into a loop.
+        """
+        state_key = self._state_key(candidate)
+        self._executed.discard((state_key, candidate.in_landmark, candidate.label))
+        route_key = (candidate.source_route_template, candidate.in_landmark, candidate.label)
+        if route_key in self._route_family_counts:
+            self._route_family_counts[route_key] -= 1
+            if self._route_family_counts[route_key] <= 0:
+                del self._route_family_counts[route_key]
+
     def record_transition(self, from_state: str, to_state: str, label: str) -> None:
         """Called for every real transition the crawl observes — both a
         candidate's own forward navigation and a successful State Return

@@ -128,7 +128,9 @@ def _add_test_suite(journey: Journey, status: str = "generating") -> None:
         session.commit()
 
 
-def _add_test_run(application: dict, passed_count: int, total_count: int) -> None:
+def _add_test_run(
+    application: dict, passed_count: int, total_count: int, *, suite_name: str | None = None
+) -> None:
     with Session(engine) as session:
         app_row = session.exec(
             select(Application).where(Application.external_id == uuid.UUID(application["id"]))
@@ -145,6 +147,7 @@ def _add_test_run(application: dict, passed_count: int, total_count: int) -> Non
                 target_base_url_snapshot=application["url"],
                 total_count=total_count,
                 passed_count=passed_count,
+                suite_name=suite_name,
             )
         )
         session.commit()
@@ -193,6 +196,26 @@ def test_get_home_ignores_live_exploration_internal_verification_runs() -> None:
             )
         )
         session.commit()
+
+    response = client.get("/home")
+    body = response.json()[0]
+    assert body["test_run_count"] == 1
+    assert body["recent_pass_rates"] == [0.75]
+    assert body["last_test_run_pass_rate"] == 0.75
+
+
+def test_get_home_ignores_runs_scoped_to_a_single_test_case() -> None:
+    """`[FIXED]` regression: running one test case alone ("Run Journey(s)"
+    scoped to a single TestAsset, `suite_name` set) used to become the
+    dashboard's `last_test_run_pass_rate`/a `recent_pass_rates` point,
+    reading as a 100%/0% run for the whole suite. Only an unscoped Full
+    Suite run (`suite_name is None`) should count here."""
+    init_db()
+    client = _signed_in_client("Org Home Scoped Run")
+    application = _create_application(client, "Home Scoped Run App")
+
+    _add_test_run(application, passed_count=3, total_count=4)
+    _add_test_run(application, passed_count=1, total_count=1, suite_name="Checkout")
 
     response = client.get("/home")
     body = response.json()[0]

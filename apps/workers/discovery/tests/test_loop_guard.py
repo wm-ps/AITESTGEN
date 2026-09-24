@@ -116,6 +116,49 @@ def test_route_family_cap_bounds_a_parameterized_duplicate() -> None:
     assert "route_normalization" in verdict.reason
 
 
+# --- forget_executed: undoing a premature record_executed --------------------
+
+
+def test_forget_executed_lets_a_never_actually_clicked_candidate_retry() -> None:
+    """`[FIXED]` A caller that discovers a click never actually landed (e.g.
+    crawler.py's ancestor-collapsed reload-and-retry) must be able to undo
+    `record_executed`'s premature bookkeeping — otherwise the retry's own
+    `guard()` call sees the candidate already in `_executed` and skips it,
+    defeating the retry entirely."""
+    guard = LoopGuardState()
+    candidate = _candidate("Brands", state_key="https://app.example.com/store")
+    assert guard.guard(candidate).decision is None
+    guard.record_executed(candidate)
+    assert guard.guard(candidate).decision == "SKIP"
+
+    guard.forget_executed(candidate)
+
+    assert guard.guard(candidate).decision is None
+
+
+def test_forget_executed_also_undoes_the_route_family_sample_count() -> None:
+    """A click that never landed shouldn't consume the route family's
+    limited sample budget either — otherwise enough ancestor-collapsed
+    misses across a route family's pages could exhaust
+    `route_family_cap` without a single real click ever succeeding."""
+    guard = LoopGuardState(route_family_cap=1)
+    route = "https://app.example.com/product/{id}"
+    candidate = _candidate("Add to cart", state_key="https://app.example.com/product/1", route=route)
+    guard.guard(candidate)
+    guard.record_executed(candidate)
+    guard.forget_executed(candidate)
+
+    other = _candidate("Add to cart", state_key="https://app.example.com/product/2", route=route)
+    assert guard.guard(other).decision is None
+
+
+def test_forget_executed_on_an_unrecorded_candidate_is_a_no_op() -> None:
+    guard = LoopGuardState()
+    candidate = _candidate("Never clicked", state_key="https://app.example.com/")
+    guard.forget_executed(candidate)  # must not raise
+    assert guard.guard(candidate).decision is None
+
+
 # --- AC 2f: depth/action ceiling ---------------------------------------------
 
 

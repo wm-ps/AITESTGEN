@@ -1724,3 +1724,113 @@ async def test_decide_live_exploration_action_combines_semantic_target_and_appli
     assert result.semantic_target["target"] == {"name": "Engagement"}
     user_prompt = captured["json"]["messages"][1]["content"]
     assert "Engagement options depend on the selected tenant." in user_prompt
+
+
+async def test_decide_live_exploration_action_parses_exploration_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {
+                "exploration_scope": {"collection": "Tenant", "scope": "representative"},
+                "tool_name": "browser_click",
+                "tool_args": {"ref": "e3"},
+                "rationale": "open the first tenant row",
+                "goal_satisfied": False,
+            }
+        ),
+    )
+
+    result = await HostedAIProvider().decide_live_exploration_action(
+        requirement="Open tenant settings.", history=[], snapshot={"role": "main"}
+    )
+
+    assert result.exploration_scope == {"collection": "Tenant", "scope": "representative"}
+
+
+async def test_decide_live_exploration_action_exploration_scope_is_optional_and_backward_compatible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Same degrade-safely contract as `semantic_target`'s own equivalent
+    test — the key entirely absent (a heal-mode response, which never
+    includes this field at all) and a hallucinated non-dict value both
+    produce `exploration_scope=None`, never a crash or trusted garbage."""
+    _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {"tool_name": "browser_snapshot", "tool_args": {}, "rationale": "x", "goal_satisfied": False}
+        ),
+    )
+    absent = await HostedAIProvider().decide_live_exploration_action(
+        requirement="x", history=[], snapshot={"role": "main"}
+    )
+    assert absent.exploration_scope is None
+
+    _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {
+                "exploration_scope": "dataset",
+                "tool_name": "browser_snapshot",
+                "tool_args": {},
+                "rationale": "x",
+                "goal_satisfied": False,
+            }
+        ),
+    )
+    malformed = await HostedAIProvider().decide_live_exploration_action(
+        requirement="x", history=[], snapshot={"role": "main"}
+    )
+    assert malformed.exploration_scope is None
+
+
+async def test_decide_live_exploration_action_prompt_defaults_to_representative_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression guard for the actual policy text — the default-
+    representative/specific_item/dataset distinction must be an explicit,
+    deterministic instruction in the prompt, not left to the model to infer
+    ("the exploration system needs an actual bounded exploration policy...
+    not entirely on the LLM remembering a sentence")."""
+    captured = _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {"tool_name": "browser_snapshot", "tool_args": {}, "rationale": "x", "goal_satisfied": False}
+        ),
+    )
+
+    await HostedAIProvider().decide_live_exploration_action(
+        requirement="Open tenant settings.", history=[], snapshot={"role": "main"}
+    )
+
+    system_prompt = captured["json"]["messages"][0]["content"]
+    assert 'Default to "representative"' in system_prompt
+    assert '"specific_item"' in system_prompt
+    assert '"dataset"' in system_prompt
+
+
+async def test_decide_live_exploration_action_prompt_forbids_generic_context_from_expanding_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A business rule merely mentioning a collection ("Transactions are
+    important") must never expand scope — only a concrete, specific reason
+    does. Also confirms the requirement's own explicit wording always wins
+    over Application Context when they'd disagree (scope precedence)."""
+    captured = _monkeypatch_post(
+        monkeypatch,
+        json.dumps(
+            {"tool_name": "browser_snapshot", "tool_args": {}, "rationale": "x", "goal_satisfied": False}
+        ),
+    )
+
+    await HostedAIProvider().decide_live_exploration_action(
+        requirement="Open a transaction and inspect its details.",
+        history=[],
+        snapshot={"role": "main"},
+        application_context={"business_rules": ["The application contains thousands of transactions."]},
+    )
+
+    system_prompt = captured["json"]["messages"][0]["content"]
+    assert "not merely that the collection exists, or is large/important" in system_prompt
+    assert "requirement's own explicit wording always takes precedence" in system_prompt

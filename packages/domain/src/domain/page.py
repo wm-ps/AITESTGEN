@@ -17,7 +17,7 @@ bare FK on this table, so one Page can support more than one Journey.
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
@@ -68,6 +68,16 @@ class Page(SQLModel, table=True):
     # cache (Task 5), not just pages captured this run.
     heading: str | None = Field(default=None)
     structural_tokens: list | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    # `[ADDED journey-screenshot]` Story 2.9's own `wait_for_page_ready`
+    # readiness gate (`ReadinessResult.settled`), captured at screenshot
+    # time — reused as-is rather than a second "is this blank" analysis: a
+    # page that never settled (network still busy / DOM still mutating /
+    # content not yet present) is very likely to have been screenshotted
+    # blank or mid-load. Defaults `True` (existing rows, and the
+    # dialog/popup/login capture paths that don't pass a readiness result,
+    # are assumed settled — never worse than today's behaviour) so this only
+    # ever narrows which page's screenshot a Journey shows, never widens it.
+    page_settled: bool = Field(default=True, sa_column=Column(Boolean, nullable=False))
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

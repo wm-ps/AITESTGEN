@@ -194,6 +194,17 @@ export function DiscoverJourneys({
   // now that every card on the page renders its own (no more single
   // selected-journey detail pane to fade in and out of).
   const [loadedImgIds, setLoadedImgIds] = useState<Set<string>>(new Set())
+  // `[FIXED]` A screenshot's presigned URL can fail to load (expired,
+  // network blip, the underlying object missing) — with no `onError`
+  // handling, that image tag just sat there broken (browser's native
+  // broken-image icon) with its skeleton never clearing either, since
+  // `onLoad` never fires for a failed request. Falls back to the same "no
+  // screenshot yet" placeholder a genuinely-absent screenshot already
+  // gets, instead of ever showing broken/blank image content. Keyed by
+  // URL (like the `<img key={screenshotUrl}>` below), not journey id — a
+  // later poll's fresh presigned URL for the same journey is untried and
+  // gets a real retry, rather than staying stuck failed forever.
+  const [failedImgUrls, setFailedImgUrls] = useState<Set<string>>(new Set())
   // Story 2.17: pause/resume already round-trips through the API — this
   // just reflects the response immediately rather than waiting for
   // useDiscoveryProgress's next poll tick.
@@ -484,7 +495,8 @@ export function DiscoverJourneys({
             {pagedJourneys.map((journey, cardIndex) => {
               const steps = stepsByJourney[journey.id] ?? []
               const stages = stageFlow(steps)
-              const screenshotUrl = steps.at(-1)?.screenshot_url ?? null
+              const rawScreenshotUrl = steps.at(-1)?.screenshot_url ?? null
+              const screenshotUrl = rawScreenshotUrl && !failedImgUrls.has(rawScreenshotUrl) ? rawScreenshotUrl : null
               const loaded = loadedImgIds.has(journey.id)
               return (
                 <div
@@ -562,6 +574,7 @@ export function DiscoverJourneys({
                               decoding="async"
                               onClick={() => setLightboxUrl(screenshotUrl)}
                               onLoad={() => setLoadedImgIds((prev) => new Set(prev).add(journey.id))}
+                              onError={() => setFailedImgUrls((prev) => new Set(prev).add(screenshotUrl))}
                               style={{
                                 display: 'block',
                                 width: '100%',

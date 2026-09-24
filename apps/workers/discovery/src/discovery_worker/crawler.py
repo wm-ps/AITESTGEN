@@ -1050,6 +1050,11 @@ class CapturedPage:
     # score identical (AC 6).
     heading: str | None = None
     structural_tokens: list[str] | None = None
+    # `[ADDED journey-screenshot]` `ReadinessResult.settled` at screenshot
+    # time — a page that never settled is very likely screenshotted blank or
+    # mid-load. Default `True`: the dialog/popup/login capture paths below
+    # don't pass this (no readiness check runs for them), same as before.
+    page_settled: bool = True
 
 
 @dataclass
@@ -1231,6 +1236,20 @@ def _page_fingerprint(url: str) -> str:
         base = urlunsplit(split._replace(query=urlencode(kept_params)))
 
     return f"{base}#{fragment}" if fragment else base
+
+
+def _url_without_query(url: str) -> str:
+    """`url`'s fingerprint (`_page_fingerprint` — OAuth-param stripping,
+    empty-fragment collapsing) with the query string additionally dropped.
+    Same "keep the fragment, only touch the query" shape
+    `state_identity.route_template` already uses. Exploration-scope's
+    pagination dedup (`seen_pager_paths` in `run_discovery_crawl`) is the
+    only caller — path AND fragment are both kept so a hash-routed SPA's
+    fragment (a real, distinct page — see `_page_fingerprint`'s own
+    docstring) is never collapsed just because two URLs share a path."""
+    base, _, fragment = _page_fingerprint(url).partition("#")
+    stripped = urlunsplit(urlsplit(base)._replace(query=""))
+    return f"{stripped}#{fragment}" if fragment else stripped
 
 
 async def _submit_button_label(locator: Locator) -> str | None:
@@ -2386,6 +2405,22 @@ async def _click_standalone_buttons(
                                     ):
                                         break
                                     await page.wait_for_timeout(recover_wait_ms)
+                                # `[FIXED]` This click never actually landed
+                                # (that's the whole premise of the reload-
+                                # and-retry below) — but `record_executed`
+                                # above already marked it "executed" the
+                                # moment the Execution Decision was made,
+                                # before the click was ever attempted. Left
+                                # alone, the loop guard's own `guard()` sees
+                                # this exact candidate already in
+                                # `_executed` on the very next scan and
+                                # skips it as "already executed from this
+                                # state" — silently defeating the retry this
+                                # whole block exists to give it. See
+                                # `LoopGuardState.forget_executed`'s
+                                # docstring.
+                                if loop_guard_state:
+                                    loop_guard_state.forget_executed(action_candidate)
                                 seen_labels.discard(seen_key)
                                 continue
                             except Exception as exc:
@@ -2801,6 +2836,16 @@ async def run_discovery_crawl(
     safety: planner.SpecialistFn | None = None,
     already_confirmed_urls: frozenset[str] | None = None,
     resume_seed: list[tuple[str, str | None]] | None = None,
+    # Exploration-scope feature: "representative" (default) samples at most
+    # one page per route template (see `state_identity.route_template`) and
+    # skips scroll/"Load More" pagination sampling entirely — a collection
+    # of N structurally-identical rows/items should never turn into N full
+    # page visits just because N URLs exist. "dataset" restores today's
+    # exact behavior (visit every discovered URL, sample pagination). There
+    # is no per-crawl "specific_item" — an unattended batch crawl has no
+    # per-item user request to bound to; that scope only applies to Live
+    # Exploration.
+    exploration_scope: str = "representative",
 ) -> CrawlResult:
     """`already_confirmed_urls`/`resume_seed` (Story 2.17 AC 2/3, Story 2.16
     Task 3): resuming a paused/blocked run never re-explores a state already
@@ -2813,7 +2858,7 @@ async def run_discovery_crawl(
     # Story 2.19: one loop-guard instance for the whole run — deferred
     # import for the same reason `_click_standalone_buttons` uses one (see
     # its own comment on the crawler/planner/state_identity import cycle).
-    from discovery_worker import data_resolver, planner
+    from discovery_worker import data_resolver, planner, state_identity
 
     result = CrawlResult()
     sink = _CaptureSink(result, on_capture)
@@ -2879,6 +2924,57 @@ async def run_discovery_crawl(
     )
     queued_urls: set[str] = {u for u, _ in page_queue}
     visited_pages: set[str] = set(already_confirmed_urls or ())
+    # Exploration-scope feature. Two independent, narrowly-scoped dedup
+    # signals — NOT a blanket "any URL sharing a route template is
+    # redundant" rule. `[FIXED]` regression: an earlier version of this
+    # feature deduped by route template alone regardless of where a
+    # candidate URL came from, and that silently ate legitimate distinct app
+    # sections — a persistent nav menu's sibling items routinely have
+    # numeric/module-style path segments too (`route_template` can't tell
+    # "row 2 of a data table" from "the 2nd of 5 genuinely different nav
+    # destinations"), and plenty of real nav menus navigate via an
+    # onclick'd button/div rather than a plain `<a href>`, which goes
+    # through this same gate with no DOM signal at all to tell it apart from
+    # a repeated per-row button. Observed live: a 5-item nav sub-menu
+    # collapsed to 1 crawled destination, losing 4 real app sections (and
+    # every journey reachable only from them) entirely.
+    #
+    # 1. `seen_pager_paths` — same URL with only the query string stripped
+    #    (`?page=2`, `?page=3`, ...; scheme/netloc/path/FRAGMENT all kept).
+    #    `[FIXED]` regression: originally kept `.path` alone, which drops
+    #    the fragment entirely — a hash-routed SPA destination
+    #    (`/#Reports`, `/#Analytics`) has the same empty/`/` path as the
+    #    bare dashboard and as each other, so they wrongly collapsed into
+    #    "the same page, already sampled" even though this codebase's own
+    #    `_page_fingerprint`/`route_template` elsewhere correctly treat the
+    #    fragment as a real route path component. Always safe to dedupe
+    #    regardless of how the URL was discovered: a nav item is a
+    #    different path (or fragment) by definition, never the same one
+    #    with a different query. Seeded with the starting frontier's own
+    #    key so a pager linked from the entry page itself hands back zero
+    #    extra pages, not one.
+    # 2. `seen_table_row_templates` — different-path route templates
+    #    (`state_identity.route_template` — the SAME numeric/UUID-collapsing
+    #    canonicalization Story 2.10 already uses for SAME/VARIANT/NEW page
+    #    dedup, not a second one), but ONLY for a literal `<a href>` whose
+    #    nearest DOM ancestor is a real `<tr>` — see `_extract_and_enqueue_links`.
+    #    Table markup is essentially never used for navigation chrome, so
+    #    this stays a safe, narrow win for the spec's primary example (a
+    #    `/tenant/{id}/settings`-style data table) without the false-positive
+    #    class above. Deliberately NOT applied to button-click or form-submit
+    #    destinations (no such DOM signal exists there) or to non-`<tr>`
+    #    link collections (lists/grids/cards) — see this function's own
+    #    `in_table_row` parameter.
+    # ponytail: list/grid/card collections and button/form-discovered
+    # destinations are no longer deduped by URL shape at all (full
+    # enumeration, today's/pre-feature behavior) — upgrade path is a real
+    # repeated-sibling-container signal (extract_snapshot_context-style
+    # ancestor capture, already proven for Live Exploration) if that class
+    # of over-enumeration turns out to matter in practice.
+    seen_pager_paths: set[str] = set()
+    seen_table_row_templates: set[str] = set()
+    if exploration_scope != "dataset":
+        seen_pager_paths.update(_url_without_query(u) for u, _ in page_queue)
     visited_forms: set[str] = set()
     seen_form_signatures: set[tuple[str, str, tuple[tuple[str | None, str | None], ...]]] = set()
     # `[ADDED 2026-07-22]` A mid-page session expiry (see `_recover_login_if_needed`
@@ -2893,13 +2989,18 @@ async def run_discovery_crawl(
     # don't share state, persists across BFS re-queues of the same page.
     seen_button_labels_by_page: dict[str, set[str]] = {}
 
-    def _maybe_enqueue(new_url: str | None, from_url: str) -> str:
+    def _maybe_enqueue(new_url: str | None, from_url: str, *, in_table_row: bool = False) -> str:
         """Returns why a candidate URL was or wasn't queued — used both to
         actually drive the BFS and to power `_extract_and_enqueue_links`'s
         per-page skip-reason summary below (`[ADDED 2026-07-22]` — this used
         to be silent, which is exactly why a whole class of "page never
         gets crawled" bugs went unnoticed until a live run was manually
-        compared against the real site's page list)."""
+        compared against the real site's page list).
+
+        `in_table_row`: only ever passed `True` by `_extract_and_enqueue_links`
+        for a link whose nearest DOM ancestor is a real `<tr>` — see this
+        module's own exploration-scope comment above for why that's the only
+        case route-template dedup is safe to apply."""
         if not new_url:
             return "empty"
         if not _same_origin(new_url, base_url):
@@ -2916,6 +3017,21 @@ async def run_discovery_crawl(
             return "already-visited"
         if new_url in queued_urls:
             return "already-queued"
+        if exploration_scope != "dataset":
+            pager_key = _url_without_query(new_url)
+            if pager_key in seen_pager_paths:
+                return "pagination-already-sampled"
+            seen_pager_paths.add(pager_key)
+            if in_table_row:
+                template = state_identity.route_template(new_url)
+                if template in seen_table_row_templates:
+                    # e.g. a 50-row `/tenant/{id}/settings` table: the first
+                    # row's URL already claimed this template as its one
+                    # representative sample — every other row leading to a
+                    # structurally equivalent page is skipped here, not
+                    # queued and visited only to be deduplicated afterward.
+                    return "template-already-sampled"
+                seen_table_row_templates.add(template)
         page_queue.append((new_url, from_url))
         queued_urls.add(new_url)
         return "enqueued"
@@ -2945,17 +3061,24 @@ async def run_discovery_crawl(
         of just skipping that one scrape attempt like every other transient
         per-page failure in this file already does."""
         try:
-            links = await page.eval_on_selector_all("a[href]", "els => els.map(e => e.href)")
+            # `inRow`: whether this link's nearest ancestor is a real `<tr>`
+            # — the one DOM signal exploration-scope trusts enough to dedupe
+            # by URL template (see the module-level comment by
+            # `seen_table_row_templates`). Nothing else here reads it.
+            links = await page.eval_on_selector_all(
+                "a[href]", "els => els.map(e => ({href: e.href, inRow: e.closest('tr') !== null}))"
+            )
         except Exception as exc:
             logger.warning("  %s: link scrape failed, skipping (%s)", from_url, exc)
             return 0
         tally: dict[str, int] = {}
         new_links: list[str] = []
-        for raw_link in links:
-            reason = _maybe_enqueue(_page_fingerprint(raw_link), from_url)
+        for link in links:
+            fingerprint = _page_fingerprint(link["href"])
+            reason = _maybe_enqueue(fingerprint, from_url, in_table_row=link["inRow"])
             tally[reason] = tally.get(reason, 0) + 1
             if reason == "enqueued":
-                new_links.append(_page_fingerprint(raw_link))
+                new_links.append(fingerprint)
         logger.info(
             "  %s: %d <a href> found — %s",
             from_url,
@@ -3098,6 +3221,7 @@ async def run_discovery_crawl(
                 object_storage_key=key,
                 heading=heading,
                 structural_tokens=structural_tokens,
+                page_settled=readiness.settled,
             )
         )
         # Records how the crawler actually reached this page — without this,
@@ -3197,13 +3321,23 @@ async def run_discovery_crawl(
         # "Load More") before the generic loops below, and exclude the
         # matched control from them so it isn't also clicked as an ordinary
         # button.
-        load_more_label = await _sample_scroll_or_pagination(
-            page,
-            current_url,
-            heartbeat,
-            on_diagnostic,
-            network_tracker,
-            effective_page_load_timeout,
+        # Exploration-scope feature: this traverses pagination (clicks
+        # "Load More"/scrolls for more rows) — collection/pagination
+        # metadata is still captured via the page's own DOM either way, but
+        # actually paging through more of it is exactly the dataset-wide
+        # behavior the default "representative" scope must not do
+        # automatically.
+        load_more_label = (
+            await _sample_scroll_or_pagination(
+                page,
+                current_url,
+                heartbeat,
+                on_diagnostic,
+                network_tracker,
+                effective_page_load_timeout,
+            )
+            if exploration_scope == "dataset"
+            else None
         )
         if load_more_label:
             seen_button_labels_by_page.setdefault(current_url, set()).add(load_more_label)

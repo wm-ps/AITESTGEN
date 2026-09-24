@@ -518,6 +518,48 @@ def records_page(record_id: int, request: Request) -> Response:
     )
 
 
+@app.get("/nav-menu", response_class=HTMLResponse)
+def nav_menu_page(request: Request) -> Response:
+    """Exploration-scope regression fixture — 5 persistent-nav-style sibling
+    destinations whose paths happen to share a route-template shape
+    (`/nav-section/{id}`), plain `<a href>`, deliberately NOT inside a
+    `<tr>` (nav chrome, not a data table). All 5 must still be crawled —
+    see test_nav_menu_items_are_all_crawled_even_with_templated_paths."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    items = "".join(f'<a href="/nav-section/{i}">Nav Section {i}</a>' for i in range(1, 6))
+    return HTMLResponse(f"<html><body><h1>Nav Menu</h1><nav>{items}</nav></body></html>")
+
+
+@app.get("/nav-section/{section_id}", response_class=HTMLResponse)
+def nav_section_page(section_id: int, request: Request) -> Response:
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(f"<html><body><h1>Nav Section {section_id}</h1></body></html>")
+
+
+@app.get("/nav-menu-buttons", response_class=HTMLResponse)
+def nav_menu_buttons_page(request: Request) -> Response:
+    """Button-driven variant of the fixture above — real nav menus often
+    navigate via an onclick'd button/div rather than a plain `<a href>`
+    (same pattern `_APP_NAV` above already uses), which has no `<tr>` (or
+    any DOM) signal available for exploration-scope to key off at all."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    buttons = "".join(
+        f"<button onclick=\"window.location='/nav-section-btn/{i}'\">Section {i}</button>"
+        for i in range(1, 6)
+    )
+    return HTMLResponse(f"<html><body><h1>Nav Menu Buttons</h1>{buttons}</body></html>")
+
+
+@app.get("/nav-section-btn/{section_id}", response_class=HTMLResponse)
+def nav_section_btn_page(section_id: int, request: Request) -> Response:
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(f"<html><body><h1>Nav Section Btn {section_id}</h1></body></html>")
+
+
 @app.get("/locators", response_class=HTMLResponse)
 def locators_page(request: Request) -> Response:
     """Story 2.21 — one button per capture tier: a real `data-testid`, a
@@ -715,3 +757,71 @@ def safety_test(request: Request) -> Response:
         </body></html>
         """
     )
+
+
+# Exploration-scope feature — collection fixtures. Each is its own isolated
+# entry page (never linked from `/` or any other existing fixture route) so
+# a test can pass it directly as `base_url` without perturbing any other
+# test's page/link counts. `/table-row/{id}`, `/list-item/{id}`, and
+# `/grid-item/{id}` are each a real route template (numeric id segment),
+# reusing exactly the `state_identity.route_template` canonicalization
+# Story 2.10 already established — not a new templating scheme.
+
+
+@app.get("/table-collection", response_class=HTMLResponse)
+def table_collection_page(request: Request) -> Response:
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    rows = "".join(f'<tr><td><a href="/table-row/{i}">Row {i}</a></td></tr>' for i in range(1, 11))
+    return HTMLResponse(f"<html><body><h1>Table</h1><table>{rows}</table></body></html>")
+
+
+@app.get("/table-row/{row_id}", response_class=HTMLResponse)
+def table_row_page(row_id: int, request: Request) -> Response:
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(f"<html><body><h1>Row {row_id}</h1></body></html>")
+
+
+@app.get("/list-collection", response_class=HTMLResponse)
+def list_collection_page(request: Request) -> Response:
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    items = "".join(f'<li><a href="/list-item/{i}">Item {i}</a></li>' for i in range(1, 7))
+    return HTMLResponse(f"<html><body><h1>List</h1><ul>{items}</ul></body></html>")
+
+
+@app.get("/list-item/{item_id}", response_class=HTMLResponse)
+def list_item_page(item_id: int, request: Request) -> Response:
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(f"<html><body><h1>Item {item_id}</h1></body></html>")
+
+
+@app.get("/grid-collection", response_class=HTMLResponse)
+def grid_collection_page(request: Request) -> Response:
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    cards = "".join(
+        f'<div class="card"><a href="/grid-item/{i}">Card {i}</a></div>' for i in range(1, 9)
+    )
+    return HTMLResponse(f"<html><body><h1>Grid</h1>{cards}</body></html>")
+
+
+@app.get("/grid-item/{item_id}", response_class=HTMLResponse)
+def grid_item_page(item_id: int, request: Request) -> Response:
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    return HTMLResponse(f"<html><body><h1>Card {item_id}</h1></body></html>")
+
+
+@app.get("/paginated-collection", response_class=HTMLResponse)
+def paginated_collection_page(request: Request) -> Response:
+    """A numbered `1 2 3 4 5 Next` pager — same path, different `?page=`
+    query, so `state_identity.route_template` (which drops the query
+    entirely) collapses every page link to this same page's own template."""
+    if not _authenticated(request):
+        return RedirectResponse(url="/login")
+    pager = "".join(f'<a href="/paginated-collection?page={n}">{n}</a>' for n in range(2, 6))
+    pager += '<a href="/paginated-collection?page=2">Next</a>'
+    return HTMLResponse(f"<html><body><h1>Paginated</h1><table><tr><td>Row</td></tr></table>{pager}</body></html>")

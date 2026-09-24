@@ -1298,6 +1298,22 @@ choosing "Mango" from it share the same target name), even as the ref/tool_args/
 realize it change turn to turn as the DOM changes. Leave semantic_target null for turns that \
 don't act on a named target (e.g. a bare `browser_snapshot` taken only to look around).
 
+Exploration scope — when this turn's target is one of several structurally similar items in a \
+collection (a table row, a list/grid item, a paginated set), or involves deciding whether to \
+enumerate such a collection, state a separate "exploration_scope": {{"collection": "<name of \
+the repeated thing, e.g. \"Tenant\", \"Transaction\">", "scope": "representative" | \
+"specific_item" | "dataset"}}. Default to "representative": explore ONE sample item to \
+understand its structure/behavior, then stop — do not click a second, third, ... row/item of \
+the same collection, and do not click "next page"/paginate through more of it, merely because \
+more exist. Use "specific_item" only when the requirement itself names or bounds a particular \
+item (e.g. "the third tenant", "these five users", an ordinal, a specific identifying value). \
+Use "dataset" only when the requirement explicitly requires broad/all-item coverage (e.g. \
+"every", "all", "each", "entire dataset", "all pages") — or Application Context states a \
+concrete, specific reason this workflow must cover every item (not merely that the collection \
+exists, or is large/important). The requirement's own explicit wording always takes precedence \
+over Application Context when they'd otherwise disagree. Leave "exploration_scope" null for a \
+turn that isn't about a collection at all.
+
 Pick the interaction the element's actual current state calls for, not whatever the \
 requirement's verb literally says — a combobox/listbox/menu needs opening before any option \
 inside it is choosable. Never call `browser_select_option`/`browser_click` on an option that \
@@ -1323,7 +1339,8 @@ item visibly appears in a list) — never assume success from an action alone.
 
 Respond with ONLY a JSON object of this shape, no prose: {{"semantic_target": {{"action": \
 "...", "target": {{"name": "..."}}, "value": null, "relationship": null, "context": null}}, \
-"tool_name": "...", "tool_args": {{...}}, "rationale": "<one sentence>", "goal_satisfied": \
+"exploration_scope": {{"collection": null, "scope": "representative"}}, "tool_name": "...", \
+"tool_args": {{...}}, "rationale": "<one sentence>", "goal_satisfied": \
 false}}"""
 
 _LIVE_EXPLORATION_PROMPT_USER = """Requirement: {requirement}
@@ -1798,12 +1815,23 @@ class HostedAIProvider:
             if isinstance(raw_semantic_target, dict) and raw_semantic_target
             else None
         )
+        # Same hallucination guard as `semantic_target` — a heal-mode response
+        # never includes this key at all (heal investigates one known step,
+        # never enumerates a collection), so `None` here is also that flow's
+        # normal, expected result, not a degraded case.
+        raw_exploration_scope = parsed.get("exploration_scope")
+        exploration_scope = (
+            raw_exploration_scope
+            if isinstance(raw_exploration_scope, dict) and raw_exploration_scope
+            else None
+        )
         return LiveExplorationDecision(
             tool_name=parsed["tool_name"],
             tool_args=parsed.get("tool_args") or {},
             rationale=parsed.get("rationale", ""),
             goal_satisfied=bool(parsed.get("goal_satisfied", False)),
             semantic_target=semantic_target,
+            exploration_scope=exploration_scope,
         )
 
     async def generate_playwright(

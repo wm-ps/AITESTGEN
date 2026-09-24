@@ -65,6 +65,7 @@ describe('ConnectAppForm', () => {
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     fillCommonFields()
+    fireEvent.click(screen.getByRole('button', { name: /Notes \(optional\)/ }))
     fireEvent.change(
       screen.getByPlaceholderText('Describe the primary purpose of the application and the outcomes it should deliver'),
       { target: { value: 'Manage clients, accounts and investments.' } },
@@ -76,6 +77,31 @@ describe('ConnectAppForm', () => {
     expect(body.application_context).toMatchObject({
       business_goal: 'Manage clients, accounts and investments.',
     })
+  })
+
+  it('keeps Notes collapsed by default and preserves typed text across collapse/expand', () => {
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    expect(
+      screen.queryByPlaceholderText('Describe the primary purpose of the application and the outcomes it should deliver'),
+    ).toBeNull()
+
+    const toggle = screen.getByRole('button', { name: /Notes \(optional\)/ })
+    fireEvent.click(toggle)
+    fireEvent.change(
+      screen.getByPlaceholderText('Describe the primary purpose of the application and the outcomes it should deliver'),
+      { target: { value: 'Manage clients, accounts and investments.' } },
+    )
+
+    fireEvent.click(toggle)
+    expect(
+      screen.queryByPlaceholderText('Describe the primary purpose of the application and the outcomes it should deliver'),
+    ).toBeNull()
+
+    fireEvent.click(toggle)
+    expect(
+      screen.getByPlaceholderText('Describe the primary purpose of the application and the outcomes it should deliver'),
+    ).toHaveValue('Manage clients, accounts and investments.')
   })
 
   it('submits application_context as all-null when no notes were typed', async () => {

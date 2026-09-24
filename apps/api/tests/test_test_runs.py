@@ -539,3 +539,55 @@ class TestGetOverview:
         assert body["passed"] == 1
         assert body["not_run"] == 1
         assert body["pass_rate"] == 0.5  # 1 passed / 2 total, not 1/1
+
+    def test_a_run_scoped_to_a_single_test_case_is_not_the_suites_latest_run(self) -> None:
+        """`[FIXED]` regression: running one test case alone ("Run
+        Journey(s)" scoped to a single TestAsset, `suite_name` set) used to
+        become `latest_run`/a `trend` point, showing a 100%/0% pass rate for
+        the whole suite based on that one test. Only an unscoped Full Suite
+        run (`suite_name is None`) should ever appear here."""
+        init_db()
+        client, _ = _signed_in_client("Org Overview Scoped Run")
+        application = _create_application(client, "Overview Scoped Run App")
+        app_id, _ = _seed_test_asset(application)
+        _seed_test_run(app_id, suite_name="Checkout", total_count=1, passed_count=1, failed_count=0)
+
+        body = client.get(f"/applications/{application['id']}/overview").json()
+
+        assert body["latest_run"] is None
+        assert body["trend"] == []
+
+        full_suite_run = _seed_test_run(app_id, total_count=2, passed_count=1, failed_count=1)
+
+        body = client.get(f"/applications/{application['id']}/overview").json()
+
+        assert body["latest_run"]["id"] == str(full_suite_run.external_id)
+        assert len(body["trend"]) == 1
+
+    def test_latest_run_exposes_timed_out_and_errored_counts(self) -> None:
+        """`[FIXED]` regression: `latest_run` used to omit `timed_out_count`/
+        `errored_count` entirely — the Overview tab's "Pass rate" tile
+        computed its own denominator from just passed+failed+blocked,
+        undercounting real outcomes and showing a different (inflated)
+        percentage than the same run's own trend-chart bar, which already
+        divides by the run's real `total_count` (every outcome included)."""
+        init_db()
+        client, _ = _signed_in_client("Org Overview Timed Out")
+        application = _create_application(client, "Overview Timed Out App")
+        app_id, _ = _seed_test_asset(application)
+        _seed_test_run(
+            app_id,
+            total_count=108,
+            passed_count=54,
+            failed_count=53,
+            timed_out_count=1,
+            errored_count=0,
+        )
+
+        body = client.get(f"/applications/{application['id']}/overview").json()
+
+        assert body["latest_run"]["timed_out_count"] == 1
+        assert body["latest_run"]["errored_count"] == 0
+        # The bar and the tile must agree: both are `passed / total_count`
+        # for the exact same run.
+        assert body["trend"][0]["pass_rate"] == 54 / 108
