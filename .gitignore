@@ -46,7 +46,7 @@ htmlcov/
 
 # --- Node / React / Vite (apps/web) ---
 node_modules/
-apps/workers/generation/typecheck/.runs/
+packages/playwright_typecheck/typecheck/.runs/
 dist/
 build/
 .vite/

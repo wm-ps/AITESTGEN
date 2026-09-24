@@ -14,6 +14,18 @@ if not "%WEB_UP%"=="200" (
   start "AITestGen Web" cmd /k "cd apps\web && (if not exist node_modules npm install) && npm run dev"
 )
 
+rem recording-worker is the one worker that always runs containerized, even
+rem in local dev (Xvfb/x11vnc are Linux-only - see docker-compose.yml's own
+rem comment). Unlike the other three workers' `uv run`, a plain `docker
+rem compose up` won't pick up source edits on its own once an image already
+rem exists, so rebuild it explicitly before bringing the stack up.
+echo [dev-up] rebuilding recording-worker image...
+docker compose build recording-worker
+if errorlevel 1 (
+  echo [dev-up] docker compose build failed for recording-worker
+  exit /b 1
+)
+
 echo [dev-up] docker compose up -d --wait ...
 docker compose up -d --wait
 if errorlevel 1 (
@@ -39,8 +51,11 @@ if errorlevel 1 (
   rem out to a real tsc here - without this install every Generate Suite run
   rem fails the typecheck step for every Scenario, silently (SuiteGeneration-
   rem Workflow reports COMPLETED with 0 TestAssets written, no error surfaced).
-  if not exist apps\workers\generation\typecheck\node_modules (
-    pushd apps\workers\generation\typecheck
+  rem Lives in packages\playwright_typecheck\typecheck now (Record and Play
+  rem extracted it into a shared package so apps\workers\recording can reuse
+  rem the same gate) - generation_worker.typecheck is just a re-export shim.
+  if not exist packages\playwright_typecheck\typecheck\node_modules (
+    pushd packages\playwright_typecheck\typecheck
     call npm install
     popd
   )

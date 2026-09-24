@@ -14,6 +14,8 @@ members = [
     "generation-worker",
     "locator-capture",
     "object-store",
+    "playwright-typecheck",
+    "recording-worker",
     "safety-classifier",
     "secrets-client",
     "test-suite-assembler",
@@ -558,6 +560,7 @@ dependencies = [
     { name = "langgraph" },
     { name = "mcp" },
     { name = "playwright" },
+    { name = "playwright-typecheck" },
     { name = "psycopg", extra = ["binary"] },
     { name = "safety-classifier" },
     { name = "secrets-client" },
@@ -580,6 +583,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=0.2" },
     { name = "mcp", specifier = ">=1.2" },
     { name = "playwright", specifier = ">=1.57" },
+    { name = "playwright-typecheck", editable = "packages/playwright_typecheck" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "safety-classifier", editable = "packages/safety_classifier" },
     { name = "secrets-client", editable = "packages/secrets_client" },
@@ -1186,6 +1190,25 @@ wheels = [
 ]
 
 [[package]]
+name = "playwright-typecheck"
+version = "0.1.0"
+source = { editable = "packages/playwright_typecheck" }
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.3" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
+]
+
+[[package]]
 name = "pluggy"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1452,6 +1475,47 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/da/92/1446574745d74df0c92e6aa4a7b0b3130706a4142b2d1a5869f2eaa423c6/pyyaml-6.0.3-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:16249ee61e95f858e83976573de0f5b2893b3677ba71c9dd36b9cf8be9ac6d65", size = 829923, upload-time = "2025-09-25T21:32:54.537Z" },
     { url = "https://files.pythonhosted.org/packages/f0/7a/1c7270340330e575b92f397352af856a8c06f230aa3e76f86b39d01b416a/pyyaml-6.0.3-cp314-cp314t-win_amd64.whl", hash = "sha256:4ad1906908f2f5ae4e5a8ddfce73c320c2a1429ec52eafd27138b7f1cbe341c9", size = 174062, upload-time = "2025-09-25T21:32:55.767Z" },
     { url = "https://files.pythonhosted.org/packages/f1/12/de94a39c2ef588c7e6455cfbe7343d3b2dc9d6b6b2f40c4c6565744c873d/pyyaml-6.0.3-cp314-cp314t-win_arm64.whl", hash = "sha256:ebc55a14a21cb14062aa4162f906cd962b28e2e9ea38f9b4391244cd8de4ae0b", size = 149341, upload-time = "2025-09-25T21:32:56.828Z" },
+]
+
+[[package]]
+name = "recording-worker"
+version = "0.1.0"
+source = { editable = "apps/workers/recording" }
+dependencies = [
+    { name = "discovery-worker" },
+    { name = "domain" },
+    { name = "fastapi" },
+    { name = "playwright" },
+    { name = "playwright-typecheck" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "secrets-client" },
+    { name = "sqlmodel" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "discovery-worker", editable = "apps/workers/discovery" },
+    { name = "domain", editable = "packages/domain" },
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "playwright", specifier = ">=1.57" },
+    { name = "playwright-typecheck", editable = "packages/playwright_typecheck" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "secrets-client", editable = "packages/secrets_client" },
+    { name = "sqlmodel", specifier = ">=0.0.24" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.3" },
+    { name = "pytest-asyncio", specifier = ">=0.24" },
 ]
 
 [[package]]

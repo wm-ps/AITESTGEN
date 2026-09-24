@@ -70,10 +70,12 @@ export type JourneyStepRead = components['schemas']['JourneyStepRead']
 export type ScenarioRead = components['schemas']['ScenarioRead'] & { test_case_number: number }
 // `description` isn't in api-types.gen.ts yet (regenerate via `npm run
 // generate:api-types` once the API is running) — added by hand.
-// 'discovery' (normal Discovery -> Journey -> Scenario pipeline) or 'nl'
-// (created via live browser exploration from a plain-English request).
-// Mirrors `Scenario.source`/`TestCaseRead.source` (apps/api/src/api/main.py).
-export type TestCaseSource = 'discovery' | 'nl'
+// 'discovery' (normal Discovery -> Journey -> Scenario pipeline), 'nl'
+// (created via live browser exploration from a plain-English request), or
+// 'recorded' (Record and Play — a human drove a worker-hosted headed
+// browser through the real `playwright codegen` CLI). Mirrors
+// `Scenario.source`/`TestCaseRead.source` (apps/api/src/api/main.py).
+export type TestCaseSource = 'discovery' | 'nl' | 'recorded'
 export type TestCaseRead = components['schemas']['TestCaseRead'] & {
   description: string
   source: TestCaseSource
@@ -139,6 +141,19 @@ export type LiveTestCaseRequestStatusRead = {
   journey_name: string | null
   pages: LiveTestCasePageRead[]
   generated_tests: LiveTestCaseGeneratedTestRead[]
+}
+// Record and Play — not in api-types.gen.ts yet (regenerate via `npm run
+// generate:api-types` once the API is running), added by hand. Mirrors
+// `RecordingSessionCreate`/`RecordingSessionMintRead` (apps/api/src/api/main.py).
+// 'logged_out': Codegen starts from a fresh, logged-out browser — the
+// human's own recorded actions include the login step. 'authenticated':
+// Codegen starts already logged in via the Application's existing stored
+// credential/session — no login step is recorded.
+export type RecordingAuthMode = 'logged_out' | 'authenticated'
+export type RecordingSessionMintRead = {
+  id: string
+  vnc_ws_url: string
+  control_ws_url: string
 }
 // Not in api-types.gen.ts yet (backend schema is new, regenerate via
 // `npm run generate:api-types` once the API is running) — added by hand.
@@ -503,6 +518,11 @@ export const api = {
     request<LiveTestCaseRequestStatusRead>(
       `/applications/${applicationId}/live-test-cases/requests/${requestId}`,
     ),
+  createRecordingSession: (applicationId: string, authMode: RecordingAuthMode) =>
+    request<RecordingSessionMintRead>(`/applications/${applicationId}/recordings/sessions`, {
+      method: 'POST',
+      body: JSON.stringify({ auth_mode: authMode }),
+    }),
   getGenerationStatus: (applicationId: string) =>
     request<{ available: boolean }>(`/applications/${applicationId}/generation-status`),
   getDiscoveryStatus: (applicationId: string) =>

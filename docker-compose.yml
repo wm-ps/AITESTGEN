@@ -46,5 +46,29 @@ services:
   # Object storage (Story 2.2/2.8) points at real AWS S3 even for local dev
   # (AWS_S3_BUCKET/AWS_REGION/AWS creds in .env) — no local MinIO container.
 
+  # Record and Play's recording service is a deliberate exception to every
+  # other worker's "run natively via uv run" local-dev convention (see
+  # scripts/dev-start.{sh,cmd}) — it depends on Xvfb/x11vnc, Linux-only
+  # display-server tooling with no native-Windows equivalent, so it always
+  # runs containerized, even here. Joins this same compose network to reach
+  # postgres/vault by their in-network service names; the host reaches it
+  # (and the browser reaches the websocket routes it exposes) via the
+  # mapped port below.
+  recording-worker:
+    build:
+      context: .
+      dockerfile: apps/workers/recording/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/aitestgen
+      VAULT_ADDR: http://vault:8200
+      VAULT_TOKEN: dev-only-root-token
+    ports:
+      - "8100:8100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      vault:
+        condition: service_started
+
 volumes:
   postgres_data:

@@ -47,6 +47,7 @@ from domain.page import Page
 from domain.page_transition import PageTransition
 from domain.password_reset import PasswordReset
 from domain.platform_user import PlatformUser
+from domain.recording_session import RecordingAuthMode, RecordingSession, RecordingSessionStatus
 from domain.scenario import Scenario, ScenarioSource, ScenarioType
 from domain.schedule import Schedule, ScheduleCadenceType
 from domain.synthetic_data_entry import SyntheticDataEntry
@@ -91,6 +92,9 @@ __all__ = [
     "PageTransition",
     "PasswordReset",
     "PlatformUser",
+    "RecordingAuthMode",
+    "RecordingSession",
+    "RecordingSessionStatus",
     "Scenario",
     "ScenarioSource",
     "ScenarioType",

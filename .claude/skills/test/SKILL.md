@@ -46,7 +46,11 @@ silently does nothing from the user's perspective (the UI polls for a
 way discovery does.
 
 **The generation worker's typecheck gate needs its own `npm install`, once,
-in `apps/workers/generation/typecheck/` — a bare local project of just
+in `packages/playwright_typecheck/typecheck/`** (moved here from
+`apps/workers/generation/typecheck/` when Record and Play extracted it into
+a shared package so `apps/workers/recording` could reuse the same gate on
+Codegen's own recorded output — `generation_worker.typecheck` is now just a
+re-export shim over it) **— a bare local project of just
 `package.json`/`package-lock.json` (real `typescript` + `@playwright/test`,
 no source of its own) that `PlaywrightGenerationActivity` shells out to for
 Checklist rule 3's mandatory typecheck of every AI-generated spec before
@@ -99,7 +103,14 @@ bring-up used to feel slow.
 1. `docker compose up -d --wait` — starts Postgres 18.4 + Temporal dev server +
    dev-mode Vault and waits for Postgres's healthcheck (`--wait` needs Docker
    Compose v2.1.1+; if unsupported, drop the flag and just re-run the next
-   step once — alembic will fail fast if Postgres isn't ready yet).
+   step once — alembic will fail fast if Postgres isn't ready yet). This
+   same command also builds and starts the `recording-worker` container
+   (Record and Play) — unlike discovery/generation/execution, that worker
+   depends on Xvfb/x11vnc (Linux-only display-server tooling with no native-
+   Windows equivalent), so it's the one worker that always runs
+   containerized here instead of via a `run-*-worker` script. Its first
+   build is slow (apt package install + `playwright install --with-deps
+   chromium`); later runs reuse the cached image.
 Then, in parallel (single message, multiple tool calls):
 
 2. Check `curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/openapi.json`.
@@ -162,11 +173,11 @@ Then, in parallel (single message, multiple tool calls):
    ```
    cmd //c start "AITestGen Generation Worker" cmd //k "scripts\\run-generation-worker.cmd"
    ```
-   Before launching it, also check `apps/workers/generation/typecheck/node_modules`
+   Before launching it, also check `packages/playwright_typecheck/typecheck/node_modules`
    exists (see the typecheck-gate note above) — if not, run `npm install`
    there first:
    ```
-   cd apps/workers/generation/typecheck && npm install
+   cd packages/playwright_typecheck/typecheck && npm install
    ```
 6c. Check if the execution worker is already running (`ps -W | grep -i
    execution_worker`). If not, same pattern — needed for the "Run All

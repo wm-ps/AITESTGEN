@@ -108,6 +108,7 @@ from api.password_reset import (
     request_password_reset,
     reset_password,
 )
+from api.recordings import mint_recording_session, recording_ws_urls
 from api.schedule_spec import (
     ScheduleSpecError,
     build_cadence_label,
@@ -2442,6 +2443,53 @@ async def create_live_test_case(
         task_queue=GENERATION_TASK_QUEUE,
     )
     return {"request_id": str(request_id)}
+
+
+class RecordingSessionCreate(BaseModel):
+    # "logged_out" (the human's own recorded actions include the login
+    # step) | "authenticated" (Codegen starts already logged in, via the
+    # Application's existing stored credential/session — plan §4).
+    auth_mode: Literal["logged_out", "authenticated"]
+
+
+class RecordingSessionMintRead(BaseModel):
+    id: uuid.UUID
+    vnc_ws_url: str
+    control_ws_url: str
+
+
+# Record and Play: mints a `RecordingSession` and hands back the two
+# websocket URLs the recording service (apps/workers/recording — a
+# separate deployable, not this app) authenticates by token on connect.
+# Uses the same Application-access check every other Application-scoped
+# route uses (`_get_org_application` + `CurrentOrgIdDep`) — no weaker/no
+# stronger a check than the rest of this app already applies (this repo has
+# no per-user Application ACL to check instead).
+@app.post(
+    "/applications/{external_id}/recordings/sessions",
+    status_code=201,
+    response_model=RecordingSessionMintRead,
+)
+def create_recording_session(
+    external_id: uuid.UUID,
+    payload: RecordingSessionCreate,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
+) -> RecordingSessionMintRead:
+    application = _get_org_application(session, organization_id, external_id)
+    recording_session, token = mint_recording_session(
+        session,
+        application_id=application.id,
+        created_by_id=user.id,
+        auth_mode=payload.auth_mode,
+    )
+    vnc_ws_url, control_ws_url = recording_ws_urls(token)
+    return RecordingSessionMintRead(
+        id=recording_session.external_id,
+        vnc_ws_url=vnc_ws_url,
+        control_ws_url=control_ws_url,
+    )
 
 
 # TEMP DEBUG — see LiveTestCasePageRead above.

@@ -13,6 +13,7 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "discovery-worker",
     "secrets-client",
+    "playwright-typecheck",
     "playwright>=1.57",
     "mcp>=1.2",
     "langgraph>=0.2",
@@ -31,6 +32,7 @@ ai-provider = { workspace = true }
 safety-classifier = { workspace = true }
 discovery-worker = { workspace = true }
 secrets-client = { workspace = true }
+playwright-typecheck = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

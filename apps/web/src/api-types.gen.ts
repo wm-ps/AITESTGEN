@@ -713,6 +713,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/{external_id}/recordings/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Recording Session */
+        post: operations["create_recording_session_applications__external_id__recordings_sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications/{external_id}/live-test-cases/requests/{request_id}": {
         parameters: {
             query?: never;
@@ -1753,6 +1770,26 @@ export interface components {
             last_discovery_started_at: string | null;
             /** Journey Count */
             journey_count: number;
+        };
+        /** RecordingSessionCreate */
+        RecordingSessionCreate: {
+            /**
+             * Auth Mode
+             * @enum {string}
+             */
+            auth_mode: "logged_out" | "authenticated";
+        };
+        /** RecordingSessionMintRead */
+        RecordingSessionMintRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Vnc Ws Url */
+            vnc_ws_url: string;
+            /** Control Ws Url */
+            control_ws_url: string;
         };
         /** RegenerateTestAssetStatusRead */
         RegenerateTestAssetStatusRead: {
@@ -3899,6 +3936,43 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_recording_session_applications__external_id__recordings_sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RecordingSessionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RecordingSessionMintRead"];
                 };
             };
             /** @description Validation Error */

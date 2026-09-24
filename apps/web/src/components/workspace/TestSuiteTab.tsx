@@ -207,6 +207,7 @@ const REGENERATE_POLL_INTERVAL_MS = 3000
 const SOURCE_LABEL: Record<TestAssetStatusRead['source'], string> = {
   discovery: 'From discovery',
   nl: 'Authored by prompt',
+  recorded: 'Recorded',
 }
 
 // Edit Test Data (Test Suite page) — inline, expanded-row form, reusing the

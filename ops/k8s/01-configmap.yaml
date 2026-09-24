@@ -35,3 +35,9 @@ data:
   SMTP_USER: "ps-tools@wavemaker.com"
   SMTP_FROM: "ps-tools@wavemaker.com"
   SCHEDULE_DEFAULT_TIME_ZONE: "Asia/Kolkata"
+  # Record and Play — the `api` Deployment picks this up automatically via
+  # its existing `envFrom: configMapRef` (no separate env entry needed
+  # there). Points at 11-recording-worker-ingress.yaml's own host; flip to
+  # ws:// (matching COOKIE_SECURE's own "no TLS yet" note above) until that
+  # ingress's certificate-arn is actually filled in.
+  RECORDING_SERVICE_WS_BASE: "wss://vantage-recording.omnewave.com"

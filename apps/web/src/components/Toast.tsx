@@ -4,6 +4,7 @@
 const TOAST_COLORS = {
   error: { accent: 'var(--danger)', wash: 'var(--danger-wash)' },
   info: { accent: 'var(--accent)', wash: 'var(--accent-wash)' },
+  success: { accent: 'var(--good-strong)', wash: 'var(--good-wash)' },
 } as const
 
 function ToastGlyph({ kind }: { kind: keyof typeof TOAST_COLORS }) {
@@ -15,6 +16,8 @@ function ToastGlyph({ kind }: { kind: keyof typeof TOAST_COLORS }) {
           <line x1={12} y1={7.5} x2={12} y2={13} />
           <circle cx={12} cy={16.5} r={0.6} fill="currentColor" stroke="none" />
         </>
+      ) : kind === 'success' ? (
+        <polyline points="7.5,12.5 10.5,15.5 16.5,9" />
       ) : (
         <>
           <circle cx={12} cy={7.5} r={0.6} fill="currentColor" stroke="none" />

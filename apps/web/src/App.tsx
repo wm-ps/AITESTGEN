@@ -9,6 +9,7 @@ import { AppBootLoader, GlobalLoadingOverlay } from './components/GlobalLoadingO
 import { Home } from './components/Home'
 import { Overview } from './components/Overview'
 import { RecordAndPlay } from './components/RecordAndPlay'
+import { getRecordingPopupParamsFromUrl, RecordingSessionWindow } from './components/RecordingSessionWindow'
 import { ResetPassword } from './components/ResetPassword'
 import { ReviewScenarios } from './components/ReviewScenarios'
 import { Settings } from './components/Settings'
@@ -96,10 +97,16 @@ function App() {
   const [application, setApplication] = useState<ApplicationRead | null>(null)
   const [inviteToken, setInviteToken] = useState(getInviteTokenFromUrl)
   const [resetToken, setResetToken] = useState(getResetTokenFromUrl)
+  // /recording-session?vnc=...&control=...&auth=...&app=... — opened in its
+  // own tab by RecordAndPlay.tsx's "Record a flow" flow. Never requires a
+  // signed-in session here either: the vnc/control URLs already carry the
+  // recording token the service re-validates on every connect.
+  const [recordingPopupParams] = useState(getRecordingPopupParamsFromUrl)
   // Covers logout and resume-application — both involve an API round trip
   // before the screen changes, and users were reading the pause as a hang.
   const [globalLoading, setGlobalLoading] = useState<string | null>(null)
   const [errorToast, setErrorToast] = useState<string | null>(null)
+  const [successToast, setSuccessToast] = useState<string | null>(null)
 
   // Which per-application tab is active — freely clickable via AppShell's
   // sidebar, no more furthestCount/Stepper gating (the tabs each handle
@@ -124,6 +131,12 @@ function App() {
     return () => clearTimeout(timeout)
   }, [errorToast])
 
+  useEffect(() => {
+    if (!successToast) return
+    const timeout = setTimeout(() => setSuccessToast(null), 6000)
+    return () => clearTimeout(timeout)
+  }, [successToast])
+
   // Fired by api.ts's request() on any 401 that isn't a login attempt —
   // catches an idle-timeout logout (COOKIE_MAX_AGE, apps/api/src/api/auth.py)
   // hit mid-session by a background poll, not just the mount-time check
@@ -138,7 +151,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    if (inviteToken || resetToken) return
+    if (inviteToken || resetToken || recordingPopupParams) return
     api
       .me()
       .then(setUser)
@@ -149,7 +162,7 @@ function App() {
           setServiceDown(true)
         }
       })
-  }, [inviteToken, resetToken])
+  }, [inviteToken, resetToken, recordingPopupParams])
 
   function handleSignedIn(signedInUser: UserRead) {
     window.history.replaceState({}, '', '/')
@@ -171,6 +184,10 @@ function App() {
 
   if (resetToken) {
     return <ResetPassword token={resetToken} onDone={handleResetDone} />
+  }
+
+  if (recordingPopupParams) {
+    return <RecordingSessionWindow {...recordingPopupParams} />
   }
 
   if (serviceDown) {
@@ -349,7 +366,12 @@ function App() {
         />
       )}
       {view === 'app' && application && appTab === 'record' && (
-        <RecordAndPlay applicationName={application.name} applicationUrl={application.url} />
+        <RecordAndPlay
+          applicationId={application.id}
+          applicationName={application.name}
+          applicationUrl={application.url}
+          onSaved={setSuccessToast}
+        />
       )}
       {view === 'app' && application && appTab !== 'journeys' && appTab !== 'scenarios' && appTab !== 'record' && (
         justGeneratedSuite && appTab === 'suite' ? (
@@ -413,6 +435,9 @@ function App() {
 
       {errorToast && (
         <Toast message={errorToast} kind="error" onDismiss={() => setErrorToast(null)} />
+      )}
+      {successToast && (
+        <Toast message={successToast} kind="success" onDismiss={() => setSuccessToast(null)} />
       )}
 
       {globalLoading && <GlobalLoadingOverlay message={globalLoading} />}

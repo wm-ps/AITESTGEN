@@ -2,7 +2,7 @@
 FROM python:3.14-slim
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-# Node is needed for the typecheck gate (apps/workers/generation/typecheck —
+# Node is needed for the typecheck gate (packages/playwright_typecheck/typecheck —
 # real @playwright/test types to catch hallucinated-matcher/undefined-var bugs
 # in generated specs before they're persisted) and, separately, to spawn
 # @playwright/mcp for live-exploration (generation_worker/live_exploration/).
@@ -13,7 +13,11 @@ WORKDIR /app
 COPY . .
 
 RUN uv sync --frozen --no-dev --package generation-worker
-RUN cd apps/workers/generation/typecheck && npm install
+# Lives in packages/playwright_typecheck now (Record and Play extracted it
+# into a shared package so apps/workers/recording can reuse the same gate
+# on Codegen's own output) — generation_worker.typecheck is just a
+# re-export shim over it.
+RUN cd packages/playwright_typecheck/typecheck && npm install
 
 # auth_bootstrap.py launches a real (Python) Chromium briefly to produce an
 # authenticated storage_state for the live-exploration session.

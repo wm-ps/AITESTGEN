@@ -4,6 +4,7 @@ members = [
     "apps/workers/discovery",
     "apps/workers/generation",
     "apps/workers/execution",
+    "apps/workers/recording",
     "packages/domain",
     "packages/workflows",
     "packages/ai_provider",
@@ -14,6 +15,7 @@ members = [
     "packages/test_suite_assembler",
     "packages/safety_classifier",
     "packages/locator_capture",
+    "packages/playwright_typecheck",
 ]
 
 [dependency-groups]
@@ -41,11 +43,18 @@ select = ["E", "F", "I", "UP"]
 
 [tool.pyright]
 pythonVersion = "3.14"
+# Every app here deploys as a Linux container (see any Dockerfile) — this
+# only matters for typeshed's platform-conditional stubs (os.killpg,
+# signal.SIGKILL, ...), which recording_worker.display is the first module
+# in this repo to actually use, since it always runs containerized, never
+# natively on a dev machine's own OS (Record and Play plan §12).
+pythonPlatform = "Linux"
 include = [
     "apps/api",
     "apps/workers/discovery",
     "apps/workers/generation",
     "apps/workers/execution",
+    "apps/workers/recording",
     "packages/domain",
     "packages/workflows",
     "packages/ai_provider",
@@ -56,4 +65,5 @@ include = [
     "packages/test_suite_assembler",
     "packages/safety_classifier",
     "packages/locator_capture",
+    "packages/playwright_typecheck",
 ]

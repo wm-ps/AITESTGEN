@@ -28,6 +28,17 @@ if [ "$(check_url http://localhost:5173)" != "200" ]; then
   (cd "$ROOT/apps/web" && { [ -d node_modules ] || npm install; } && npm run dev) >"$LOG_DIR/web.log" 2>&1 &
 fi
 
+# recording-worker is the one worker that always runs containerized, even
+# in local dev (Xvfb/x11vnc are Linux-only - see docker-compose.yml's own
+# comment). Unlike the other three workers' `uv run`, a plain `docker
+# compose up` won't pick up source edits on its own once an image already
+# exists, so rebuild it explicitly before bringing the stack up.
+echo "[dev-up] rebuilding recording-worker image..."
+if ! docker compose build recording-worker; then
+  echo "[dev-up] docker compose build failed for recording-worker"
+  exit 1
+fi
+
 echo "[dev-up] docker compose up -d --wait ..."
 if ! docker compose up -d --wait; then
   echo "[dev-up] docker compose failed - is Docker running?"
@@ -49,7 +60,10 @@ if ! pgrep -f "generation_worker.worker" >/dev/null 2>&1; then
   # out to a real tsc here - without this install every Generate Suite run
   # fails the typecheck step for every Scenario, silently (SuiteGeneration-
   # Workflow reports COMPLETED with 0 TestAssets written, no error surfaced).
-  [ -d "$ROOT/apps/workers/generation/typecheck/node_modules" ] || (cd "$ROOT/apps/workers/generation/typecheck" && npm install)
+  # Lives in packages/playwright_typecheck/typecheck now (Record and Play
+  # extracted it into a shared package so apps/workers/recording can reuse
+  # the same gate) - generation_worker.typecheck is just a re-export shim.
+  [ -d "$ROOT/packages/playwright_typecheck/typecheck/node_modules" ] || (cd "$ROOT/packages/playwright_typecheck/typecheck" && npm install)
   echo "[dev-up] starting generation worker..."
   "$ROOT/scripts/run-generation-worker.sh" >"$LOG_DIR/generation-worker.log" 2>&1 &
 fi

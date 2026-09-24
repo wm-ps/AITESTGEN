@@ -828,6 +828,17 @@ export function TestSuiteResults({
                                       NL Test Case
                                     </span>
                                   )}
+                                  {/* Recorded Label — Record and Play: a human drove a
+                                      worker-hosted headed browser through the real
+                                      playwright codegen CLI; source:'recorded' only. */}
+                                  {testCase.source === 'recorded' && (
+                                    <span
+                                      className="badge"
+                                      style={{ background: 'var(--accent-wash)', color: 'var(--accent)', flexShrink: 0 }}
+                                    >
+                                      Recorded
+                                    </span>
+                                  )}
                                 </div>
                                 {testCase.description && (
                                   <p

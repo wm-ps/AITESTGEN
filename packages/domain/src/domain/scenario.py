@@ -29,10 +29,14 @@ value as authoritative rather than reclassifying on every run.
 Journey -> Scenario pipeline (`ScenarioGenerationActivity`, called with its
 default `source="discovery"`) from one created via `LiveExplorationTestWorkflow`
 (live browser exploration from a user's plain-English request, see
-`natural_language_flow.png`, which passes `source="nl"` explicitly) — the
-frontend labels only the latter "NL Test Case". Every pre-existing row gets
-`'discovery'` via the column's `server_default`, so a migration adding this
-column never relabels a test case that predates the feature.
+`natural_language_flow.png`, which passes `source="nl"` explicitly), from one
+created via Record and Play (a human drives a worker-hosted headed browser
+through the real `playwright codegen` CLI; the recording service persists
+`source="recorded"` — no LLM authors this code, unlike the other two
+sources) — the frontend labels each of the latter two distinctly ("NL Test
+Case" / "Recorded"). Every pre-existing row gets `'discovery'` via the
+column's `server_default`, so a migration adding this column (or widening
+this Literal) never relabels a test case that predates the feature.
 """
 
 import uuid
@@ -45,7 +49,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
 ScenarioType = Literal["happy", "negative", "edge"]
-ScenarioSource = Literal["discovery", "nl"]
+ScenarioSource = Literal["discovery", "nl", "recorded"]
 
 
 class Scenario(SQLModel, table=True):
