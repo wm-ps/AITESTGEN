@@ -300,6 +300,8 @@ export type LatestRunSummaryRead = {
   created_at: string
   passed_count: number
   failed_count: number
+  timed_out_count: number
+  errored_count: number
   blocked_count: number
   duration_ms: number | null
   trigger: string
