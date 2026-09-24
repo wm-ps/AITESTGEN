@@ -202,17 +202,18 @@ export function ReviewScenarios({
   // can't signal "done" the way TestSuiteResults' test-case count does.
   // Distinct Journeys covered vs total candidate Journeys is the signal
   // that's actually stable: every Journey gets exactly one generation run.
-  useEffect(() => {
-    let cancelled = false
-    api.listJourneys(applicationId).then((rows) => {
-      if (!cancelled) setJourneys(rows)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [applicationId])
-
-  const journeysCovered = new Set(scenarios.map((s) => s.journey_id)).size
+  // `[FIXED]` A Journey whose generation genuinely failed (caught by
+  // ScenarioGenerationActivity, see Journey.generation_error) never gets a
+  // Scenario — counting only Journeys-with-Scenarios as "covered" meant
+  // `isComplete` could never reach `journeys.length`, and this screen's
+  // progress bar spun forever with no way to proceed or even see why.
+  // Failed Journeys count as covered too (their generation attempt did
+  // conclude, just not successfully) and get surfaced below instead.
+  const failedJourneys = journeys.filter((j) => j.generation_error)
+  const journeysCovered = new Set([
+    ...scenarios.map((s) => s.journey_id),
+    ...failedJourneys.map((j) => j.id),
+  ]).size
   const isComplete = journeys.length > 0 && journeysCovered >= journeys.length
   // Real evidence generation is running: something has already landed, or
   // this mount is the direct result of clicking Continue on Journeys. Absent
@@ -227,6 +228,16 @@ export function ReviewScenarios({
       try {
         const rows = await api.listScenarios(applicationId)
         if (!cancelled) setScenarios(rows)
+      } catch {
+        // best-effort poll — a transient failure just skips this tick
+      }
+      // `[FIXED]` Used to be fetched once on mount only — a Journey's
+      // `generation_error` (or any other change) that lands after that
+      // first fetch was never picked up, so this must poll like
+      // `scenarios` does, not just seed once.
+      try {
+        const journeyRows = await api.listJourneys(applicationId)
+        if (!cancelled) setJourneys(journeyRows)
       } catch {
         // best-effort poll — a transient failure just skips this tick
       }
@@ -390,6 +401,32 @@ export function ReviewScenarios({
               </button>
           </div>
         </div>
+
+        {failedJourneys.length > 0 && (
+          <div
+            role="alert"
+            style={{
+              background: 'var(--warn-wash)',
+              border: '1px solid var(--warn-strong)',
+              borderRadius: 10,
+              padding: '12px 16px',
+              marginBottom: 'var(--space-5)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}
+          >
+            <div style={{ fontSize: 13, fontWeight: 600, color: '#92400E' }}>
+              {failedJourneys.length} journey{failedJourneys.length === 1 ? '' : 's'} couldn't be
+              turned into scenarios
+            </div>
+            {failedJourneys.map((j) => (
+              <div key={j.id} style={{ fontSize: 12.5, color: '#92400E' }}>
+                <strong>{j.name}:</strong> {j.generation_error}
+              </div>
+            ))}
+          </div>
+        )}
 
         {scenarios.length === 0 && !generationStarted ? (
           <EmptyState

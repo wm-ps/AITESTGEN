@@ -1473,6 +1473,11 @@ class JourneyRead(BaseModel):
     name: str
     description: str | None
     step_count: int
+    # Set when ScenarioGenerationActivity caught its own failure instead of
+    # leaving this Journey stuck at 0 Scenarios forever with no explanation
+    # — see Journey.generation_error's own docstring. None means either
+    # generation hasn't run yet or it succeeded.
+    generation_error: str | None = None
 
 
 class JourneyStepRead(BaseModel):
@@ -1634,6 +1639,7 @@ def list_journeys(
             name=j.name,
             description=j.description,
             step_count=step_counts.get(j.id, 0),
+            generation_error=j.generation_error,
         )
         for j in journeys
     ]
@@ -1768,6 +1774,7 @@ def rename_journey(
         name=journey.name,
         description=journey.description,
         step_count=step_count,
+        generation_error=journey.generation_error,
     )
 
 

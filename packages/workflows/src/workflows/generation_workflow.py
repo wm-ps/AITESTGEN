@@ -14,6 +14,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError
 
 GENERATION_TASK_QUEUE = "generation-task-queue"
 SCENARIO_GENERATION_ACTIVITY_NAME = "ScenarioGenerationActivity"
@@ -45,12 +46,36 @@ class ScenarioGenerationActivityInput:
 class GenerationWorkflow:
     @workflow.run
     async def run(self, journey_id: str) -> list[str]:
-        return await workflow.execute_activity(
-            SCENARIO_GENERATION_ACTIVITY_NAME,
-            ScenarioGenerationActivityInput(journey_id=journey_id),
-            # Generous for LLM latency, matching InferenceActivity's own
-            # generous timeout in DiscoveryWorkflow.
-            start_to_close_timeout=timedelta(minutes=5),
-            retry_policy=RetryPolicy(maximum_attempts=3),
-            result_type=list[str],
-        )
+        # `[FIXED]` ScenarioGenerationActivity failing used to fail this
+        # whole Workflow — Temporal's own `RetryPolicy` below already gives
+        # it 3 genuine attempts first (each one logs and records the
+        # failure on the Journey before re-raising, see the Activity's own
+        # comment), so by the time `ActivityError` reaches here every
+        # reasonable retry has already happened; this is the "truly out of
+        # options" case, not the first failure. A Journey whose generation
+        # never Recovers used to leave this Workflow permanently "Failed"
+        # in Temporal and the Journey stuck at 0 Scenarios with the Review
+        # Scenarios screen's `journeysCovered >= journeys.length` check
+        # unable to ever pass — the progress bar spun forever. Completing
+        # cleanly instead lets every other candidate Journey's own
+        # Workflow keep going (they were always independent — one per
+        # Journey), and lets the frontend see this one as concluded
+        # (Journey.generation_error already recorded by the Activity) and
+        # move on rather than waiting on it forever.
+        try:
+            return await workflow.execute_activity(
+                SCENARIO_GENERATION_ACTIVITY_NAME,
+                ScenarioGenerationActivityInput(journey_id=journey_id),
+                # Generous for LLM latency, matching InferenceActivity's own
+                # generous timeout in DiscoveryWorkflow.
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+                result_type=list[str],
+            )
+        except ActivityError:
+            workflow.logger.error(
+                "GenerationWorkflow: journey_id=%s exhausted every retry — see "
+                "Journey.generation_error for what ScenarioGenerationActivity hit",
+                journey_id,
+            )
+            return []

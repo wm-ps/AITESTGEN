@@ -372,6 +372,86 @@ def test_scenario_generation_activity_is_idempotent_on_retry(
         assert count == 1
 
 
+class _RaisingAIProvider:
+    """`[ADDED]` Simulates `ScenarioGenerationActivity`'s own AI-provider
+    call failing — the case `GenerationWorkflow` has no per-scenario fault
+    isolation for (unlike `SuiteGenerationWorkflow`), which used to leave a
+    Journey stuck at 0 Scenarios forever with no record of why."""
+
+    async def generate_scenarios(self, *args: object, **kwargs: object) -> list:
+        raise RuntimeError("AI provider timed out")
+
+
+def test_scenario_generation_activity_records_its_failure_on_the_journey_then_reraises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`[FIXED]` This used to swallow the exception and return `[]` on the
+    very first attempt, which meant Temporal's own `RetryPolicy` never got
+    a chance to actually retry a transient failure. It must still re-raise
+    (so real retries keep happening) — `GenerationWorkflow` is the layer
+    that stops retrying and completes cleanly, only once every attempt is
+    genuinely exhausted (see that Workflow's own test)."""
+    init_db()
+    journey = _seed_journey()
+    monkeypatch.setattr(activities_module, "HostedAIProvider", lambda: _RaisingAIProvider())
+
+    with pytest.raises(RuntimeError, match="AI provider timed out"):
+        asyncio.run(
+            activities_module.scenario_generation_activity(
+                ScenarioGenerationActivityInput(journey_id=str(journey.external_id))
+            )
+        )
+
+    with Session(engine) as session:
+        refreshed = session.exec(select(Journey).where(Journey.id == journey.id)).one()
+        assert refreshed.generation_error is not None
+        assert "AI provider timed out" in refreshed.generation_error
+        assert (
+            session.exec(select(Scenario).where(Scenario.journey_id == journey.id)).all() == []
+        )
+
+
+def test_scenario_generation_activity_clears_a_stale_error_on_a_successful_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Journey that failed once and is retried (a fresh Activity call —
+    Story 4.3/regeneration isn't built yet, but the field must not lie once
+    it is) must not keep showing the old error once generation succeeds."""
+    init_db()
+    journey = _seed_journey()
+    journey_external_id = str(journey.external_id)
+    with Session(engine) as session:
+        journey.generation_error = "RuntimeError: previous failure"
+        session.add(journey)
+        session.commit()
+
+    candidates = [
+        ScenarioCandidate(
+            name="Guest checkout",
+            type="happy",
+            steps=["Add item to cart"],
+            expected_result="Order confirmation is shown",
+            test_data=[TestDataFieldCandidate(name="username", mandatory=True)],
+        )
+    ]
+    monkeypatch.setattr(
+        activities_module, "HostedAIProvider", lambda: _FakeAIProvider(candidates)
+    )
+
+    scenario_external_ids = asyncio.run(
+        activities_module.scenario_generation_activity(
+            ScenarioGenerationActivityInput(journey_id=journey_external_id)
+        )
+    )
+
+    assert len(scenario_external_ids) == 1
+    with Session(engine) as session:
+        refreshed = session.exec(
+            select(Journey).where(Journey.external_id == uuid.UUID(journey_external_id))
+        ).one()
+        assert refreshed.generation_error is None
+
+
 def test_scenario_generation_activity_persists_safety_classification(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

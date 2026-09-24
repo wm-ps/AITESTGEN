@@ -38,7 +38,7 @@ function stubFetch(
     // Scenario yet (e.g. "generation started but nothing has landed") —
     // scenarios alone can't express that, since the default below derives
     // Journeys from the Scenarios themselves.
-    journeys?: { id: string; name: string; step_count: number }[]
+    journeys?: { id: string; name: string; step_count: number; generation_error?: string | null }[]
   } = {},
 ) {
   const journeys =
@@ -266,5 +266,31 @@ describe('ReviewScenarios', () => {
       expect(screen.getByRole('status').textContent).toContain('Modelling scenarios')
     })
     expect(screen.queryByText('Guest checkout')).toBeNull()
+  })
+
+  it('treats a Journey whose generation failed as covered instead of hanging the loader forever, and shows the error', async () => {
+    // `[FIXED]` regression: a Journey with generation_error used to never
+    // count toward journeysCovered (it has no Scenario), so isComplete
+    // could never become true and this screen's loader spun forever.
+    stubFetch([INCOMPLETE_SCENARIO], {
+      journeys: [
+        { id: 'journey-1', name: 'Checkout', step_count: 1 },
+        {
+          id: 'journey-2',
+          name: 'Returns',
+          step_count: 1,
+          generation_error: 'RuntimeError: AI provider timed out',
+        },
+      ],
+    })
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Guest checkout')).toBeTruthy()
+    })
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByText(/1 journey couldn't be turned into scenarios/)).toBeTruthy()
+    expect(screen.getByText('Returns:')).toBeTruthy()
+    expect(screen.getByText(/AI provider timed out/)).toBeTruthy()
   })
 })

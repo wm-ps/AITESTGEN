@@ -139,6 +139,33 @@ def test_list_journeys_returns_name_and_step_count() -> None:
     assert body[0]["step_count"] == 2
     assert "confidence" not in body[0]
     assert "risk" not in body[0]
+    assert body[0]["generation_error"] is None
+
+
+def test_list_journeys_surfaces_a_generation_error() -> None:
+    """`[FIXED]` regression: ScenarioGenerationActivity catches its own
+    failure and records it on the Journey (see Journey.generation_error's
+    docstring) instead of leaving the Journey stuck at 0 Scenarios with no
+    explanation — this is the read side the Review Scenarios screen polls
+    to know a Journey's generation concluded (even if it failed) and to
+    show the user why."""
+    init_db()
+    client = _signed_in_client("Org Journey Generation Error")
+    application = _create_application(client, "Journey Generation Error App")
+    journey_id = _add_candidate_journey(application, name="Checkout")
+    with Session(engine) as session:
+        journey = session.exec(
+            select(Journey).where(Journey.external_id == uuid.UUID(journey_id))
+        ).one()
+        journey.generation_error = "RuntimeError: AI provider timed out"
+        session.add(journey)
+        session.commit()
+
+    response = client.get(f"/applications/{application['id']}/journeys")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body[0]["generation_error"] == "RuntimeError: AI provider timed out"
 
 
 def test_list_journeys_excludes_deleted() -> None:

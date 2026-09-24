@@ -1633,6 +1633,8 @@ export interface components {
             description: string | null;
             /** Step Count */
             step_count: number;
+            /** Generation Error */
+            generation_error?: string | null;
         };
         /** JourneyRenamePayload */
         JourneyRenamePayload: {

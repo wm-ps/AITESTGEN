@@ -403,177 +403,205 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
             )
             return [str(s.external_id) for s in existing]
 
-        logger.info("ScenarioGenerationActivity: journey_id=%s starting", input.journey_id)
+        journey.generation_error = None
+        try:
+            logger.info("ScenarioGenerationActivity: journey_id=%s starting", input.journey_id)
 
-        steps = list(
-            session.exec(
-                select(JourneyStep)
-                .where(JourneyStep.journey_id == journey.id)
-                .order_by(JourneyStep.step_order)  # type: ignore[arg-type]
-            ).all()
-        )
-
-        # Every real JourneyStep today only ever sets page_id (Story 2.6's
-        # InferenceActivity) — resolve generically anyway, same reasoning as
-        # the Story 3.1 read endpoint: the schema allows all four target
-        # types via its CHECK constraint.
-        component_ids = {s.component_id for s in steps if s.component_id}
-        components_by_id = {
-            c.id: c
-            for c in (
+            steps = list(
                 session.exec(
-                    select(Component).where(Component.id.in_(component_ids))  # type: ignore[attr-defined]
+                    select(JourneyStep)
+                    .where(JourneyStep.journey_id == journey.id)
+                    .order_by(JourneyStep.step_order)  # type: ignore[arg-type]
                 ).all()
-                if component_ids
-                else []
             )
-        }
-        page_ids = {s.page_id for s in steps if s.page_id} | {
-            c.page_id for c in components_by_id.values()
-        }
-        pages_by_id = {
-            p.id: p
-            for p in (
-                session.exec(select(Page).where(Page.id.in_(page_ids))).all()  # type: ignore[attr-defined]
-                if page_ids
-                else []
-            )
-        }
-        forms = list(
-            session.exec(select(Form).where(Form.page_id.in_(page_ids))).all()  # type: ignore[attr-defined]
-        ) if page_ids else []
-        api_endpoints = list(
-            session.exec(
-                select(ApiEndpoint).where(ApiEndpoint.page_id.in_(page_ids))  # type: ignore[attr-defined]
-            ).all()
-        ) if page_ids else []
-        form_ids = [f.id for f in forms]
-        fields = list(
-            session.exec(
-                select(FormField).where(FormField.form_id.in_(form_ids))  # type: ignore[attr-defined]
-            ).all()
-        ) if form_ids else []
-        field_ids = [f.id for f in fields]
-        rules = list(
-            session.exec(
-                select(ValidationRule).where(
-                    ValidationRule.form_field_id.in_(field_ids)  # type: ignore[attr-defined]
+
+            # Every real JourneyStep today only ever sets page_id (Story 2.6's
+            # InferenceActivity) — resolve generically anyway, same reasoning as
+            # the Story 3.1 read endpoint: the schema allows all four target
+            # types via its CHECK constraint.
+            component_ids = {s.component_id for s in steps if s.component_id}
+            components_by_id = {
+                c.id: c
+                for c in (
+                    session.exec(
+                        select(Component).where(Component.id.in_(component_ids))  # type: ignore[attr-defined]
+                    ).all()
+                    if component_ids
+                    else []
                 )
-            ).all()
-        ) if field_ids else []
-        rules_by_field: dict[uuid.UUID, list[ValidationRule]] = {}
-        for rule in rules:
-            rules_by_field.setdefault(rule.form_field_id, []).append(rule)
-        fields_by_form: dict[uuid.UUID, list[FormField]] = {}
-        for field_row in fields:
-            fields_by_form.setdefault(field_row.form_id, []).append(field_row)
+            }
+            page_ids = {s.page_id for s in steps if s.page_id} | {
+                c.page_id for c in components_by_id.values()
+            }
+            pages_by_id = {
+                p.id: p
+                for p in (
+                    session.exec(select(Page).where(Page.id.in_(page_ids))).all()  # type: ignore[attr-defined]
+                    if page_ids
+                    else []
+                )
+            }
+            forms = list(
+                session.exec(select(Form).where(Form.page_id.in_(page_ids))).all()  # type: ignore[attr-defined]
+            ) if page_ids else []
+            api_endpoints = list(
+                session.exec(
+                    select(ApiEndpoint).where(ApiEndpoint.page_id.in_(page_ids))  # type: ignore[attr-defined]
+                ).all()
+            ) if page_ids else []
+            form_ids = [f.id for f in forms]
+            fields = list(
+                session.exec(
+                    select(FormField).where(FormField.form_id.in_(form_ids))  # type: ignore[attr-defined]
+                ).all()
+            ) if form_ids else []
+            field_ids = [f.id for f in fields]
+            rules = list(
+                session.exec(
+                    select(ValidationRule).where(
+                        ValidationRule.form_field_id.in_(field_ids)  # type: ignore[attr-defined]
+                    )
+                ).all()
+            ) if field_ids else []
+            rules_by_field: dict[uuid.UUID, list[ValidationRule]] = {}
+            for rule in rules:
+                rules_by_field.setdefault(rule.form_field_id, []).append(rule)
+            fields_by_form: dict[uuid.UUID, list[FormField]] = {}
+            for field_row in fields:
+                fields_by_form.setdefault(field_row.form_id, []).append(field_row)
 
-        forms_by_page: dict[uuid.UUID, list[Form]] = {}
-        for form in forms:
-            # Transient — same `object.__setattr__` technique as `.forms`/
-            # `.api_endpoints` below, so `_describe_page` (ai_provider/hosted.py)
-            # can show the LLM each field's actual captured validation rules
-            # (rule_type + value) generically, instead of it having to guess
-            # validation conditions from field names alone.
-            object.__setattr__(
-                form,
-                "fields",
-                [
-                    {
-                        "name": field_row.name,
-                        "rules": [
-                            {"rule_type": rule.rule_type, "value": rule.value}
-                            for rule in rules_by_field.get(field_row.id, [])
-                        ],
-                    }
-                    for field_row in fields_by_form.get(form.id, [])
-                ],
+            forms_by_page: dict[uuid.UUID, list[Form]] = {}
+            for form in forms:
+                # Transient — same `object.__setattr__` technique as `.forms`/
+                # `.api_endpoints` below, so `_describe_page` (ai_provider/hosted.py)
+                # can show the LLM each field's actual captured validation rules
+                # (rule_type + value) generically, instead of it having to guess
+                # validation conditions from field names alone.
+                object.__setattr__(
+                    form,
+                    "fields",
+                    [
+                        {
+                            "name": field_row.name,
+                            "rules": [
+                                {"rule_type": rule.rule_type, "value": rule.value}
+                                for rule in rules_by_field.get(field_row.id, [])
+                            ],
+                        }
+                        for field_row in fields_by_form.get(form.id, [])
+                    ],
+                )
+                forms_by_page.setdefault(form.page_id, []).append(form)
+            api_by_page: dict[uuid.UUID, list[ApiEndpoint]] = {}
+            for endpoint in api_endpoints:
+                api_by_page.setdefault(endpoint.page_id, []).append(endpoint)
+
+            ordered_pages: list[Page] = []
+            for step in steps:
+                page = pages_by_id.get(step.page_id) if step.page_id else None
+                if page is None and step.component_id:
+                    component = components_by_id.get(step.component_id)
+                    page = pages_by_id.get(component.page_id) if component else None
+                if page is None:
+                    continue
+                # Transient attributes, same technique InferenceActivity uses —
+                # SQLModel/Pydantic rejects direct attribute assignment for
+                # undeclared fields.
+                object.__setattr__(page, "forms", forms_by_page.get(page.id, []))
+                object.__setattr__(page, "api_endpoints", api_by_page.get(page.id, []))
+                object.__setattr__(page, "stage_label", step.stage_label)
+                ordered_pages.append(page)
+
+            settings = session.exec(select(DiscoverySettings)).one()
+            application = session.get(Application, journey.application_id)
+            candidates = await HostedAIProvider().generate_scenarios(
+                journey,
+                ordered_pages,
+                limit=settings.max_scenarios_per_journey,
+                requested_counts=input.requested_scenario_counts or None,
+                application_context=application.application_context if application else None,
             )
-            forms_by_page.setdefault(form.page_id, []).append(form)
-        api_by_page: dict[uuid.UUID, list[ApiEndpoint]] = {}
-        for endpoint in api_endpoints:
-            api_by_page.setdefault(endpoint.page_id, []).append(endpoint)
 
-        ordered_pages: list[Page] = []
-        for step in steps:
-            page = pages_by_id.get(step.page_id) if step.page_id else None
-            if page is None and step.component_id:
-                component = components_by_id.get(step.component_id)
-                page = pages_by_id.get(component.page_id) if component else None
-            if page is None:
-                continue
-            # Transient attributes, same technique InferenceActivity uses —
-            # SQLModel/Pydantic rejects direct attribute assignment for
-            # undeclared fields.
-            object.__setattr__(page, "forms", forms_by_page.get(page.id, []))
-            object.__setattr__(page, "api_endpoints", api_by_page.get(page.id, []))
-            object.__setattr__(page, "stage_label", step.stage_label)
-            ordered_pages.append(page)
+            scenario_external_ids: list[str] = []
+            for candidate in candidates:
+                safety_classification, safety_classification_reason = classify_scenario_steps(
+                    candidate.steps
+                )
+                scenario = Scenario(
+                    journey_id=journey.id,
+                    type=candidate.type,
+                    name=candidate.name,
+                    steps=candidate.steps,
+                    expected_result=candidate.expected_result,
+                    test_data=[
+                        {
+                            "name": f.name,
+                            "mandatory": f.mandatory,
+                            # The user's own literal value (e.g. "fill Server
+                            # type with GIT") only ever applies to the happy
+                            # path — a negative/edge Scenario's whole point is a
+                            # deliberately different or missing value, so it
+                            # keeps `None` here for the usual intent/pattern
+                            # -based default fill later.
+                            "value": (
+                                _provided_value_for_field(f.name, input.provided_test_data)
+                                if candidate.type == "happy"
+                                else None
+                            ),
+                        }
+                        for f in candidate.test_data
+                        if not _is_existing_credential_field(f.name)
+                    ],
+                    generation_run_id=journey.attempt,
+                    test_case_number=_claim_test_case_number_sync(session, journey.application_id),
+                    current=True,
+                    safety_classification=safety_classification,
+                    safety_classification_reason=safety_classification_reason,
+                    source=input.source,
+                )
+                session.add(scenario)
+                session.flush()
+                scenario_external_ids.append(str(scenario.external_id))
+                logger.info(
+                    "ScenarioGenerationActivity: journey_id=%s created scenario_id=%s name=%r",
+                    input.journey_id,
+                    scenario.external_id,
+                    scenario.name,
+                )
 
-        settings = session.exec(select(DiscoverySettings)).one()
-        application = session.get(Application, journey.application_id)
-        candidates = await HostedAIProvider().generate_scenarios(
-            journey,
-            ordered_pages,
-            limit=settings.max_scenarios_per_journey,
-            requested_counts=input.requested_scenario_counts or None,
-            application_context=application.application_context if application else None,
-        )
-
-        scenario_external_ids: list[str] = []
-        for candidate in candidates:
-            safety_classification, safety_classification_reason = classify_scenario_steps(
-                candidate.steps
-            )
-            scenario = Scenario(
-                journey_id=journey.id,
-                type=candidate.type,
-                name=candidate.name,
-                steps=candidate.steps,
-                expected_result=candidate.expected_result,
-                test_data=[
-                    {
-                        "name": f.name,
-                        "mandatory": f.mandatory,
-                        # The user's own literal value (e.g. "fill Server
-                        # type with GIT") only ever applies to the happy
-                        # path — a negative/edge Scenario's whole point is a
-                        # deliberately different or missing value, so it
-                        # keeps `None` here for the usual intent/pattern
-                        # -based default fill later.
-                        "value": (
-                            _provided_value_for_field(f.name, input.provided_test_data)
-                            if candidate.type == "happy"
-                            else None
-                        ),
-                    }
-                    for f in candidate.test_data
-                    if not _is_existing_credential_field(f.name)
-                ],
-                generation_run_id=journey.attempt,
-                test_case_number=_claim_test_case_number_sync(session, journey.application_id),
-                current=True,
-                safety_classification=safety_classification,
-                safety_classification_reason=safety_classification_reason,
-                source=input.source,
-            )
-            session.add(scenario)
-            session.flush()
-            scenario_external_ids.append(str(scenario.external_id))
+            session.commit()
             logger.info(
-                "ScenarioGenerationActivity: journey_id=%s created scenario_id=%s name=%r",
+                "ScenarioGenerationActivity: journey_id=%s generated %d scenarios",
                 input.journey_id,
-                scenario.external_id,
-                scenario.name,
+                len(scenario_external_ids),
             )
-
-        session.commit()
-        logger.info(
-            "ScenarioGenerationActivity: journey_id=%s generated %d scenarios",
-            input.journey_id,
-            len(scenario_external_ids),
-        )
-        return scenario_external_ids
+            return scenario_external_ids
+        except Exception as exc:
+            # `[FIXED]` This used to swallow the exception and return `[]`
+            # on the very first attempt — which meant the Activity always
+            # looked like a success to Temporal, so its own
+            # `RetryPolicy(maximum_attempts=3)` never got a chance to fire:
+            # a single transient failure (an AI-provider timeout, a brief
+            # DB hiccup) permanently gave up on this Journey instead of
+            # genuinely being retried a couple more times first, the way
+            # every other Activity in this codebase's retry policies
+            # promise. Persisting the error and re-raising on every attempt
+            # (including ones Temporal goes on to retry) keeps that real
+            # retry behavior intact — `journey.generation_error` reflects
+            # whatever the most recent attempt's outcome was, cleared again
+            # the moment a retry actually starts (see the `= None` above).
+            # `GenerationWorkflow` catches the *final* re-raise, once every
+            # attempt is genuinely exhausted — see its own comment for why
+            # that's the right layer to stop retrying and give up cleanly.
+            session.rollback()
+            logger.exception(
+                "ScenarioGenerationActivity: journey_id=%s failed",
+                input.journey_id,
+            )
+            journey.generation_error = f"{type(exc).__name__}: {exc}"[:500]
+            session.add(journey)
+            session.commit()
+            raise
 
 
 @activity.defn(name="EnsureTestSuiteActivity")

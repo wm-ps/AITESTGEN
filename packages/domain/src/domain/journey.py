@@ -98,6 +98,17 @@ class Journey(SQLModel, table=True):
     captured_flow: list[dict] | None = Field(
         default=None, sa_column=Column(JSONB, nullable=True)
     )
+    # `[ADDED]` Set by `ScenarioGenerationActivity` when it catches its own
+    # failure instead of letting it propagate — `GenerationWorkflow` has no
+    # per-scenario fault isolation the way `SuiteGenerationWorkflow` does
+    # (see that workflow's own comment), so before this field existed a
+    # Journey whose generation genuinely failed stayed at 0 Scenarios
+    # forever, with no durable record of why, and the Review Scenarios
+    # screen's `journeysCovered >= journeys.length` completion check could
+    # never pass — the progress bar spun forever with nothing to show the
+    # user. Cleared at the start of every generation attempt (never sticks
+    # around from an old attempt once a new one starts).
+    generation_error: str | None = Field(default=None)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
