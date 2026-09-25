@@ -972,7 +972,17 @@ async def get_home(
     result = []
     for application in applications:
         discovery_run = latest_run_by_app.get(application.id)
-        assert discovery_run is not None
+        # `[FIXED]` An Application with zero `DiscoveryRun` rows is
+        # impossible through the normal app flow (`start_discovery_run`
+        # always creates one at Application-creation time) but a real state
+        # after direct DB intervention (e.g. clearing a run for a manual
+        # re-test) — the old `assert` crashed this whole endpoint, taking
+        # down every application's dashboard card over one app's edge-case
+        # state. Same "degrade this one badge, don't take down the whole
+        # dashboard" principle this function already applies to a Temporal
+        # hiccup above — skip just this application instead.
+        if discovery_run is None:
+            continue
         base = _to_application_read(session, application, discovery_run)
         runs = test_runs_by_app.get(application.id, [])
         last_test_run = runs[0] if runs else None
@@ -1718,15 +1728,19 @@ def list_journey_steps(
     # associated Page, so no screenshot is available for those.
     #
     # `[FIXED journey-screenshot]` Used to always use the last step's page
-    # regardless of whether it actually rendered — `page_settled=False`
-    # (Story 2.9's own readiness gate, checked right before the crawler
-    # takes the screenshot) correlates strongly with a blank/mid-load
-    # capture. Prefer the last step's page when it settled (today's choice
-    # — the journey's end state is the most representative shot); otherwise
-    # walk backward through the journey's earlier steps for a settled one
-    # instead of showing a blank screenshot. Falls back to the closest
-    # available screenshot at all if none of them settled, rather than
-    # showing nothing.
+    # regardless of whether it actually rendered.
+    #
+    # `[FIXED screenshot-content-score]` `page_settled` alone is a coarse
+    # boolean — a page can settle (network quiet, DOM stable) and still
+    # screenshot as visually near-empty, a loading skeleton, or a
+    # partially-rendered state. Pick whichever candidate Page has the
+    # highest deterministic Screenshot Content Score instead (no LLM/vision
+    # model — see `discovery_worker.screenshot_quality`'s own docstring for
+    # what it actually measures and why a legitimate empty-state page like
+    # "No users found." still scores well above a genuinely blank one).
+    # Falls back to the original page_settled-based pick only for Pages
+    # captured before this field existed (`content_score is None` for all
+    # of them) — never worse than today's behaviour for old data.
     def _step_page(step: JourneyStep) -> Page | None:
         if step.page_id:
             return pages.get(step.page_id)
@@ -1735,13 +1749,36 @@ def list_journey_steps(
             return pages.get(component.page_id) if component else None
         return None
 
+    # `[FIXED]` Searching every step for the single highest-scoring page let
+    # a generic-but-legitimately-real page (most often `Home` — a real nav
+    # DOM and heading, but no dashboard widgets, so it still scores
+    # respectably) win over the journey's own destination page far too
+    # often — technically not blank, but not representative of what the
+    # journey actually demonstrates either. Prefer the journey's actual end
+    # state (`candidates[0]` — see call site's `reversed(steps)`); only
+    # fall back to an earlier step's page when the end state's own capture
+    # scored too low to be worth showing (e.g. captured before its data
+    # finished loading).
+    _MIN_USABLE_SCREENSHOT_SCORE = 0.3
+
+    def _best_screenshot_page(candidates: list[Page]) -> Page | None:
+        if not candidates:
+            return None
+        end_state = candidates[0]
+        if end_state.content_score is not None and end_state.content_score >= _MIN_USABLE_SCREENSHOT_SCORE:
+            return end_state
+        scored = [p for p in candidates if p.content_score is not None]
+        if scored:
+            return max(scored, key=lambda p: p.content_score)  # type: ignore[return-value,arg-type]
+        return next((p for p in candidates if p.page_settled), end_state)
+
     if result:
         candidates = [
             p
             for p in (_step_page(s) for s in reversed(steps))
             if p is not None and p.object_storage_key
         ]
-        chosen = next((p for p in candidates if p.page_settled), candidates[0] if candidates else None)
+        chosen = _best_screenshot_page(candidates)
         if chosen is not None and chosen.object_storage_key:
             result[-1].screenshot_url = ObjectStore().presigned_get_url(
                 chosen.object_storage_key,

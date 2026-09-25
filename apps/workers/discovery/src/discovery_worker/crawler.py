@@ -78,6 +78,7 @@ from playwright.async_api import BrowserContext, Frame, Locator, Page, Response
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from discovery_worker import widgets
+from discovery_worker.screenshot_quality import score_screenshot
 from discovery_worker.session import attempt_login
 
 if TYPE_CHECKING:
@@ -1055,6 +1056,16 @@ class CapturedPage:
     # mid-load. Default `True`: the dialog/popup/login capture paths below
     # don't pass this (no readiness check runs for them), same as before.
     page_settled: bool = True
+    # `[ADDED screenshot-content-score]` The deterministic Screenshot
+    # Content Score (`screenshot_quality.score_screenshot`) — computed once,
+    # right here at capture time, from the screenshot bytes and DOM evidence
+    # already in hand, and persisted so a Journey's screenshot selection
+    # (apps/api/src/api/main.py) never has to re-decode an image or guess
+    # from `page_settled` alone. `None` for the dialog/popup/login capture
+    # paths below, which don't compute it (same "not this path's job"
+    # convention `page_settled` already follows) — those rows just never
+    # win a Journey's screenshot comparison.
+    content_score: float | None = None
 
 
 @dataclass
@@ -1798,6 +1809,30 @@ async def _recover_login_if_needed(
     return False
 
 
+async def _replay_expanded_toggles(
+    page, expanded_toggle_labels: list[tuple[str, str]]
+) -> None:
+    """Re-clicks every toggle in `expanded_toggle_labels` (recorded, in
+    order, by `_click_standalone_buttons`'s "grew" branch), re-establishing
+    whatever nested submenu state a page restore just reset. Best-effort per
+    item — a toggle that no longer resolves (or errors) is skipped, not
+    fatal, since a restore landing on a genuinely different state than when
+    it was first recorded is possible and shouldn't abort the rest."""
+    for group_selector, label in expanded_toggle_labels:
+        try:
+            buttons = page.locator(group_selector)
+            all_labels = await buttons.all_inner_texts()
+            index = next(
+                (i for i, text in enumerate(all_labels) if text.strip() == label), None
+            )
+            if index is None:
+                continue
+            await buttons.nth(index).click(timeout=1000)
+            await page.wait_for_timeout(300)
+        except Exception:
+            continue
+
+
 async def _click_standalone_buttons(
     page,
     sink: _CaptureSink,
@@ -1856,6 +1891,18 @@ async def _click_standalone_buttons(
     # candidate that's still broken after a full reload isn't going to fix
     # itself with a second one, and this bounds it against ever looping.
     reload_retried_labels: set[str] = set()
+    # `[ADDED nested-menu-recovery]` Every toggle-like click confirmed to
+    # reveal an in-place submenu (see the "grew" branch below) — a nested
+    # child (e.g. a "Catalog" sidebar section's "Specifications" item) is
+    # only ever visible while its parent toggle is expanded. Any restore of
+    # this page (a State Return, a hard reload, an ancestor-collapsed retry)
+    # resets that expansion, so every restore point below replays this list
+    # first — confirmed live: without it, every nested child after the
+    # first one clicked in a group (this app: 8 of 9 "Catalog" children)
+    # was permanently unreachable, since the reload-and-wait recovery this
+    # file already had never re-opens a collapsed parent, no matter how
+    # long it waits.
+    expanded_toggle_labels: list[tuple[str, str]] = []
     # `[ADDED 2026-08-05]` Persists across the whole page visit (every tier/
     # group iteration), not reset per candidate like `is_ambiguous_icon_toggle`
     # below — confirmed live: two different ambiguous-icon candidates both
@@ -2398,13 +2445,56 @@ async def _click_standalone_buttons(
                                 await wait_for_page_ready(
                                     page, timeout_seconds, network_tracker, heartbeat
                                 )
-                                for recover_wait_ms in (500, 1000, 1500, 2000, 2500, 2500):
+                                # `[FIXED]` This ~10s budget (confirmed live:
+                                # a matching second-attempt `click_failure`
+                                # diagnostic, `connected: true, displayNone:
+                                # false, ancestorWidth: null` — the exact
+                                # ancestor-collapsed signature again — on a
+                                # deep sub-route reload) was tuned against
+                                # the shallow-route case (reload landing on
+                                # the app's Home/shell page). A reload
+                                # straight to a *deep* route (this app:
+                                # BackofficeSettings, CheckoutConfigurator,
+                                # ...) makes the SPA re-bootstrap its whole
+                                # shell before the nav re-mounts, not just
+                                # re-render the nav in an already-booted
+                                # shell — consistently slower, and 10s
+                                # wasn't enough on every one of those routes
+                                # observed live. Widened, not just padded
+                                # once: nav/chrome-landmark candidates (a
+                                # collapsed sidebar is specifically a chrome
+                                # concern) get the deep-route budget.
+                                # `[FIXED]` `in_landmark` used to gate this —
+                                # dropped: confirmed live, the *same* physical
+                                # left-nav link is tagged `chrome` when
+                                # scanned from one route and `body` from
+                                # another (DOM ancestor structure differs per
+                                # page, not a stable property of the link
+                                # itself), so gating on it left plenty of
+                                # genuinely-chrome retries stuck on the short
+                                # budget and still failing. The
+                                # `ancestor_collapsed` signature alone is
+                                # already the deep-route-reload evidence —
+                                # every retry that reaches this point gets
+                                # the wider budget.
+                                recovery_wait_schedule = (
+                                    500, 1000, 1500, 2000, 2500, 2500, 3000, 3000, 3000, 3000
+                                )
+                                for recover_wait_ms in recovery_wait_schedule:
                                     if (
                                         await _visible_content_size(page)
                                         >= visible_size_before_click
                                     ):
                                         break
                                     await page.wait_for_timeout(recover_wait_ms)
+                                # `[ADDED nested-menu-recovery]` The reload
+                                # above landed on a fresh page — any nested
+                                # submenu this candidate lives inside (e.g. a
+                                # "Catalog" section) is collapsed again, and
+                                # no amount of waiting reopens it. Replay
+                                # every toggle expansion seen so far on this
+                                # page visit before the candidate is retried.
+                                await _replay_expanded_toggles(page, expanded_toggle_labels)
                                 # `[FIXED]` This click never actually landed
                                 # (that's the whole premise of the reload-
                                 # and-retry below) — but `record_executed`
@@ -2532,6 +2622,7 @@ async def _click_standalone_buttons(
                         # before this story.
                         try:
                             await page.goto(before_url)
+                            await _replay_expanded_toggles(page, expanded_toggle_labels)
                         except Exception as exc:
                             logger.warning(
                                 "  %s: could not restore frame content after %s button %r "
@@ -2607,6 +2698,13 @@ async def _click_standalone_buttons(
                                     await page.wait_for_timeout(return_wait_ms)
                             except Exception:
                                 pass
+                        # `[ADDED nested-menu-recovery]` Every restore rung
+                        # above (`browser_back`, a forced re-navigation) can
+                        # land back on this page with any nested submenu
+                        # this candidate opened now collapsed again — replay
+                        # it before the scan loop tries the next candidate,
+                        # which may live inside it.
+                        await _replay_expanded_toggles(page, expanded_toggle_labels)
                         if on_diagnostic:
                             await _emit_diagnostic(
                                 on_diagnostic,
@@ -2742,6 +2840,10 @@ async def _click_standalone_buttons(
                             if recovered_size >= visible_size_before_click:
                                 break
                             await page.wait_for_timeout(reload_wait_ms)
+                        # `[ADDED nested-menu-recovery]` Same reasoning as
+                        # the other restore points — this reload landed on a
+                        # fresh page with any nested submenu collapsed again.
+                        await _replay_expanded_toggles(page, expanded_toggle_labels)
                         if on_diagnostic:
                             await _emit_diagnostic(
                                 on_diagnostic,
@@ -2781,6 +2883,8 @@ async def _click_standalone_buttons(
                     # this one's reveal is still animating.
                     await page.wait_for_timeout(300)
                     revealed_via_icon_toggle = True
+                    if (group_selector, label) not in expanded_toggle_labels:
+                        expanded_toggle_labels.append((group_selector, label))
                 if rescan:
                     # Didn't navigate — likely a toggle/dropdown/drawer/accordion.
                     # Whatever it revealed may include new <a href> nav links
@@ -3214,6 +3318,15 @@ async def run_discovery_crawl(
             logger.warning("skip %s: screenshot/upload failed (%s)", url, exc)
             continue
         heading, structural_tokens = await _capture_state_signals(page)
+        # `[ADDED screenshot-content-score]` One decode of the screenshot
+        # bytes already in hand — no re-fetch, no second navigation, no
+        # LLM/vision call. See screenshot_quality.py's own docstring.
+        content_score = score_screenshot(
+            screenshot,
+            structural_tokens=structural_tokens,
+            heading=heading,
+            page_settled=readiness.settled,
+        )
         await sink.add(
             CapturedPage(
                 url=page.url,
@@ -3222,6 +3335,7 @@ async def run_discovery_crawl(
                 heading=heading,
                 structural_tokens=structural_tokens,
                 page_settled=readiness.settled,
+                content_score=content_score,
             )
         )
         # Records how the crawler actually reached this page — without this,

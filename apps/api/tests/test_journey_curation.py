@@ -430,6 +430,196 @@ def test_journey_steps_uses_the_only_screenshot_even_if_unsettled(monkeypatch) -
     assert body[0]["screenshot_url"] == "https://fake-store/discovery-runs/some-run/only-blank-key"
 
 
+def test_journey_steps_prefers_the_end_states_own_screenshot(monkeypatch) -> None:
+    """`[FIXED screenshot-content-score]` The journey's own end state (its
+    last step's Page) is shown whenever its capture is good enough
+    (`content_score >= 0.3`), even when an earlier step's page scored
+    higher — searching every step for the single highest score let a
+    generic-but-real earlier page (most often `Home` in production: a real
+    nav DOM and heading, but no dashboard widgets) win over the journey's
+    actual destination far too often, showing an unrepresentative
+    screenshot."""
+    import api.main as main_module
+
+    class _FakeObjectStore:
+        def presigned_get_url(
+            self,
+            key: str,
+            expires_seconds: int = 900,
+            *,
+            response_content_type: str | None = None,
+            filename: str | None = None,
+        ) -> str:
+            return f"https://fake-store/{key}"
+
+    monkeypatch.setattr(main_module, "ObjectStore", _FakeObjectStore)
+
+    init_db()
+    client = _signed_in_client("Org Journey Content Score")
+    application = _create_application(client, "Journey Content Score App")
+
+    with Session(engine) as session:
+        discovery_run = session.exec(
+            select(DiscoveryRun).where(
+                DiscoveryRun.external_id == uuid.UUID(application["discovery_run_id"])
+            )
+        ).one()
+        # A real, legitimate page (e.g. a Home dashboard) that scores well
+        # despite being visually generic.
+        home_page = Page(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            url="https://staging.example.com/home",
+            title="Home",
+            object_storage_key="discovery-runs/some-run/home-key",
+            page_settled=True,
+            content_score=0.85,
+        )
+        # The journey's actual destination — a lower score than Home, but
+        # still well above the "usable" floor, so it must still win.
+        end_state_page = Page(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            url="https://staging.example.com/confirmation",
+            title="Confirmation",
+            object_storage_key="discovery-runs/some-run/end-state-key",
+            page_settled=True,
+            content_score=0.4,
+        )
+        session.add_all([home_page, end_state_page])
+        session.flush()
+
+        journey = Journey(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            name="Checkout Flow",
+            identity_key=f"identity-{uuid.uuid4()}",
+        )
+        session.add(journey)
+        session.flush()
+
+        session.add_all(
+            [
+                JourneyStep(
+                    journey_id=journey.id,
+                    page_id=home_page.id,
+                    step_order=1,
+                    stage_label="Home",
+                ),
+                JourneyStep(
+                    journey_id=journey.id,
+                    page_id=end_state_page.id,
+                    step_order=2,
+                    stage_label="Confirmation",
+                ),
+            ]
+        )
+        session.commit()
+        session.refresh(journey)
+        journey_id = str(journey.external_id)
+
+    response = client.get(f"/journeys/{journey_id}/steps")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 2
+    assert body[-1]["screenshot_url"] == "https://fake-store/discovery-runs/some-run/end-state-key"
+
+
+def test_journey_steps_falls_back_when_the_end_states_own_screenshot_is_too_low(
+    monkeypatch,
+) -> None:
+    """`[ADDED screenshot-content-score]` When the end state's own capture
+    scored too low to be worth showing (e.g. captured before its data
+    finished loading — content_score < 0.3), fall back to the best-scoring
+    earlier step's page rather than showing a near-blank screenshot."""
+    import api.main as main_module
+
+    class _FakeObjectStore:
+        def presigned_get_url(
+            self,
+            key: str,
+            expires_seconds: int = 900,
+            *,
+            response_content_type: str | None = None,
+            filename: str | None = None,
+        ) -> str:
+            return f"https://fake-store/{key}"
+
+    monkeypatch.setattr(main_module, "ObjectStore", _FakeObjectStore)
+
+    init_db()
+    client = _signed_in_client("Org Journey Content Score Fallback")
+    application = _create_application(client, "Journey Content Score Fallback App")
+
+    with Session(engine) as session:
+        discovery_run = session.exec(
+            select(DiscoveryRun).where(
+                DiscoveryRun.external_id == uuid.UUID(application["discovery_run_id"])
+            )
+        ).one()
+        best_page = Page(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            url="https://staging.example.com/checkout",
+            title="Checkout",
+            object_storage_key="discovery-runs/some-run/best-key",
+            page_settled=True,
+            content_score=0.85,
+        )
+        # Settled but a near-empty capture (e.g. a loading skeleton that
+        # happened to settle) — low content_score despite page_settled=True,
+        # and it's the journey's own end state.
+        blank_end_state_page = Page(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            url="https://staging.example.com/loading",
+            title="Loading",
+            object_storage_key="discovery-runs/some-run/loading-key",
+            page_settled=True,
+            content_score=0.05,
+        )
+        session.add_all([best_page, blank_end_state_page])
+        session.flush()
+
+        journey = Journey(
+            application_id=discovery_run.application_id,
+            discovery_run_id=discovery_run.id,
+            name="Checkout Flow",
+            identity_key=f"identity-{uuid.uuid4()}",
+        )
+        session.add(journey)
+        session.flush()
+
+        session.add_all(
+            [
+                JourneyStep(
+                    journey_id=journey.id,
+                    page_id=best_page.id,
+                    step_order=1,
+                    stage_label="Checkout",
+                ),
+                JourneyStep(
+                    journey_id=journey.id,
+                    page_id=blank_end_state_page.id,
+                    step_order=2,
+                    stage_label="Loading",
+                ),
+            ]
+        )
+        session.commit()
+        session.refresh(journey)
+        journey_id = str(journey.external_id)
+
+    response = client.get(f"/journeys/{journey_id}/steps")
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 2
+    # Still attached to the LAST step's response object (unchanged API
+    # contract) — the Journey association is preserved even though the
+    # winning screenshot came from an earlier step.
+    assert body[-1]["screenshot_url"] == "https://fake-store/discovery-runs/some-run/best-key"
+
+
 def test_rename_journey_updates_name() -> None:
     init_db()
     client = _signed_in_client("Org Journey Rename")

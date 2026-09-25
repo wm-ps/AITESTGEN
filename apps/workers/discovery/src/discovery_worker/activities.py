@@ -438,6 +438,7 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                 structural_tokens=item.structural_tokens,
                 variant_of_page_id=variant_of_page_id,
                 page_settled=item.page_settled,
+                content_score=item.content_score,
             )
             session.add(page)
             session.commit()

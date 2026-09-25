@@ -212,6 +212,13 @@ async def test_crawl_captures_every_typed_capture(target_app_url: str) -> None:
     assert result.api_calls
 
     assert all(page.object_storage_key in object_store.stored for page in result.pages)
+    # `[ADDED screenshot-content-score]` Every real captured Page gets a
+    # real Screenshot Content Score computed from its actual screenshot
+    # bytes/DOM — category 10 ("existing screenshot capture behavior is
+    # unchanged"): the capture call itself isn't touched, this just proves
+    # the new scoring step doesn't silently no-op against a real page.
+    assert all(page.content_score is not None for page in result.pages)
+    assert all(0.0 <= page.content_score <= 1.0 for page in result.pages)  # type: ignore[operator]
 
 
 @pytest.mark.asyncio

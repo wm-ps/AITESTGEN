@@ -78,6 +78,18 @@ class Page(SQLModel, table=True):
     # are assumed settled — never worse than today's behaviour) so this only
     # ever narrows which page's screenshot a Journey shows, never widens it.
     page_settled: bool = Field(default=True, sa_column=Column(Boolean, nullable=False))
+    # `[ADDED screenshot-content-score]` The deterministic Screenshot
+    # Content Score (`discovery_worker.screenshot_quality.score_screenshot`,
+    # 0.0-1.0) — computed once at capture time from the screenshot bytes and
+    # this same row's own `structural_tokens`/`heading`/`page_settled`, no
+    # LLM/vision model involved. Lets a Journey's screenshot selection
+    # (apps/api/src/api/main.py) pick whichever of its steps' Pages is most
+    # likely to show real, rendered application content instead of a blank
+    # or mid-load capture. Null for existing rows captured before this
+    # field existed, and for the dialog/popup/login capture paths that
+    # don't compute it — both read the same as "no opinion", never worse
+    # than the page_settled-only selection this augments.
+    content_score: float | None = Field(default=None)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

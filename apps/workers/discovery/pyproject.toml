@@ -15,6 +15,9 @@ dependencies = [
     "sqlmodel>=0.0.24",
     "psycopg[binary]>=3.2",
     "playwright>=1.57",
+    # Screenshot Content Score (screenshot_quality.py) — deterministic local
+    # image analysis only (blank-ratio/edge-density), no OCR/vision model.
+    "pillow>=11.0",
 ]
 
 [dependency-groups]

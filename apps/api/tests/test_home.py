@@ -260,6 +260,39 @@ def test_get_home_returns_counts_scoped_to_org() -> None:
     assert body[0]["suites_generating_count"] == 1
 
 
+def test_get_home_skips_an_application_with_no_discovery_run_instead_of_crashing() -> None:
+    """`[FIXED]` An Application with zero `DiscoveryRun` rows is impossible
+    through the normal app flow (`start_discovery_run` always creates one at
+    Application-creation time) but a real state after direct DB
+    intervention (e.g. clearing a run for a manual re-test). This used to
+    `assert discovery_run is not None` and crash the whole `/home` response
+    — taking down every application's dashboard card over one app's edge
+    case. Must skip just that one application instead."""
+    init_db()
+    client = _signed_in_client("Org Home Missing Discovery Run")
+    healthy_application = _create_application(client, "Healthy App")
+    broken_application = _create_application(client, "No Discovery Run App")
+
+    with Session(engine) as session:
+        broken_app_row = session.exec(
+            select(Application).where(
+                Application.external_id == uuid.UUID(broken_application["id"])
+            )
+        ).one()
+        for run in session.exec(
+            select(DiscoveryRun).where(DiscoveryRun.application_id == broken_app_row.id)
+        ).all():
+            session.delete(run)
+        session.commit()
+
+    response = client.get("/home")
+    assert response.status_code == 200
+    body = response.json()
+    names = [app["name"] for app in body]
+    assert "Healthy App" in names
+    assert "No Discovery Run App" not in names
+
+
 def test_get_home_reports_zero_generating_once_a_suite_is_terminally_incomplete() -> None:
     """A Scenario that's permanently skipped (over max_test_cases_per_application)
     or exhausts its wave retries never gets a TestAsset — test_case_count

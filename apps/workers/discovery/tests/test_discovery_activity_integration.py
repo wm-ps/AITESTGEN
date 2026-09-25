@@ -110,6 +110,17 @@ async def test_discovery_activity_captures_the_application_model_against_live_ta
     # early stop that used to write the identical status — see
     # `CrawlResult.stop_reason` in crawler.py.
     assert completed_run.stop_reason == "exhausted"
+    # `[ADDED screenshot-content-score]` The deterministic Screenshot
+    # Content Score round-trips all the way to a real Postgres row, not
+    # just `CrawlResult.pages` in memory — proves `_create_page_row`
+    # (activities.py) actually persists it. Not every Page has one — the
+    # pre-crawl login-page capture (`establish_session`, run before
+    # `run_discovery_crawl` even starts) builds its own `CapturedPage`
+    # without this scoring step, by design (see `screenshot_quality.py`'s
+    # module docstring) — only the pages the crawl loop itself visits do.
+    scored = [p.content_score for p in pages if p.content_score is not None]
+    assert scored, "expected at least one Page from the crawl loop to have a content_score"
+    assert all(0.0 <= s <= 1.0 for s in scored)
     # CR-2 (AC 10): authenticating -> discovering, and stage remains
     # "discovering" through completion (ApplicationModelBuilder/Inference are
     # separate Activities that own the later stage transitions).
