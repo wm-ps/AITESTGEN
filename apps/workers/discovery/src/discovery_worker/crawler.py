@@ -1333,8 +1333,24 @@ _STATE_SIGNALS_SCRIPT = r"""
     });
     return tokens;
   }
-  const h1 = document.querySelector('h1');
-  const h2 = document.querySelector('h2');
+  // `[FIXED heading-visibility]` `document.querySelector('h1')` picks the
+  // *first* h1 in DOM order regardless of visibility — confirmed live:
+  // this app mounts a permanently-present, ancestor-hidden toast/error
+  // template near the top of `<body>` (a real `<h1>innerText`, just an
+  // invisible ancestor container), so every single page's heading came
+  // back as that template's placeholder text instead of the page's own
+  // real, visible heading. `checkVisibility()` walks the ancestor chain
+  // (display/visibility/opacity), unlike a bare `getBoundingClientRect`
+  // check on the element alone.
+  function isVisible(el) {
+    if (typeof el.checkVisibility === 'function') {
+      return el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true });
+    }
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }
+  const h1 = Array.from(document.querySelectorAll('h1')).find(isVisible);
+  const h2 = Array.from(document.querySelectorAll('h2')).find(isVisible);
   const heading = (h1 && h1.innerText.trim())
     || (h2 && h2.innerText.trim())
     || document.title
