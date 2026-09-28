@@ -1592,6 +1592,10 @@ export interface components {
             last_discovery_started_at: string | null;
             /** Live Exploration Generating */
             live_exploration_generating: boolean;
+            /** Journeys With Generation Error */
+            journeys_with_generation_error: number;
+            /** Failed Journey Names */
+            failed_journey_names: string[];
         };
         /** InviteCreate */
         InviteCreate: {

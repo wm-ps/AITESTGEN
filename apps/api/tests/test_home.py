@@ -270,7 +270,7 @@ def test_get_home_skips_an_application_with_no_discovery_run_instead_of_crashing
     case. Must skip just that one application instead."""
     init_db()
     client = _signed_in_client("Org Home Missing Discovery Run")
-    healthy_application = _create_application(client, "Healthy App")
+    _create_application(client, "Healthy App")
     broken_application = _create_application(client, "No Discovery Run App")
 
     with Session(engine) as session:
@@ -314,3 +314,33 @@ def test_get_home_reports_zero_generating_once_a_suite_is_terminally_incomplete(
     assert body[0]["suite_count"] == 1
     assert body[0]["test_case_count"] == 0
     assert body[0]["suites_generating_count"] == 0
+
+
+def test_get_home_exposes_journeys_with_generation_error() -> None:
+    """`[FIXED generation-stuck]` A Journey whose scenario generation
+    permanently failed (Temporal retries exhausted, `generation_error` set)
+    never gets a Scenario — `scenario_journeys_covered` alone can never
+    catch up to `journey_count` for it, which used to read as "still
+    generating" forever. `/home` must expose enough for the frontend to
+    treat a failed Journey as done, not stuck: a count and which one(s)."""
+    init_db()
+    client = _signed_in_client("Org Home Generation Error")
+
+    application = _create_application(client, "Home Generation Error App")
+    covered_journey = _add_candidate_journey(application, name="Checkout")
+    _add_scenario(covered_journey, name="Guest checkout")
+    failed_journey = _add_candidate_journey(application, name="Broken Journey")
+    with Session(engine) as session:
+        failed_journey = session.get(Journey, failed_journey.id)
+        assert failed_journey is not None
+        failed_journey.generation_error = "RuntimeError: something went wrong"
+        session.add(failed_journey)
+        session.commit()
+
+    response = client.get("/home")
+    assert response.status_code == 200
+    body = response.json()[0]
+    assert body["journey_count"] == 2
+    assert body["scenario_journeys_covered"] == 1
+    assert body["journeys_with_generation_error"] == 1
+    assert body["failed_journey_names"] == ["Broken Journey"]

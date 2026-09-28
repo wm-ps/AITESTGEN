@@ -45,14 +45,22 @@ export function applicationStage(application: HomeApplicationRead): {
   // Temporal workflow per Journey with nothing written back to SQL until it
   // finishes, so this can't tell "still generating" from "generation was
   // triggered for some journeys and never finished/retried for the rest."
-  // Upgrade path: a Scenario-generation status column that workflow itself
-  // updates. `live_exploration_generating` doesn't have this problem — it's
-  // a live Temporal query (`running_live_exploration_application_ids`), not
-  // a proxy, because live-exploration's Journey/Scenario rows don't even
+  // `live_exploration_generating` doesn't have this problem — it's a live
+  // Temporal query (`running_live_exploration_application_ids`), not a
+  // proxy, because live-exploration's Journey/Scenario rows don't even
   // exist yet for most of that run's duration.
+  // `[FIXED generation-stuck]` A Journey whose scenario generation
+  // permanently failed (Temporal retries exhausted, `generation_error` set)
+  // never gets a Scenario, so `scenario_journeys_covered` alone could never
+  // catch up to `journey_count` for it — this read as "still generating"
+  // forever, which blocked Delete indefinitely for an application with even
+  // one permanently-failed Journey. A failed Journey is done, just not
+  // successfully — count it alongside covered ones, same union
+  // ReviewScenarios.tsx already uses for its own equivalent gate.
   const scenariosGenerating =
     (application.scenario_count > 0 &&
-      application.scenario_journeys_covered < application.journey_count) ||
+      application.scenario_journeys_covered + application.journeys_with_generation_error <
+        application.journey_count) ||
     application.live_exploration_generating
   const stage: ApplicationStage =
     discoveryStatus === 'failed' || discoveryStatus === 'paused'
@@ -481,6 +489,13 @@ export function Home({
   const [applications, setApplications] = useState<HomeApplicationRead[] | null>(null)
   const [snackbar, setSnackbar] = useState<{ message: string; kind: 'error' | 'info' } | null>(null)
   const [page, setPage] = useState(0)
+  // `[ADDED generation-stuck notification]` `null` until the first poll
+  // completes — deliberately not comparing against "nothing seen yet" on
+  // that first load, or every pre-existing failure from before this page
+  // was even opened would pop a toast the instant it loads. A `ref`, not
+  // state: purely bookkeeping for the next poll's diff, never itself
+  // rendered.
+  const seenFailedJourneysRef = useRef<Map<string, Set<string>> | null>(null)
 
   useEffect(() => {
     if (!snackbar) return
@@ -490,7 +505,27 @@ export function Home({
 
   async function refreshApplications() {
     try {
-      setApplications(await api.getHome())
+      const next = await api.getHome()
+      // A Journey that's newly `generation_error`'d since the last poll —
+      // the backend already recorded the failure and moved on to the rest
+      // (see `scenario_generation_activity`/`GenerationWorkflow`); this is
+      // purely a "here's what happened" notice, not a retry trigger.
+      if (seenFailedJourneysRef.current) {
+        outer: for (const app of next) {
+          const alreadySeen = seenFailedJourneysRef.current.get(app.id) ?? new Set<string>()
+          for (const name of app.failed_journey_names) {
+            if (!alreadySeen.has(name)) {
+              setSnackbar({
+                message: `Scenario generation failed for "${name}" in ${app.name} — continuing with the remaining journeys.`,
+                kind: 'error',
+              })
+              break outer
+            }
+          }
+        }
+      }
+      seenFailedJourneysRef.current = new Map(next.map((app) => [app.id, new Set(app.failed_journey_names)]))
+      setApplications(next)
     } catch {
       // best-effort — a transient failure just skips this refresh
     }

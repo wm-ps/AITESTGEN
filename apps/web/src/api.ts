@@ -53,6 +53,10 @@ export type HomeApplicationRead = ApplicationRead & {
   last_test_run_passed_count: number | null
   last_test_run_failed_count: number | null
   live_exploration_generating: boolean
+  // A Journey whose scenario generation permanently failed (Temporal
+  // retries exhausted) — see `applicationStage()`'s `scenariosGenerating`.
+  journeys_with_generation_error: number
+  failed_journey_names: string[]
 }
 // Global overview's org-wide "Avg run duration"/"Self-healed locators"
 // sidebar cards — not per-application, so a separate endpoint from /home.

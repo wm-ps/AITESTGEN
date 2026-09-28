@@ -628,6 +628,18 @@ class HomeApplicationRead(ApplicationRead):
     # unlike suites_generating_count above, there is no persisted status to
     # query for this; see running_live_exploration_application_ids.
     live_exploration_generating: bool
+    # `[FIXED generation-stuck]` A Journey whose scenario generation
+    # permanently failed (Temporal retries exhausted — see
+    # `scenario_generation_activity`) never gets a Scenario, so
+    # `scenario_journeys_covered` can never catch up to `journey_count` for
+    # it — `applicationStage()`'s `scenariosGenerating` used to read that
+    # gap as "still generating" forever, which blocked Delete indefinitely
+    # for an application with one permanently-failed Journey. These two
+    # fields let the frontend count a failed Journey as done (not stuck) —
+    # same union `ReviewScenarios.tsx` already does for its own equivalent
+    # gate — and name which Journey(s) failed for a notification.
+    journeys_with_generation_error: int
+    failed_journey_names: list[str]
 
 
 def _coverage_counts(session: Session, discovery_run: DiscoveryRun) -> dict[str, int]:
@@ -915,6 +927,19 @@ async def get_home(
     )
     journey_ids = list(app_id_by_journey_id.keys())
 
+    # See `HomeApplicationRead.journeys_with_generation_error`'s own comment —
+    # a permanently-failed Journey must count as "done" for the generating
+    # gate, not "still pending" forever.
+    failed_journey_names_by_app: dict[uuid.UUID, list[str]] = {}
+    for app_id, name in session.exec(
+        select(Journey.application_id, Journey.name).where(
+            Journey.application_id.in_(app_ids),  # type: ignore[attr-defined]
+            Journey.status == "candidate",
+            Journey.generation_error.is_not(None),  # type: ignore[union-attr]
+        )
+    ).all():
+        failed_journey_names_by_app.setdefault(app_id, []).append(name)
+
     scenario_counts: dict[uuid.UUID, int] = {}
     scenario_journeys_covered: dict[uuid.UUID, int] = {}
     suite_counts: dict[uuid.UUID, int] = {}
@@ -997,6 +1022,10 @@ async def get_home(
                 journey_count=journey_counts.get(application.id, 0),
                 scenario_count=scenario_counts.get(application.id, 0),
                 scenario_journeys_covered=scenario_journeys_covered.get(application.id, 0),
+                journeys_with_generation_error=len(
+                    failed_journey_names_by_app.get(application.id, [])
+                ),
+                failed_journey_names=failed_journey_names_by_app.get(application.id, []),
                 suite_count=suite_counts.get(application.id, 0),
                 test_case_count=test_case_counts.get(application.id, 0),
                 suites_generating_count=suites_generating_counts.get(application.id, 0),
