@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBolt, faChevronDown, faChevronRight, faPen, faPlay, faPlugCircleCheck } from '@fortawesome/free-solid-svg-icons'
+import { faBolt, faChevronDown, faChevronRight, faCircleInfo, faPen, faPlay, faPlugCircleCheck } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type ApplicationCreate, type ApplicationRead } from '../api'
 import { LoadingDots } from './LoadingDots'
 import { EMPTY_NOTES_FORM, NotesFields, toNotesPayload, type NotesFormState } from './NotesFields'
+import { Toast } from './Toast'
 
 const KNOWN_ENVIRONMENTS = ['staging', 'production', 'qa']
 
@@ -70,6 +71,18 @@ export function ConnectAppForm({
   const [submitting, setSubmitting] = useState(false)
   const [testingConnection, setTestingConnection] = useState(false)
   const [connectionResult, setConnectionResult] = useState<{ ok: boolean; detail: string | null } | null>(null)
+  const [blockedToast, setBlockedToast] = useState<string | null>(null)
+  // Start discovery stays disabled-looking until a Test connection call has
+  // actually come back reachable for the URL currently in the field — editing
+  // the URL already resets `connectionResult` to null below, so this can't go
+  // stale by pointing at a URL that was never (re-)verified.
+  const canStartDiscovery = connectionResult?.ok === true
+
+  useEffect(() => {
+    if (!blockedToast) return
+    const timeout = setTimeout(() => setBlockedToast(null), 3500)
+    return () => clearTimeout(timeout)
+  }, [blockedToast])
 
   async function handleTestConnection() {
     if (testingConnection || !url) return
@@ -87,6 +100,10 @@ export function ConnectAppForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (!canStartDiscovery) {
+      setBlockedToast('Please test the connection before starting discovery.')
+      return
+    }
     setError(null)
     setSubmitting(true)
     try {
@@ -177,9 +194,22 @@ export function ConnectAppForm({
               </Field>
             </div>
 
-            <Field label="Deployed URL">
+            {/* `[FIXED label-association]` Not `Field` (a wrapping `<label>`) —
+                the Test connection button and its result text used to live
+                inside that same wrapping label, so a screen reader (and
+                `getByLabelText`) read them as *part of* the "Deployed URL"
+                label's own accessible name once a result appeared (e.g.
+                "Deployed URLURL is reachable." — button text is excluded by
+                the label-content algorithm, but plain text like this isn't).
+                Explicit `htmlFor`/`id` labels only the input, regardless of
+                what else renders alongside it. */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label htmlFor="connect-app-url" style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)' }}>
+                Deployed URL
+              </label>
               <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                 <input
+                  id="connect-app-url"
                   type="url"
                   required
                   readOnly={readOnly}
@@ -228,7 +258,7 @@ export function ConnectAppForm({
                   {connectionResult.ok ? 'URL is reachable.' : connectionResult.detail ?? 'URL is not reachable.'}
                 </div>
               )}
-            </Field>
+            </div>
 
             <div style={{ height: 1, background: 'var(--line)' }} />
 
@@ -336,6 +366,16 @@ export function ConnectAppForm({
               <>
                 <div style={{ height: 1, background: 'var(--line)' }} />
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                  {/* `[ADDED]` Visible *before* anyone clicks anything —
+                      the toast alone only explains the block after a user
+                      already tried and failed. This is what lets them get
+                      it right the first time. */}
+                  {!canStartDiscovery && !submitting && (
+                    <span style={{ marginRight: 'auto', display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--fg-4)' }}>
+                      <FontAwesomeIcon icon={faCircleInfo} style={{ fontSize: 12 }} />
+                      Test the connection above to enable Start discovery.
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={onCancel}
@@ -346,6 +386,17 @@ export function ConnectAppForm({
                   <button
                     type="submit"
                     disabled={submitting}
+                    // `[NOTE]` Deliberately not hard-`disabled` (native or
+                    // `aria-disabled`) on `!canStartDiscovery` — the button
+                    // must stay genuinely operable so `handleSubmit` (the
+                    // real gate) can show the toast explaining why; marking
+                    // it `aria-disabled` would tell assistive tech it's
+                    // non-interactive while a mouse click still worked, an
+                    // inconsistency that would leave a screen-reader user
+                    // with no way to discover the toast at all. Looks
+                    // disabled (opacity/cursor/title) without lying about
+                    // being unclickable.
+                    title={canStartDiscovery ? undefined : 'Test the connection first'}
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
@@ -357,10 +408,10 @@ export function ConnectAppForm({
                       color: '#fff',
                       fontSize: 13.5,
                       fontWeight: 600,
-                      cursor: submitting ? 'default' : 'pointer',
+                      cursor: submitting ? 'default' : canStartDiscovery ? 'pointer' : 'not-allowed',
                       boxShadow: 'var(--accent-glow)',
                       border: 'none',
-                      opacity: submitting ? 0.75 : 1,
+                      opacity: submitting ? 0.75 : canStartDiscovery ? 1 : 0.5,
                     }}
                   >
                     {submitting ? (
@@ -378,6 +429,7 @@ export function ConnectAppForm({
           </fieldset>
         </form>
       </div>
+      {blockedToast && <Toast message={blockedToast} kind="info" onDismiss={() => setBlockedToast(null)} />}
     </>
   )
 }

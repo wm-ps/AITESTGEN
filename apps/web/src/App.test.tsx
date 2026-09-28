@@ -79,6 +79,9 @@ describe('App', () => {
         }
       }
       if (path.endsWith('/home')) return { ok: true, status: 200, json: async () => [] }
+      if (path.endsWith('/applications/test-connection')) {
+        return { ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) }
+      }
       if (path.endsWith('/applications') && init?.method === 'POST') {
         return {
           ok: true,
@@ -122,6 +125,9 @@ describe('App', () => {
     fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'staging' } })
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'qa-password' } })
+    // Start discovery is gated on a successful Test connection (ConnectAppForm).
+    fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
+    await screen.findByText('URL is reachable.')
     fireEvent.click(screen.getByRole('button', { name: 'Start discovery' }))
 
     await waitFor(() => {

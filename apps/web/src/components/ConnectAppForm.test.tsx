@@ -12,6 +12,15 @@ function fillCommonFields() {
   fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'qa-password' } })
 }
 
+// Start discovery is gated on a successful Test connection (see
+// ConnectAppForm's `canStartDiscovery`) — every test that submits the form
+// now has to actually pass through that gate first, same as a real user
+// would.
+async function passConnectionTest() {
+  fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
+  await screen.findByText('URL is reachable.')
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
 })
@@ -36,35 +45,33 @@ describe('ConnectAppForm', () => {
   })
 
   it('submits with auth_method always standard_login', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 201,
-      json: async () => ({ id: '1', name: 'My App' }),
-    })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
+      .mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: '1', name: 'My App' }) })
     vi.stubGlobal('fetch', fetchMock)
     const onConnected = vi.fn()
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
     fillCommonFields()
+    await passConnectionTest()
     fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
 
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body)
     expect(body.auth_method).toBe('standard_login')
     expect(body.username).toBe('qa-account')
     expect(body.password).toBe('qa-password')
   })
 
   it('submits notes typed during onboarding so they reach create_application', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 201,
-      json: async () => ({ id: '1', name: 'My App' }),
-    })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
+      .mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: '1', name: 'My App' }) })
     vi.stubGlobal('fetch', fetchMock)
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     fillCommonFields()
+    await passConnectionTest()
     fireEvent.click(screen.getByRole('button', { name: /Notes \(optional\)/ }))
     fireEvent.change(
       screen.getByPlaceholderText('Describe the primary purpose of the application and the outcomes it should deliver'),
@@ -72,8 +79,8 @@ describe('ConnectAppForm', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
 
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body)
     expect(body.application_context).toMatchObject({
       business_goal: 'Manage clients, accounts and investments.',
     })
@@ -105,19 +112,18 @@ describe('ConnectAppForm', () => {
   })
 
   it('submits application_context as all-null when no notes were typed', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 201,
-      json: async () => ({ id: '1', name: 'My App' }),
-    })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
+      .mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: '1', name: 'My App' }) })
     vi.stubGlobal('fetch', fetchMock)
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     fillCommonFields()
+    await passConnectionTest()
     fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
 
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    const body = JSON.parse(fetchMock.mock.calls[0][1].body)
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body)
     expect(body.application_context).toEqual({
       business_goal: null,
       business_domain: null,
@@ -127,12 +133,44 @@ describe('ConnectAppForm', () => {
   })
 
   it('keeps the form on Connect App and shows the backend-provided inline error when the reachability check fails (FR-31)', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: false,
-      status: 422,
-      statusText: 'Unprocessable Entity',
-      json: async () => ({ detail: "Could not reach this URL — check it's correct and reachable" }),
-    })
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+        statusText: 'Unprocessable Entity',
+        json: async () => ({ detail: "Could not reach this URL — check it's correct and reachable" }),
+      })
+    vi.stubGlobal('fetch', fetchMock)
+    const onConnected = vi.fn()
+    render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
+
+    fillCommonFields()
+    await passConnectionTest()
+    fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toBe("Could not reach this URL — check it's correct and reachable")
+    expect(onConnected).not.toHaveBeenCalled()
+    expect(screen.getByLabelText('Application name')).toBeTruthy()
+  })
+
+  it('shows an inline hint to test the connection before the user ever clicks Start discovery', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    fillCommonFields()
+    expect(screen.getByText('Test the connection above to enable Start discovery.')).toBeTruthy()
+
+    await passConnectionTest()
+    expect(screen.queryByText('Test the connection above to enable Start discovery.')).toBeNull()
+  })
+
+  it('blocks Start discovery and shows a toast when the connection was never tested', async () => {
+    const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const onConnected = vi.fn()
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
@@ -140,11 +178,28 @@ describe('ConnectAppForm', () => {
     fillCommonFields()
     fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
 
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled())
-    const alert = await screen.findByRole('alert')
-    expect(alert.textContent).toBe("Could not reach this URL — check it's correct and reachable")
+    await screen.findByText('Please test the connection before starting discovery.')
+    expect(fetchMock).not.toHaveBeenCalled()
     expect(onConnected).not.toHaveBeenCalled()
-    expect(screen.getByLabelText('Application name')).toBeTruthy()
+  })
+
+  it('blocks Start discovery when the URL is edited after a successful test connection', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const onConnected = vi.fn()
+    render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
+
+    fillCommonFields()
+    await passConnectionTest()
+    // Editing the URL after testing it invalidates that test — the field's
+    // own value is what changed, not just re-typing the same one.
+    fireEvent.change(screen.getByLabelText('Deployed URL'), { target: { value: 'https://staging.example.com/v2' } })
+    fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
+
+    await screen.findByText('Please test the connection before starting discovery.')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(onConnected).not.toHaveBeenCalled()
   })
 
   it('tests the Deployed URL reachability without submitting the form', async () => {
