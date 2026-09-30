@@ -2545,6 +2545,12 @@ class RecordingSessionCreate(BaseModel):
     # step) | "authenticated" (Codegen starts already logged in, via the
     # Application's existing stored credential/session — plan §4).
     auth_mode: Literal["logged_out", "authenticated"]
+    # Human-provided on the idle screen before recording starts — becomes
+    # the saved Journey/Scenario's own name (never a generic "Recorded
+    # flow" placeholder). Same as `ApplicationCreate.name`, this layer
+    # doesn't itself enforce non-blank; the frontend gates the "Record a
+    # flow" button on a trimmed, non-empty value.
+    name: str
 
 
 class RecordingSessionMintRead(BaseModel):
@@ -2578,6 +2584,7 @@ def create_recording_session(
         application_id=application.id,
         created_by_id=user.id,
         auth_mode=payload.auth_mode,
+        name=payload.name,
     )
     vnc_ws_url, control_ws_url = recording_ws_urls(token)
     return RecordingSessionMintRead(

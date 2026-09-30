@@ -59,6 +59,10 @@ class RecordingSession(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("platform_user.id"), nullable=False),
     )
     token_hash: str = Field(unique=True, index=True, nullable=False)
+    # Human-provided at mint time (Record and Play's idle screen) — becomes
+    # the saved Journey/Scenario's own name once the recording finishes,
+    # replacing what used to be a hardcoded "Recorded flow" placeholder.
+    name: str = Field(sa_column=Column(String, nullable=False))
     auth_mode: str = Field(
         sa_column=Column(String, nullable=False),
     )

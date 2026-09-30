@@ -524,10 +524,10 @@ export const api = {
     request<LiveTestCaseRequestStatusRead>(
       `/applications/${applicationId}/live-test-cases/requests/${requestId}`,
     ),
-  createRecordingSession: (applicationId: string, authMode: RecordingAuthMode) =>
+  createRecordingSession: (applicationId: string, authMode: RecordingAuthMode, name: string) =>
     request<RecordingSessionMintRead>(`/applications/${applicationId}/recordings/sessions`, {
       method: 'POST',
-      body: JSON.stringify({ auth_mode: authMode }),
+      body: JSON.stringify({ auth_mode: authMode, name }),
     }),
   getGenerationStatus: (applicationId: string) =>
     request<{ available: boolean }>(`/applications/${applicationId}/generation-status`),

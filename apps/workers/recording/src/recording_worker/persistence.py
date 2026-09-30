@@ -63,13 +63,12 @@ def _claim_test_case_number_sync(session: Session, application_id: uuid.UUID) ->
 
 
 def _create_recording_journey_sync(
-    session: Session, *, application_id: uuid.UUID, discovery_run_id: uuid.UUID
+    session: Session, *, application_id: uuid.UUID, discovery_run_id: uuid.UUID, base_name: str
 ) -> Journey:
     existing_names = [
         j.name
         for j in session.exec(select(Journey).where(Journey.application_id == application_id)).all()
     ]
-    base_name = "Recorded flow"
     name = base_name
     n = 2
     existing_lower = {e.lower() for e in existing_names}
@@ -143,15 +142,18 @@ def save_recording_sync(
     code: str,
     steps: list[str],
     requires_auth: bool,
+    name: str,
 ) -> SavedRecording:
     """Assembles and writes the full row chain for one finished recording —
     the only entry point this module exposes. `code` is Codegen's own raw
     output file content — `apply_auth_tag` is applied here, not by the
     caller, so it's never possible to persist a `TestAsset.code` whose
-    `@auth`/`@public` tag disagrees with `requires_auth`."""
+    `@auth`/`@public` tag disagrees with `requires_auth`. `name` is the
+    human-provided name from the idle screen (`RecordingSession.name`) —
+    never a generic placeholder."""
     with Session(engine) as session:
         journey = _create_recording_journey_sync(
-            session, application_id=application_id, discovery_run_id=discovery_run_id
+            session, application_id=application_id, discovery_run_id=discovery_run_id, base_name=name
         )
         test_suite = _ensure_test_suite_sync(session, journey)
         test_case_number = _claim_test_case_number_sync(session, application_id)

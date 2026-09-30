@@ -1784,6 +1784,8 @@ export interface components {
              * @enum {string}
              */
             auth_mode: "logged_out" | "authenticated";
+            /** Name */
+            name: string;
         };
         /** RecordingSessionMintRead */
         RecordingSessionMintRead: {

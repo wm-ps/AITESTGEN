@@ -37,6 +37,7 @@ def mint_recording_session(
     application_id: uuid.UUID,
     created_by_id: uuid.UUID,
     auth_mode: str,
+    name: str,
 ) -> tuple[RecordingSession, str]:
     token = secrets.token_urlsafe(32)
     recording_session = RecordingSession(
@@ -44,6 +45,7 @@ def mint_recording_session(
         created_by_id=created_by_id,
         token_hash=_hash_token(token),
         auth_mode=auth_mode,
+        name=name,
         expires_at=datetime.now(UTC) + RECORDING_TOKEN_EXPIRY,
     )
     session.add(recording_session)

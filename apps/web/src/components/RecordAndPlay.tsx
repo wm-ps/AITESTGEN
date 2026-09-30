@@ -33,6 +33,7 @@ export function RecordAndPlay({
   onSaved: (message: string) => void
 }) {
   const [authMode, setAuthMode] = useState<RecordingAuthMode>('logged_out')
+  const [flowName, setFlowName] = useState('')
   // 'idle'/'starting'/'error' here only ever describe the pre-mint phase —
   // once a session is minted, `stage` below hands off entirely to the
   // control-socket hook's own stage (recording/saving/success/error).
@@ -51,10 +52,12 @@ export function RecordAndPlay({
   const errorMessage = mintError ?? socketError
 
   const startRecording = async () => {
+    const trimmedName = flowName.trim()
+    if (!trimmedName) return
     setPreConnectPhase('starting')
     setMintError(null)
     try {
-      const session = await api.createRecordingSession(applicationId, authMode)
+      const session = await api.createRecordingSession(applicationId, authMode, trimmedName)
       const popupUrl = buildRecordingSessionWindowUrl({
         vncWsUrl: session.vnc_ws_url,
         controlWsUrl: session.control_ws_url,
@@ -90,6 +93,7 @@ export function RecordAndPlay({
     setPopupBlocked(false)
     setMintError(null)
     setPreConnectPhase('idle')
+    setFlowName('')
   }
 
   // The popup shows its own "Recording saved" confirmation and closes
@@ -132,7 +136,14 @@ export function RecordAndPlay({
         }}
       >
         {(stage === 'idle' || stage === 'starting') && (
-          <IdleState authMode={authMode} onAuthModeChange={setAuthMode} starting={stage === 'starting'} onStart={startRecording} />
+          <IdleState
+            flowName={flowName}
+            onFlowNameChange={setFlowName}
+            authMode={authMode}
+            onAuthModeChange={setAuthMode}
+            starting={stage === 'starting'}
+            onStart={startRecording}
+          />
         )}
 
         {(stage === 'recording' || stage === 'saving') && (
@@ -154,19 +165,48 @@ export function RecordAndPlay({
 }
 
 function IdleState({
+  flowName,
+  onFlowNameChange,
   authMode,
   onAuthModeChange,
   starting,
   onStart,
 }: {
+  flowName: string
+  onFlowNameChange: (name: string) => void
   authMode: RecordingAuthMode
   onAuthModeChange: (mode: RecordingAuthMode) => void
   starting: boolean
   onStart: () => void
 }) {
+  const trimmedName = flowName.trim()
   return (
     <>
       <RecordingsIllustration />
+      <label style={{ display: 'flex', flexDirection: 'column', gap: 6, width: '100%', maxWidth: 490 }}>
+        <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)' }}>Flow name</span>
+        <input
+          type="text"
+          required
+          disabled={starting}
+          placeholder="Enter a name for this flow"
+          value={flowName}
+          onChange={(e) => onFlowNameChange(e.target.value)}
+          style={{
+            height: 38,
+            padding: '0 12px',
+            border: '1px solid var(--border-2)',
+            borderRadius: 8,
+            fontSize: 13.5,
+            color: 'var(--fg-1)',
+            background: 'var(--panel)',
+            outline: 'none',
+            width: '100%',
+            boxSizing: 'border-box',
+            fontFamily: 'inherit',
+          }}
+        />
+      </label>
       <div role="radiogroup" aria-label="Recording mode" style={{ display: 'flex', gap: 10 }}>
         <AuthModeOption
           mode="logged_out"
@@ -186,7 +226,7 @@ function IdleState({
       <button
         type="button"
         onClick={onStart}
-        disabled={starting}
+        disabled={starting || !trimmedName}
         style={{
           display: 'inline-flex',
           alignItems: 'center',
@@ -199,8 +239,8 @@ function IdleState({
           border: 'none',
           fontSize: 13.5,
           fontWeight: 600,
-          cursor: starting ? 'default' : 'pointer',
-          opacity: starting ? 0.7 : 1,
+          cursor: starting || !trimmedName ? 'default' : 'pointer',
+          opacity: starting || !trimmedName ? 0.7 : 1,
         }}
       >
         {starting ? (

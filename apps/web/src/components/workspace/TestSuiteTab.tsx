@@ -437,6 +437,14 @@ function AssetCard({
                 Authored by prompt
               </span>
             )}
+            {/* Recorded badge — Record and Play: a human drove a
+                worker-hosted headed browser through the real playwright
+                codegen CLI; source:'recorded' only. */}
+            {asset.source === 'recorded' && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, fontWeight: 600, padding: '2px 8px', borderRadius: 6, background: 'rgba(30,150,138,0.14)', color: 'var(--accent-2)', border: '1px solid rgba(30,150,138,0.28)' }}>
+                Recorded
+              </span>
+            )}
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 6, maxWidth: 760, lineHeight: '19px' }}>
             {scenario?.expected_result || 'No expected result recorded'}

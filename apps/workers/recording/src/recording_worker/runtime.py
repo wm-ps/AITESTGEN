@@ -32,6 +32,7 @@ from playwright_typecheck import typecheck_playwright_code
 from starlette.websockets import WebSocket
 
 from recording_worker.allocator import AllocatedResources, DisplayPortAllocator
+from recording_worker.assertion_uncomment import uncomment_codegen_assertions
 from recording_worker.auth_mode import bootstrap_storage_state
 from recording_worker.codegen_session import CodegenSession
 from recording_worker.config import (
@@ -206,6 +207,8 @@ class SessionRuntime:
                 )
                 return
 
+            code = uncomment_codegen_assertions(code)
+
             typecheck_errors = await typecheck_playwright_code(code)
             if typecheck_errors:
                 await self._finish(status="failed", error_message="; ".join(typecheck_errors))
@@ -222,6 +225,7 @@ class SessionRuntime:
                     code=code,
                     steps=steps,
                     requires_auth=requires_auth,
+                    name=self._row.name,
                 )
             except Exception as exc:  # pragma: no cover - defensive, mirrors save-path errors
                 logger.exception("recording session %s: failed to persist", self._row.external_id)
