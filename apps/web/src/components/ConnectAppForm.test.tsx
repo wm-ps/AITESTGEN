@@ -156,20 +156,16 @@ describe('ConnectAppForm', () => {
     expect(screen.getByLabelText('Application name')).toBeTruthy()
   })
 
-  it('shows an inline hint to test the connection before the user ever clicks Start discovery', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
-    vi.stubGlobal('fetch', fetchMock)
+  it('looks like a normal, enabled button before the connection is ever tested', async () => {
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     fillCommonFields()
-    expect(screen.getByText('Test the connection above to enable Start discovery.')).toBeTruthy()
-
-    await passConnectionTest()
+    const startButton = screen.getByRole('button', { name: /Start discovery/ })
+    expect(startButton).not.toBeDisabled()
     expect(screen.queryByText('Test the connection above to enable Start discovery.')).toBeNull()
   })
 
-  it('blocks Start discovery and shows a toast when the connection was never tested', async () => {
+  it('blocks Start discovery and shows a popover when the connection was never tested', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     const onConnected = vi.fn()
@@ -178,7 +174,7 @@ describe('ConnectAppForm', () => {
     fillCommonFields()
     fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
 
-    await screen.findByText('Please test the connection before starting discovery.')
+    await screen.findByText('Test the connection above to enable Start discovery.')
     expect(fetchMock).not.toHaveBeenCalled()
     expect(onConnected).not.toHaveBeenCalled()
   })
@@ -197,7 +193,7 @@ describe('ConnectAppForm', () => {
     fireEvent.change(screen.getByLabelText('Deployed URL'), { target: { value: 'https://staging.example.com/v2' } })
     fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
 
-    await screen.findByText('Please test the connection before starting discovery.')
+    await screen.findByText('Test the connection above to enable Start discovery.')
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(onConnected).not.toHaveBeenCalled()
   })
