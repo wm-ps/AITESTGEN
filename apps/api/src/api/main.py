@@ -11,6 +11,7 @@ import os
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from domain import (
@@ -498,6 +499,11 @@ class ApplicationCreate(BaseModel):
         # the credential, never touch that.
         return value.strip() if isinstance(value, str) else value
 
+    @field_validator("url", mode="before")
+    @classmethod
+    def _normalize_url(cls, value: str) -> str:
+        return _normalize_application_url(value) if isinstance(value, str) else value
+
     @model_validator(mode="after")
     def _credentials_match_auth_method(self) -> ApplicationCreate:
         if self.auth_method == "standard_login" and not (self.username and self.password):
@@ -686,6 +692,25 @@ _UNREACHABLE_DETAIL = (
 )
 
 
+def _normalize_application_url(url: str) -> str:
+    """A Base URL with no trailing slash (e.g. `.../bm_catalog_backoffice_ui`)
+    combined with a target app's `<base href="">` makes the browser resolve
+    every relative asset path by dropping that last path segment — every
+    bundled JS/CSS 404s and only the app's own "unavailable" fallback ever
+    renders. Normalizing once here, before the URL is ever reachability-
+    checked or persisted, means every downstream consumer (crawler, session
+    login, execution self-heal, live-exploration, recording, generated
+    playwright.config.ts/auth.setup.ts) inherits a URL that navigates
+    correctly — instead of each of those ~10 call sites needing its own fix.
+    """
+    url = url.strip()
+    parts = urlsplit(url)
+    path = parts.path
+    if path and path != "/" and not path.endswith("/") and "." not in path.rsplit("/", 1)[-1]:
+        path += "/"
+    return urlunsplit((parts.scheme, parts.netloc, path, parts.query, parts.fragment))
+
+
 async def _check_reachable(client: httpx.AsyncClient, url: str) -> None:
     """FR-31 (CR-3): gates Application creation on the Base URL actually
     responding, 2xx/3xx — the same tolerance FR-6(f) already uses for a live
@@ -758,6 +783,11 @@ async def create_application(
 
 class ConnectionTestPayload(BaseModel):
     url: str
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _normalize_url(cls, value: str) -> str:
+        return _normalize_application_url(value) if isinstance(value, str) else value
 
 
 class ConnectionTestResult(BaseModel):
