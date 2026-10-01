@@ -2411,6 +2411,8 @@ async def _click_standalone_buttons(
                     retry_click_succeeded = False
                     if not has_real_size and rect == {"x": 0, "y": 0, "width": 0, "height": 0}:
                         for retry_wait_ms in (400, 800, 1600, 2200, 2500, 2500):
+                            if heartbeat:
+                                heartbeat()
                             await page.wait_for_timeout(retry_wait_ms)
                             rect = await _capture_rect()
                             has_real_size = bool(rect) and rect["width"] > 0 and rect["height"] > 0
@@ -2497,6 +2499,8 @@ async def _click_standalone_buttons(
                                     500, 1000, 1500, 2000, 2500, 2500, 3000, 3000, 3000, 3000
                                 )
                                 for recover_wait_ms in recovery_wait_schedule:
+                                    if heartbeat:
+                                        heartbeat()
                                     if (
                                         await _visible_content_size(page)
                                         >= visible_size_before_click
