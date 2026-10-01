@@ -5,4 +5,4 @@ cd "$(dirname "$0")/.."
 # unreliable at reaching the actual python process, leaving it orphaned and
 # still polling Temporal after a restart (same reasoning as the Dockerfiles'
 # own direct-venv invocation).
-exec uv run --env-file .env --package generation-worker watchfiles ".venv/bin/python -m generation_worker.worker" apps/workers/generation/src packages
+exec uv run --env-file .env --package generation-worker watchfiles --filter python ".venv/bin/python -m generation_worker.worker" apps/workers/generation/src packages

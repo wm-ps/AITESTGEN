@@ -355,6 +355,42 @@ def _post_application(client: TestClient, name: str, url: str = "https://app.exa
     )
 
 
+def test_create_application_appends_trailing_slash_to_directory_like_url() -> None:
+    """`[FIXED trailing-slash]` A stored URL with no trailing slash
+    (`.../bm_catalog_backoffice_ui`) combined with the target app's
+    `<base href="">` makes the browser drop that last path segment when
+    resolving every relative asset — every bundled JS/CSS 404s and only the
+    app's own "unavailable" fallback ever renders. Normalize at creation so
+    every downstream navigation (crawler, session login, execution,
+    generated playwright.config.ts, ...) inherits a URL that works."""
+    init_db()
+    client = _signed_in_client("Org Trailing Slash")
+
+    response = _post_application(
+        client, "Trailing Slash App", url="https://app.example.com/bm_catalog_backoffice_ui"
+    )
+
+    assert response.status_code == 201
+    assert response.json()["url"] == "https://app.example.com/bm_catalog_backoffice_ui/"
+
+
+def test_create_application_leaves_file_like_and_already_slashed_urls_alone() -> None:
+    init_db()
+    client = _signed_in_client("Org Url Untouched")
+
+    already_slashed = _post_application(
+        client, "Already Slashed App", url="https://app.example.com/portal/"
+    )
+    root_only = _post_application(client, "Root App", url="https://app.example.com")
+    file_like = _post_application(
+        client, "File Like App", url="https://app.example.com/portal/index.html"
+    )
+
+    assert already_slashed.json()["url"] == "https://app.example.com/portal/"
+    assert root_only.json()["url"] == "https://app.example.com"
+    assert file_like.json()["url"] == "https://app.example.com/portal/index.html"
+
+
 def test_create_application_rejects_unreachable_url(monkeypatch: pytest.MonkeyPatch) -> None:
     init_db()
     monkeypatch.setattr(

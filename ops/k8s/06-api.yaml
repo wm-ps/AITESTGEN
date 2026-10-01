@@ -67,24 +67,40 @@ spec:
                 name: aitestgen-config
             - secretRef:
                 name: aitestgen-secrets      
+          # /health stalls whenever a request blocks the event loop (sync DB
+          # work inside an `async def` route), so the old 1s timeout /
+          # 3-strike liveness restarted the pod mid-request — surfacing in
+          # the browser as CORS errors, since an ALB 502/503 carries no CORS
+          # headers. startupProbe covers boot; liveness is deliberately
+          # lenient (~2 min unresponsive) so it only kills a truly hung
+          # process, while readiness just pulls the pod from the Service.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 24
           readinessProbe:
             httpGet:
               path: /health
               port: 8000
-            initialDelaySeconds: 5
-            periodSeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /health
               port: 8000
-            initialDelaySeconds: 15
-            periodSeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
           resources:
             requests:
               cpu: "100m"
               memory: "256Mi"
             limits:
-              cpu: "500m"
+              cpu: "1000m"
               memory: "512Mi"
 ---
 apiVersion: v1
