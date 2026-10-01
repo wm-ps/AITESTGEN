@@ -2698,6 +2698,8 @@ async def _click_standalone_buttons(
                         for return_wait_ms in (500, 1000, 1500, 2000, 2500, 2500):
                             if recovered_size >= visible_size_before_click:
                                 break
+                            if heartbeat:
+                                heartbeat()
                             await page.wait_for_timeout(return_wait_ms)
                             recovered_size = await _visible_content_size(page)
                         if recovered_size < visible_size_before_click:
@@ -2715,6 +2717,8 @@ async def _click_standalone_buttons(
                                     recovered_size = await _visible_content_size(page)
                                     if recovered_size >= visible_size_before_click:
                                         break
+                                    if heartbeat:
+                                        heartbeat()
                                     await page.wait_for_timeout(return_wait_ms)
                             except Exception:
                                 pass
@@ -2859,6 +2863,8 @@ async def _click_standalone_buttons(
                             recovered_size = await _visible_content_size(page)
                             if recovered_size >= visible_size_before_click:
                                 break
+                            if heartbeat:
+                                heartbeat()
                             await page.wait_for_timeout(reload_wait_ms)
                         # `[ADDED nested-menu-recovery]` Same reasoning as
                         # the other restore points — this reload landed on a
@@ -3349,7 +3355,22 @@ async def run_discovery_crawl(
         )
         await sink.add(
             CapturedPage(
-                url=page.url,
+                # `[FIXED]` Must match `CapturedPageComplete`'s url exactly
+                # (crawler.py, below, and `_page_fingerprint(page.url)` is
+                # also already used for the redirect check right after this
+                # block) — `activities.py`'s buffer that holds everything
+                # captured for this page is keyed by this exact string, and
+                # `_classify_and_flush` looks it up using the fingerprinted
+                # one. The raw `page.url` and its fingerprint aren't always
+                # byte-identical: `_page_fingerprint` rebuilds any non-empty
+                # query string via parse_qsl/urlencode to strip OAuth
+                # callback params, and that round-trip isn't guaranteed to
+                # reproduce an unusual original encoding verbatim (confirmed
+                # live: a `wm_state=...` table-pagination param with nested
+                # parens/tildes). A raw-vs-fingerprinted mismatch here made
+                # the buffer lookup silently miss — no error, no diagnostic,
+                # the entire page's capture just never got written.
+                url=_page_fingerprint(page.url),
                 title=title,
                 object_storage_key=key,
                 heading=heading,
