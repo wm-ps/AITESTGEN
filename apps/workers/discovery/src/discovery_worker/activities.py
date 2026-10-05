@@ -876,6 +876,30 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                 },
             )
 
+        # `[FIXED]` Every individual wait-loop in crawler.py now heartbeats
+        # per iteration (see its own history), but that's whack-a-mole by
+        # nature — a single slow Playwright call (a hung `page.goto`, a
+        # stuck click) blocks this whole coroutine for as long as it takes,
+        # with none of those call-site heartbeats ever running in between.
+        # Confirmed live: Temporal still cancelled the activity mid-await,
+        # deep inside Playwright's own `wrap_api_call`, even after every
+        # known wait-loop already heartbeat on its own. A background pump
+        # heartbeats on a fixed clock, independent of whatever the crawl
+        # happens to be awaiting at any given moment — closes this whole
+        # class of gap for good instead of chasing the next missed call
+        # site. 30s keeps comfortable margin under the 2-minute
+        # heartbeat_timeout even if one pump tick is itself delayed by a
+        # long synchronous stretch.
+        heartbeat_task: asyncio.Task | None = None
+        if activity.in_activity():
+
+            async def _heartbeat_pump() -> None:
+                while True:
+                    await asyncio.sleep(30)
+                    activity.heartbeat()
+
+            heartbeat_task = asyncio.create_task(_heartbeat_pump())
+
         try:
             # Both are synchronous network clients (hvac/requests, boto3/
             # urllib3) — off the event loop so a slow Vault/S3 response
@@ -1018,6 +1042,13 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                 # exact same status, with no way to tell them apart after
                 # the fact. See `CrawlResult.stop_reason` in crawler.py.
                 discovery_run.stop_reason = result.stop_reason
+        finally:
+            if heartbeat_task:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
 
         session.add(discovery_run)
         session.commit()

@@ -1197,6 +1197,11 @@ export interface paths {
          *     substring match against the Test Case Number (`TC-001`, with or without
          *     the `TC-`/leading zeros), Test Case Name, or Journey name — Test Case
          *     Number & Journey feature.
+         *
+         *     `source`, when set to `"nl"`/`"recorded"`, additionally filters to just
+         *     that `Scenario.source` (All / Author test cases / Record-and-play tabs)
+         *     — applied after `q` but before pagination, same "filter before slicing"
+         *     shape `q` itself already uses. Omitted/`"all"` keeps every source.
          */
         get: operations["get_test_suite_status_applications__external_id__test_suite_status_get"];
         put?: never;
@@ -2071,6 +2076,10 @@ export interface components {
             page_size: number;
             /** Total */
             total: number;
+            /** Source Counts */
+            source_counts: {
+                [key: string]: number;
+            };
         };
         /** TestAssetStatusRead */
         TestAssetStatusRead: {
@@ -4792,6 +4801,7 @@ export interface operations {
                 page?: number;
                 page_size?: number;
                 q?: string | null;
+                source?: string | null;
             };
             header?: never;
             path: {
