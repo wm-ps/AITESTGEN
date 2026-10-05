@@ -4601,6 +4601,11 @@ class TestAssetStatusPageRead(BaseModel):
     page: int
     page_size: int
     total: int
+    # All / Author test cases / Record-and-play tabs (Test Suite tab) — lets
+    # the frontend label each tab with how many it'll show without a
+    # separate round trip. Reflects `q` (if set) but never `source` itself,
+    # so switching tabs never changes any other tab's own count.
+    source_counts: dict[str, int]
 
 
 @app.get(
@@ -4614,6 +4619,7 @@ def get_test_suite_status(
     page: int = 1,
     page_size: int = 10,
     q: str | None = None,
+    source: str | None = None,
 ) -> TestAssetStatusPageRead:
     """Application Workspace's Test Suite tab — one row per current
     TestAsset, showing its most recent result (or "not_run" if it's never
@@ -4622,7 +4628,12 @@ def get_test_suite_status(
     `q`, when set, filters (before pagination) by a case-insensitive
     substring match against the Test Case Number (`TC-001`, with or without
     the `TC-`/leading zeros), Test Case Name, or Journey name — Test Case
-    Number & Journey feature."""
+    Number & Journey feature.
+
+    `source`, when set to `"nl"`/`"recorded"`, additionally filters to just
+    that `Scenario.source` (All / Author test cases / Record-and-play tabs)
+    — applied after `q` but before pagination, same "filter before slicing"
+    shape `q` itself already uses. Omitted/`"all"` keeps every source."""
     application = _get_org_application(session, organization_id, external_id)
     test_assets, scenarios_by_id = _current_test_assets_for_application(session, application)
     journey_names_by_id = {
@@ -4648,7 +4659,18 @@ def get_test_suite_status(
         haystack = q.strip().lower()
         return haystack in scenario.name.lower() or haystack in _journey_name(asset).lower()
 
+    def _asset_source(asset: TestAsset) -> str:
+        scenario = scenarios_by_id.get(asset.scenario_id)
+        return scenario.source if scenario else "discovery"
+
     test_assets = [a for a in test_assets if _matches_query(a)]
+    source_counts = {"all": len(test_assets), "nl": 0, "recorded": 0}
+    for asset in test_assets:
+        asset_source = _asset_source(asset)
+        if asset_source in source_counts:
+            source_counts[asset_source] += 1
+    if source and source != "all":
+        test_assets = [a for a in test_assets if _asset_source(a) == source]
     test_assets = sorted(
         test_assets, key=lambda a: scenarios_by_id[a.scenario_id].test_case_number
     )
@@ -4680,7 +4702,9 @@ def get_test_suite_status(
                 source=scenario.source if scenario else "discovery",
             )
         )
-    return TestAssetStatusPageRead(items=items, page=page, page_size=page_size, total=total)
+    return TestAssetStatusPageRead(
+        items=items, page=page, page_size=page_size, total=total, source_counts=source_counts
+    )
 
 
 class TestAssetCodeRead(BaseModel):

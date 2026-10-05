@@ -84,7 +84,7 @@ def _create_application(client: TestClient, name: str) -> dict:
 
 
 def _seed_test_asset(
-    application: dict, *, scenario_name: str = "Guest checkout"
+    application: dict, *, scenario_name: str = "Guest checkout", source: str = "discovery"
 ) -> tuple[uuid.UUID, TestAsset]:
     """Seeds a Journey -> Scenario -> TestSuite -> TestAsset chain for an
     onboarded Application, mirroring `_add_candidate_journey_with_suite` in
@@ -116,6 +116,7 @@ def _seed_test_asset(
             expected_result="Order confirmed",
             test_data=[],
             generation_run_id=journey.attempt,
+            source=source,
         )
         session.add(scenario)
         session.flush()
@@ -438,6 +439,37 @@ class TestGetTestSuiteStatus:
 
         assert body["items"][0]["status"] == "not_run"
         assert body["items"][0]["last_run_at"] is None
+
+    def test_source_filter_scopes_items_and_total_but_counts_reflect_every_source(
+        self,
+    ) -> None:
+        """All / Author test cases / Record-and-play tabs (Test Suite tab)."""
+        init_db()
+        client, _ = _signed_in_client("Org Suite Status Source Filter")
+        application = _create_application(client, "Suite Status Source Filter App")
+        _seed_test_asset(application, scenario_name="Discovered flow", source="discovery")
+        _seed_test_asset(application, scenario_name="Authored flow", source="nl")
+        _seed_test_asset(application, scenario_name="Recorded flow", source="recorded")
+
+        all_body = client.get(f"/applications/{application['id']}/test-suite-status").json()
+        assert all_body["total"] == 3
+        assert all_body["source_counts"] == {"all": 3, "nl": 1, "recorded": 1}
+
+        nl_body = client.get(
+            f"/applications/{application['id']}/test-suite-status", params={"source": "nl"}
+        ).json()
+        assert nl_body["total"] == 1
+        assert [item["name"] for item in nl_body["items"]] == ["Authored flow"]
+        # Counts never change with the active filter — every tab always
+        # shows the true total for its own source, not just what's in view.
+        assert nl_body["source_counts"] == {"all": 3, "nl": 1, "recorded": 1}
+
+        recorded_body = client.get(
+            f"/applications/{application['id']}/test-suite-status",
+            params={"source": "recorded"},
+        ).json()
+        assert recorded_body["total"] == 1
+        assert [item["name"] for item in recorded_body["items"]] == ["Recorded flow"]
 
 
 class TestGetTestAssetCode:

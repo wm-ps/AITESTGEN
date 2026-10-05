@@ -277,6 +277,8 @@ export type TestAssetStatusPageRead = {
   page: number
   page_size: number
   total: number
+  // All / Author test cases / Record-and-play tabs — see main.py's own comment.
+  source_counts: { all: number; nl: number; recorded: number }
 }
 export type TestAssetCodeRead = { code: string }
 // Edit Test Data (Test Suite page) — not in api-types.gen.ts yet, added by
@@ -587,11 +589,11 @@ export const api = {
     request<TestResultArtifactRead[]>(`/test-results/${testResultId}/artifacts`),
   healTestResult: (testResultId: string) =>
     request<{ started: boolean }>(`/test-results/${testResultId}/heal`, { method: 'POST' }),
-  getTestSuiteStatus: (applicationId: string, page = 1, pageSize = 10, q = '') =>
+  getTestSuiteStatus: (applicationId: string, page = 1, pageSize = 10, q = '', source = '') =>
     request<TestAssetStatusPageRead>(
       `/applications/${applicationId}/test-suite-status?page=${page}&page_size=${pageSize}${
         q ? `&q=${encodeURIComponent(q)}` : ''
-      }`,
+      }${source && source !== 'all' ? `&source=${encodeURIComponent(source)}` : ''}`,
     ),
   getTestAssetCode: (testAssetId: string) =>
     request<TestAssetCodeRead>(`/test-assets/${testAssetId}/code`),

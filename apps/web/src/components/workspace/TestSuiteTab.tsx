@@ -210,6 +210,13 @@ const SOURCE_LABEL: Record<TestAssetStatusRead['source'], string> = {
   recorded: 'Recorded',
 }
 
+type TestCaseSourceFilter = 'all' | 'nl' | 'recorded'
+const SOURCE_FILTER_TABS: { value: TestCaseSourceFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'nl', label: 'Author test cases' },
+  { value: 'recorded', label: 'Record-and-play test cases' },
+]
+
 // Edit Test Data (Test Suite page) — inline, expanded-row form, reusing the
 // same field-list markup/behavior ReviewScenarios.tsx already established
 // for this exact data (Scenario.test_data). Unlike that screen's
@@ -539,8 +546,14 @@ export function TestSuiteTab({
   const [assets, setAssets] = useState<TestAssetStatusRead[]>([])
   const [assetsLoaded, setAssetsLoaded] = useState(false)
   const [total, setTotal] = useState(0)
+  const [sourceCounts, setSourceCounts] = useState({ all: 0, nl: 0, recorded: 0 })
   const [page, setPage] = useState(0)
   const [search, setSearch] = useState('')
+  // All / Author test cases / Record-and-play tabs — a newly-authored or
+  // recorded test case is appended after every discovery-sourced one, so it
+  // can land several pages in; filtering by source lets a user who just
+  // created one jump straight to it instead of paging through the rest.
+  const [sourceFilter, setSourceFilter] = useState<TestCaseSourceFilter>('all')
   // Edit Test Data — fetched once per page load/refresh here (not once per
   // row) since every row needing this data would otherwise each fetch the
   // full per-Application scenario list independently, same reuse of
@@ -624,9 +637,10 @@ export function TestSuiteTab({
       : `${total} test case${total === 1 ? '' : 's'} across ${journeyCount} journey${journeyCount === 1 ? '' : 's'} · each generated from its approved scenario`
 
   function refreshAssets() {
-    return api.getTestSuiteStatus(applicationId, page + 1, ASSETS_PER_PAGE, search).then((body) => {
+    return api.getTestSuiteStatus(applicationId, page + 1, ASSETS_PER_PAGE, search, sourceFilter).then((body) => {
       setAssets(body.items)
       setTotal(body.total)
+      setSourceCounts(body.source_counts)
     })
   }
 
@@ -636,11 +650,12 @@ export function TestSuiteTab({
 
   useEffect(() => {
     let cancelled = false
-    api.getTestSuiteStatus(applicationId, page + 1, ASSETS_PER_PAGE, search).then(
+    api.getTestSuiteStatus(applicationId, page + 1, ASSETS_PER_PAGE, search, sourceFilter).then(
       (body) => {
         if (!cancelled) {
           setAssets(body.items)
           setTotal(body.total)
+          setSourceCounts(body.source_counts)
           setAssetsLoaded(true)
         }
       },
@@ -651,7 +666,7 @@ export function TestSuiteTab({
     return () => {
       cancelled = true
     }
-  }, [applicationId, page, search])
+  }, [applicationId, page, search, sourceFilter])
 
   useEffect(() => {
     let cancelled = false
@@ -675,7 +690,10 @@ export function TestSuiteTab({
   // instead of the progress template. Self-stops once generation is
   // confirmed finished, rather than polling forever.
   useEffect(() => {
-    if (!assetsLoaded || search || page !== 0) return
+    // A source-filtered view is skipped here the same way `search` already
+    // is — this poll's own unfiltered fetch would otherwise clobber it with
+    // every tick.
+    if (!assetsLoaded || search || sourceFilter !== 'all' || page !== 0) return
     let cancelled = false
     let interval: ReturnType<typeof setInterval> | undefined
     async function poll() {
@@ -689,6 +707,7 @@ export function TestSuiteTab({
         setSuiteGenerating(generating)
         setAssets(statusPage.items)
         setTotal(statusPage.total)
+        setSourceCounts(statusPage.source_counts)
         if (!generating) clearInterval(interval)
       } catch {
         // best-effort poll — a transient failure just leaves the state as-is
@@ -700,10 +719,41 @@ export function TestSuiteTab({
       cancelled = true
       clearInterval(interval)
     }
-  }, [applicationId, assetsLoaded, search, page])
+  }, [applicationId, assetsLoaded, search, sourceFilter, page])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div role="tablist" aria-label="Filter test cases by source" style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {SOURCE_FILTER_TABS.map((tab) => {
+          const selected = sourceFilter === tab.value
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => {
+                setSourceFilter(tab.value)
+                setPage(0)
+              }}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 7,
+                border: `1px solid ${selected ? 'var(--accent)' : 'var(--border-3)'}`,
+                background: selected ? 'var(--accent-wash)' : 'var(--panel)',
+                color: selected ? 'var(--accent)' : 'var(--fg-3)',
+                fontSize: 12.5,
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {tab.label} ({sourceCounts[tab.value]})
+            </button>
+          )
+        })}
+      </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         {assetsLoaded && headerSub && <span style={{ fontSize: 13, color: 'var(--fg-3)' }}>{headerSub}</span>}
         <span style={{ flex: 1 }} />
@@ -781,14 +831,15 @@ export function TestSuiteTab({
           </>
         )
         if (!assetsLoaded) return <SkeletonRows count={4} height={80} gap={12} />
-        // A search implies the user wants whatever currently matches,
-        // generating or not — bypasses the generating check below entirely.
-        if (search) {
-          return assets.length === 0 ? (
-            <p style={{ fontSize: 13, color: 'var(--fg-4)' }}>No test cases match this search.</p>
-          ) : (
-            assetList
-          )
+        // A search or a source filter implies the user wants whatever
+        // currently matches, generating or not — bypasses the generating
+        // check below entirely.
+        if (search || sourceFilter !== 'all') {
+          if (assets.length > 0) return assetList
+          const message = search
+            ? 'No test cases match this search.'
+            : `No ${SOURCE_FILTER_TABS.find((t) => t.value === sourceFilter)?.label.toLowerCase()} yet.`
+          return <p style={{ fontSize: 13, color: 'var(--fg-4)' }}>{message}</p>
         }
         // `[FIXED]` "still generating" must win over an already non-empty
         // asset list — a suite writes test cases incrementally, so
