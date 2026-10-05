@@ -17,12 +17,12 @@ once a recording is finished, exactly like `terminate_test_suite`/the
 journey/scenario PATCH/DELETE endpoints in `apps/api/src/api/main.py`
 already are.
 
-Confirmed during planning: `TestSuite` is one-per-Journey (DB-constrained
-`(journey_id, generation_run_id)`, not `application_id`) — creating a fresh
-Journey and its own fresh TestSuite here is exactly what the discovery and
-live-exploration pipelines already do; the Suite tab's "one test suite per
-application" is a UI/API-layer aggregation across every Journey's own
-TestSuite, not a single row to find-or-reuse.
+`TestSuite` is one-per-Journey (DB-constrained `(journey_id,
+generation_run_id)`, not `application_id`), and `TestAsset`/`Scenario`
+both require one — so recordings share a single per-Application "Recorded
+tests" Journey + its TestSuite (see `get_or_create_recorded_tests_journey_
+sync`), each recording adding one more Scenario/TestAsset to it, rather
+than each minting a Journey of its own.
 """
 
 import hashlib
@@ -62,50 +62,57 @@ def _claim_test_case_number_sync(session: Session, application_id: uuid.UUID) ->
     ).scalar_one()
 
 
-def _create_recording_journey_sync(
-    session: Session, *, application_id: uuid.UUID, discovery_run_id: uuid.UUID, base_name: str
+# Every recording lands as one more test case in a single per-Application
+# "Recorded tests" Journey/TestSuite, never a Journey of its own (that used
+# to mint "Recorded flow (2)", "(3)", ... — one Journey per recording). A
+# fixed identity key makes `uq_journey_application_id_identity_key` the
+# get-or-create's race guard, the same way `_ensure_test_suite_sync` leans
+# on its own unique constraint below.
+RECORDED_TESTS_JOURNEY_NAME = "Recorded tests"
+RECORDED_TESTS_JOURNEY_DESCRIPTION = "Test cases recorded via Record and Play"
+RECORDED_TESTS_IDENTITY_KEY = hashlib.sha256(b"recording:bucket").hexdigest()
+# What every per-recording Journey created before the bucket existed was
+# described as — how `convert_legacy_recordings.py` finds them.
+LEGACY_RECORDING_JOURNEY_DESCRIPTION = "Recorded via Record and Play"
+
+
+def _select_recorded_tests_journey(session: Session, application_id: uuid.UUID) -> Journey | None:
+    return session.exec(
+        select(Journey).where(
+            Journey.application_id == application_id,
+            Journey.identity_key == RECORDED_TESTS_IDENTITY_KEY,
+        )
+    ).first()
+
+
+def get_or_create_recorded_tests_journey_sync(
+    session: Session, *, application_id: uuid.UUID, discovery_run_id: uuid.UUID
 ) -> Journey:
-    existing_names = [
-        j.name
-        for j in session.exec(select(Journey).where(Journey.application_id == application_id)).all()
-    ]
-    name = base_name
-    n = 2
-    existing_lower = {e.lower() for e in existing_names}
-    while name.lower() in existing_lower:
-        name = f"{base_name} ({n})"
-        n += 1
-
-    # Unlike a crawl/live-exploration Journey, there is no underlying
-    # evidence shape (pages visited, form fields) to fingerprint — each
-    # recording session is already a distinct, deliberate human act, so its
-    # own random session id is a perfectly good identity key; it only needs
-    # to be unique per Application, same as every other Journey's.
-    identity_key = hashlib.sha256(f"recording:{uuid.uuid4()}".encode()).hexdigest()
-
+    existing = _select_recorded_tests_journey(session, application_id)
+    if existing is not None:
+        return existing
     journey = Journey(
         application_id=application_id,
         discovery_run_id=discovery_run_id,
-        name=name,
-        description="Recorded via Record and Play",
-        identity_key=identity_key,
+        name=RECORDED_TESTS_JOURNEY_NAME,
+        description=RECORDED_TESTS_JOURNEY_DESCRIPTION,
+        identity_key=RECORDED_TESTS_IDENTITY_KEY,
         attempt=1,
         captured_flow=None,
     )
     session.add(journey)
     try:
-        session.flush()
-    except IntegrityError:  # pragma: no cover - astronomically unlikely random collision
-        session.rollback()
-        journey = session.exec(
-            select(Journey).where(
-                Journey.application_id == application_id, Journey.identity_key == identity_key
-            )
-        ).one()
+        # Savepoint, so losing the race doesn't roll back the caller's
+        # outer transaction (the legacy conversion runs inside one).
+        with session.begin_nested():
+            session.flush()
+    except IntegrityError:
+        journey = _select_recorded_tests_journey(session, application_id)
+        assert journey is not None
     return journey
 
 
-def _ensure_test_suite_sync(session: Session, journey: Journey) -> TestSuite:
+def ensure_test_suite_sync(session: Session, journey: Journey) -> TestSuite:
     existing = session.exec(
         select(TestSuite).where(
             TestSuite.journey_id == journey.id,
@@ -123,9 +130,9 @@ def _ensure_test_suite_sync(session: Session, journey: Journey) -> TestSuite:
     )
     session.add(test_suite)
     try:
-        session.flush()
+        with session.begin_nested():
+            session.flush()
     except IntegrityError:
-        session.rollback()
         test_suite = session.exec(
             select(TestSuite).where(
                 TestSuite.journey_id == journey.id,
@@ -152,16 +159,16 @@ def save_recording_sync(
     human-provided name from the idle screen (`RecordingSession.name`) —
     never a generic placeholder."""
     with Session(engine) as session:
-        journey = _create_recording_journey_sync(
-            session, application_id=application_id, discovery_run_id=discovery_run_id, base_name=name
+        journey = get_or_create_recorded_tests_journey_sync(
+            session, application_id=application_id, discovery_run_id=discovery_run_id
         )
-        test_suite = _ensure_test_suite_sync(session, journey)
+        test_suite = ensure_test_suite_sync(session, journey)
         test_case_number = _claim_test_case_number_sync(session, application_id)
 
         scenario = Scenario(
             journey_id=journey.id,
             type="happy",
-            name=journey.name,
+            name=name,
             steps=steps,
             expected_result="",
             test_data=[],
@@ -203,8 +210,18 @@ def create_recording_discovery_run_sync(application_id: uuid.UUID) -> uuid.UUID:
     unlike a live-exploration session, a Codegen recording has no structured
     action trace to derive an application-model fragment from, only the
     final source file (which is `TestAsset.code` itself; see steps_parser's
-    own docstring for the same reasoning applied to `Scenario.steps`)."""
+    own docstring for the same reasoning applied to `Scenario.steps`).
+
+    One per Application, reused by every recording (the "Recorded tests"
+    Journey only ever points at one), rather than a fresh row per session."""
     with Session(engine) as session:
+        existing = session.exec(
+            select(DiscoveryRun)
+            .where(DiscoveryRun.application_id == application_id, DiscoveryRun.source == "recorded")
+            .order_by(DiscoveryRun.created_at)  # type: ignore[arg-type]
+        ).first()
+        if existing is not None:
+            return existing.id
         discovery_run = DiscoveryRun(
             application_id=application_id,
             status="complete",

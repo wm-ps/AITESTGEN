@@ -30,18 +30,30 @@ services:
       - "7233:7233"   # gRPC frontend
       - "8233:8233"   # Web UI
 
-  # Dev-mode only (Story 1.3, Task 2) — in-memory, unsealed, root token fixed
-  # for local/CI convenience. Not the deferred production Vault-vs-cloud-KMS
-  # topology decision.
+  # Local-dev only (Story 1.3, Task 2) — file storage on the vault_data volume
+  # so stored credentials survive a container/Docker restart (dev mode's
+  # in-memory store silently orphaned every Application.secret_ref in
+  # Postgres on each restart). scripts/vault/entrypoint.sh auto-inits/unseals
+  # and keeps the same fixed `dev-only-root-token` + `secret/` KV v2 mount dev
+  # mode used to provide, so nothing that talks to Vault changes. CI keeps
+  # dev mode (ci.yml) — ephemeral is correct there. Not the deferred
+  # production Vault-vs-cloud-KMS topology decision.
   vault:
     image: hashicorp/vault:1.18
     cap_add:
       - IPC_LOCK
-    environment:
-      VAULT_DEV_ROOT_TOKEN_ID: dev-only-root-token
-      VAULT_DEV_LISTEN_ADDRESS: 0.0.0.0:8200
+    entrypoint: ["/bin/sh", "/vault/bootstrap/entrypoint.sh"]
+    volumes:
+      - vault_data:/vault/file
+      - ./scripts/vault:/vault/bootstrap:ro
     ports:
       - "8200:8200"
+    healthcheck:
+      # `vault status` exits 0 only once unsealed — gates `up --wait`.
+      test: ["CMD-SHELL", "VAULT_ADDR=http://127.0.0.1:8200 vault status >/dev/null"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
 
   # Object storage (Story 2.2/2.8) points at real AWS S3 even for local dev
   # (AWS_S3_BUCKET/AWS_REGION/AWS creds in .env) — no local MinIO container.
@@ -68,7 +80,8 @@ services:
       postgres:
         condition: service_healthy
       vault:
-        condition: service_started
+        condition: service_healthy
 
 volumes:
   postgres_data:
+  vault_data:

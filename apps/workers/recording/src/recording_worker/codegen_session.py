@@ -51,8 +51,15 @@ class CodegenSession:
             "-m",
             "playwright",
             "codegen",
+            # `playwright-test`, not `javascript`: the latter is Playwright's
+            # standalone library-script format (`require('playwright')` + an
+            # IIFE, no `test(...)` call) — `npx playwright test` collects
+            # zero tests from that, so every recording errored with
+            # "playwright report contained no suite matching ..." when run.
+            # See spec_normalizer.py for the remaining cleanup applied to
+            # this format's output before it's persisted.
             "--target",
-            "javascript",
+            "playwright-test",
             "--output",
             str(self._output_path),
         ]

@@ -1,8 +1,9 @@
 """Vault-backed SecretsClient adapter (Story 1.3, architecture AD-5).
 
-Dev-mode HashiCorp Vault chosen over a cloud-KMS adapter: portable across the
+HashiCorp Vault chosen over a cloud-KMS adapter: portable across the
 still-undecided SaaS/on-prem topology, trivial to run locally/in CI via a
-container, no cloud account dependency. The Vault-vs-cloud-KMS choice is
+container, no cloud account dependency. Local dev runs a persistent
+file-storage Vault (docker-compose.yml); CI runs an ephemeral dev-mode one. The Vault-vs-cloud-KMS choice is
 explicitly deferred to deploy time by the architecture — this is not that
 decision, just what unblocks the build now.
 

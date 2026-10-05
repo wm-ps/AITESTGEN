@@ -30,17 +30,17 @@ Single-line only, matching `steps_parser.py`'s own same assumption
 (Codegen always emits one assertion per line) — `re.MULTILINE` operates
 line-by-line rather than any manual splitting.
 
-Confirmed live against a real persisted recording: `codegen_session.py`'s
-own `--target javascript` flag selects Playwright's STANDALONE/library
-codegen format (`const { chromium } = require('playwright'); (async () =>
-{ ... })();`), never the `@playwright/test` `test(...)`/`import { test,
-expect }` format — that other format only comes from `--target
-playwright-test`, a different flag value this app never passes. `expect`
-is therefore never in scope anywhere in a real recording's raw output, so
-uncommenting an assertion alone would leave `expect` undefined (a real
-`tsc` failure: `Cannot find name 'expect'`, confirmed live) — a require
-line for it must be added too, exactly once, only when an assertion was
-actually uncommented.
+`codegen_session.py` now passes `--target playwright-test`, whose output
+already has `import { test, expect } from '@playwright/test'` — so for a
+fresh recording the expect-availability step below is a no-op. It still
+matters for recordings persisted before that switch, in Playwright's
+STANDALONE/library format (`const { chromium } = require('playwright');
+(async () => { ... })();`, from the old `--target javascript`), where
+`expect` is never in scope: uncommenting an assertion alone would leave it
+undefined (a real `tsc` failure: `Cannot find name 'expect'`, confirmed
+live), so a require line for it is added, exactly once, only when an
+assertion was actually uncommented. `spec_normalizer.py` then rewrites that
+legacy shape into a `test()` anyway.
 """
 
 import re

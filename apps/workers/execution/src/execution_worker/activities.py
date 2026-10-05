@@ -614,20 +614,23 @@ def _load_execution_context_sync(input: ExecuteTestActivityInput) -> _ExecutionC
         test_asset = session.exec(
             select(TestAsset).where(TestAsset.external_id == uuid.UUID(input.test_asset_id))
         ).one()
-        test_suite = session.exec(
-            select(TestSuite).where(TestSuite.id == test_asset.test_suite_id)
-        ).one()
-        journey = session.exec(select(Journey).where(Journey.id == test_suite.journey_id)).one()
-        scenario = session.exec(select(Scenario).where(Scenario.id == test_asset.scenario_id)).one()
 
         # Recomputed fresh from the same DB-sourced inputs Prepare used —
         # never persisted, never relies on in-memory state surviving across
         # separate Activity invocations (see compute_spec_paths' docstring).
+        # Scoped to the whole Application (not just this one TestSuite/
+        # TestAsset) — `dedupe_slugs` only disambiguates a Journey-name-slug
+        # collision when it sees every current TestSuite at once, same as
+        # `_write_project_files` did when it actually wrote the project to
+        # disk; recomputing from a single suite can never reproduce a suffix
+        # assigned against that wider set, and silently points at the wrong
+        # (or a nonexistent) spec path.
+        inputs = _load_assembly_inputs_sync(session, application)
         spec_path_by_asset_id = compute_spec_paths(
-            test_suites=[test_suite],
-            journeys_by_id={journey.id: journey},
-            assets_by_suite={test_suite.id: [test_asset]},
-            scenario_name_by_asset_id={test_asset.id: scenario.name},
+            test_suites=inputs.test_suites,
+            journeys_by_id=inputs.journeys_by_id,
+            assets_by_suite=inputs.assets_by_suite,
+            scenario_name_by_asset_id=inputs.scenario_name_by_asset_id,
         )
 
         return _ExecutionContext(
@@ -1103,11 +1106,16 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
         # guessing (the "wrap it in Number(...)" prompt rule needs this
         # concrete signal to actually fire).
         field_input_types = spec_linter.field_input_types_for_pages(session, known_page_ids)
+        # Scoped to the whole Application, not just this one TestSuite/
+        # TestAsset — see `_load_execution_context_sync`'s own note on why a
+        # single-suite recompute can never reproduce a `dedupe_slugs` suffix
+        # that assembly assigned against the full current-TestSuite set.
+        inputs = _load_assembly_inputs_sync(session, application)
         spec_path_by_asset_id = compute_spec_paths(
-            test_suites=[test_suite],
-            journeys_by_id={journey.id: journey},
-            assets_by_suite={test_suite.id: [test_asset]},
-            scenario_name_by_asset_id={test_asset.id: scenario.name},
+            test_suites=inputs.test_suites,
+            journeys_by_id=inputs.journeys_by_id,
+            assets_by_suite=inputs.assets_by_suite,
+            scenario_name_by_asset_id=inputs.scenario_name_by_asset_id,
         )
         return _HealContext(
             test_result_pk=test_result.id,

@@ -34,6 +34,7 @@ from execution_worker.db import engine, init_db
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
+from test_suite_assembler import compute_spec_paths
 from workflows import (
     TEST_RUN_STALE_AFTER,
     ExecuteTestActivityInput,
@@ -79,7 +80,9 @@ def _seed_application(**overrides) -> Application:
         return application
 
 
-def _seed_test_asset(application: Application, *, safety_classification: str) -> TestAsset:
+def _seed_test_asset(
+    application: Application, *, safety_classification: str, journey_name: str = "Checkout"
+) -> TestAsset:
     with Session(engine) as session:
         discovery_run = DiscoveryRun(application_id=application.id, status="complete")
         session.add(discovery_run)
@@ -88,7 +91,7 @@ def _seed_test_asset(application: Application, *, safety_classification: str) ->
         journey = Journey(
             application_id=application.id,
             discovery_run_id=discovery_run.id,
-            name="Checkout",
+            name=journey_name,
             identity_key=f"identity-{uuid.uuid4()}",
         )
         session.add(journey)
@@ -226,6 +229,81 @@ def test_prepare_runs_destructive_and_unknown_scenarios_unconditionally(
             select(TestResult).where(TestResult.test_run_id == test_run.id)
         ).all()
         assert all(r.status == "pending" for r in results)
+
+
+def test_load_execution_context_matches_assembled_path_when_journey_slugs_collide() -> None:
+    """`[REGRESSION]` `_write_project_files` disambiguates a Journey-name-slug
+    collision across *every* current TestSuite for the Application (see
+    `dedupe_slugs`), but `_load_execution_context_sync` used to recompute
+    `compute_spec_paths` scoped to only the one TestSuite/TestAsset it was
+    handling — a single-item `dedupe_slugs` call can never reproduce a
+    suffix assigned against the wider set, so whichever asset landed in the
+    disambiguated folder got handed a spec path that didn't exist on disk,
+    surfacing as "playwright report contained no suite matching ...".
+    "Login Flow" and "Login Flow!" are distinct Journey names (so the
+    recording worker's own exact-name dedup lets both exist) but collapse to
+    the identical `sanitize_slug` output, reproducing the collision."""
+    init_db()
+    application = _seed_application()
+    asset_a = _seed_test_asset(
+        application, safety_classification="SAFE", journey_name="Login Flow"
+    )
+    asset_b = _seed_test_asset(
+        application, safety_classification="SAFE", journey_name="Login Flow!"
+    )
+
+    with Session(engine) as session:
+        app_row = session.exec(
+            select(Application).where(Application.id == application.id)
+        ).one()
+        ground_truth = activities_module._load_assembly_inputs_sync(session, app_row)
+        expected_paths = compute_spec_paths(
+            test_suites=ground_truth.test_suites,
+            journeys_by_id=ground_truth.journeys_by_id,
+            assets_by_suite=ground_truth.assets_by_suite,
+            scenario_name_by_asset_id=ground_truth.scenario_name_by_asset_id,
+        )
+
+    # Sanity check that this scenario actually reproduces a collision —
+    # otherwise the assertions below would pass for the wrong reason.
+    assert expected_paths[asset_a.id] != expected_paths[asset_b.id]
+
+    with Session(engine) as session:
+        test_run = TestRun(
+            application_id=application.id,
+            run_number=1,
+            status="running",
+            environment_snapshot="staging",
+            target_base_url_snapshot=application.url,
+        )
+        session.add(test_run)
+        session.flush()
+        test_run_external_id = test_run.external_id
+
+        test_result_external_ids = {}
+        for asset in (asset_a, asset_b):
+            test_result = TestResult(
+                test_run_id=test_run.id,
+                test_asset_id=asset.id,
+                scenario_id=asset.scenario_id,
+                status="pending",
+            )
+            session.add(test_result)
+            session.flush()
+            test_result_external_ids[asset.id] = test_result.external_id
+        session.commit()
+
+    for asset in (asset_a, asset_b):
+        context = activities_module._load_execution_context_sync(
+            ExecuteTestActivityInput(
+                application_id=str(application.external_id),
+                test_run_id=str(test_run_external_id),
+                test_result_id=str(test_result_external_ids[asset.id]),
+                test_asset_id=str(asset.external_id),
+            )
+        )
+        assert context is not None
+        assert context.spec_path == expected_paths[asset.id]
 
 
 def test_prepare_force_closes_run_when_assembly_inputs_crash_before_any_test_result(

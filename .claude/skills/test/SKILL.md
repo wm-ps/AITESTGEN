@@ -101,7 +101,9 @@ first" pass. Serializing all of this behind itself is the other reason
 bring-up used to feel slow.
 
 1. `docker compose up -d --wait` — starts Postgres 18.4 + Temporal dev server +
-   dev-mode Vault and waits for Postgres's healthcheck (`--wait` needs Docker
+   Vault (file storage on the `vault_data` volume, auto-init/unseal via
+   `scripts/vault/entrypoint.sh` — stored credentials survive restarts; only
+   `docker compose down -v` wipes them) and waits for the healthchecks (`--wait` needs Docker
    Compose v2.1.1+; if unsupported, drop the flag and just re-run the next
    step once — alembic will fail fast if Postgres isn't ready yet). This
    same command also builds and starts the `recording-worker` container

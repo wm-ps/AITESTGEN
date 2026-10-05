@@ -48,6 +48,7 @@ from recording_worker.persistence import (
     load_application_sync,
     save_recording_sync,
 )
+from recording_worker.spec_normalizer import normalize_recorded_spec
 from recording_worker.steps_parser import parse_steps
 from recording_worker.tokens import mark_complete_sync, mark_failed_sync, mark_first_connect_sync
 
@@ -207,14 +208,15 @@ class SessionRuntime:
                 )
                 return
 
+            requires_auth = self._row.auth_mode == "authenticated"
             code = uncomment_codegen_assertions(code)
+            code = normalize_recorded_spec(code, name=self._row.name, requires_auth=requires_auth)
 
             typecheck_errors = await typecheck_playwright_code(code)
             if typecheck_errors:
                 await self._finish(status="failed", error_message="; ".join(typecheck_errors))
                 return
 
-            requires_auth = self._row.auth_mode == "authenticated"
             steps = parse_steps(code)
             assert self._discovery_run_id is not None
             try:
