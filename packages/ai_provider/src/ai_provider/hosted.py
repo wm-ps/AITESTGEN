@@ -1169,11 +1169,16 @@ other than describe a test case (e.g. "write me a poem", "what's the weather", "
 data"). A short or informally worded request is still relevant if it's clearly describing \
 application behavior to test.
 
-Also extract any concrete test-data VALUE the user stated literally in their own words (e.g. \
-"using promo code EXPIRED10", "with the email jane@example.com", "search for laptop") into \
-"provided_test_data" as {{"<field name>": "<the exact value they gave>"}}. Only include a value \
-the user actually wrote — never invent, guess, or fill in a value they didn't state. Most \
-requests give none at all; an empty object is the normal case.
+Also extract any concrete test-data VALUE the user stated literally in their own words — both \
+directions count equally: a value they want INPUT to drive the test (e.g. "using promo code \
+EXPIRED10", "with the email jane@example.com", "search for laptop") AND a value they state as \
+what should be VERIFIED/SEEN afterward (e.g. "verify the text 'test-eng' appears in the first \
+record", "confirm the status shows Shipped", "the total should read $42.00"). Put it in \
+"provided_test_data" as {{"<field name>": "<the exact value they gave>"}} — name the field after \
+what the value belongs to (e.g. "first record text", "order status", "order total"), the same \
+way you would for an input value. Only include a value the user actually wrote — never invent, \
+guess, or fill in a value they didn't state. Most requests give none at all; an empty object is \
+the normal case.
 
 Also extract an explicit scenario COUNT if, and only if, the user's own words state or imply \
 one — a total ("create three test cases", "give me 5 test cases"), a per-category breakdown \

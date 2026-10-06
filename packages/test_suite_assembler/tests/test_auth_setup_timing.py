@@ -48,7 +48,7 @@ def test_auth_setup_waits_on_discovered_password_field_before_filling() -> None:
     script = _build_auth_setup_script("standard_login", login_evidence=EVIDENCE)
 
     assert "const passwordField = page.locator('#password').first()" in script
-    assert "passwordField\n      .waitFor({ state: 'visible', timeout: 5000 })" in script
+    assert "passwordField\n      .waitFor({ state: 'visible', timeout: 15000 })" in script
     assert "waitForTimeout" not in script
 
 
