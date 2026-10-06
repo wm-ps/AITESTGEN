@@ -340,31 +340,48 @@ class LiveExplorationTestWorkflow:
             result_type=EnsureTestSuiteActivityResult,
         )
 
-        for scenario_id in prep.scenario_ids:
+        # `[FIXED]` A TestSuite row exists from here on (`prep.test_suite_id`,
+        # written 'generating' by EnsureTestSuiteActivity above) — if
+        # anything below exhausts its retries and the workflow itself ends
+        # up failed, that row previously stayed at 'generating' forever
+        # (nothing ever finalizes it on the way out via an exception), which
+        # permanently wedges TestSuiteTab.tsx's "is anything still
+        # generating" check for the WHOLE application, not just this one
+        # journey — every other, already-complete suite included. Finalizing
+        # as "incomplete" here (the same terminal value SuiteGenerationWorkflow
+        # already uses for an unfinished run) before re-raising fixes that
+        # generically for any failure in this section, not just one cause.
+        try:
+            for scenario_id in prep.scenario_ids:
+                await workflow.execute_activity(
+                    PLAYWRIGHT_GENERATION_ACTIVITY_NAME,
+                    PlaywrightGenerationActivityInput(
+                        scenario_id=scenario_id, test_suite_id=prep.test_suite_id
+                    ),
+                    start_to_close_timeout=timedelta(minutes=5),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                    result_type=str,
+                )
+
+            for scenario_id in prep.scenario_ids[:MAX_VERIFIED_SCENARIOS_PER_JOURNEY]:
+                await self._generate_and_verify_one(
+                    input.application_id, scenario_id, prep.test_suite_id
+                )
+        except BaseException:
             await workflow.execute_activity(
-                PLAYWRIGHT_GENERATION_ACTIVITY_NAME,
-                PlaywrightGenerationActivityInput(
-                    scenario_id=scenario_id, test_suite_id=prep.test_suite_id
+                FINALIZE_SUITE_GENERATION_ACTIVITY_NAME,
+                FinalizeSuiteGenerationActivityInput(
+                    test_suite_id=prep.test_suite_id,
+                    status="incomplete",
                 ),
-                start_to_close_timeout=timedelta(minutes=5),
+                start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
-                result_type=str,
             )
+            raise
 
-        for scenario_id in prep.scenario_ids[:MAX_VERIFIED_SCENARIOS_PER_JOURNEY]:
-            await self._generate_and_verify_one(
-                input.application_id, scenario_id, prep.test_suite_id
-            )
-
-        # `[FIXED]` regression: unlike SuiteGenerationWorkflow, this workflow
-        # never finalized test_suite.status — it stayed at the column's
-        # 'generating' default forever, so TestSuiteResults.tsx's isComplete
-        # check (every suite's status must leave 'generating') never
-        # flipped, and its count-so-far loader spun past the point this
-        # workflow had actually finished. Always "complete" here — the
-        # internal verify+heal pass above no longer reports a per-scenario
-        # outcome to key "incomplete" off of; every scenario got a TestAsset
-        # either way, healed or not.
+        # Always "complete" here — the internal verify+heal pass above no
+        # longer reports a per-scenario outcome to key "incomplete" off of;
+        # every scenario got a TestAsset either way, healed or not.
         await workflow.execute_activity(
             FINALIZE_SUITE_GENERATION_ACTIVITY_NAME,
             FinalizeSuiteGenerationActivityInput(

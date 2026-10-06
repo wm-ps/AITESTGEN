@@ -20,6 +20,7 @@ import uuid
 
 import pytest
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from workflows import (
@@ -67,6 +68,7 @@ _discard_calls: list[str] = []
 _finalize_suite_statuses: list[str] = []
 _playwright_generation_calls: list[str] = []
 _scenario_ids_for_test: list[str] = ["scenario-1"]
+_playwright_generation_should_fail: bool = False
 
 
 @activity.defn(name=ANALYZE_PROMPT_ACTIVITY_NAME)
@@ -108,6 +110,8 @@ async def _fake_ensure_test_suite(
 
 @activity.defn(name=PLAYWRIGHT_GENERATION_ACTIVITY_NAME)
 async def _fake_playwright_generation(input: PlaywrightGenerationActivityInput) -> str:
+    if _playwright_generation_should_fail:
+        raise ApplicationError("simulated unrecoverable failure", non_retryable=True)
     _playwright_generation_calls.append(input.scenario_id)
     return f"test-asset-{input.scenario_id}"
 
@@ -291,4 +295,34 @@ async def test_only_the_capped_number_of_scenarios_get_execute_and_heal_verifica
     assert _execute_test_calls == verified_ids
     assert _prepare_calls == verified_ids
     assert len(_discard_calls) == MAX_VERIFIED_SCENARIOS_PER_JOURNEY
-    assert _finalize_suite_statuses == ["complete"]
+
+
+@pytest.mark.asyncio
+async def test_finalizes_the_suite_as_incomplete_instead_of_wedging_it_on_a_crash() -> None:
+    """`[FIXED]` A crash anywhere after EnsureTestSuiteActivity previously left
+    test_suite.status stuck at its 'generating' default forever — nothing
+    ever finalized it on the way out through an exception. That wedges
+    TestSuiteTab.tsx's "is anything still generating" check for the WHOLE
+    application (it checks every TestSuite, not just this journey's),
+    blocking the entire Test Cases page even though every other suite had
+    already finished. Must finalize "incomplete" before the workflow's own
+    failure propagates."""
+    _execute_test_calls.clear()
+    _heal_calls.clear()
+    _prepare_calls.clear()
+    _discard_calls.clear()
+    _finalize_suite_statuses.clear()
+    _playwright_generation_calls.clear()
+    _scenario_ids_for_test[:] = ["scenario-1"]
+    _read_status_results[:] = ["passed"]
+
+    global _playwright_generation_should_fail
+    _playwright_generation_should_fail = True
+    try:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            with pytest.raises(Exception):  # noqa: B017 — Temporal's own WorkflowFailureError
+                await _run(env)
+    finally:
+        _playwright_generation_should_fail = False
+
+    assert _finalize_suite_statuses == ["incomplete"]
