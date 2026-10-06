@@ -21,6 +21,7 @@ import asyncio
 import logging
 import re
 import uuid
+from collections.abc import Sequence
 
 from ai_provider import TestAssetCode
 from ai_provider.hosted import HostedAIProvider
@@ -186,12 +187,44 @@ _CURRENT_PASSWORD_FIELD_RE = re.compile(r"current|old|existing", re.IGNORECASE)
 # non-auth fields use those names.
 _USERNAME_FIELD_RE = re.compile(r"\busername\b", re.IGNORECASE)
 _NEW_OR_CONFIRM_QUALIFIER_RE = re.compile(r"\bnew\b|\bconfirm", re.IGNORECASE)
+# `[FIXED]` The only override used to be the field's own NAME containing
+# "new"/"confirm" — correct for an account-settings change-password form's
+# two fields, but far too narrow: a sign-in Scenario whose whole point is a
+# deliberately crafted/malformed password ("a password containing Unicode
+# characters", "...that begins or ends with a space") still correctly names
+# its field plain "password" — it's grammatically still the login password,
+# just with a candidate value under test, so the name-only check always
+# stripped it, 100% of the time, for every Scenario of this shape, on any
+# Application. The generated Playwright test then fell back to the real
+# stored credential and tested nothing the Scenario's own name claimed —
+# confirmed live. "new"/"confirm" are deliberately NOT repeated here — a
+# field's own name already covers that case above; matching them again at
+# the whole-scenario-text level below would wrongly spare an unrelated
+# sibling field too (e.g. "current password" sharing a Change Password
+# Scenario with its own "new password"/"confirm new password" fields).
+_CREDENTIAL_VALUE_UNDER_TEST_RE = re.compile(
+    r"\b(containing|contains|begins?\s+(or\s+ends?\s+)?with|ends?\s+with|"
+    r"exceeding|exceeds|too\s+(long|short)|malformed|invalid(\s+format)?|unicode|"
+    r"special\s+character|whitespace|case-sensitiv\w*|leading\s+or\s+trailing|boundary)\b",
+    re.IGNORECASE,
+)
 
 
-def _is_existing_credential_field(field_name: str) -> bool:
+def _is_existing_credential_field(
+    field_name: str, intent_segments: Sequence[str] = ()
+) -> bool:
     if _NEW_OR_CONFIRM_QUALIFIER_RE.search(field_name):
         return False
-    return bool(_USERNAME_FIELD_RE.search(field_name) or _PASSWORD_FIELD_RE.search(field_name))
+    if not (_USERNAME_FIELD_RE.search(field_name) or _PASSWORD_FIELD_RE.search(field_name)):
+        return False
+    field_lower = field_name.lower()
+    for segment in intent_segments:
+        # Scoped to the one step/sentence that actually mentions THIS
+        # field, not the Scenario's whole text — a sibling field's own
+        # deviation language must never spare a different field.
+        if field_lower in segment.lower() and _CREDENTIAL_VALUE_UNDER_TEST_RE.search(segment):
+            return False
+    return True
 
 
 # `[FIXED]` A "confirm X" field (confirm password, confirm new password, ...)
@@ -527,6 +560,11 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
                 safety_classification, safety_classification_reason = classify_scenario_steps(
                     candidate.steps
                 )
+                candidate_intent_segments = [
+                    candidate.name,
+                    *candidate.steps,
+                    candidate.expected_result,
+                ]
                 scenario = Scenario(
                     journey_id=journey.id,
                     type=candidate.type,
@@ -550,7 +588,7 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
                             ),
                         }
                         for f in candidate.test_data
-                        if not _is_existing_credential_field(f.name)
+                        if not _is_existing_credential_field(f.name, candidate_intent_segments)
                     ],
                     generation_run_id=journey.attempt,
                     test_case_number=_claim_test_case_number_sync(session, journey.application_id),

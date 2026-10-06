@@ -18,6 +18,7 @@ from temporalio.worker import Worker
 from workflows import (
     GENERATION_TASK_QUEUE,
     LIVE_EXPLORATION_TASK_QUEUE,
+    AutofillScenarioTestDataWorkflow,
     GenerationWorkflow,
     LiveExplorationTestWorkflow,
     RegenerateTestAssetWorkflow,
@@ -58,6 +59,7 @@ async def main() -> None:
             SuiteGenerationWorkflow,
             LiveExplorationTestWorkflow,
             RegenerateTestAssetWorkflow,
+            AutofillScenarioTestDataWorkflow,
         ],
         activities=[
             scenario_generation_activity,

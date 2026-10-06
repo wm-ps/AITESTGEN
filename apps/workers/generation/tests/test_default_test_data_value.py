@@ -221,3 +221,58 @@ def test_is_existing_credential_field_spares_confirm_password() -> None:
 def test_is_existing_credential_field_spares_unrelated_fields() -> None:
     assert _is_existing_credential_field("email") is False
     assert _is_existing_credential_field("promo_code") is False
+
+
+def test_is_existing_credential_field_spares_a_deliberately_malformed_sign_in_password() -> None:
+    """`[FIXED]` A sign-in Scenario whose whole point is a deliberately
+    crafted/malformed password still correctly names its field plain
+    "password" (it's grammatically still the login password, just with a
+    candidate value under test) — the name-only check used to strip it
+    100% of the time, for every Scenario of this shape, on any Application.
+    Checking the Scenario's own intent segments for this same class of
+    qualifying language is what actually distinguishes it from a normal
+    sign-in."""
+    leading_trailing_spaces_segments = [
+        "Sign in with a password containing leading or trailing spaces",
+        "Open the Sign in page.",
+        "Enter the configured account credentials, using an account password "
+        "that intentionally begins or ends with a space.",
+    ]
+    assert _is_existing_credential_field("password", leading_trailing_spaces_segments) is False
+
+    unicode_password_segments = [
+        "Sign in with a Unicode password",
+        "Enter the configured account credentials, using an account password "
+        "containing Unicode characters.",
+    ]
+    assert _is_existing_credential_field("password", unicode_password_segments) is False
+
+
+def test_is_existing_credential_field_still_flags_a_normal_sign_in_password() -> None:
+    # No qualifying language at all — the ordinary, overwhelmingly common
+    # case (just log in with the real stored credential) must keep working
+    # exactly as before; this broadened check must never over-trigger on it.
+    normal_segments = ["Successful sign-in", "Enter the configured account credentials."]
+    assert _is_existing_credential_field("password", normal_segments) is True
+
+    # "Leave the password field empty" — an omission, not a candidate value;
+    # none of the qualifying keywords apply, so this stays correctly
+    # stripped (there's no value to ever put in test_data for it anyway).
+    missing_password_segments = [
+        "Sign-in with the password missing",
+        "Leave the password field empty.",
+    ]
+    assert _is_existing_credential_field("password", missing_password_segments) is True
+
+
+def test_is_existing_credential_field_never_spares_a_sibling_fields_own_wording() -> None:
+    """`[FIXED regression]` A multi-field Scenario (e.g. Change Password:
+    "current password", "new password", "confirm new password") must never
+    let one field's own qualifying language spare a *different* field — the
+    check has to be scoped to the segment that actually mentions each
+    field, not the Scenario's whole text."""
+    segments = ["Enter current password", "Enter new password", "Confirm new password"]
+    # "current password" shares this Scenario with fields whose own names
+    # contain "new"/"confirm" — but its own segment says nothing special,
+    # so it must stay a real, stripped credential field.
+    assert _is_existing_credential_field("current password", segments) is True

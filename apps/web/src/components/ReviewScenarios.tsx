@@ -191,6 +191,24 @@ export function ReviewScenarios({
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [autofillingId, setAutofillingId] = useState<string | null>(null)
   const [autofillError, setAutofillError] = useState<string | null>(null)
+  // A manual edit auto-saves on blur with no explicit Save button — without
+  // this, there's no visible confirmation it actually persisted, which
+  // reads as "did this do anything?" even though it genuinely saved.
+  const [savedFieldKeys, setSavedFieldKeys] = useState<Set<string>>(new Set())
+  const savedFieldTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
+  useEffect(() => {
+    const timers = savedFieldTimers.current
+    return () => {
+      Object.values(timers).forEach(clearTimeout)
+    }
+  }, [])
+  // Auto-generate can legitimately leave every value unchanged (nothing
+  // blank, nothing eligible for a better default) — without an explicit
+  // outcome message, that looks indistinguishable from the button being
+  // broken.
+  const [autofillOutcome, setAutofillOutcome] = useState<{ scenarioId: string; message: string } | null>(
+    null,
+  )
   // Same distinction DiscoverJourneys draws for Journeys: "generation still
   // running" and "every Scenario was removed" both look like an empty list.
   const hadScenariosRef = useRef(false)
@@ -277,6 +295,16 @@ export function ReviewScenarios({
   async function handleTestDataChange(scenarioId: string, name: string, value: string) {
     const updated = await api.updateScenarioTestData(scenarioId, name, value)
     setScenarios((rows) => rows.map((s) => (s.id === scenarioId ? updated : s)))
+    const key = `${scenarioId}:${name}`
+    setSavedFieldKeys((prev) => new Set(prev).add(key))
+    clearTimeout(savedFieldTimers.current[key])
+    savedFieldTimers.current[key] = setTimeout(() => {
+      setSavedFieldKeys((prev) => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+    }, 2000)
   }
 
   // "Clear" — resets every field on this Scenario to blank, reusing the same
@@ -294,6 +322,8 @@ export function ReviewScenarios({
     if (autofillingId) return
     setAutofillingId(scenarioId)
     setAutofillError(null)
+    setAutofillOutcome(null)
+    const before = scenarios.find((s) => s.id === scenarioId)?.test_data ?? []
     try {
       await api.autofillScenarioTestData(scenarioId)
       let result = await api.getAutofillScenarioTestDataStatus(scenarioId)
@@ -303,6 +333,17 @@ export function ReviewScenarios({
       }
       if (result.status === 'complete' && result.scenario) {
         setScenarios((rows) => rows.map((s) => (s.id === scenarioId ? result.scenario! : s)))
+        const beforeByName = Object.fromEntries(before.map((f) => [f.name, f.value]))
+        const changedCount = result.scenario.test_data.filter(
+          (f) => f.value !== beforeByName[f.name],
+        ).length
+        setAutofillOutcome({
+          scenarioId,
+          message:
+            changedCount > 0
+              ? `Filled ${changedCount} field${changedCount === 1 ? '' : 's'}.`
+              : 'No changes — every field already has a value.',
+        })
       } else {
         setAutofillError(result.error_message ?? 'Could not auto-fill test data — try again.')
       }
@@ -624,12 +665,23 @@ export function ReviewScenarios({
                                           {scenario.test_data.map((field) => {
                                             const missing = field.mandatory && !field.value
                                             const fieldId = `test-data-${scenario.id}-${field.name}`
+                                            const justSaved = savedFieldKeys.has(`${scenario.id}:${field.name}`)
                                             return (
                                               <div key={field.name} style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0 }}>
-                                                <label htmlFor={fieldId} style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)' }}>
-                                                  {field.name}
-                                                  {field.mandatory && <span style={{ color: 'var(--bad)' }}> *</span>}
-                                                </label>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                                  <label htmlFor={fieldId} style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)' }}>
+                                                    {field.name}
+                                                    {field.mandatory && <span style={{ color: 'var(--bad)' }}> *</span>}
+                                                  </label>
+                                                  {justSaved && (
+                                                    <span
+                                                      role="status"
+                                                      style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--accent)', animation: 'aitg-fade-up 0.2s ease-out both' }}
+                                                    >
+                                                      ✓ Saved
+                                                    </span>
+                                                  )}
+                                                </div>
                                                 <input
                                                   id={fieldId}
                                                   defaultValue={field.value ?? ''}
@@ -667,6 +719,14 @@ export function ReviewScenarios({
                                         {autofillError && autofillingId === null && (
                                           <div style={{ fontSize: 11.5, color: 'var(--bad)', marginTop: 8 }}>{autofillError}</div>
                                         )}
+                                        {!autofillError &&
+                                          autofillOutcome &&
+                                          autofillOutcome.scenarioId === scenario.id &&
+                                          autofillingId === null && (
+                                            <div style={{ fontSize: 11.5, color: 'var(--fg-3)', marginTop: 8 }}>
+                                              {autofillOutcome.message}
+                                            </div>
+                                          )}
                                       </>
                                   </div>
                                   )}

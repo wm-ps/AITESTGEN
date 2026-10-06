@@ -199,6 +199,120 @@ describe('ReviewScenarios', () => {
     })
   })
 
+  it('shows a brief "Saved" confirmation after a test data value auto-saves on blur', async () => {
+    // `[FIXED]` auto-save-on-blur has no explicit Save button — without
+    // this, there's no visible confirmation an edit actually persisted,
+    // which reads as "did this do anything?" even though it genuinely did.
+    stubFetch([INCOMPLETE_SCENARIO])
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
+
+    await waitFor(() => screen.getByText('Guest checkout'))
+    fireEvent.click(screen.getByText('Guest checkout'))
+    await waitFor(() => screen.getByLabelText(/^username/))
+
+    expect(screen.queryByText('✓ Saved')).toBeNull()
+    const input = screen.getByLabelText(/^username/)
+    fireEvent.change(input, { target: { value: 'qa-user' } })
+    fireEvent.blur(input)
+
+    await waitFor(() => {
+      expect(screen.getByText('✓ Saved')).toBeTruthy()
+    })
+  })
+
+  it('Auto-generate reports how many fields it actually filled', async () => {
+    // `[FIXED]` no outcome message at all used to make a no-op Auto-generate
+    // (every field already has a value, nothing eligible for a better
+    // default) indistinguishable from the button being broken.
+    const filledScenario = {
+      ...INCOMPLETE_SCENARIO,
+      test_data: [
+        { name: 'username', mandatory: true, value: 'Test value' },
+        { name: 'promo_code', mandatory: false, value: null },
+      ],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes('/test-data/auto-fill') && init?.method === 'POST') {
+          return { ok: true, status: 200, json: async () => ({ started: true }) }
+        }
+        if (url.includes('/test-data/auto-fill')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              status: 'complete',
+              error_message: null,
+              scenario: {
+                ...filledScenario,
+                test_data: [
+                  { name: 'username', mandatory: true, value: 'Test value' },
+                  { name: 'promo_code', mandatory: false, value: 'Test value' },
+                ],
+              },
+            }),
+          }
+        }
+        if (url.includes('/journeys')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [{ id: 'journey-1', name: 'Checkout', step_count: 1 }],
+          }
+        }
+        if (url.includes('/scenarios')) {
+          return { ok: true, status: 200, json: async () => [filledScenario] }
+        }
+        if (url.includes('/generation-status')) {
+          return { ok: true, status: 200, json: async () => ({ available: true }) }
+        }
+        return { ok: true, status: 200, json: async () => [] }
+      }),
+    )
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
+
+    await waitFor(() => screen.getByText('Guest checkout'))
+    fireEvent.click(screen.getByText('Guest checkout'))
+    await waitFor(() => screen.getByRole('button', { name: 'Auto-generate' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Auto-generate' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Filled 1 field.')).toBeTruthy()
+    })
+  })
+
+  it('Auto-generate reports when nothing changed, instead of looking broken', async () => {
+    stubFetch([COMPLETE_SCENARIO])
+    const originalFetch = globalThis.fetch
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.includes('/test-data/auto-fill') && init?.method === 'POST') {
+          return { ok: true, status: 200, json: async () => ({ started: true }) }
+        }
+        if (url.includes('/test-data/auto-fill')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ status: 'complete', error_message: null, scenario: COMPLETE_SCENARIO }),
+          }
+        }
+        return originalFetch(url, init)
+      }),
+    )
+    render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
+
+    await waitFor(() => screen.getByText('Checkout with promo'))
+    fireEvent.click(screen.getByText('Checkout with promo'))
+    await waitFor(() => screen.getByRole('button', { name: 'Auto-generate' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Auto-generate' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('No changes — every field already has a value.')).toBeTruthy()
+    })
+  })
+
   it('clicking Continue to Generate Test Suite calls onContinueToGenerate', async () => {
     stubFetch([COMPLETE_SCENARIO])
     const onContinueToGenerate = vi.fn()
