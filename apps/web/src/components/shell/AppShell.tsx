@@ -248,6 +248,12 @@ export function AppShell({
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 500, flex: '1 1 auto', minWidth: 140, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
             <span style={{ color: 'var(--fg-4)' }}>Workspace</span>
             <FontAwesomeIcon icon={faChevronRight} style={{ fontSize: 9, color: 'var(--fg-5)' }} />
+            {app && (
+              <>
+                <span style={{ color: 'var(--fg-4)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{app.name}</span>
+                <FontAwesomeIcon icon={faChevronRight} style={{ fontSize: 9, color: 'var(--fg-5)' }} />
+              </>
+            )}
             <span style={{ color: 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{crumb}</span>
           </div>
           <button
