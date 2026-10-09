@@ -579,7 +579,7 @@ class TestDownloadTestSuiteProjectEndpoint:
         response = client.get(f"/applications/{application['id']}/test-suites/download")
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/zip"
-        assert 'filename="download-app-tests.zip"' in response.headers["content-disposition"]
+        assert 'filename="Download App.zip"' in response.headers["content-disposition"]
 
         zf = zipfile.ZipFile(io.BytesIO(response.content))
         names = zf.namelist()

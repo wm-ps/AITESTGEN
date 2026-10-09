@@ -8,6 +8,7 @@ Story 1.3 adds Application onboarding.
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
@@ -162,6 +163,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
     allow_credentials=True,
+    # Needed so the web app's fetch() can read the download filename.
+    expose_headers=["Content-Disposition"],
 )
 
 SessionDep = Annotated[Session, Depends(get_session)]
@@ -3116,11 +3119,15 @@ def download_test_suite_project(
         # Fail closed (AC 9) — never a 200 with partial/corrupt zip bytes.
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    filename = sanitize_slug(application.name, fallback="application")
+    # Keep the application name's original casing (sanitize_slug lowercases);
+    # only characters unsafe in a filename/header are replaced.
+    filename = re.sub(r"[^A-Za-z0-9._ -]+", "_", application.name).strip(" ._-")
+    if not filename:
+        filename = sanitize_slug(application.name, fallback="application")
     return Response(
         content=zip_bytes,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}-tests.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}.zip"'},
     )
 
 
