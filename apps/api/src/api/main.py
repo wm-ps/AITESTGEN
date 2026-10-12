@@ -35,6 +35,7 @@ from domain import (
     PlatformUser,
     RetentionPeriod,
     Scenario,
+    ScreenshotCapture,
     Schedule,
     TestAsset,
     TestDataEntry,
@@ -4884,6 +4885,7 @@ class SettingsRead(BaseModel):
     max_test_cases_per_application: int | None
     delete_project_after: RetentionPeriod
     max_heal_attempts: int
+    screenshot_capture: ScreenshotCapture
 
 
 class SettingsUpdate(BaseModel):
@@ -4892,6 +4894,7 @@ class SettingsUpdate(BaseModel):
     interaction_level: InteractionLevel | None = None
     delete_project_after: RetentionPeriod | None = None
     max_heal_attempts: int | None = None
+    screenshot_capture: ScreenshotCapture | None = None
     # Sentinel, not None: None already means "leave unchanged" for every
     # other field here, but these four need "leave unchanged" AND "clear to
     # unlimited" to be distinguishable.
@@ -4912,6 +4915,7 @@ def _to_settings_read(settings: DiscoverySettings) -> SettingsRead:
         max_test_cases_per_application=settings.max_test_cases_per_application,
         delete_project_after=settings.delete_project_after,  # type: ignore[arg-type]
         max_heal_attempts=settings.max_heal_attempts,
+        screenshot_capture=settings.screenshot_capture,  # type: ignore[arg-type]
     )
 
 
@@ -4946,6 +4950,8 @@ def update_settings(
         settings.max_test_cases_per_application = payload.max_test_cases_per_application
     if payload.max_heal_attempts is not None:
         settings.max_heal_attempts = payload.max_heal_attempts
+    if payload.screenshot_capture is not None:
+        settings.screenshot_capture = payload.screenshot_capture
     session.add(settings)
     session.commit()
     session.refresh(settings)

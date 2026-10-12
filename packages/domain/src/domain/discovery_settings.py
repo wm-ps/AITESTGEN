@@ -12,6 +12,7 @@ from sqlmodel import Field, SQLModel
 
 InteractionLevel = Literal["passive", "normal", "aggressive"]
 RetentionPeriod = Literal["1_day", "1_week", "1_month"]
+ScreenshotCapture = Literal["failed", "passed", "all"]
 
 
 class DiscoverySettings(SQLModel, table=True):
@@ -46,3 +47,6 @@ class DiscoverySettings(SQLModel, table=True):
     # value. 0 disables self-healing entirely (every attempt-count check is
     # `>=`/`<` against this value).
     max_heal_attempts: int = Field(default=3)
+    # Which finished TestResults keep a final-screen screenshot. str, not the
+    # ScreenshotCapture Literal — same SQLModel/Literal limitation as above.
+    screenshot_capture: str = Field(default="failed")

@@ -414,13 +414,16 @@ function TestResultRow({
   }, [healing, applicationId, runId, result.id])
 
   const canShowArtifacts = NON_PASSED_STATUSES.has(liveResult.status)
+  // A passed result can carry a final-screen screenshot too, depending on
+  // the Screenshot capture setting.
+  const canLoadArtifacts = canShowArtifacts || liveResult.status === 'passed'
 
   // Screenshot/trace load inline, in the expand panel itself, the moment
-  // it opens on a failed result — no separate "Artifacts" dialog to open
+  // it opens on a finished result — no separate "Artifacts" dialog to open
   // on top of the row that's already showing the error. Fetched once per
   // row (not re-fetched on collapse/re-expand).
   useEffect(() => {
-    if (!expanded || !canShowArtifacts || artifacts !== null) return
+    if (!expanded || !canLoadArtifacts || artifacts !== null) return
     let cancelled = false
     api
       .listTestResultArtifacts(liveResult.id)
@@ -433,7 +436,7 @@ function TestResultRow({
     return () => {
       cancelled = true
     }
-  }, [expanded, canShowArtifacts, artifacts, liveResult.id])
+  }, [expanded, canLoadArtifacts, artifacts, liveResult.id])
 
   // Manual eligibility is independent of automatic's own state — a test
   // whose automatic healing already used its fixed 2 attempts still offers
@@ -568,7 +571,7 @@ function TestResultRow({
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>Passed cleanly</div>
                 <div className="caption" style={{ fontSize: 12, marginTop: 2 }}>
-                  No errors, screenshots, or traces — this scenario ran with nothing to flag.
+                  No errors — this scenario ran with nothing to flag.
                 </div>
               </div>
             </div>
@@ -599,7 +602,7 @@ function TestResultRow({
             </pre>
           )}
           {healError && <p style={{ color: 'var(--danger-strong)', fontSize: 12, margin: '0 0 10px' }}>{healError}</p>}
-          {canShowArtifacts && (
+          {canLoadArtifacts && (
             <>
               {artifactsError && (
                 <p style={{ color: 'var(--danger-strong)', fontSize: 12, margin: '0 0 10px' }}>{artifactsError}</p>
@@ -609,7 +612,7 @@ function TestResultRow({
                   Loading screenshot/trace…
                 </p>
               )}
-              {artifacts !== null && artifacts.length === 0 && !artifactsError && (
+              {canShowArtifacts && artifacts !== null && artifacts.length === 0 && !artifactsError && (
                 <p className="caption" style={{ fontSize: 12 }}>
                   No screenshot or trace was captured for this failure.
                 </p>

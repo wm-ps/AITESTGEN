@@ -7,6 +7,7 @@ import {
   type HomeApplicationRead,
   type InteractionLevel,
   type RetentionPeriod,
+  type ScreenshotCapture,
   type SettingsRead,
   type UserRead,
 } from '../api'
@@ -15,12 +16,11 @@ import { PasswordInput } from './PasswordInput'
 import { SkeletonRows } from './Skeleton'
 import { AccessDeniedIllustration } from './EmptyState'
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)' }}>{label}</span>
       {children}
-      {hint && <span style={{ fontSize: 10.5, color: 'var(--fg-4)' }}>{hint}</span>}
     </label>
   )
 }
@@ -365,7 +365,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 16 }}>
-            <Field label="Maximum discovery time" hint="Discovery stops and keeps what it found">
+            <Field label="Maximum discovery time">
               <select
                 value={settings.max_discovery_duration_minutes ?? 'unlimited'}
                 onChange={(e) =>
@@ -385,7 +385,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
               </select>
             </Field>
 
-            <Field label="Maximum pages" hint="Per application, per discovery run">
+            <Field label="Maximum pages">
               <select value={settings.max_pages} onChange={(e) => setSettings({ ...settings, max_pages: Number(e.target.value) })} style={fieldInputStyle}>
                 {[5, 10, 20, 50, 100, 250, 500, 1000].map((n) => (
                   <option key={n} value={n}>
@@ -395,7 +395,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
               </select>
             </Field>
 
-            <Field label="Maximum journeys" hint="Highest-value journeys are kept first">
+            <Field label="Maximum journeys">
               <input
                 type="number"
                 min={1}
@@ -477,6 +477,18 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
                     {n === 0 ? 'Disabled' : n}
                   </option>
                 ))}
+              </select>
+            </Field>
+
+            <Field label="Screenshot capture">
+              <select
+                value={settings.screenshot_capture}
+                onChange={(e) => setSettings({ ...settings, screenshot_capture: e.target.value as ScreenshotCapture })}
+                style={fieldInputStyle}
+              >
+                <option value="failed">Failed test cases</option>
+                <option value="passed">Passed test cases</option>
+                <option value="all">All</option>
               </select>
             </Field>
           </div>

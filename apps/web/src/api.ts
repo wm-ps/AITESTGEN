@@ -163,6 +163,7 @@ export type RecordingSessionMintRead = {
 // `npm run generate:api-types` once the API is running) — added by hand.
 export type InteractionLevel = 'passive' | 'normal' | 'aggressive'
 export type RetentionPeriod = '1_day' | '1_week' | '1_month'
+export type ScreenshotCapture = 'failed' | 'passed' | 'all'
 export type SettingsRead = {
   max_pages: number
   max_discovery_duration_minutes: number | null
@@ -173,6 +174,7 @@ export type SettingsRead = {
   max_test_cases_per_application: number | null
   delete_project_after: RetentionPeriod
   max_heal_attempts: number
+  screenshot_capture: ScreenshotCapture
 }
 export type SettingsUpdate = Partial<SettingsRead>
 // Not in api-types.gen.ts yet (backend schema is new, regenerate via

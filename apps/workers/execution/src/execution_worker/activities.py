@@ -644,6 +644,11 @@ def _build_subprocess_env(application: Application) -> dict:
     vault_client = VaultSecretsClient()
     credential = vault_client.resolve(SecretRef(path=application.secret_ref))
     env = dict(os.environ)
+    # Playwright has no "screenshot only on pass" mode — capture every test's
+    # final screen when passed ones are wanted at all, and let
+    # `_persist_test_result_sync` drop the ones the setting excludes.
+    if _load_screenshot_capture_sync() != "failed":
+        env["AITESTGEN_SCREENSHOT"] = "on"
     if application.auth_method == "sso_session_reuse":
         env["AITESTGEN_STORAGE_STATE"] = credential.decode()
     else:
@@ -727,9 +732,10 @@ async def _run_playwright_test(
         }
 
     result = _parse_playwright_report(stdout, stderr, spec_path)
-    result["artifact_paths"] = (
-        _find_artifacts(project_dir / output_dir) if result["status"] != "passed" else []
-    )
+    # Every artifact on disk — `_persist_test_result_sync` decides which are
+    # kept (Screenshot capture setting), so a passed test's screenshot isn't
+    # discarded here.
+    result["artifact_paths"] = _find_artifacts(project_dir / output_dir)
     return result
 
 
@@ -826,6 +832,21 @@ def _find_artifacts(output_dir: Path) -> list[Path]:
     return [p for p in output_dir.rglob("*") if p.is_file() and p.suffix in (".png", ".zip")]
 
 
+def _load_screenshot_capture_sync() -> str:
+    with Session(engine) as session:
+        settings = session.exec(select(DiscoverySettings)).first()
+        return settings.screenshot_capture if settings else "failed"
+
+
+def _keep_artifact(artifact_type: str, status: str, screenshot_capture: str) -> bool:
+    """Traces stay failure-only; a screenshot is kept per the Screenshot
+    capture setting ("failed" = any non-passed status)."""
+    passed = status == "passed"
+    if artifact_type == "trace":
+        return not passed
+    return screenshot_capture == "all" or (screenshot_capture == "passed") == passed
+
+
 def _tally_counts(results: list[TestResult]) -> dict[str, int]:
     counts = {status: 0 for status in ("passed", "failed", "timed_out", "errored", "blocked")}
     for result in results:
@@ -872,12 +893,15 @@ def _persist_test_result_sync(test_run_id: str, context: _ExecutionContext, outc
                 session.delete(artifact)
             session.flush()
 
+        screenshot_capture = _load_screenshot_capture_sync()
         for path in outcome.get("artifact_paths", []):
+            artifact_type = "trace" if path.suffix == ".zip" else "screenshot"
+            if not _keep_artifact(artifact_type, outcome["status"], screenshot_capture):
+                continue
             try:
                 data = path.read_bytes()
             except OSError:
                 continue
-            artifact_type = "trace" if path.suffix == ".zip" else "screenshot"
             content_type = "application/zip" if artifact_type == "trace" else "image/png"
             key = ObjectStore().put_test_artifact(
                 data, uuid.UUID(test_run_id), content_type=content_type

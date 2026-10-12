@@ -259,10 +259,10 @@ def _build_playwright_config(base_url: str, *, has_login: bool) -> str:
     `setup`/auth project split would have nothing to authenticate."""
     # `retain-on-failure`, not `on-first-retry` — this project's default
     # `retries: 0` means a first-attempt failure never gets a second try, so
-    # `on-first-retry` would silently never capture a trace at all. Both
-    # artifacts are only written on failure either way (Run All Tests
-    # feature: TestResultArtifact rows only ever exist for a
-    # failing/timed-out/errored TestResult).
+    # `on-first-retry` would silently never capture a trace at all. Traces
+    # are only written on failure; screenshots follow the Screenshot capture
+    # setting (execution worker sets AITESTGEN_SCREENSHOT and filters which
+    # ones are kept per TestResult status).
     if not has_login:
         return (
             "import { defineConfig, devices } from '@playwright/test'\n\n"
@@ -272,7 +272,9 @@ def _build_playwright_config(base_url: str, *, has_login: bool) -> str:
             "  use: {\n"
             f"    baseURL: '{base_url}',\n"
             "    trace: 'retain-on-failure',\n"
-            "    screenshot: 'only-on-failure',\n"
+            "    // AITESTGEN_SCREENSHOT is set by the execution worker from the Screenshot\n"
+            "    // capture setting; unset (e.g. an exported suite) keeps only-on-failure.\n"
+            "    screenshot: (process.env.AITESTGEN_SCREENSHOT as 'on' | 'only-on-failure') ?? 'only-on-failure',\n"
             "    ...devices['Desktop Chrome'],\n"
             "  },\n"
             "})\n"
@@ -285,7 +287,9 @@ def _build_playwright_config(base_url: str, *, has_login: bool) -> str:
         "  use: {\n"
         f"    baseURL: '{base_url}',\n"
         "    trace: 'retain-on-failure',\n"
-        "    screenshot: 'only-on-failure',\n"
+        "    // AITESTGEN_SCREENSHOT is set by the execution worker from the Screenshot\n"
+        "    // capture setting; unset (e.g. an exported suite) keeps only-on-failure.\n"
+        "    screenshot: (process.env.AITESTGEN_SCREENSHOT as 'on' | 'only-on-failure') ?? 'only-on-failure',\n"
         "  },\n"
         "  projects: [\n"
         "    {\n"
