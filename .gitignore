@@ -92,3 +92,6 @@ _bmad/**/config.user.toml
 ~$*.docx
 ~$*.xlsx
 ~$*.pptx
+
+# /brag launch-video output
+brag-output*/
