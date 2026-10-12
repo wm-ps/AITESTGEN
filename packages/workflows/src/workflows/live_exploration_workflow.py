@@ -42,11 +42,12 @@ that sharing generation_worker's lightweight-activity concurrency slot would
 starve normal scenario/code generation.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ActivityError
 
 from workflows.add_test_case_workflow import (
     ANALYZE_PROMPT_ACTIVITY_NAME,
@@ -84,6 +85,7 @@ from workflows.suite_generation_workflow import (
 LIVE_EXPLORATION_TASK_QUEUE = "live-exploration-task-queue"
 LIVE_EXPLORE_ACTIVITY_NAME = "LiveExploreActivity"
 LIVE_HEAL_ACTIVITY_NAME = "LiveHealActivity"
+MERGE_LIVE_JOURNEY_ACTIVITY_NAME = "MergeLiveJourneyActivity"
 
 # Each internal verify+heal pass (execute -> heal -> re-execute) takes
 # several real minutes (a live browser run, and on failure a whole second
@@ -103,6 +105,12 @@ MAX_VERIFIED_SCENARIOS_PER_JOURNEY = 1
 class LiveExplorationWorkflowInput:
     application_id: str
     prompt: str
+    # The author chooses where the test case lands — exactly one is set by
+    # the API: an existing Journey's external id (the new Scenarios are
+    # merged into it), or the name for a brand-new Journey. Both None only
+    # for a request started before this existed (auto-named new Journey).
+    journey_id: str | None = None
+    journey_name: str | None = None
 
 
 @dataclass
@@ -113,6 +121,8 @@ class LiveExploreActivityInput:
     # sign-in and sign-out both work") — used to name the Journey instead of
     # truncating the raw, often multi-line/instructional `requirement` text.
     functionality_summary: str = ""
+    # User-given name for the new Journey; overrides `functionality_summary`.
+    journey_name: str = ""
 
 
 @dataclass
@@ -138,11 +148,26 @@ class LiveHealActivityResult:
 
 
 @dataclass
+class MergeLiveJourneyActivityInput:
+    source_journey_id: str
+    target_journey_id: str
+    scenario_ids: list[str]
+
+
+@dataclass
+class MergeLiveJourneyActivityResult:
+    journey_name: str
+
+
+@dataclass
 class LiveExplorationResult:
     status: str  # rejected | complete
     journey_id: str | None = None
     journey_name: str | None = None
     rejection_reason: str | None = None
+    # The Scenarios this request generated — a merged-into existing Journey
+    # also holds older ones, so the status read filters to these.
+    scenario_ids: list[str] = field(default_factory=list)
 
 
 @workflow.defn(name="LiveExplorationTestWorkflow")
@@ -182,103 +207,104 @@ class LiveExplorationTestWorkflow:
             result_type=PrepareSingleTestRunActivityResult,
         )
         test_run_ids_to_discard = [run_prep.test_run_id]
-        await workflow.execute_activity(
-            EXECUTE_TEST_ACTIVITY_NAME,
-            ExecuteTestActivityInput(
-                application_id=application_id,
-                test_run_id=run_prep.test_run_id,
-                test_result_id=run_prep.test_result_id,
-                test_asset_id=test_asset_id,
-            ),
-            task_queue=EXECUTION_TASK_QUEUE,
-            start_to_close_timeout=timedelta(minutes=10),
-            retry_policy=RetryPolicy(maximum_attempts=2),
-            result_type=str,
-        )
-
-        status_result: ReadTestResultStatusResult = await workflow.execute_activity(
-            READ_TEST_RESULT_STATUS_ACTIVITY_NAME,
-            ReadTestResultStatusActivityInput(test_result_id=run_prep.test_result_id),
-            task_queue=EXECUTION_TASK_QUEUE,
-            start_to_close_timeout=timedelta(minutes=1),
-            retry_policy=RetryPolicy(maximum_attempts=3),
-            result_type=ReadTestResultStatusResult,
-        )
-        if status_result.status not in ("passed", "blocked"):
-            heal_result: LiveHealActivityResult = await workflow.execute_activity(
-                LIVE_HEAL_ACTIVITY_NAME,
-                LiveHealActivityInput(
+        try:
+            await workflow.execute_activity(
+                EXECUTE_TEST_ACTIVITY_NAME,
+                ExecuteTestActivityInput(
                     application_id=application_id,
                     test_run_id=run_prep.test_run_id,
                     test_result_id=run_prep.test_result_id,
+                    test_asset_id=test_asset_id,
                 ),
-                task_queue=LIVE_EXPLORATION_TASK_QUEUE,
+                task_queue=EXECUTION_TASK_QUEUE,
                 start_to_close_timeout=timedelta(minutes=10),
-                heartbeat_timeout=timedelta(minutes=2),
-                # 2, not 1 — a worker restart/crash mid-activity currently
-                # surfaces as a heartbeat timeout with nothing left to retry,
-                # failing the whole run over pure infra flakiness rather than
-                # a real heal failure. One retry re-runs from scratch (a
-                # fresh MCP session, fresh materialize) — safe here since a
-                # genuine non-convergence still exhausts both attempts and
-                # reports not-healed, same as before.
                 retry_policy=RetryPolicy(maximum_attempts=2),
-                result_type=LiveHealActivityResult,
+                result_type=str,
             )
-            if heal_result.healed:
-                # A fresh TestRun/TestResult, not a reuse of run_prep's —
-                # ExecuteTestActivity's own idempotency guard skips a
-                # test_result_id whose status isn't "pending" (it assumes a
-                # repeat call is Temporal's at-least-once redelivery of the
-                # SAME attempt), so replaying the original, already-"failed"
-                # test_result_id here silently no-ops instead of actually
-                # running the healed code. This is the same
-                # PrepareSingleTestRunActivity call used for the first
-                # attempt, just re-invoked with the healed asset id.
-                heal_run_prep: PrepareSingleTestRunActivityResult = await workflow.execute_activity(
-                    PREPARE_SINGLE_TEST_RUN_ACTIVITY_NAME,
-                    PrepareSingleTestRunActivityInput(
-                        application_id=application_id, test_asset_id=heal_result.test_asset_id
-                    ),
-                    task_queue=EXECUTION_TASK_QUEUE,
-                    start_to_close_timeout=timedelta(minutes=5),
-                    retry_policy=RetryPolicy(maximum_attempts=2),
-                    result_type=PrepareSingleTestRunActivityResult,
-                )
-                test_run_ids_to_discard.append(heal_run_prep.test_run_id)
-                await workflow.execute_activity(
-                    EXECUTE_TEST_ACTIVITY_NAME,
-                    ExecuteTestActivityInput(
-                        application_id=application_id,
-                        test_run_id=heal_run_prep.test_run_id,
-                        test_result_id=heal_run_prep.test_result_id,
-                        test_asset_id=heal_result.test_asset_id,
-                    ),
-                    task_queue=EXECUTION_TASK_QUEUE,
-                    start_to_close_timeout=timedelta(minutes=10),
-                    retry_policy=RetryPolicy(maximum_attempts=2),
-                    result_type=str,
-                )
-                # No status read here on purpose — whether the healed
-                # re-execution actually passed is never checked. Whatever
-                # TestAsset this produced ships as the Scenario's current
-                # code either way; only the user's own "Run All Tests"
-                # click ever determines whether it really works.
 
-        # Internal verification only, done either way (passed, failed, or
-        # never even attempted a heal) — every TestRun created above is
-        # discarded, never finalized into real history. The healed-or-not
-        # TestAsset this scenario ends up with is what ships; whether it
-        # actually passes is something only the user's own "Run All Tests"
-        # click ever surfaces.
-        for test_run_id in test_run_ids_to_discard:
-            await workflow.execute_activity(
-                DISCARD_TEST_RUN_ACTIVITY_NAME,
-                DiscardTestRunActivityInput(test_run_id=test_run_id),
+            status_result: ReadTestResultStatusResult = await workflow.execute_activity(
+                READ_TEST_RESULT_STATUS_ACTIVITY_NAME,
+                ReadTestResultStatusActivityInput(test_result_id=run_prep.test_result_id),
                 task_queue=EXECUTION_TASK_QUEUE,
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
+                result_type=ReadTestResultStatusResult,
             )
+            if status_result.status not in ("passed", "blocked"):
+                heal_result: LiveHealActivityResult = await workflow.execute_activity(
+                    LIVE_HEAL_ACTIVITY_NAME,
+                    LiveHealActivityInput(
+                        application_id=application_id,
+                        test_run_id=run_prep.test_run_id,
+                        test_result_id=run_prep.test_result_id,
+                    ),
+                    task_queue=LIVE_EXPLORATION_TASK_QUEUE,
+                    start_to_close_timeout=timedelta(minutes=10),
+                    heartbeat_timeout=timedelta(minutes=2),
+                    # 2, not 1 — a worker restart/crash mid-activity currently
+                    # surfaces as a heartbeat timeout with nothing left to retry,
+                    # failing the whole run over pure infra flakiness rather than
+                    # a real heal failure. One retry re-runs from scratch (a
+                    # fresh MCP session, fresh materialize) — safe here since a
+                    # genuine non-convergence still exhausts both attempts and
+                    # reports not-healed, same as before.
+                    retry_policy=RetryPolicy(maximum_attempts=2),
+                    result_type=LiveHealActivityResult,
+                )
+                if heal_result.healed:
+                    # A fresh TestRun/TestResult, not a reuse of run_prep's —
+                    # ExecuteTestActivity's own idempotency guard skips a
+                    # test_result_id whose status isn't "pending" (it assumes a
+                    # repeat call is Temporal's at-least-once redelivery of the
+                    # SAME attempt), so replaying the original, already-"failed"
+                    # test_result_id here silently no-ops instead of actually
+                    # running the healed code. This is the same
+                    # PrepareSingleTestRunActivity call used for the first
+                    # attempt, just re-invoked with the healed asset id.
+                    heal_run_prep: PrepareSingleTestRunActivityResult = await workflow.execute_activity(
+                        PREPARE_SINGLE_TEST_RUN_ACTIVITY_NAME,
+                        PrepareSingleTestRunActivityInput(
+                            application_id=application_id, test_asset_id=heal_result.test_asset_id
+                        ),
+                        task_queue=EXECUTION_TASK_QUEUE,
+                        start_to_close_timeout=timedelta(minutes=5),
+                        retry_policy=RetryPolicy(maximum_attempts=2),
+                        result_type=PrepareSingleTestRunActivityResult,
+                    )
+                    test_run_ids_to_discard.append(heal_run_prep.test_run_id)
+                    await workflow.execute_activity(
+                        EXECUTE_TEST_ACTIVITY_NAME,
+                        ExecuteTestActivityInput(
+                            application_id=application_id,
+                            test_run_id=heal_run_prep.test_run_id,
+                            test_result_id=heal_run_prep.test_result_id,
+                            test_asset_id=heal_result.test_asset_id,
+                        ),
+                        task_queue=EXECUTION_TASK_QUEUE,
+                        start_to_close_timeout=timedelta(minutes=10),
+                        retry_policy=RetryPolicy(maximum_attempts=2),
+                        result_type=str,
+                    )
+                    # No status read here on purpose — whether the healed
+                    # re-execution actually passed is never checked. Whatever
+                    # TestAsset this produced ships as the Scenario's current
+                    # code either way; only the user's own "Run All Tests"
+                    # click ever determines whether it really works.
+        finally:
+            # Internal verification only, done either way (passed, failed, or
+            # never even attempted a heal) — every TestRun created above is
+            # discarded, never finalized into real history. The healed-or-not
+            # TestAsset this scenario ends up with is what ships; whether it
+            # actually passes is something only the user's own "Run All Tests"
+            # click ever surfaces.
+            for test_run_id in test_run_ids_to_discard:
+                await workflow.execute_activity(
+                    DISCARD_TEST_RUN_ACTIVITY_NAME,
+                    DiscardTestRunActivityInput(test_run_id=test_run_id),
+                    task_queue=EXECUTION_TASK_QUEUE,
+                    start_to_close_timeout=timedelta(minutes=1),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                )
 
     @workflow.run
     async def run(self, input: LiveExplorationWorkflowInput) -> LiveExplorationResult:
@@ -301,6 +327,7 @@ class LiveExplorationTestWorkflow:
                 application_id=input.application_id,
                 requirement=input.prompt,
                 functionality_summary=analysis.functionality_summary,
+                journey_name=input.journey_name or "",
             ),
             task_queue=LIVE_EXPLORATION_TASK_QUEUE,
             start_to_close_timeout=timedelta(minutes=20),
@@ -318,7 +345,7 @@ class LiveExplorationTestWorkflow:
 
         self._status = "generating"
 
-        await workflow.execute_activity(
+        scenario_ids: list[str] = await workflow.execute_activity(
             SCENARIO_GENERATION_ACTIVITY_NAME,
             ScenarioGenerationActivityInput(
                 journey_id=explore_result.journey_id,
@@ -332,9 +359,27 @@ class LiveExplorationTestWorkflow:
             result_type=list[str],
         )
 
+        # Explored as its own Journey either way (so Scenario generation
+        # sees exactly this flow), then folded into the author's chosen
+        # existing Journey before any code is generated.
+        journey_id, journey_name = explore_result.journey_id, explore_result.journey_name
+        if input.journey_id:
+            merge_result: MergeLiveJourneyActivityResult = await workflow.execute_activity(
+                MERGE_LIVE_JOURNEY_ACTIVITY_NAME,
+                MergeLiveJourneyActivityInput(
+                    source_journey_id=explore_result.journey_id,
+                    target_journey_id=input.journey_id,
+                    scenario_ids=scenario_ids,
+                ),
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+                result_type=MergeLiveJourneyActivityResult,
+            )
+            journey_id, journey_name = input.journey_id, merge_result.journey_name
+
         prep: EnsureTestSuiteActivityResult = await workflow.execute_activity(
             ENSURE_TEST_SUITE_ACTIVITY_NAME,
-            EnsureTestSuiteActivityInput(journey_id=explore_result.journey_id),
+            EnsureTestSuiteActivityInput(journey_id=journey_id),
             start_to_close_timeout=timedelta(minutes=1),
             retry_policy=RetryPolicy(maximum_attempts=3),
             result_type=EnsureTestSuiteActivityResult,
@@ -352,7 +397,10 @@ class LiveExplorationTestWorkflow:
         # already uses for an unfinished run) before re-raising fixes that
         # generically for any failure in this section, not just one cause.
         try:
-            for scenario_id in prep.scenario_ids:
+            # Only this request's Scenarios — `prep.scenario_ids` is every
+            # current one on the Journey, which for an existing Journey
+            # would regenerate its older test cases' code too.
+            for scenario_id in scenario_ids:
                 await workflow.execute_activity(
                     PLAYWRIGHT_GENERATION_ACTIVITY_NAME,
                     PlaywrightGenerationActivityInput(
@@ -363,10 +411,23 @@ class LiveExplorationTestWorkflow:
                     result_type=str,
                 )
 
-            for scenario_id in prep.scenario_ids[:MAX_VERIFIED_SCENARIOS_PER_JOURNEY]:
-                await self._generate_and_verify_one(
-                    input.application_id, scenario_id, prep.test_suite_id
-                )
+            for scenario_id in scenario_ids[:MAX_VERIFIED_SCENARIOS_PER_JOURNEY]:
+                # Best-effort: every test case is already generated and saved
+                # by now, so a verify-pass failure (observed live: the
+                # target app's login page timing out on the post-heal re-run)
+                # must never fail the whole request — the user's own run
+                # surfaces whether the test really works.
+                try:
+                    await self._generate_and_verify_one(
+                        input.application_id, scenario_id, prep.test_suite_id
+                    )
+                except ActivityError:
+                    workflow.logger.warning(
+                        "LiveExplorationTestWorkflow: verify pass for scenario_id=%s failed, "
+                        "keeping its generated test case as-is",
+                        scenario_id,
+                        exc_info=True,
+                    )
         except BaseException:
             await workflow.execute_activity(
                 FINALIZE_SUITE_GENERATION_ACTIVITY_NAME,
@@ -395,8 +456,9 @@ class LiveExplorationTestWorkflow:
         self._status = "complete"
         return LiveExplorationResult(
             status="complete",
-            journey_id=explore_result.journey_id,
-            journey_name=explore_result.journey_name,
+            journey_id=journey_id,
+            journey_name=journey_name,
+            scenario_ids=scenario_ids,
         )
 
 
@@ -404,6 +466,7 @@ __all__ = [
     "LIVE_EXPLORATION_TASK_QUEUE",
     "LIVE_EXPLORE_ACTIVITY_NAME",
     "LIVE_HEAL_ACTIVITY_NAME",
+    "MERGE_LIVE_JOURNEY_ACTIVITY_NAME",
     "LiveExploreActivityInput",
     "LiveExploreActivityResult",
     "LiveExplorationResult",
@@ -412,4 +475,6 @@ __all__ = [
     "LiveHealActivityInput",
     "LiveHealActivityResult",
     "MAX_VERIFIED_SCENARIOS_PER_JOURNEY",
+    "MergeLiveJourneyActivityInput",
+    "MergeLiveJourneyActivityResult",
 ]

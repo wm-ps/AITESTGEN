@@ -34,7 +34,11 @@ from generation_worker.activities import (
     scenario_generation_activity,
 )
 from generation_worker.add_test_case_activities import analyze_prompt_activity
-from generation_worker.live_exploration_activities import live_explore_activity, live_heal_activity
+from generation_worker.live_exploration_activities import (
+    live_explore_activity,
+    live_heal_activity,
+    merge_live_journey_activity,
+)
 
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
 MAX_CONCURRENT_ACTIVITIES = int(os.environ.get("GENERATION_WORKER_MAX_CONCURRENT_ACTIVITIES", "5"))
@@ -64,6 +68,7 @@ async def main() -> None:
         activities=[
             scenario_generation_activity,
             ensure_test_suite_activity,
+            merge_live_journey_activity,
             playwright_generation_activity,
             finalize_suite_generation_activity,
             regenerate_test_asset_activity,

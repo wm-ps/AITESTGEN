@@ -2494,6 +2494,10 @@ class TestSuiteRead(BaseModel):
 
 class LiveTestCaseCreate(BaseModel):
     prompt: str
+    # Exactly one: an existing Journey to add the test case to, or the name
+    # of a new Journey to create for it.
+    journey_id: uuid.UUID | None = None
+    journey_name: str | None = None
 
 
 # TEMP DEBUG — supports the workflow's temporary exploration-only cutoff
@@ -2554,7 +2558,31 @@ async def create_live_test_case(
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
 ) -> dict[str, str]:
-    _get_org_application(session, organization_id, external_id)
+    application = _get_org_application(session, organization_id, external_id)
+
+    journey_name = (payload.journey_name or "").strip() or None
+    if (payload.journey_id is None) == (journey_name is None):
+        raise HTTPException(
+            status_code=422, detail="Select an existing journey or enter a new journey name."
+        )
+    active_journeys = select(Journey).where(
+        Journey.application_id == application.id, Journey.status == "candidate"
+    )
+    if payload.journey_id is not None:
+        if (
+            session.exec(
+                active_journeys.where(Journey.external_id == payload.journey_id)
+            ).first()
+            is None
+        ):
+            raise HTTPException(status_code=404, detail="JOURNEY_NOT_FOUND")
+    elif session.exec(
+        active_journeys.where(func.lower(Journey.name) == journey_name.lower())  # type: ignore[union-attr]
+    ).first():
+        raise HTTPException(
+            status_code=409,
+            detail="A journey with this name already exists. Select it from the list instead.",
+        )
 
     client = await get_temporal_client()
     if not await has_pollers(client, GENERATION_TASK_QUEUE):
@@ -2567,7 +2595,12 @@ async def create_live_test_case(
     request_id = uuid.uuid4()
     await client.start_workflow(
         LiveExplorationTestWorkflow.run,
-        LiveExplorationWorkflowInput(application_id=str(external_id), prompt=payload.prompt),
+        LiveExplorationWorkflowInput(
+            application_id=str(external_id),
+            prompt=payload.prompt,
+            journey_id=str(payload.journey_id) if payload.journey_id else None,
+            journey_name=journey_name,
+        ),
         id=_live_exploration_workflow_id(external_id, request_id),
         task_queue=GENERATION_TASK_QUEUE,
     )
@@ -2687,19 +2720,24 @@ def _live_test_case_page_inventory(session: Session, journey_external_id: str) -
 # previous checkpoint — surfaced here so generated-test-case quality can be
 # reviewed before execution is turned back on.
 def _live_test_case_generated_tests(
-    session: Session, journey_external_id: str
+    session: Session, journey_external_id: str, scenario_ids: list[str]
 ) -> list[LiveTestCaseGeneratedTestRead]:
     journey = session.exec(
         select(Journey).where(Journey.external_id == uuid.UUID(journey_external_id))
     ).one_or_none()
     if journey is None:
         return []
-    scenarios = session.exec(
-        select(Scenario).where(
-            Scenario.journey_id == journey.id,
-            Scenario.current.is_(True),  # type: ignore[attr-defined]
+    query = select(Scenario).where(
+        Scenario.journey_id == journey.id,
+        Scenario.current.is_(True),  # type: ignore[attr-defined]
+    )
+    # Empty only for a request that predates `scenario_ids` — its Journey
+    # was always its own, so every Scenario on it is this request's.
+    if scenario_ids:
+        query = query.where(
+            Scenario.external_id.in_([uuid.UUID(s) for s in scenario_ids])  # type: ignore[attr-defined]
         )
-    ).all()
+    scenarios = session.exec(query).all()
     result: list[LiveTestCaseGeneratedTestRead] = []
     for scenario in scenarios:
         asset = session.exec(
@@ -2750,7 +2788,9 @@ async def get_live_test_case_request(
             pages=_live_test_case_page_inventory(session, result.journey_id)
             if result.journey_id
             else [],
-            generated_tests=_live_test_case_generated_tests(session, result.journey_id)
+            generated_tests=_live_test_case_generated_tests(
+                session, result.journey_id, result.scenario_ids
+            )
             if result.journey_id
             else [],
         )

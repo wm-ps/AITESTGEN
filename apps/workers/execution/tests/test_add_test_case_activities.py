@@ -155,6 +155,33 @@ def test_prepare_single_test_run_assigns_sequential_run_numbers(
     assert run_numbers == [1, 2, 3]
 
 
+def test_prepare_single_test_run_failure_leaves_no_test_run_behind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed prepare (observed live: the target app's login page timing
+    out in auth.setup.ts) must not leak an errored "Add Test Case" run into
+    the Runs tab — the workflow never learns its id to discard it."""
+    init_db()
+    application = _seed_application()
+    test_asset = _seed_test_asset(application)
+
+    def _fail(*a, **k):
+        raise RuntimeError("login page timed out")
+
+    monkeypatch.setattr(add_test_case_activities_module, "assemble_test_suite_project_to_dir", _fail)
+
+    with pytest.raises(RuntimeError, match="failed to prepare the test project"):
+        add_test_case_activities_module._prepare_single_test_run_sync(
+            PrepareSingleTestRunActivityInput(
+                application_id=str(application.external_id),
+                test_asset_id=str(test_asset.external_id),
+            )
+        )
+
+    with Session(engine) as session:
+        assert session.exec(select(TestRun).where(TestRun.application_id == application.id)).all() == []
+
+
 def test_discard_test_run_deletes_the_run_and_its_result(monkeypatch: pytest.MonkeyPatch) -> None:
     """LiveExplorationTestWorkflow's internal verify+heal pass discards its
     own TestRun/TestResult rather than finalizing them — a real dashboard/

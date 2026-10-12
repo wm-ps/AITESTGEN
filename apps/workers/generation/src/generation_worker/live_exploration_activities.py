@@ -32,6 +32,8 @@ from workflows import (
     LiveExploreActivityResult,
     LiveHealActivityInput,
     LiveHealActivityResult,
+    MergeLiveJourneyActivityInput,
+    MergeLiveJourneyActivityResult,
 )
 
 from generation_worker import spec_linter
@@ -92,6 +94,7 @@ def _create_live_journey_sync(
     requirement: str,
     functionality_summary: str,
     captured_flow: list[dict],
+    journey_name: str = "",
 ) -> tuple[str, str]:
     with Session(engine) as session:
         existing_names = [
@@ -104,7 +107,8 @@ def _create_live_journey_sync(
         # Journey properly — falling back to a truncated first line only
         # when that's blank (e.g. a very short/atypical prompt).
         base_name = (
-            functionality_summary.strip()
+            journey_name.strip()
+            or functionality_summary.strip()
             or requirement.strip().splitlines()[0][:80]
             or "Untitled live journey"
         )
@@ -169,6 +173,64 @@ def _create_live_journey_sync(
         return str(journey.external_id), journey.name
 
 
+def _merge_live_journey_sync(input: MergeLiveJourneyActivityInput) -> MergeLiveJourneyActivityResult:
+    """Moves this request's freshly generated Scenarios from the Journey
+    LiveExploreActivity created onto the author's chosen existing Journey,
+    then deletes the now-empty source Journey (nothing else references it
+    yet — no TestSuite exists before EnsureTestSuiteActivity runs). Each
+    moved Scenario keeps the flow it was explored with in
+    `Scenario.grounding`, since the target Journey's own steps/captured_flow
+    describe a different flow. Idempotent: a retry after the source is
+    already gone just returns the target's name."""
+    with Session(engine) as session:
+        target = session.exec(
+            select(Journey).where(Journey.external_id == uuid.UUID(input.target_journey_id))
+        ).one()
+        source = session.exec(
+            select(Journey).where(Journey.external_id == uuid.UUID(input.source_journey_id))
+        ).one_or_none()
+        if source is None:
+            return MergeLiveJourneyActivityResult(journey_name=target.name)
+
+        source_steps = session.exec(
+            select(JourneyStep)
+            .where(JourneyStep.journey_id == source.id)
+            .order_by(JourneyStep.step_order)  # type: ignore[arg-type]
+        ).all()
+        grounding = {
+            "captured_flow": source.captured_flow,
+            "steps": [
+                {"page_id": str(step.page_id), "stage_label": step.stage_label}
+                for step in source_steps
+                if step.page_id
+            ],
+        }
+        scenario_ids = [uuid.UUID(sid) for sid in input.scenario_ids]
+        scenarios = session.exec(
+            select(Scenario).where(Scenario.external_id.in_(scenario_ids))  # type: ignore[attr-defined]
+        ).all()
+        for scenario in scenarios:
+            scenario.journey_id = target.id
+            # EnsureTestSuiteActivity/ScenarioGenerationActivity key off
+            # the Journey's current attempt.
+            scenario.generation_run_id = target.attempt
+            scenario.grounding = grounding
+            session.add(scenario)
+        for step in source_steps:
+            session.delete(step)
+        session.flush()
+        session.delete(source)
+        session.commit()
+        return MergeLiveJourneyActivityResult(journey_name=target.name)
+
+
+@activity.defn(name="MergeLiveJourneyActivity")
+async def merge_live_journey_activity(
+    input: MergeLiveJourneyActivityInput,
+) -> MergeLiveJourneyActivityResult:
+    return await asyncio.to_thread(_merge_live_journey_sync, input)
+
+
 @activity.defn(name="LiveExploreActivity")
 async def live_explore_activity(input: LiveExploreActivityInput) -> LiveExploreActivityResult:
     application = await asyncio.to_thread(_load_application_sync, input.application_id)
@@ -206,6 +268,7 @@ async def live_explore_activity(input: LiveExploreActivityInput) -> LiveExploreA
         requirement=input.requirement,
         functionality_summary=input.functionality_summary,
         captured_flow=_captured_flow_from(live_flow),
+        journey_name=input.journey_name,
     )
     return LiveExploreActivityResult(
         discovery_run_id=str(result.discovery_run_id),

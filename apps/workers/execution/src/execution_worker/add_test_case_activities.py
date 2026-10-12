@@ -149,25 +149,22 @@ def _prepare_single_test_run_sync(
             if inputs.login_evidence is not None:
                 _run_auth_setup_once(dest_dir, application)
         except Exception as exc:  # noqa: BLE001 — infra failure, not a test outcome
-            test_result.status = "errored"
-            test_result.error_message = f"failed to prepare the test project: {exc}"
-            test_result.completed_at = datetime.now(UTC)
-            session.add(test_result)
-            test_run.errored_count = 1
-            test_run.status = "completed"
-            test_run.completed_at = datetime.now(UTC)
-            session.add(test_run)
-            session.commit()
             logger.error(
                 "PrepareSingleTestRunActivity: test_run_id=%s failed to prepare project: %s",
                 test_run.external_id,
                 exc,
             )
+            # This TestRun only ever backs LiveExplorationTestWorkflow's
+            # internal verify pass, which never learns its id when this
+            # raises — discard it here, or every failed attempt (retries
+            # included) leaks an errored "Add Test Case" run into the Runs
+            # tab and dashboard stats.
+            _discard_test_run_sync(DiscardTestRunActivityInput(test_run_id=str(test_run.external_id)))
             # Re-raised (unlike `_prepare_test_run_sync`'s own all-assets
             # version, which just returns an empty executable list) — there's
             # only ever one test here, so "prepare failed" and "nothing to
-            # execute" are the same event; the workflow's own try/except
-            # around this activity turns it into a `status="failed"` result.
+            # execute" are the same event; the workflow treats the verify
+            # pass as best-effort and still completes the request.
             raise RuntimeError(f"failed to prepare the test project: {exc}") from exc
 
         logger.info(

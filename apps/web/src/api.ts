@@ -519,10 +519,16 @@ export const api = {
     request<TestSuiteRead>(`/applications/${applicationId}/test-suites/${suiteId}/terminate`, {
       method: 'POST',
     }),
-  createLiveTestCase: (applicationId: string, prompt: string) =>
+  // Exactly one of `journey_id` (add to an existing Journey) or
+  // `journey_name` (create a new one) — the API rejects anything else.
+  createLiveTestCase: (
+    applicationId: string,
+    prompt: string,
+    journey: { journey_id: string } | { journey_name: string },
+  ) =>
     request<{ request_id: string }>(`/applications/${applicationId}/live-test-cases`, {
       method: 'POST',
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, ...journey }),
     }),
   getLiveTestCaseRequest: (applicationId: string, requestId: string) =>
     request<LiveTestCaseRequestStatusRead>(

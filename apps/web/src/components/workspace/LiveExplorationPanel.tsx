@@ -5,7 +5,7 @@ import { faIcon } from '../../faIcon'
 
 const Sparkles = faIcon(faWandMagicSparkles)
 import { ApiError, api } from '../../api'
-import type { LiveTestCaseRequestStatusRead } from '../../api'
+import type { JourneyRead, LiveTestCaseRequestStatusRead } from '../../api'
 import { GenerationLoader } from '../GenerationLoader'
 
 const POLL_INTERVAL_MS = 3000
@@ -30,6 +30,22 @@ const secondaryButtonStyle: React.CSSProperties = {
   fontSize: 12.5,
   fontWeight: 500,
   cursor: 'pointer',
+}
+
+const NEW_JOURNEY = '__new__'
+
+const fieldStyle: React.CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  height: 36,
+  padding: '0 11px',
+  border: '1px solid var(--border-2)',
+  borderRadius: 9,
+  fontSize: 13,
+  color: 'var(--fg-1)',
+  background: 'var(--panel-2)',
+  fontFamily: 'inherit',
+  outline: 'none',
 }
 
 const IN_PROGRESS_COPY: Record<string, string> = {
@@ -63,6 +79,10 @@ export function LiveExplorationPanel({
   onComplete?: () => void
 }) {
   const [prompt, setPrompt] = useState('')
+  const [journeys, setJourneys] = useState<JourneyRead[] | null>(null)
+  // An existing Journey's id, NEW_JOURNEY, or '' (nothing chosen yet).
+  const [journeyChoice, setJourneyChoice] = useState('')
+  const [newJourneyName, setNewJourneyName] = useState('')
   const [requestId, setRequestId] = useState<string | null>(() => {
     try {
       return localStorage.getItem(requestIdStorageKey(applicationId))
@@ -73,6 +93,27 @@ export function LiveExplorationPanel({
   const [statusRow, setStatusRow] = useState<LiveTestCaseRequestStatusRead | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Refetched after every reset so a Journey the previous request created
+  // shows up in the list right away.
+  useEffect(() => {
+    if (requestId) return
+    let cancelled = false
+    api
+      .listJourneys(applicationId)
+      .then((rows) => {
+        if (cancelled) return
+        setJourneys(rows)
+        // Nothing to pick from — creating a new Journey is the only option.
+        if (rows.length === 0) setJourneyChoice(NEW_JOURNEY)
+      })
+      .catch(() => {
+        if (!cancelled) setJourneys([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [applicationId, requestId])
 
   useEffect(() => {
     if (!requestId) return
@@ -143,16 +184,26 @@ export function LiveExplorationPanel({
     setRequestId(null)
     setStatusRow(null)
     setPrompt('')
+    setJourneyChoice('')
+    setNewJourneyName('')
     setError(null)
   }
 
+  const isNewJourney = journeyChoice === NEW_JOURNEY
+  const journeyReady = isNewJourney ? newJourneyName.trim() !== '' : journeyChoice !== ''
+  const canSubmit = prompt.trim() !== '' && journeyReady && !submitting
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
-    if (!prompt.trim() || submitting) return
+    if (!canSubmit) return
     setSubmitting(true)
     setError(null)
     try {
-      const { request_id } = await api.createLiveTestCase(applicationId, prompt.trim())
+      const { request_id } = await api.createLiveTestCase(
+        applicationId,
+        prompt.trim(),
+        isNewJourney ? { journey_name: newJourneyName.trim() } : { journey_id: journeyChoice },
+      )
       try {
         localStorage.setItem(requestIdStorageKey(applicationId), request_id)
       } catch {
@@ -232,6 +283,39 @@ export function LiveExplorationPanel({
 
       {!requestId && (
         <form onSubmit={handleSubmit} style={{ marginTop: 16 }}>
+          <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 220px', minWidth: 0 }}>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)' }}>Journey</span>
+              <select
+                value={journeyChoice}
+                onChange={(event) => setJourneyChoice(event.target.value)}
+                disabled={journeys === null}
+                style={fieldStyle}
+              >
+                <option value="" disabled>
+                  {journeys === null ? 'Loading journeys…' : 'Select a journey'}
+                </option>
+                {journeys?.map((journey) => (
+                  <option key={journey.id} value={journey.id}>
+                    {journey.name}
+                  </option>
+                ))}
+                <option value={NEW_JOURNEY}>+ New journey</option>
+              </select>
+            </label>
+            {isNewJourney && (
+              <label style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 220px', minWidth: 0 }}>
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)' }}>New journey name</span>
+                <input
+                  value={newJourneyName}
+                  onChange={(event) => setNewJourneyName(event.target.value)}
+                  placeholder="Enter the new journey name"
+                  style={fieldStyle}
+                />
+              </label>
+            )}
+          </div>
+
           <textarea
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
@@ -257,7 +341,7 @@ export function LiveExplorationPanel({
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 14 }}>
             <button
               type="submit"
-              disabled={submitting || !prompt.trim()}
+              disabled={!canSubmit}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -269,9 +353,9 @@ export function LiveExplorationPanel({
                 fontSize: 13.5,
                 fontWeight: 600,
                 color: '#fff',
-                background: submitting || !prompt.trim() ? 'var(--fg-4)' : 'var(--accent)',
-                boxShadow: submitting || !prompt.trim() ? 'none' : 'var(--accent-glow)',
-                cursor: submitting || !prompt.trim() ? 'default' : 'pointer',
+                background: !canSubmit ? 'var(--fg-4)' : 'var(--accent)',
+                boxShadow: !canSubmit ? 'none' : 'var(--accent-glow)',
+                cursor: !canSubmit ? 'default' : 'pointer',
               }}
             >
               <FontAwesomeIcon icon={faWandMagicSparkles} style={{ fontSize: 11 }} />

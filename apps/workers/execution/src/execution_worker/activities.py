@@ -1122,7 +1122,7 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
         journey = session.exec(select(Journey).where(Journey.id == test_suite.journey_id)).one()
         scenario = session.exec(select(Scenario).where(Scenario.id == test_asset.scenario_id)).one()
         known_pages, known_locators, _, known_page_ids = resolve_known_application_model_sync(
-            session, journey.id
+            session, journey.id, scenario
         )
         # Same mechanism original generation uses (generation_worker/
         # activities.py) — the real captured HTML input_type per field name,

@@ -103,6 +103,15 @@ class Scenario(SQLModel, table=True):
         default="discovery",
         sa_column=Column(String, server_default=text("'discovery'"), nullable=False),
     )
+    # Set only when an authored (live-exploration) test case was added to an
+    # existing Journey that it was NOT explored as — that Journey's own
+    # steps/captured_flow describe a different flow, so the flow this
+    # Scenario was actually generated from travels with it instead:
+    # `{"captured_flow": [...], "steps": [{"page_id", "stage_label"}]}`.
+    # None = ground in the Scenario's own Journey, as before.
+    grounding: dict[str, Any] | None = Field(
+        default=None, sa_column=Column(JSONB, nullable=True)
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

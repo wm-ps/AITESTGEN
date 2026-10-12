@@ -65,6 +65,8 @@ _heal_calls: list[str] = []
 _read_status_results: list[str] = []
 _prepare_calls: list[str] = []
 _discard_calls: list[str] = []
+# 1-based PrepareSingleTestRunActivity call from which it raises; None = never.
+_prepare_fails_from_call: int | None = None
 _finalize_suite_statuses: list[str] = []
 _playwright_generation_calls: list[str] = []
 _scenario_ids_for_test: list[str] = ["scenario-1"]
@@ -96,7 +98,8 @@ async def _fake_live_explore(input: LiveExploreActivityInput) -> LiveExploreActi
 async def _fake_scenario_generation(input: ScenarioGenerationActivityInput) -> list[str]:
     assert input.journey_id == "journey-1"
     assert input.requested_scenario_counts == {"happy": 1, "negative": 1, "edge": 1}
-    return ["scenario-1"]
+    # Code generation runs over exactly the Scenarios this step returns.
+    return list(_scenario_ids_for_test)
 
 
 @activity.defn(name=ENSURE_TEST_SUITE_ACTIVITY_NAME)
@@ -130,6 +133,8 @@ async def _fake_prepare_single_test_run(
     # call this again (not reuse the first pair) for a post-heal re-run.
     _prepare_calls.append(input.test_asset_id)
     index = len(_prepare_calls)
+    if _prepare_fails_from_call is not None and index >= _prepare_fails_from_call:
+        raise ApplicationError("failed to prepare the test project: login page timed out", non_retryable=True)
     return PrepareSingleTestRunActivityResult(
         test_run_id=f"run-{index}", test_result_id=f"result-{index}"
     )
@@ -326,3 +331,31 @@ async def test_finalizes_the_suite_as_incomplete_instead_of_wedging_it_on_a_cras
         _playwright_generation_should_fail = False
 
     assert _finalize_suite_statuses == ["incomplete"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_verify_pass_still_completes_the_request() -> None:
+    """Observed live: the post-heal re-run's login (auth.setup.ts) timed out,
+    failing the whole request after all 16 test cases were already
+    generated and saved. The verify pass is internal and best-effort."""
+    _execute_test_calls.clear()
+    _heal_calls.clear()
+    _prepare_calls.clear()
+    _discard_calls.clear()
+    _finalize_suite_statuses.clear()
+    _playwright_generation_calls.clear()
+    _scenario_ids_for_test[:] = ["scenario-1"]
+    _read_status_results[:] = ["failed"]
+
+    global _prepare_fails_from_call
+    _prepare_fails_from_call = 2  # the post-heal re-run's prepare
+    try:
+        async with await WorkflowEnvironment.start_time_skipping() as env:
+            result = await _run(env)
+    finally:
+        _prepare_fails_from_call = None
+
+    assert result.status == "complete"
+    assert _finalize_suite_statuses == ["complete"]
+    # The first verify run is still discarded even though the pass failed.
+    assert _discard_calls == ["run-1"]

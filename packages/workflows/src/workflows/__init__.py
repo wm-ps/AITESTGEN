@@ -78,6 +78,7 @@ from workflows.live_exploration_workflow import (
     LIVE_EXPLORATION_TASK_QUEUE,
     LIVE_EXPLORE_ACTIVITY_NAME,
     LIVE_HEAL_ACTIVITY_NAME,
+    MERGE_LIVE_JOURNEY_ACTIVITY_NAME,
     LiveExplorationResult,
     LiveExplorationTestWorkflow,
     LiveExplorationWorkflowInput,
@@ -85,6 +86,8 @@ from workflows.live_exploration_workflow import (
     LiveExploreActivityResult,
     LiveHealActivityInput,
     LiveHealActivityResult,
+    MergeLiveJourneyActivityInput,
+    MergeLiveJourneyActivityResult,
 )
 from workflows.reconcile_stale_runs_workflow import (
     RECONCILE_STALE_TEST_RUNS_ACTIVITY_NAME,
@@ -142,6 +145,7 @@ __all__ = [
     "LIVE_EXPLORATION_TASK_QUEUE",
     "LIVE_EXPLORE_ACTIVITY_NAME",
     "LIVE_HEAL_ACTIVITY_NAME",
+    "MERGE_LIVE_JOURNEY_ACTIVITY_NAME",
     "MARK_DISCOVERY_RUN_FAILED_ACTIVITY_NAME",
     "PLAYWRIGHT_GENERATION_ACTIVITY_NAME",
     "PREPARE_SINGLE_TEST_RUN_ACTIVITY_NAME",
@@ -184,6 +188,8 @@ __all__ = [
     "LiveExploreActivityResult",
     "LiveHealActivityInput",
     "LiveHealActivityResult",
+    "MergeLiveJourneyActivityInput",
+    "MergeLiveJourneyActivityResult",
     "MarkDiscoveryRunFailedActivityInput",
     "PlaywrightGenerationActivityInput",
     "PrepareSingleTestRunActivityInput",

@@ -1088,7 +1088,7 @@ def _test_case_limit_reached_sync(scenario_external_id: str) -> bool:
 
 
 def resolve_known_application_model_sync(
-    session: Session, journey_id: uuid.UUID
+    session: Session, journey_id: uuid.UUID, scenario: Scenario | None = None
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], uuid.UUID | None, list[uuid.UUID]]:
     """Grounds Playwright generation in what Discovery actually captured for
     this Journey, mirroring `scenario_generation_activity`'s own
@@ -1126,14 +1126,30 @@ def resolve_known_application_model_sync(
       Journey (e.g. Dashboard -> a Loans page holding the actual form),
       which starves `_default_test_data_value`'s type-aware fallback for
       every field on the real target page. Callers needing that metadata
-      should look it up across all of `known_page_ids`, not just the first."""
-    steps = list(
-        session.exec(
-            select(JourneyStep)
-            .where(JourneyStep.journey_id == journey_id)
-            .order_by(JourneyStep.step_order)  # type: ignore[arg-type]
-        ).all()
-    )
+      should look it up across all of `known_page_ids`, not just the first.
+
+    A `scenario` carrying its own `grounding` (an authored test case added to
+    an existing Journey — see `Scenario.grounding`) is resolved from those
+    steps instead of the Journey's."""
+    grounding_steps = (scenario.grounding or {}).get("steps") if scenario else None
+    if grounding_steps:
+        steps = [
+            JourneyStep(
+                journey_id=journey_id,
+                page_id=uuid.UUID(step["page_id"]),
+                step_order=order,
+                stage_label=step["stage_label"],
+            )
+            for order, step in enumerate(grounding_steps)
+        ]
+    else:
+        steps = list(
+            session.exec(
+                select(JourneyStep)
+                .where(JourneyStep.journey_id == journey_id)
+                .order_by(JourneyStep.step_order)  # type: ignore[arg-type]
+            ).all()
+        )
     if not steps:
         return [], [], None, []
 
@@ -1246,10 +1262,12 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
             known_locators,
             primary_page_id,
             known_page_ids,
-        ) = resolve_known_application_model_sync(session, scenario.journey_id)
+        ) = resolve_known_application_model_sync(session, scenario.journey_id, scenario)
 
         journey = session.get(Journey, scenario.journey_id)
-        captured_flow = journey.captured_flow if journey else None
+        captured_flow = (scenario.grounding or {}).get("captured_flow") or (
+            journey.captured_flow if journey else None
+        )
         application = session.get(Application, journey.application_id) if journey else None
 
         required_fields: dict[str, bool] = {}

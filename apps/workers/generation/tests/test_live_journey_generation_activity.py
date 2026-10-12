@@ -7,9 +7,22 @@ same sync helper `live_explore_activity` calls internally."""
 import uuid
 
 import pytest
-from domain import Application, DiscoveryRun, Journey, JourneyStep, Organization, Page
+from domain import (
+    Application,
+    DiscoveryRun,
+    Journey,
+    JourneyStep,
+    Organization,
+    Page,
+    Scenario,
+)
+from generation_worker.activities import resolve_known_application_model_sync
 from generation_worker.db import engine, init_db
-from generation_worker.live_exploration_activities import _create_live_journey_sync
+from generation_worker.live_exploration_activities import (
+    _create_live_journey_sync,
+    _merge_live_journey_sync,
+)
+from workflows import MergeLiveJourneyActivityInput
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
@@ -53,6 +66,10 @@ def _cleanup_created_organizations():
                     ).all()
                 ]
                 if journey_ids:
+                    session.exec(
+                        text("DELETE FROM scenario WHERE journey_id = ANY(:journey_ids)"),
+                        params={"journey_ids": journey_ids},
+                    )
                     session.exec(
                         text("DELETE FROM journey_step WHERE journey_id = ANY(:journey_ids)"),
                         params={"journey_ids": journey_ids},
@@ -223,3 +240,71 @@ def test_persists_the_captured_flow_transcript() -> None:
             select(Journey).where(Journey.external_id == uuid.UUID(journey_id))
         ).one()
         assert journey.captured_flow == captured_flow
+
+
+def test_uses_the_authors_journey_name_over_the_summary() -> None:
+    application, discovery_run, pages = _seed_application_with_pages()
+
+    _, journey_name = _create_live_journey_sync(
+        application_id=application.id,
+        discovery_run_id=discovery_run.id,
+        page_ids=[p.id for p in pages],
+        requirement="Create a new MCP connection for a tenant.",
+        functionality_summary="Create a new MCP connection for a tenant",
+        captured_flow=[],
+        journey_name="  Tenant connections  ",
+    )
+
+    assert journey_name == "Tenant connections"
+
+
+def test_merge_moves_scenarios_into_the_existing_journey_and_keeps_their_flow() -> None:
+    application, discovery_run, pages = _seed_application_with_pages()
+    tenants_page, mcp_page = pages
+    target_id, target_name = _create_live_journey_sync(
+        application_id=application.id,
+        discovery_run_id=discovery_run.id,
+        page_ids=[tenants_page.id],
+        requirement="Open the tenants list.",
+        functionality_summary="Browse tenants",
+        captured_flow=[{"tool_name": "browser_navigate"}],
+    )
+    source_flow = [{"tool_name": "browser_click", "element_description": "New MCP connection"}]
+    source_id, _ = _create_live_journey_sync(
+        application_id=application.id,
+        discovery_run_id=discovery_run.id,
+        page_ids=[mcp_page.id],
+        requirement="Create a new MCP connection.",
+        functionality_summary="Create MCP connection",
+        captured_flow=source_flow,
+    )
+    with Session(engine) as session:
+        source = session.exec(select(Journey).where(Journey.external_id == uuid.UUID(source_id))).one()
+        scenario = Scenario(journey_id=source.id, type="happy", name="Create it", generation_run_id=1)
+        session.add(scenario)
+        session.commit()
+        scenario_external_id = str(scenario.external_id)
+
+    merge_input = MergeLiveJourneyActivityInput(
+        source_journey_id=source_id, target_journey_id=target_id, scenario_ids=[scenario_external_id]
+    )
+    assert _merge_live_journey_sync(merge_input).journey_name == target_name
+    # A Temporal retry after the source is already gone is a no-op.
+    assert _merge_live_journey_sync(merge_input).journey_name == target_name
+
+    with Session(engine) as session:
+        target = session.exec(select(Journey).where(Journey.external_id == uuid.UUID(target_id))).one()
+        assert session.exec(select(Journey).where(Journey.external_id == uuid.UUID(source_id))).first() is None
+        scenario = session.exec(
+            select(Scenario).where(Scenario.external_id == uuid.UUID(scenario_external_id))
+        ).one()
+        assert scenario.journey_id == target.id
+        assert scenario.grounding["captured_flow"] == source_flow
+        # Code generation is grounded in the flow the test case was explored
+        # with, not the target Journey's own pages.
+        known_pages, _, primary_page_id, _ = resolve_known_application_model_sync(
+            session, target.id, scenario
+        )
+        assert primary_page_id == mcp_page.id
+        assert [p["stage_label"] for p in known_pages] == ["MCP Connections"]
+        assert resolve_known_application_model_sync(session, target.id)[2] == tenants_page.id
