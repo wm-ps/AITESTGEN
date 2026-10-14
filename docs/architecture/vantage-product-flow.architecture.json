@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Vantage — How It Works",
+    "subtitle": "Follow left to right: blue boxes are what you do, purple boxes Vantage does for you",
+    "output": "vantage-product-flow.html",
+    "visual_preset": "signal-flow",
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "connect", "label": "1 · Connect your app", "focus": ["add_app", "check_access"], "note": "Give Vantage your app's link and a login, then confirm it can sign in." },
+      { "id": "learn", "label": "2 · Vantage learns it", "focus": ["check_access", "discover", "journeys", "scenarios"], "note": "Vantage explores your app, maps the main user journeys, and drafts scenarios to check." },
+      { "id": "create", "label": "3 · Create test cases", "focus": ["scenarios", "generate", "author", "record", "test_cases"], "note": "Three ways to create test cases: generate from scenarios, author in plain English, or record." },
+      { "id": "run", "label": "4 · Run & review", "focus": ["test_cases", "run", "results"], "note": "Run all or selected test cases; broken steps are fixed automatically and reported." }
+    ]
+  },
+  "components": [
+    { "id": "add_app", "type": "frontend", "label": "Add Application", "sublabel": "app link + login", "pos": [40, 250], "size": [150, 64] },
+    { "id": "check_access", "type": "frontend", "label": "Test Connection", "sublabel": "can Vantage sign in?", "pos": [240, 250], "size": [150, 64] },
+    { "id": "discover", "type": "database", "label": "Discover App", "sublabel": "explores every page", "pos": [470, 250], "size": [150, 64] },
+    { "id": "journeys", "type": "database", "label": "Journeys", "sublabel": "main user paths", "pos": [670, 250], "size": [150, 64] },
+    { "id": "scenarios", "type": "database", "label": "Scenarios", "sublabel": "what to check + data", "pos": [870, 250], "size": [150, 64] },
+    { "id": "author", "type": "frontend", "label": "Author Test Cases", "sublabel": "type it in English", "pos": [1100, 90], "size": [160, 64], "tag": "option 1" },
+    { "id": "generate", "type": "database", "label": "Generate Test Cases", "sublabel": "from scenarios", "pos": [1100, 250], "size": [160, 64], "tag": "option 2" },
+    { "id": "record", "type": "frontend", "label": "Record and Play", "sublabel": "click through once", "pos": [1100, 410], "size": [160, 64], "tag": "option 3" },
+    { "id": "test_cases", "type": "database", "label": "Test Cases", "sublabel": "added to a journey", "pos": [1340, 250], "size": [150, 64] },
+    { "id": "run", "type": "frontend", "label": "Run Tests", "sublabel": "all or selected", "pos": [1570, 250], "size": [150, 64] },
+    { "id": "results", "type": "database", "label": "Test Runs", "sublabel": "pass · fail · healed", "pos": [1860, 250], "size": [150, 64] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "1 · Connect your app", "wraps": ["add_app", "check_access"] },
+    { "kind": "region", "label": "2 · Vantage learns it", "wraps": ["discover", "journeys", "scenarios"] },
+    { "kind": "region", "label": "3 · Create test cases — 3 options", "wraps": ["author", "generate", "record", "test_cases"] },
+    { "kind": "region", "label": "4 · Run & review", "wraps": ["run", "results"] }
+  ],
+  "connections": [
+    { "id": "add-check", "from": "add_app", "to": "check_access", "variant": "emphasis" },
+    { "id": "check-discover", "from": "check_access", "to": "discover", "variant": "emphasis" },
+    { "id": "discover-journeys", "from": "discover", "to": "journeys", "variant": "emphasis" },
+    { "id": "journeys-scenarios", "from": "journeys", "to": "scenarios", "variant": "emphasis" },
+    { "id": "scenarios-generate", "from": "scenarios", "to": "generate", "variant": "emphasis" },
+    { "id": "author-tests", "from": "author", "to": "test_cases", "route": "orthogonal-h" },
+    { "id": "generate-tests", "from": "generate", "to": "test_cases", "variant": "emphasis" },
+    { "id": "record-tests", "from": "record", "to": "test_cases", "route": "orthogonal-h" },
+    { "id": "tests-run", "from": "test_cases", "to": "run", "variant": "emphasis" },
+    { "id": "run-results", "from": "run", "to": "results", "label": "broken steps self-heal", "variant": "emphasis" }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "How to Read This", "items": ["Go left to right, stage 1 to 4", "Blue box = a step you take", "Purple box = Vantage does it for you"] },
+    { "dot": "emerald", "title": "3 Ways to Create Test Cases", "items": ["Author: describe the test in plain English", "Generate: Vantage writes them from scenarios", "Record and Play: click through it once"] },
+    { "dot": "amber", "title": "Self-Healing Runs", "items": ["If a page changes and a step breaks", "Vantage finds the new element and retries", "Healed tests are flagged in Test Runs"] }
+  ]
+}

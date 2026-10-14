@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Vantage — Platform Architecture & Test Flows",
+    "subtitle": "Discovery, NL authoring, record & play, scheduled runs, and project download",
+    "output": "vantage-flow.html",
+    "visual_preset": "signal-flow",
+    "animation": "trace",
+    "quality_profile": "showcase",
+    "views": [
+      { "id": "discovery", "label": "Crawl to test suite", "focus": ["user", "web", "api", "temporal", "discovery", "aut", "generation", "llm"], "note": "Onboard an app: crawl it, infer journeys, generate scenarios and Playwright code." },
+      { "id": "authoring", "label": "Author with natural language", "focus": ["user", "web", "api", "temporal", "authoring", "llm", "aut"], "note": "A prompt drives a live LangGraph + Playwright MCP agent; the new test lands in the chosen or new journey." },
+      { "id": "recording", "label": "Record & play", "focus": ["user", "web", "recording", "aut", "postgres"], "note": "Remote browser over noVNC; Playwright codegen captures steps and saves them as a test case." },
+      { "id": "scheduler", "label": "Scheduled & selective runs", "focus": ["api", "scheduler", "temporal", "execution", "aut"], "note": "Temporal Schedules fire gated runs; manual runs can target selected test cases." },
+      { "id": "download", "label": "Download the project", "focus": ["user", "web", "api", "assembler"], "note": "Current suites are assembled into a runnable Playwright TypeScript ZIP." }
+    ]
+  },
+  "components": [
+    { "id": "user", "type": "external", "label": "QA Engineer", "sublabel": "browser", "pos": [40, 310] },
+    { "id": "web", "type": "frontend", "label": "Vantage Web", "sublabel": "React SPA", "pos": [220, 310] },
+    { "id": "api", "type": "backend", "label": "Vantage API", "sublabel": "FastAPI", "pos": [410, 310] },
+    { "id": "assembler", "type": "backend", "label": "Suite Assembler", "sublabel": "Playwright TS ZIP", "pos": [400, 120], "size": [140, 60], "tag": "download" },
+    { "id": "scheduler", "type": "cloud", "label": "Temporal Schedules", "sublabel": "daily · weekly · cron", "pos": [600, 120], "size": [140, 60], "tag": "scheduler" },
+    { "id": "temporal", "type": "messagebus", "label": "Temporal", "sublabel": "workflows + queues", "pos": [610, 310] },
+    { "id": "discovery", "type": "backend", "label": "Discovery Worker", "sublabel": "crawl · model · journeys", "pos": [820, 70], "size": [150, 60] },
+    { "id": "generation", "type": "backend", "label": "Generation Worker", "sublabel": "scenarios · test code", "pos": [820, 190], "size": [150, 60] },
+    { "id": "authoring", "type": "backend", "label": "Authoring Agent", "sublabel": "LangGraph · Playwright MCP", "pos": [820, 310], "size": [150, 60], "tag": "NL authoring" },
+    { "id": "execution", "type": "backend", "label": "Execution Worker", "sublabel": "run · auto-heal · gate", "pos": [820, 430], "size": [150, 60] },
+    { "id": "recording", "type": "backend", "label": "Recording Service", "sublabel": "Xvfb · noVNC · codegen", "pos": [400, 550], "size": [140, 60], "tag": "record & play" },
+    { "id": "postgres", "type": "database", "label": "PostgreSQL", "sublabel": "journeys · tests · runs", "pos": [620, 550], "size": [140, 60] },
+    { "id": "llm", "type": "external", "label": "LLM Provider", "sublabel": "hosted AI", "pos": [1080, 130] },
+    { "id": "aut", "type": "external", "label": "App Under Test", "sublabel": "customer web app", "pos": [1280, 310], "size": [130, 60] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "Vantage platform", "wraps": ["web", "api", "assembler", "scheduler", "temporal", "discovery", "generation", "authoring", "execution", "recording", "postgres"] }
+  ],
+  "connections": [
+    { "id": "user-web", "from": "user", "to": "web", "label": "HTTPS", "variant": "emphasis" },
+    { "id": "web-api", "from": "web", "to": "api", "label": "REST", "variant": "emphasis" },
+    { "id": "api-temporal", "from": "api", "to": "temporal", "label": "start", "variant": "emphasis", "labelAt": [590, 358] },
+    { "id": "api-assembler", "from": "api", "to": "assembler", "label": "GET /download", "fromSide": "top", "toSide": "bottom" },
+    { "id": "api-scheduler", "from": "api", "to": "scheduler", "label": "cadence", "route": "orthogonal-h" },
+    { "id": "scheduler-temporal", "from": "scheduler", "to": "temporal", "label": "fire", "variant": "dashed", "fromSide": "bottom", "toSide": "top", "labelAt": [698, 248] },
+    { "id": "temporal-discovery", "from": "temporal", "to": "discovery", "variant": "dashed", "route": "orthogonal-h" },
+    { "id": "temporal-generation", "from": "temporal", "to": "generation", "variant": "dashed", "route": "orthogonal-h" },
+    { "id": "temporal-authoring", "from": "temporal", "to": "authoring", "variant": "dashed" },
+    { "id": "temporal-execution", "from": "temporal", "to": "execution", "variant": "dashed", "route": "orthogonal-h" },
+    { "id": "generation-llm", "from": "generation", "to": "llm", "label": "generate", "route": "orthogonal-h", "labelAt": [1056, 180] },
+    { "id": "authoring-llm", "from": "authoring", "to": "llm", "route": "orthogonal-h" },
+    { "id": "discovery-aut", "from": "discovery", "to": "aut", "label": "crawl", "variant": "emphasis", "fromSide": "right", "toSide": "top", "via": [[1345, 100]] },
+    { "id": "authoring-aut", "from": "authoring", "to": "aut", "label": "live explore", "variant": "emphasis" },
+    { "id": "execution-aut", "from": "execution", "to": "aut", "label": "Playwright run", "variant": "emphasis", "fromSide": "right", "toSide": "left", "via": [[1240, 460], [1240, 352]], "labelAt": [1120, 450] },
+    { "id": "web-recording", "from": "web", "to": "recording", "label": "noVNC ws", "variant": "security", "fromSide": "bottom", "toSide": "left", "via": [[280, 580]] },
+    { "id": "recording-postgres", "from": "recording", "to": "postgres", "label": "save", "variant": "dashed" },
+    { "id": "recording-aut", "from": "recording", "to": "aut", "label": "codegen browser", "variant": "emphasis", "fromSide": "bottom", "toSide": "bottom", "via": [[470, 670], [1345, 670]] },
+    { "id": "api-postgres", "from": "api", "to": "postgres", "fromSide": "bottom", "toSide": "top", "via": [[470, 460], [690, 460]] }
+  ],
+  "cards": [
+    { "dot": "cyan", "title": "Discovery to Suite", "items": ["Crawl, build app model, infer journeys", "Scenarios + Playwright code per journey", "Live execute-and-heal before a test ships"] },
+    { "dot": "emerald", "title": "Author & Record", "items": ["NL prompt drives a live browser agent", "Recordings use real Playwright codegen", "Both land in a chosen or new journey"] },
+    { "dot": "amber", "title": "Run, Schedule, Download", "items": ["Full suite or selected test cases", "Schedules skip while a run is in flight", "ZIP = same project the worker executes"] },
+    { "dot": "rose", "title": "Platform Services", "items": ["Vault holds app credentials", "Object store keeps screenshots + traces", "Daily cleanup and stale-run reconcile"] }
+  ]
+}
