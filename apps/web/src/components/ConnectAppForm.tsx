@@ -279,7 +279,7 @@ export function ConnectAppForm({
               </div>
             </div>
 
-            <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, padding: 14, background: 'var(--panel-2)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, padding: 14, background: 'var(--panel)', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <Field label="Login URL (optional)">
                 <input
                   type="url"
@@ -318,7 +318,7 @@ export function ConnectAppForm({
             </div>
 
             {!readOnly && (
-              <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, padding: 14, background: 'var(--panel-2)', display: 'flex', flexDirection: 'column', gap: notesExpanded ? 14 : 0 }}>
+              <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, padding: 14, background: 'var(--panel)', display: 'flex', flexDirection: 'column', gap: notesExpanded ? 14 : 0 }}>
                 <button
                   type="button"
                   onClick={() => setNotesExpanded((v) => !v)}
@@ -350,7 +350,7 @@ export function ConnectAppForm({
             )}
 
             {!readOnly && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', border: '1px solid var(--border-2)', borderRadius: 10, background: 'var(--panel-2)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', border: '1px solid var(--border-2)', borderRadius: 10, background: 'var(--panel)' }}>
                 <FontAwesomeIcon icon={faBolt} style={{ fontSize: 13, color: 'var(--fg-3)', flexShrink: 0 }} />
                 <div style={{ flex: 1, fontSize: 12.5, color: 'var(--fg-3)' }}>
                   Discovery uses the workspace defaults for runtime, page count and journey limits. Change them in Configuration → Settings.

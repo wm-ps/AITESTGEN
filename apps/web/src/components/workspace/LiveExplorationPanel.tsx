@@ -43,7 +43,7 @@ const fieldStyle: React.CSSProperties = {
   borderRadius: 9,
   fontSize: 13,
   color: 'var(--fg-1)',
-  background: 'var(--panel-2)',
+  background: 'var(--panel)',
   fontFamily: 'inherit',
   outline: 'none',
 }
@@ -329,7 +329,7 @@ export function LiveExplorationPanel({
               borderRadius: 9,
               fontSize: 13,
               color: 'var(--fg-1)',
-              background: 'var(--panel-2)',
+              background: 'var(--panel)',
               fontFamily: 'inherit',
               resize: 'vertical',
               outline: 'none',

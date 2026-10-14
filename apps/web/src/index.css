@@ -54,6 +54,44 @@ textarea:focus-visible,
   outline-offset: 2px;
 }
 
+/* Shared field states. Most fields carry inline styles (border, background,
+   `outline: 'none'`), so these use !important to win over them: a visible
+   focus ring matching the Selective Run search input, a hover cue, and a
+   muted look for genuinely disabled fields so editable ones read as active. */
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):hover:not(:disabled):not(:focus),
+select:hover:not(:disabled):not(:focus),
+textarea:hover:not(:disabled):not(:focus) {
+  border-color: var(--border-3) !important;
+}
+
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):not([data-bare]):focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+.field-shell:focus-within {
+  outline: none !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-wash) !important;
+}
+
+/* Borderless input living inside a bordered shell (data-bare): the shell
+   shows the ring, the input just drops its own outline. */
+input[data-bare]:focus-visible {
+  outline: none;
+}
+
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):disabled,
+select:disabled,
+textarea:disabled {
+  background: var(--panel-2) !important;
+  color: var(--fg-4) !important;
+  cursor: not-allowed;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--fg-4);
+}
+
 .caption,
 .label {
   color: var(--fg-4);

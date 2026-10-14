@@ -63,8 +63,7 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
           maxWidth: 520,
           position: 'relative',
           overflow: 'hidden',
-          background: 'linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,255,255,0.82))',
-          backdropFilter: 'blur(20px) saturate(1.3)',
+          background: 'var(--panel)',
           border: '1px solid var(--border-2)',
           borderRadius: 16,
           boxShadow: '0 30px 80px rgba(8,12,20,0.34), var(--panel-shadow)',
@@ -73,11 +72,6 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
           boxSizing: 'border-box',
         }}
       >
-        <div
-          aria-hidden="true"
-          style={{ position: 'absolute', left: -60, top: -120, width: 320, height: 320, borderRadius: 1000, background: 'var(--glow)', pointerEvents: 'none' }}
-        />
-
         <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', gap: 13, padding: '22px 22px 18px', borderBottom: '1px solid var(--line)' }}>
           <div
             style={{
@@ -135,6 +129,7 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
                     <span style={{ fontSize: 11, color: 'var(--fg-5)', whiteSpace: 'nowrap', flex: 'none' }}>Comma-separate for several</span>
                   </div>
                   <div
+                    className="field-shell"
                     style={{
                       display: 'flex',
                       alignItems: 'center',
@@ -143,7 +138,7 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
                       padding: '0 13px',
                       borderRadius: 10,
                       border: '1px solid var(--border-2)',
-                      background: 'var(--bg-2)',
+                      background: 'var(--panel)',
                       boxShadow: 'inset 0 1px 2px rgba(16,20,30,0.04)',
                     }}
                   >
@@ -152,6 +147,7 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
                       type="email"
                       required
                       autoFocus
+                      data-bare
                       placeholder="Enter their email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
@@ -221,7 +217,7 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
               </div>
             </fieldset>
 
-            <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 10, padding: '14px 22px', borderTop: '1px solid var(--line)', background: 'var(--panel-2)' }}>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 10, padding: '14px 22px', borderTop: '1px solid var(--line)', background: 'var(--panel)' }}>
               <div style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: 'var(--fg-5)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 Invitation expires in 7 days
               </div>

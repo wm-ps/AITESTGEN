@@ -32,7 +32,7 @@ const fieldInputStyle: React.CSSProperties = {
   borderRadius: 8,
   fontSize: 13.5,
   color: 'var(--fg-1)',
-  background: 'var(--panel-2)',
+  background: 'var(--panel)',
   outline: 'none',
   width: '100%',
   boxSizing: 'border-box',
@@ -508,7 +508,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
             <select
               value={settings.delete_project_after}
               onChange={(e) => setSettings({ ...settings, delete_project_after: e.target.value as RetentionPeriod })}
-              style={{ height: 32, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 8, fontSize: 12.5, color: 'var(--fg-1)', background: 'var(--panel-2)', flex: 'none' }}
+              style={{ height: 32, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 8, fontSize: 12.5, color: 'var(--fg-1)', background: 'var(--panel)', flex: 'none' }}
             >
               <option value="1_day">After 1 day</option>
               <option value="1_week">After 1 week</option>
