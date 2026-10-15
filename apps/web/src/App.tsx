@@ -120,6 +120,17 @@ function App() {
   // behavior the old 'test-suite-results' view had.
   const [justGeneratedSuite, setJustGeneratedSuite] = useState(false)
   const [autoTriggerRun, setAutoTriggerRun] = useState(false)
+  // One-shot: the scenario a just-saved recording created — Test cases
+  // (TestSuiteTab) brings its row into view and flashes it, then reports it
+  // consumed. Cleared on any navigation away from 'suite' or to another
+  // application, so a stale one never fires on a later visit.
+  const [highlightScenarioId, setHighlightScenarioId] = useState<string | null>(null)
+  useEffect(() => {
+    if (appTab !== 'suite') setHighlightScenarioId(null)
+  }, [appTab])
+  useEffect(() => {
+    setHighlightScenarioId(null)
+  }, [application?.id])
   // Same one-shot idea for Scenarios: journeys existing is not evidence
   // generation was triggered (Scenarios is a standing sidebar tab, reachable
   // without ever clicking Journeys' Continue) — only this deliberate
@@ -296,6 +307,7 @@ function App() {
     setJustGeneratedSuite(false)
     setAutoTriggerRun(false)
     setJustStartedScenarios(false)
+    setHighlightScenarioId(null)
     setAppTab(tab as AppTab)
   }
 
@@ -370,7 +382,12 @@ function App() {
           applicationId={application.id}
           applicationName={application.name}
           applicationUrl={application.url}
-          onSaved={setSuccessToast}
+          onSaved={(message, saved) => {
+            setSuccessToast(message)
+            setJustGeneratedSuite(false)
+            setHighlightScenarioId(saved.scenarioExternalId)
+            setAppTab('suite')
+          }}
           onCancelled={setSuccessToast}
         />
       )}
@@ -392,6 +409,8 @@ function App() {
             activeTab={appTab as WorkspaceTab}
             onActiveTabChange={(tab) => setAppTab(tab)}
             autoTriggerRun={autoTriggerRun}
+            highlightScenarioId={highlightScenarioId}
+            onHighlightConsumed={() => setHighlightScenarioId(null)}
           />
         )
       )}

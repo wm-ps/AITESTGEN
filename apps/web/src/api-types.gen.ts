@@ -1703,6 +1703,10 @@ export interface components {
         LiveTestCaseCreate: {
             /** Prompt */
             prompt: string;
+            /** Journey Id */
+            journey_id?: string | null;
+            /** Journey Name */
+            journey_name?: string | null;
         };
         /** LiveTestCaseFieldRead */
         LiveTestCaseFieldRead: {
@@ -2011,6 +2015,11 @@ export interface components {
             delete_project_after: "1_day" | "1_week" | "1_month";
             /** Max Heal Attempts */
             max_heal_attempts: number;
+            /**
+             * Screenshot Capture
+             * @enum {string}
+             */
+            screenshot_capture: "failed" | "passed" | "all";
         };
         /** SettingsUpdate */
         SettingsUpdate: {
@@ -2024,6 +2033,8 @@ export interface components {
             delete_project_after?: ("1_day" | "1_week" | "1_month") | null;
             /** Max Heal Attempts */
             max_heal_attempts?: number | null;
+            /** Screenshot Capture */
+            screenshot_capture?: ("failed" | "passed" | "all") | null;
             /**
              * Max Discovery Duration Minutes
              * @default __unset__

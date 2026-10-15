@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { faArrowUpRightFromSquare, faCircleDot, faVideo } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { ApiError, api, type RecordingAuthMode } from '../api'
-import { useRecordingControlSocket } from '../hooks/useRecordingControlSocket'
+import { type SavedResult, useRecordingControlSocket } from '../hooks/useRecordingControlSocket'
 import { AppIdentityLine } from './AppIdentityLine'
 import { LoadingDots } from './LoadingDots'
 import { buildRecordingSessionWindowUrl } from './RecordingSessionWindow'
@@ -31,7 +31,7 @@ export function RecordAndPlay({
   applicationId: string
   applicationName: string
   applicationUrl: string
-  onSaved: (message: string) => void
+  onSaved: (message: string, saved: SavedResult) => void
   onCancelled: (message: string) => void
 }) {
   const [authMode, setAuthMode] = useState<RecordingAuthMode>('logged_out')
@@ -103,7 +103,7 @@ export function RecordAndPlay({
   // and goes straight back to idle, ready to record again immediately.
   useEffect(() => {
     if (stage !== 'success' || !saved) return
-    onSaved(`Test case TC-${String(saved.testCaseNumber).padStart(3, '0')} was added to the test suite.`)
+    onSaved(`Test case TC-${String(saved.testCaseNumber).padStart(3, '0')} was added to the test suite.`, saved)
     resetToIdle()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage, saved])

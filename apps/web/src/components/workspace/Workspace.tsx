@@ -64,6 +64,8 @@ export function Workspace({
   onActiveTabChange,
   onTabsChange,
   autoTriggerRun = false,
+  highlightScenarioId = null,
+  onHighlightConsumed,
 }: {
   applicationId: string
   applicationName: string
@@ -82,6 +84,10 @@ export function Workspace({
   // (if any) has somewhere to surface, mirroring what the old standalone
   // TestExecutionResults.tsx screen used to show.
   autoTriggerRun?: boolean
+  // A just-recorded test case's scenario for the Test cases tab to bring
+  // into view and flash once — passed straight through to TestSuiteTab.
+  highlightScenarioId?: string | null
+  onHighlightConsumed?: () => void
 }) {
   // Set once, the moment "Run Suite"/"Run All Tests" switches to the Runs
   // tab — consumed by RunsTab's own auto-select-newest-run poll, then never
@@ -260,7 +266,13 @@ export function Workspace({
         {activeTab === 'overview' && (
           <OverviewTab applicationId={applicationId} onNavigateTab={onActiveTabChange} />
         )}
-        {activeTab === 'suite' && <TestSuiteTab applicationId={applicationId} />}
+        {activeTab === 'suite' && (
+          <TestSuiteTab
+            applicationId={applicationId}
+            highlightScenarioId={highlightScenarioId}
+            onHighlightConsumed={onHighlightConsumed}
+          />
+        )}
         {activeTab === 'schedules' && <SchedulesTab applicationId={applicationId} />}
         {activeTab === 'notes' && <NotesTab applicationId={applicationId} />}
         {activeTab === 'export' && <DownloadTab applicationId={applicationId} applicationName={applicationName} />}
