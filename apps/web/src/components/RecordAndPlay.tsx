@@ -19,18 +19,20 @@ import { buildRecordingSessionWindowUrl } from './RecordingSessionWindow'
 // to every attached control socket, so this tab and the popped-out window
 // each having their own is a supported shape, not a workaround).
 
-type Stage = 'idle' | 'starting' | 'recording' | 'saving' | 'success' | 'error'
+type Stage = 'idle' | 'starting' | 'recording' | 'saving' | 'success' | 'error' | 'cancelled'
 
 export function RecordAndPlay({
   applicationId,
   applicationName,
   applicationUrl,
   onSaved,
+  onCancelled,
 }: {
   applicationId: string
   applicationName: string
   applicationUrl: string
   onSaved: (message: string) => void
+  onCancelled: (message: string) => void
 }) {
   const [authMode, setAuthMode] = useState<RecordingAuthMode>('logged_out')
   const [flowName, setFlowName] = useState('')
@@ -105,6 +107,17 @@ export function RecordAndPlay({
     resetToIdle()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage, saved])
+
+  // Cancel is triggered from the popup; this tab hears about it on its own
+  // control socket. 'cancelled' is only ever set once the service has
+  // persisted the cancel (its `cancelled` message, or a 4410 close), so the
+  // toast never claims a cancel that didn't happen.
+  useEffect(() => {
+    if (stage !== 'cancelled') return
+    onCancelled('Recording cancelled successfully.')
+    resetToIdle()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage])
 
   return (
     <div style={{ maxWidth: 1560, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: 20 }}>

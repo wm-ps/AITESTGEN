@@ -23,12 +23,22 @@ class InvalidRecordingToken(Exception):
     session process tree is ever launched for it (plan §10 verification)."""
 
 
+class RecordingSessionCancelled(InvalidRecordingToken):
+    """The session was explicitly cancelled — the control route tells the
+    client so (`{"type": "cancelled"}` + close 4410) instead of a bare
+    rejection, so a reopened popup or a reconnecting tab that missed the
+    original broadcast still lands on "cancelled", never a retry loop."""
+
+
+TERMINAL_STATUSES = ("complete", "failed", "cancelled")
+
+
 def load_session_for_connect(raw_token: str) -> RecordingSession:
     """Validated at *every* connect (mint-time validity isn't reused
     silently, plan §10) — but reconnect within the grace window is a valid
     connect too, so this only rejects a token that's outright unknown,
     past `expires_at` while still `pending` (never used), or in a terminal
-    state (`complete`/`failed`) — `status == "recording"` stays acceptable
+    state (`complete`/`failed`/`cancelled`) — `status == "recording"` stays acceptable
     for as long as the runtime itself is willing to reattach it (plan §3)."""
     token_hash = hash_token(raw_token)
     with Session(engine) as session:
@@ -37,7 +47,9 @@ def load_session_for_connect(raw_token: str) -> RecordingSession:
         ).first()
         if recording_session is None:
             raise InvalidRecordingToken("unknown token")
-        if recording_session.status in ("complete", "failed"):
+        if recording_session.status == "cancelled":
+            raise RecordingSessionCancelled("session was cancelled")
+        if recording_session.status in TERMINAL_STATUSES:
             raise InvalidRecordingToken("session already finished")
         if recording_session.status == "pending" and recording_session.expires_at < datetime.now(
             UTC
@@ -82,3 +94,25 @@ def mark_failed_sync(recording_session_id: uuid.UUID, *, error_message: str) -> 
         row.error_message = error_message
         session.add(row)
         session.commit()
+
+
+def mark_cancelled_sync(recording_session_id: uuid.UUID) -> bool:
+    """Row-locked conditional transition — only a still-live session
+    (`pending`/`recording`) becomes `cancelled`; a row some other path
+    already finished is left untouched and this returns False. DB errors
+    propagate so the caller never reports a cancel that didn't persist."""
+    with Session(engine) as session:
+        row = session.get(RecordingSession, recording_session_id, with_for_update=True)
+        assert row is not None
+        if row.status not in ("pending", "recording"):
+            return False
+        row.status = "cancelled"
+        session.add(row)
+        session.commit()
+        return True
+
+
+def load_status_sync(recording_session_id: uuid.UUID) -> str | None:
+    with Session(engine) as session:
+        row = session.get(RecordingSession, recording_session_id)
+        return row.status if row is not None else None

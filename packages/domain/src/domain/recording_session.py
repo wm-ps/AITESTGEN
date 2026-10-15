@@ -32,7 +32,7 @@ from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
 RecordingAuthMode = Literal["logged_out", "authenticated"]
-RecordingSessionStatus = Literal["pending", "recording", "complete", "failed"]
+RecordingSessionStatus = Literal["pending", "recording", "complete", "failed", "cancelled"]
 
 
 class RecordingSession(SQLModel, table=True):

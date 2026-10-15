@@ -7,7 +7,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 // to all of them, so two simultaneous listeners is an already-supported
 // shape, not a workaround).
 
-export type ControlStage = 'recording' | 'saving' | 'success' | 'error'
+export type ControlStage = 'recording' | 'saving' | 'success' | 'error' | 'cancelled'
 
 export type SavedResult = {
   journeyExternalId: string
@@ -30,9 +30,14 @@ const RECONNECT_MAX_ATTEMPTS = 30
 // code 1006). A periodic real message is what defeats that class of
 // middlebox, unlike a low-level WS protocol ping (not exposed to browser JS
 // anyway). The server tolerates any message type it doesn't recognize
-// (recordings_control's loop only acts on "stop"), so this needs no
+// (recordings_control's loop only acts on "stop"/"cancel"), so this needs no
 // backend change.
 const PING_INTERVAL_MS = 30_000
+
+// The recording service closes with this code once a session is cancelled
+// (and on any later connect to it) — only ever sent after the cancel was
+// persisted, so it's as authoritative as the `cancelled` message itself.
+const CANCELLED_CLOSE_CODE = 4410
 
 export function useRecordingControlSocket(controlWsUrl: string | null) {
   const [stage, setStage] = useState<ControlStage>('recording')
@@ -44,6 +49,8 @@ export function useRecordingControlSocket(controlWsUrl: string | null) {
   // open — never silently swallow that click. Cleared on the next
   // reconnect or successful send.
   const [stopWarning, setStopWarning] = useState<string | null>(null)
+  // The service couldn't persist a cancel — the session is still recording.
+  const [cancelError, setCancelError] = useState<string | null>(null)
 
   const socketRef = useRef<WebSocket | null>(null)
   const reconnectAttemptsRef = useRef(0)
@@ -53,12 +60,21 @@ export function useRecordingControlSocket(controlWsUrl: string | null) {
   stageRef.current = stage
 
   useEffect(() => {
-    if (!controlWsUrl) return
+    if (!controlWsUrl) {
+      // Reset on teardown, not only on the next connect — otherwise the
+      // next session's first render would still see the previous terminal
+      // stage ('success'/'cancelled') and re-fire a consumer's effect on it.
+      setStage('recording')
+      setSaved(null)
+      setCancelError(null)
+      return
+    }
 
     setStage('recording')
     setReconnecting(false)
     setErrorMessage(null)
     setSaved(null)
+    setCancelError(null)
     reconnectAttemptsRef.current = 0
 
     let cancelled = false
@@ -115,13 +131,17 @@ export function useRecordingControlSocket(controlWsUrl: string | null) {
             testCaseNumber: Number(message.test_case_number),
           })
           setStage('success')
+        } else if (message.type === 'cancelled') {
+          setStage('cancelled')
+        } else if (message.type === 'cancel_failed') {
+          setCancelError(typeof message.error === 'string' ? message.error : 'Could not cancel the recording.')
         } else if (message.type === 'failed') {
           setErrorMessage(typeof message.error === 'string' ? message.error : 'The recording could not be saved.')
           setStage('error')
         }
       }
 
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         const isCurrent = socketRef.current === socket
         if (isCurrent) {
           socketRef.current = null
@@ -129,6 +149,10 @@ export function useRecordingControlSocket(controlWsUrl: string | null) {
           stopPing()
         }
         if (cancelled || !isCurrent) return
+        if (event.code === CANCELLED_CLOSE_CODE) {
+          setStage('cancelled')
+          return
+        }
         // A finished session (success/error) already moved off 'recording'/
         // 'saving' — only a still-in-progress session's unexpected drop
         // should retry.
@@ -165,5 +189,16 @@ export function useRecordingControlSocket(controlWsUrl: string | null) {
     socket.send(JSON.stringify({ type: 'stop' }))
   }, [])
 
-  return { stage, reconnecting, errorMessage, saved, connected, stopWarning, sendStop }
+  const sendCancel = useCallback(() => {
+    const socket = socketRef.current
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      setCancelError('Not connected right now — reconnecting. Try again in a moment.')
+      return false
+    }
+    setCancelError(null)
+    socket.send(JSON.stringify({ type: 'cancel' }))
+    return true
+  }, [])
+
+  return { stage, reconnecting, errorMessage, saved, connected, stopWarning, sendStop, cancelError, sendCancel }
 }

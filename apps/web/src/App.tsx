@@ -371,6 +371,7 @@ function App() {
           applicationName={application.name}
           applicationUrl={application.url}
           onSaved={setSuccessToast}
+          onCancelled={setSuccessToast}
         />
       )}
       {view === 'app' && application && appTab !== 'journeys' && appTab !== 'scenarios' && appTab !== 'record' && (

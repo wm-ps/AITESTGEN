@@ -110,14 +110,16 @@ class CodegenSession:
     def has_exited(self) -> bool:
         return self._proc is not None and self._proc.returncode is not None
 
-    async def stop_and_read_output(self) -> str:
+    async def terminate(self) -> None:
         """SIGTERM's Codegen specifically (not the whole session process
         group — that happens separately, after this) so it gets the chance
-        to flush `--output`'s file on a clean exit; escalates to SIGKILL
-        only after `STOP_GRACE_SECONDS` (plan §11). Returns whatever ended
-        up on disk, including an empty string if Codegen never wrote
-        anything (e.g. stopped before any action was recorded)."""
-        assert self._proc is not None
+        to flush `--output`'s file and close its own Chromium tree (which is
+        a descendant of this pid, *not* a member of the session's process
+        group, so the display's killpg alone wouldn't reach it); escalates
+        to SIGKILL only after `STOP_GRACE_SECONDS` (plan §11). No-op if
+        Codegen never started or already exited."""
+        if self._proc is None:
+            return
         if self._proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
                 self._proc.send_signal(signal.SIGTERM)
@@ -128,6 +130,12 @@ class CodegenSession:
                     self._proc.kill()
                 await self._proc.wait()
 
+    async def stop_and_read_output(self) -> str:
+        """`terminate()`, then return whatever ended up on disk, including
+        an empty string if Codegen never wrote anything (e.g. stopped before
+        any action was recorded)."""
+        assert self._proc is not None
+        await self.terminate()
         if not self._output_path.exists():
             return ""
         return self._output_path.read_text(encoding="utf-8")

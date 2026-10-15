@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import RFB from '@novnc/novnc'
-import { faCircleDot } from '@fortawesome/free-solid-svg-icons'
+import { faCircleDot, faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import type { RecordingAuthMode } from '../api'
 import { useRecordingControlSocket } from '../hooks/useRecordingControlSocket'
@@ -60,18 +60,61 @@ export function getRecordingPopupParamsFromUrl(): RecordingPopupParams | null {
   }
 }
 
-// Long enough to actually read the test case number before the tab closes
-// itself — only the success path auto-closes; an error state stays open so
-// the human can read why and decide what to do (retry, or close manually).
+// Long enough to actually read the result before the tab closes itself —
+// only the success and cancelled paths auto-close; an error state stays open
+// so the human can read why and decide what to do (retry, or close manually).
 const AUTO_CLOSE_DELAY_MS = 2500
 
+// The service replies to a cancel before any teardown, so a healthy cancel
+// answers in well under a second — this is only a backstop.
+const CANCEL_REPLY_TIMEOUT_MS = 20_000
+
 export function RecordingSessionWindow({ vncWsUrl, controlWsUrl, authMode, applicationName }: RecordingPopupParams) {
-  const { stage, reconnecting, errorMessage, saved, stopWarning, sendStop } = useRecordingControlSocket(controlWsUrl)
+  const { stage, reconnecting, errorMessage, saved, connected, stopWarning, sendStop, cancelError, sendCancel } =
+    useRecordingControlSocket(controlWsUrl)
+  const [confirmingCancel, setConfirmingCancel] = useState(false)
+  // Waiting on the service's `cancelled` (or `cancel_failed`) — the stage
+  // only ever flips to 'cancelled' once the cancel is actually persisted.
+  const [cancelling, setCancelling] = useState(false)
+  // No reply at all (e.g. a recording service that predates cancel and
+  // silently ignores the message) must not leave the spinner up forever.
+  const [cancelTimeoutError, setCancelTimeoutError] = useState<string | null>(null)
+  useEffect(() => {
+    if (cancelError) setCancelling(false)
+  }, [cancelError])
+  useEffect(() => {
+    if (!cancelling || stage !== 'recording') return
+    const timer = setTimeout(() => {
+      setCancelling(false)
+      setCancelTimeoutError("The recording service didn't respond. Try again.")
+    }, CANCEL_REPLY_TIMEOUT_MS)
+    return () => clearTimeout(timer)
+  }, [cancelling, stage])
+
+  const confirmCancel = () => {
+    setCancelTimeoutError(null)
+    setCancelling(sendCancel())
+  }
   // RFB only ever inserts its canvas into the DOM once its own connection
   // reaches 'connected' — a stalled/failed handshake past the raw
   // WebSocket (security negotiation, ServerInit, etc.) otherwise leaves
   // this silently blank forever with no indication anywhere of why.
   const [vncError, setVncError] = useState<string | null>(null)
+
+  // Cancel / Stop and Save stay hidden until the recording screen is
+  // actually usable: the control socket is only accepted once the service
+  // has fully started the session (display + Codegen), and RFB's `connect`
+  // means the video is rendering. Latched — a later transient reconnect
+  // doesn't hide them again (the "Reconnecting" indicator covers that).
+  // A VNC error shows them regardless, so a video that never loads can't
+  // strand the human without a way to cancel.
+  const [vncConnected, setVncConnected] = useState(false)
+  const handleVncConnect = useCallback(() => setVncConnected(true), [])
+  const [screenReady, setScreenReady] = useState(false)
+  useEffect(() => {
+    if (vncConnected && connected) setScreenReady(true)
+  }, [vncConnected, connected])
+  const showControls = screenReady || vncError !== null
 
   // This window was opened via `window.open()` (RecordAndPlay.tsx's
   // `startRecording`), so `window.close()` is allowed here — the opener
@@ -79,7 +122,7 @@ export function RecordingSessionWindow({ vncWsUrl, controlWsUrl, authMode, appli
   // on to its toast+reset; this tab doesn't depend on that in any way, it
   // just closes itself once the human's had a moment to read the result.
   useEffect(() => {
-    if (stage !== 'success') return
+    if (stage !== 'success' && stage !== 'cancelled') return
     const timer = setTimeout(() => window.close(), AUTO_CLOSE_DELAY_MS)
     return () => clearTimeout(timer)
   }, [stage])
@@ -128,30 +171,147 @@ export function RecordingSessionWindow({ vncWsUrl, controlWsUrl, authMode, appli
               <span style={{ fontSize: 12, color: '#ffb84d', flex: 'none' }}>{stopWarning}</span>
             )}
           </div>
-          <button
-            type="button"
-            onClick={sendStop}
-            disabled={stage === 'saving'}
+          {showControls ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>
+              <button
+                type="button"
+                onClick={() => setConfirmingCancel(true)}
+                disabled={stage === 'saving'}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  height: 30,
+                  padding: '0 14px',
+                  borderRadius: 7,
+                  background: 'transparent',
+                  color: 'rgba(255,255,255,0.85)',
+                  border: '1px solid rgba(255,255,255,0.3)',
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  cursor: stage === 'saving' ? 'default' : 'pointer',
+                  opacity: stage === 'saving' ? 0.5 : 1,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={sendStop}
+                disabled={stage === 'saving'}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  height: 30,
+                  padding: '0 14px',
+                  borderRadius: 7,
+                  background: '#d33',
+                  color: 'white',
+                  border: 'none',
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  cursor: stage === 'saving' ? 'default' : 'pointer',
+                  opacity: stage === 'saving' ? 0.7 : 1,
+                  flex: 'none',
+                }}
+              >
+                {stage === 'saving' ? <LoadingDots label="Saving" /> : 'Stop and Save'}
+              </button>
+            </div>
+          ) : (
+            <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)', flex: 'none' }}>
+              <LoadingDots label="Loading recording screen" />
+            </span>
+          )}
+        </div>
+
+        {confirmingCancel && stage === 'recording' && (
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Discard recording"
+            onClick={() => {
+              if (!cancelling) setConfirmingCancel(false)
+            }}
             style={{
-              display: 'inline-flex',
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(15,23,42,0.6)',
+              display: 'flex',
               alignItems: 'center',
-              gap: 8,
-              height: 30,
-              padding: '0 14px',
-              borderRadius: 7,
-              background: '#d33',
-              color: 'white',
-              border: 'none',
-              fontSize: 12.5,
-              fontWeight: 600,
-              cursor: stage === 'saving' ? 'default' : 'pointer',
-              opacity: stage === 'saving' ? 0.7 : 1,
-              flex: 'none',
+              justifyContent: 'center',
+              padding: 24,
+              zIndex: 100,
             }}
           >
-            {stage === 'saving' ? <LoadingDots label="Saving" /> : 'Stop and Save'}
-          </button>
-        </div>
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{ maxWidth: 420, width: '100%', padding: 24, background: 'var(--panel, #fff)', borderRadius: 14, boxShadow: 'var(--panel-shadow)' }}
+            >
+              <div style={{ display: 'flex', gap: 14, marginBottom: 18 }}>
+                <span
+                  aria-hidden="true"
+                  style={{
+                    display: 'inline-flex',
+                    width: 40,
+                    height: 40,
+                    borderRadius: 1000,
+                    background: 'color-mix(in srgb, var(--bad, #d33) 12%, transparent)',
+                    color: 'var(--bad, #d33)',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0,
+                  }}
+                >
+                  <FontAwesomeIcon icon={faTriangleExclamation} style={{ fontSize: 17 }} />
+                </span>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4, color: 'var(--fg, #1b1f24)' }}>
+                    Discard this recording?
+                  </div>
+                  <p style={{ margin: 0, lineHeight: 1.5, fontSize: 13, color: 'var(--fg-3, #666)' }}>
+                    Everything recorded so far will be thrown away. Nothing is saved to the test suite.
+                  </p>
+                  {(cancelError ?? cancelTimeoutError) && (
+                    <p style={{ margin: '8px 0 0', lineHeight: 1.5, fontSize: 12.5, color: 'var(--bad, #d33)' }}>
+                      {cancelError ?? cancelTimeoutError}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+                <button
+                  type="button"
+                  disabled={cancelling}
+                  onClick={() => setConfirmingCancel(false)}
+                  style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border-2, #ddd)', background: 'var(--panel, #fff)', color: 'var(--fg-2, #333)', fontWeight: 600, cursor: cancelling ? 'default' : 'pointer' }}
+                >
+                  Keep recording
+                </button>
+                <button
+                  type="button"
+                  disabled={cancelling}
+                  onClick={confirmCancel}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '9px 16px',
+                    borderRadius: 8,
+                    border: 'none',
+                    background: 'var(--bad, #d33)',
+                    color: '#FFFFFF',
+                    fontWeight: 600,
+                    cursor: cancelling ? 'default' : 'pointer',
+                    opacity: cancelling ? 0.7 : 1,
+                  }}
+                >
+                  {cancelling ? <LoadingDots label="Discarding" /> : 'Discard'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {authMode === 'logged_out' && (
           <div
@@ -168,7 +328,12 @@ export function RecordingSessionWindow({ vncWsUrl, controlWsUrl, authMode, appli
         )}
 
         <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-          <VncCanvas url={vncWsUrl} style={{ width: '100%', height: '100%' }} onError={setVncError} />
+          <VncCanvas
+            url={vncWsUrl}
+            style={{ width: '100%', height: '100%' }}
+            onError={setVncError}
+            onConnect={handleVncConnect}
+          />
           {vncError && (
             <div
               style={{
@@ -192,7 +357,7 @@ export function RecordingSessionWindow({ vncWsUrl, controlWsUrl, authMode, appli
     )
   }
 
-  // Success/error: no video to show at this point — the opener tab (still
+  // Success/cancelled/error: no video to show at this point — the opener tab (still
   // open in Vantage) is the one with real "View in Suite"/"Record another"
   // actions, driven off its own independent control-socket broadcast of the
   // same saved/failed message. A normal centered card is fine here.
@@ -214,6 +379,14 @@ export function RecordingSessionWindow({ vncWsUrl, controlWsUrl, authMode, appli
           <div style={{ fontSize: 13, color: 'var(--fg-3, #666)' }}>
             Test case TC-{String(saved.testCaseNumber).padStart(3, '0')} was added to the test suite.
           </div>
+          <div style={{ fontSize: 12, color: 'var(--fg-4, #888)' }}>This tab will close automatically.</div>
+        </div>
+      )}
+
+      {stage === 'cancelled' && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, textAlign: 'center' }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg, #1b1f24)' }}>Recording cancelled</div>
+          <div style={{ fontSize: 13, color: 'var(--fg-3, #666)' }}>Nothing was saved to the test suite.</div>
           <div style={{ fontSize: 12, color: 'var(--fg-4, #888)' }}>This tab will close automatically.</div>
         </div>
       )}
@@ -278,10 +451,14 @@ function VncCanvas({
   url,
   style,
   onError,
+  onConnect,
 }: {
   url: string
   style?: React.CSSProperties
   onError: (message: string | null) => void
+  // Must be stable — it's an effect dependency, and a new identity would
+  // tear down and recreate the RFB connection.
+  onConnect: () => void
 }) {
   const outerRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -328,6 +505,7 @@ function VncCanvas({
     }
     function handleConnect() {
       onError(null)
+      onConnect()
     }
     rfb.addEventListener('securityfailure', handleSecurityFailure as EventListener)
     rfb.addEventListener('disconnect', handleDisconnect as EventListener)
@@ -339,7 +517,7 @@ function VncCanvas({
       rfb.removeEventListener('connect', handleConnect)
       rfb.disconnect()
     }
-  }, [url, onError])
+  }, [url, onError, onConnect])
 
   return (
     <div ref={outerRef} style={{ ...style, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

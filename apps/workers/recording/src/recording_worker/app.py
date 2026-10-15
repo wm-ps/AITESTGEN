@@ -5,8 +5,9 @@ strictly separate so `react-vnc`'s RFB client never sees a JSON frame):
 
     /recordings/{token}/vnc      RFB-over-websocket only, proxied straight
                                   to this session's local x11vnc port.
-    /recordings/{token}/control  JSON only: browser -> {"type": "stop"};
-                                  service -> status/saved/failed messages.
+    /recordings/{token}/control  JSON only: browser -> {"type": "stop"} or
+                                  {"type": "cancel"}; service -> status/
+                                  saved/failed/cancelled/cancel_failed.
 
 Every route re-validates the raw token (hash + expiry + status, plan §10)
 on every single connect — a token is never trusted just because an earlier
@@ -22,7 +23,12 @@ import logging
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from recording_worker.registry import RecordingServiceBusy, SessionRegistry
-from recording_worker.tokens import InvalidRecordingToken, load_session_for_connect
+from recording_worker.runtime import CANCELLED_CLOSE_CODE, RuntimeState
+from recording_worker.tokens import (
+    InvalidRecordingToken,
+    RecordingSessionCancelled,
+    load_session_for_connect,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -92,11 +98,24 @@ async def recordings_vnc(websocket: WebSocket, token: str) -> None:
         return
 
     await websocket.accept()
-    await runtime.attach(channel="vnc", socket=websocket)
+    if not await runtime.attach(channel="vnc", socket=websocket):
+        await websocket.close(code=4401)
+        return
     try:
         await _proxy_vnc(websocket, runtime.vnc_port)
     finally:
         await runtime.detach(channel="vnc", socket=websocket)
+
+
+async def _tell_cancelled(websocket: WebSocket) -> None:
+    """Accepted first so the client actually sees the message and the 4410
+    close (a pre-accept close reaches the browser as a bare 1006) — a
+    reopened popup, or a tab that missed the original broadcast while
+    reconnecting, lands on "cancelled" instead of retrying."""
+    await websocket.accept()
+    with contextlib.suppress(Exception):
+        await websocket.send_json({"type": "cancelled"})
+    await websocket.close(code=CANCELLED_CLOSE_CODE)
 
 
 @app.websocket("/recordings/{token}/control")
@@ -104,6 +123,9 @@ async def recordings_control(websocket: WebSocket, token: str) -> None:
     try:
         recording_session = load_session_for_connect(token)
         runtime = await _registry.get_or_start(recording_session)
+    except RecordingSessionCancelled:
+        await _tell_cancelled(websocket)
+        return
     except InvalidRecordingToken:
         await websocket.close(code=4401)
         return
@@ -112,12 +134,21 @@ async def recordings_control(websocket: WebSocket, token: str) -> None:
         return
 
     await websocket.accept()
-    await runtime.attach(channel="control", socket=websocket)
+    if not await runtime.attach(channel="control", socket=websocket):
+        if runtime.state == RuntimeState.CANCELLED:
+            with contextlib.suppress(Exception):
+                await websocket.send_json({"type": "cancelled"})
+            await websocket.close(code=CANCELLED_CLOSE_CODE)
+        else:
+            await websocket.close(code=4401)
+        return
     try:
         while True:
             message = await websocket.receive_json()
             if message.get("type") == "stop":
                 await runtime.request_stop()
+            elif message.get("type") == "cancel":
+                await runtime.request_cancel()
     except WebSocketDisconnect:
         pass
     finally:

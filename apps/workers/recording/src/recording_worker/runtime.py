@@ -24,7 +24,7 @@ import enum
 import logging
 import shutil
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from domain import RecordingSession
@@ -50,7 +50,12 @@ from recording_worker.persistence import (
 )
 from recording_worker.spec_normalizer import normalize_recorded_spec
 from recording_worker.steps_parser import parse_steps
-from recording_worker.tokens import mark_complete_sync, mark_failed_sync, mark_first_connect_sync
+from recording_worker.tokens import (
+    mark_cancelled_sync,
+    mark_complete_sync,
+    mark_failed_sync,
+    mark_first_connect_sync,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +69,13 @@ class RuntimeState(enum.StrEnum):
     SAVING = "saving"
     COMPLETE = "complete"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+# Custom close code for "this session was cancelled" — the browser only ever
+# sees a custom code on an *accepted* socket (a pre-accept close is an HTTP
+# 403, which the client sees as a plain 1006).
+CANCELLED_CLOSE_CODE = 4410
 
 
 class SessionRuntime:
@@ -105,6 +117,10 @@ class SessionRuntime:
         return self._display.vnc_port
 
     @property
+    def is_finished(self) -> bool:
+        return self._finished
+
+    @property
     def display_backend(self) -> NoVncDisplayBackend:
         return self._display
 
@@ -144,7 +160,15 @@ class SessionRuntime:
         self._max_duration_task = asyncio.create_task(self._max_duration_watchdog())
         await self._broadcast_control({"type": "status", "state": self.state.value})
 
-    async def attach(self, *, channel: str, socket: WebSocket) -> None:
+    async def attach(self, *, channel: str, socket: WebSocket) -> bool:
+        """False when this runtime already finished — a connect can pass
+        `get_or_start` while the session is still live and only reach here
+        after `_cleanup` has run (its socket snapshot would then miss this
+        one, leaving it attached to a dead runtime forever). `_cleanup`
+        sets `_finished` before its first await, so every attach either
+        lands in that snapshot or is refused here."""
+        if self._finished:
+            return False
         if channel == "control":
             self._control_sockets.add(socket)
         else:
@@ -153,6 +177,7 @@ class SessionRuntime:
             self._cancel_grace_timer()
             self.state = RuntimeState.RECORDING
             await self._broadcast_control({"type": "status", "state": self.state.value})
+        return True
 
     async def detach(self, *, channel: str, socket: WebSocket) -> None:
         if channel == "control":
@@ -168,14 +193,19 @@ class SessionRuntime:
     async def _grace_timeout(self) -> None:
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.sleep(RECONNECT_GRACE_SECONDS)
-            if self.state == RuntimeState.DISCONNECTED:
-                await self._finish(
-                    status="failed",
-                    error_message="abandoned: no reconnect within grace period",
-                )
+            # Same lock as stop/cancel, so this terminal path can't
+            # interleave with either of them.
+            async with self._lock:
+                if self.state == RuntimeState.DISCONNECTED:
+                    await self._finish(
+                        status="failed",
+                        error_message="abandoned: no reconnect within grace period",
+                    )
 
     def _cancel_grace_timer(self) -> None:
-        if self._grace_task is not None:
+        # Never cancel the grace task from inside itself (it reaches here via
+        # `_finish` -> `_cleanup`) — that would abort its own teardown.
+        if self._grace_task is not None and self._grace_task is not asyncio.current_task():
             self._grace_task.cancel()
             self._grace_task = None
 
@@ -251,6 +281,37 @@ class SessionRuntime:
             )
             await self._cleanup()
 
+    async def request_cancel(self) -> None:
+        """An explicit `{"type": "cancel"}` on `control` — discard the
+        recording without saving anything. The DB transition is persisted
+        *before* any teardown or `cancelled` broadcast, so a DB failure
+        never reports a false success: the session just keeps recording and
+        the client is told the cancel failed. Serialised with stop/grace via
+        `_lock`; once any terminal path has run, `_finished` makes this a
+        no-op (duplicate cancel, or a Stop that already won)."""
+        async with self._lock:
+            if self._finished:
+                return
+            try:
+                transitioned = await asyncio.to_thread(mark_cancelled_sync, self._row.id)
+            except Exception:
+                logger.exception(
+                    "recording session %s: failed to persist cancel", self._row.external_id
+                )
+                await self._broadcast_control(
+                    {"type": "cancel_failed", "error": "Could not cancel the recording. Try again."}
+                )
+                return
+            if not transitioned:
+                logger.warning(
+                    "recording session %s: cancel ignored, row already terminal",
+                    self._row.external_id,
+                )
+                return
+            self.state = RuntimeState.CANCELLED
+            await self._broadcast_control({"type": "cancelled"})
+            await self._cleanup(close_code=CANCELLED_CLOSE_CODE)
+
     async def force_stop_for_shutdown(self) -> None:
         """Graceful-shutdown path (plan §9) — a rolling deploy's SIGTERM to
         this whole service, not a per-session Stop. Never attempts to save
@@ -266,23 +327,59 @@ class SessionRuntime:
         await self._broadcast_control({"type": "failed", "error": error_message})
         await self._cleanup()
 
-    async def _cleanup(self) -> None:
+    async def _cleanup(self, *, close_code: int | None = None) -> None:
+        """Runs at most once (`_finished` is set before the first await).
+        Every step is attempted independently — one failing teardown step
+        never skips the rest — and the allocator release / registry removal
+        are each attempted exactly once."""
         if self._finished:
             return
         self._finished = True
+        try:
+            self._try_step("cancel timers", self._cancel_timers)
+            if self._codegen is not None:
+                await self._try_async_step("terminate codegen", self._codegen.terminate)
+            await self._try_async_step("stop display", self._display.stop)
+            storage_state_path = self._storage_state_path
+            if storage_state_path is not None:
+                self._try_step(
+                    "remove storage state", lambda: storage_state_path.unlink(missing_ok=True)
+                )
+            self._try_step(
+                "remove session dir", lambda: shutil.rmtree(self._session_dir, ignore_errors=True)
+            )
+            self._try_step(
+                "release display slot", lambda: self._allocator.release(self._resources.display)
+            )
+            for socket in [*self._control_sockets, *self._vnc_sockets]:
+                with contextlib.suppress(Exception):
+                    if close_code is None:
+                        await socket.close()
+                    else:
+                        await socket.close(code=close_code)
+        finally:
+            self._on_finished(self._row.token_hash)
+
+    def _cancel_timers(self) -> None:
         self._cancel_grace_timer()
         if self._max_duration_task is not None:
             self._max_duration_task.cancel()
-        with contextlib.suppress(Exception):
-            await self._display.stop()
-        if self._storage_state_path is not None:
-            self._storage_state_path.unlink(missing_ok=True)
-        shutil.rmtree(self._session_dir, ignore_errors=True)
-        self._allocator.release(self._resources.display)
-        for socket in [*self._control_sockets, *self._vnc_sockets]:
-            with contextlib.suppress(Exception):
-                await socket.close()
-        self._on_finished(self._row.token_hash)
+
+    def _try_step(self, label: str, step: Callable[[], object]) -> None:
+        try:
+            step()
+        except Exception:
+            logger.exception(
+                "recording session %s: cleanup step failed: %s", self._row.external_id, label
+            )
+
+    async def _try_async_step(self, label: str, step: Callable[[], Awaitable[object]]) -> None:
+        try:
+            await step()
+        except Exception:
+            logger.exception(
+                "recording session %s: cleanup step failed: %s", self._row.external_id, label
+            )
 
     async def _broadcast_control(self, message: dict) -> None:
         for socket in list(self._control_sockets):

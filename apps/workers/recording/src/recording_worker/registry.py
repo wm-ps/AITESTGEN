@@ -12,7 +12,13 @@ import logging
 from domain import RecordingSession
 
 from recording_worker.allocator import DisplayPortAllocator, ResourcePoolExhausted
-from recording_worker.runtime import SessionRuntime
+from recording_worker.runtime import RuntimeState, SessionRuntime
+from recording_worker.tokens import (
+    TERMINAL_STATUSES,
+    InvalidRecordingToken,
+    RecordingSessionCancelled,
+    load_status_sync,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +57,24 @@ class SessionRegistry:
             existing = self._sessions.get(recording_session.token_hash)
             if existing is not None:
                 runtime, start_task = existing
+                # Mid-`_cleanup` (entry not popped yet) — never hand out a
+                # dead runtime to attach to.
+                if runtime.is_finished:
+                    if runtime.state == RuntimeState.CANCELLED:
+                        raise RecordingSessionCancelled("session was cancelled")
+                    raise InvalidRecordingToken("session already finished")
             else:
+                # The caller's `load_session_for_connect` ran *before* this
+                # lock — a cancel/stop can have committed and popped this
+                # entry in between. Every terminal transition commits before
+                # `_cleanup` pops the entry, so re-reading the status here
+                # (under the lock) is what keeps a finished session from
+                # ever being relaunched.
+                status = await asyncio.to_thread(load_status_sync, recording_session.id)
+                if status == "cancelled":
+                    raise RecordingSessionCancelled("session was cancelled")
+                if status is None or status in TERMINAL_STATUSES:
+                    raise InvalidRecordingToken("session already finished")
                 try:
                     resources = self._allocator.acquire()
                 except ResourcePoolExhausted as exc:
