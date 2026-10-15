@@ -196,7 +196,7 @@ function CredentialsPanel() {
 
       <form
         onSubmit={handleAddCredentials}
-        style={{ border: '1px solid var(--border-2)', borderRadius: 10, background: 'var(--panel-2)', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}
+        style={{ border: '1px solid var(--border-2)', borderRadius: 10, background: 'var(--panel)', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}
       >
         <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-1)' }}>Add credentials</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: 14 }}>
