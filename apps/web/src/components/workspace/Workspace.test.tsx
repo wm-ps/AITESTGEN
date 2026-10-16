@@ -55,4 +55,39 @@ describe('Workspace', () => {
     await waitFor(() => expect(screen.getByText('Schedules and CI', { selector: 'h1' })).toBeInTheDocument())
     await waitFor(() => expect(hitSchedules).toBe(true))
   })
+
+  // No test run yet, so the Overview tab renders just the empty state and the
+  // quick-action cards — the part that differs with discovery on/off.
+  function stubEmptyOverview() {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/overview')) {
+          return { ok: true, status: 200, json: async () => ({ latest_run: null }) }
+        }
+        return { ok: true, status: 200, json: async () => [] }
+      }),
+    )
+  }
+
+  it('shows the Journeys/Scenarios shortcuts on Overview by default', async () => {
+    stubEmptyOverview()
+    render(<Workspace applicationId="app-1" activeTab="overview" onActiveTabChange={() => {}} />)
+
+    await screen.findByText('View journeys')
+    expect(screen.getByText('Review scenarios')).toBeInTheDocument()
+    expect(screen.getByText('Automate discovery and suite runs on a cadence.')).toBeInTheDocument()
+  })
+
+  it('hides the Journeys/Scenarios shortcuts on Overview when discovery is disabled', async () => {
+    stubEmptyOverview()
+    render(
+      <Workspace applicationId="app-1" activeTab="overview" onActiveTabChange={() => {}} discoveryEnabled={false} />,
+    )
+
+    await screen.findByText('Record and play')
+    expect(screen.queryByText('View journeys')).toBeNull()
+    expect(screen.queryByText('Review scenarios')).toBeNull()
+    expect(screen.getByText('Automate suite runs on a cadence.')).toBeInTheDocument()
+  })
 })

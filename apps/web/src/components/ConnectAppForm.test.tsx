@@ -63,6 +63,57 @@ describe('ConnectAppForm', () => {
     expect(body.password).toBe('qa-password')
   })
 
+  it('defaults Autonomous discovery to checked and sends discovery_required true', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
+      .mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: '1', name: 'My App' }) })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    expect((screen.getByLabelText('Autonomous discovery') as HTMLInputElement).checked).toBe(true)
+    expect(screen.queryByRole('button', { name: /Add application/ })).toBeNull()
+
+    fillCommonFields()
+    await passConnectionTest()
+    fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).discovery_required).toBe(true)
+  })
+
+  it('relabels the submit button "Add application" and sends discovery_required false when unchecked', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
+      .mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: '1', name: 'My App' }) })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    fireEvent.click(screen.getByLabelText('Autonomous discovery'))
+    expect(screen.queryByRole('button', { name: /Start discovery/ })).toBeNull()
+
+    fillCommonFields()
+    await passConnectionTest()
+    fireEvent.click(screen.getByRole('button', { name: /Add application/ }))
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).discovery_required).toBe(false)
+  })
+
+  it('keeps requiring a tested connection when discovery is unchecked', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const onConnected = vi.fn()
+    render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
+
+    fireEvent.click(screen.getByLabelText('Autonomous discovery'))
+    fillCommonFields()
+    fireEvent.click(screen.getByRole('button', { name: /Add application/ }))
+
+    await screen.findByText('Test the connection above to enable Add application.')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(onConnected).not.toHaveBeenCalled()
+  })
+
   it('submits notes typed during onboarding so they reach create_application', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })

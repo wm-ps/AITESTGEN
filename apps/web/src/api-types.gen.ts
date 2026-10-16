@@ -1327,6 +1327,12 @@ export interface components {
             /** Environment */
             environment: string;
             /**
+             * Discovery Required
+             * @description When false, no crawler discovery is started for this Application (tests are authored or recorded instead).
+             * @default true
+             */
+            discovery_required: boolean;
+            /**
              * Auth Method
              * @default standard_login
              * @enum {string}
@@ -1389,12 +1395,14 @@ export interface components {
              */
             created_at: string;
             /**
-             * Discovery Run Id
-             * Format: uuid
+             * Discovery Required
+             * @default true
              */
-            discovery_run_id: string;
+            discovery_required: boolean;
+            /** Discovery Run Id */
+            discovery_run_id: string | null;
             /** Discovery Status */
-            discovery_status: string;
+            discovery_status: string | null;
             /** Discovery Stage */
             discovery_stage: string | null;
             /** Discovery Failure Reason */
@@ -1551,12 +1559,14 @@ export interface components {
              */
             created_at: string;
             /**
-             * Discovery Run Id
-             * Format: uuid
+             * Discovery Required
+             * @default true
              */
-            discovery_run_id: string;
+            discovery_required: boolean;
+            /** Discovery Run Id */
+            discovery_run_id: string | null;
             /** Discovery Status */
-            discovery_status: string;
+            discovery_status: string | null;
             /** Discovery Stage */
             discovery_stage: string | null;
             /** Discovery Failure Reason */
