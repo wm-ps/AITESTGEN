@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faCircleDot, faCompass, faListCheck, faRoute } from '@fortawesome/free-solid-svg-icons'
-import { ApiError, api, type ApplicationRead, type UserRead } from './api'
+import { ApiError, api, hasDiscovery, type ApplicationRead, type UserRead } from './api'
 import { AcceptInvite } from './components/AcceptInvite'
 import { ConnectAppForm } from './components/ConnectAppForm'
 import { DiscoverJourneys } from './components/DiscoverJourneys'
@@ -126,6 +126,25 @@ function App() {
   // behavior the old 'test-suite-results' view had.
   const [justGeneratedSuite, setJustGeneratedSuite] = useState(false)
   const [autoTriggerRun, setAutoTriggerRun] = useState(false)
+  // One-shot: the scenario a just-saved recording created — Test cases
+  // (TestSuiteTab) brings its row into view and flashes it, then reports it
+  // consumed. Cleared on any navigation away from 'suite' or to another
+  // application, so a stale one never fires on a later visit.
+  const [highlightScenarioId, setHighlightScenarioId] = useState<string | null>(null)
+  useEffect(() => {
+    if (appTab !== 'suite') setHighlightScenarioId(null)
+  }, [appTab])
+  useEffect(() => {
+    setHighlightScenarioId(null)
+  }, [application?.id])
+  // An application added without discovery has no Journeys/Scenarios tabs —
+  // any path that still points at one (stale tab state, a fallback) lands on
+  // Test cases instead of a screen that no longer exists for it.
+  useEffect(() => {
+    if (application && !hasDiscovery(application) && (appTab === 'journeys' || appTab === 'scenarios')) {
+      setAppTab('suite')
+    }
+  }, [application, appTab])
   // Same one-shot idea for Scenarios: journeys existing is not evidence
   // generation was triggered (Scenarios is a standing sidebar tab, reachable
   // without ever clicking Journeys' Continue) — only this deliberate
@@ -271,13 +290,17 @@ function App() {
       const suiteGenerating =
         noSuiteHasFinishedYet && suites.some((s) => s.status === 'generating')
       setJustGeneratedSuite(suiteGenerating)
+      // No Journeys/Scenarios tabs when discovery is off — an empty app
+      // lands on Test cases, where its tests get added.
       setAppTab(
         suiteGenerating
           ? 'suite'
           : suites.length > 0
             ? 'overview'
-            : app.discovery_engine === 'explorer'
-              ? 'explorer'
+            : !hasDiscovery(app)
+              ? 'suite'
+              : app.discovery_engine === 'explorer'
+                ? 'explorer'
               : scenarios.length > 0
                 ? 'scenarios'
                 : 'journeys',
@@ -320,8 +343,11 @@ function App() {
     setJustGeneratedSuite(false)
     setAutoTriggerRun(false)
     setJustStartedScenarios(false)
+    setHighlightScenarioId(null)
     setAppTab(tab as AppTab)
   }
+  // Journeys/Scenarios only exist for applications with discovery on.
+  const discoveryTabsVisible = !application || hasDiscovery(application)
 
   const shellRoute = SHELL_ROUTE_FOR_VIEW[view]
 
@@ -335,7 +361,14 @@ function App() {
   // still exist underneath: test generation reads them.
   const byExplorer = application?.discovery_engine === 'explorer'
   const mergedAppTabs: AppShellTab[] = application
-    ? [...WORKSPACE_TABS, ...(byExplorer ? [] : [JOURNEYS_TAB]), EXPLORER_TAB, ...(byExplorer ? [] : [SCENARIOS_TAB]), RECORD_TAB]
+    ? [
+        ...WORKSPACE_TABS,
+        // Explorer *is* discovery: an app added without discovery has neither.
+        ...(discoveryTabsVisible
+          ? [...(byExplorer ? [] : [JOURNEYS_TAB]), EXPLORER_TAB, ...(byExplorer ? [] : [SCENARIOS_TAB])]
+          : []),
+        RECORD_TAB,
+      ]
         .sort((a, b) => TAB_ORDER.indexOf(a.key) - TAB_ORDER.indexOf(b.key))
         .map((t) => ({ key: t.key, label: t.label, icon: t.icon, badge: (t as { badge?: string }).badge }))
     : []
@@ -351,7 +384,13 @@ function App() {
           application={application}
           onConnected={(connectedApplication) => {
             setApplication(connectedApplication)
-            setAppTab(connectedApplication.discovery_engine === 'explorer' ? 'explorer' : 'journeys')
+            setAppTab(
+              !hasDiscovery(connectedApplication)
+                ? 'suite'
+                : connectedApplication.discovery_engine === 'explorer'
+                  ? 'explorer'
+                  : 'journeys',
+            )
             setView('app')
           }}
           onCancel={() => setView('home')}
@@ -391,7 +430,12 @@ function App() {
           applicationId={application.id}
           applicationName={application.name}
           applicationUrl={application.url}
-          onSaved={setSuccessToast}
+          onSaved={(message, saved) => {
+            setSuccessToast(message)
+            setJustGeneratedSuite(false)
+            setHighlightScenarioId(saved.scenarioExternalId)
+            setAppTab('suite')
+          }}
           onCancelled={setSuccessToast}
         />
       )}
@@ -410,10 +454,13 @@ function App() {
             applicationId={application.id}
             applicationName={application.name}
             applicationUrl={application.url}
+            discoveryEnabled={hasDiscovery(application)}
             activeTab={appTab as WorkspaceTab}
             onActiveTabChange={(tab) => setAppTab(byExplorer && (tab === 'journeys' || tab === 'scenarios') ? 'explorer' : tab)}
             autoTriggerRun={autoTriggerRun}
             byExplorer={byExplorer}
+            highlightScenarioId={highlightScenarioId}
+            onHighlightConsumed={() => setHighlightScenarioId(null)}
           />
         )
       )}

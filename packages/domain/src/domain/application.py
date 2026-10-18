@@ -18,7 +18,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
@@ -96,6 +96,14 @@ class Application(SQLModel, table=True):
     next_test_case_number: int = Field(
         default=1,
         sa_column=Column(Integer, nullable=False, server_default=text("1")),
+    )
+    # Add Application's "Autonomous discovery" checkbox. `False` means the
+    # crawler is never started for this Application and the UI hides the
+    # Journeys/Scenarios navigation; tests are authored or recorded instead.
+    # Defaults true so every pre-existing Application keeps today's behavior.
+    discovery_required: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default=text("true")),
     )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),

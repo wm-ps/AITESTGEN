@@ -475,6 +475,11 @@ class ApplicationCreate(BaseModel):
         "misbehave without prior session state).",
     )
     environment: str
+    discovery_required: bool = Field(
+        default=True,
+        description="When false, no crawler discovery is started for this Application "
+        "(tests are authored or recorded instead).",
+    )
     auth_method: AuthMethod = "standard_login"
     username: str | None = Field(
         default=None,
@@ -561,8 +566,11 @@ class ApplicationRead(BaseModel):
     environment: str
     auth_method: AuthMethod
     created_at: datetime
-    discovery_run_id: uuid.UUID
-    discovery_status: str
+    discovery_required: bool = True
+    # `None` only for an Application created with `discovery_required=false`
+    # (no crawler DiscoveryRun ever exists for it).
+    discovery_run_id: uuid.UUID | None
+    discovery_status: str | None
     discovery_stage: str | None
     discovery_failure_reason: str | None
     # "explorer" | "crawler" — which discovery filled this app's Journeys.
@@ -673,7 +681,7 @@ def _coverage_counts(session: Session, discovery_run: DiscoveryRun) -> dict[str,
 
 
 def _to_application_read(
-    session: Session, application: Application, discovery_run: DiscoveryRun
+    session: Session, application: Application, discovery_run: DiscoveryRun | None
 ) -> ApplicationRead:
     return ApplicationRead(
         id=application.external_id,
@@ -683,10 +691,11 @@ def _to_application_read(
         environment=application.environment,
         auth_method=application.auth_method,  # type: ignore[arg-type]
         created_at=application.created_at,
-        discovery_run_id=discovery_run.external_id,
-        discovery_status=discovery_run.status,
-        discovery_stage=discovery_run.stage,
-        discovery_failure_reason=discovery_run.failure_reason,
+        discovery_required=application.discovery_required,
+        discovery_run_id=discovery_run.external_id if discovery_run else None,
+        discovery_status=discovery_run.status if discovery_run else None,
+        discovery_stage=discovery_run.stage if discovery_run else None,
+        discovery_failure_reason=discovery_run.failure_reason if discovery_run else None,
         # Stage 8 (docs/vantage-explorer/PLAN.md): apps discovered by Explorer
         # get Explorer-aware Journeys/Scenarios screens.
         discovery_engine=(
@@ -698,7 +707,9 @@ def _to_application_read(
             else "crawler"
         ),
         discovery_coverage_summary=(
-            _coverage_counts(session, discovery_run) if discovery_run.status == "complete" else None
+            _coverage_counts(session, discovery_run)
+            if discovery_run and discovery_run.status == "complete"
+            else None
         ),
         application_context=(
             ApplicationContext(**application.application_context)
@@ -778,6 +789,7 @@ async def create_application(
         login_url=payload.login_url,
         environment=payload.environment,
         auth_method=payload.auth_method,
+        discovery_required=payload.discovery_required,
         secret_ref=secret_ref.path,
         # Set before `start_discovery_run` below so the very first
         # `InferenceActivity` run (chained automatically after the initial
@@ -794,7 +806,13 @@ async def create_application(
     # Absorbed from removed Story 1.5: start a DiscoveryRun immediately, in
     # the same request — no separate "start discovery" action (AC 4). The
     # DiscoveryRun-creation logic itself is Story 2.1's (api.discovery).
-    discovery_run = await start_discovery_run(session, application, started_by=user.id)
+    # Skipped when the user unchecked "Autonomous discovery": no crawler
+    # DiscoveryRun or workflow exists for such an Application.
+    discovery_run = (
+        await start_discovery_run(session, application, started_by=user.id)
+        if application.discovery_required
+        else None
+    )
 
     # Three ready-made-but-disabled schedules so a team can flip one on
     # instead of hand-configuring cadence from a blank dialog.
@@ -864,6 +882,15 @@ def _get_org_application(
     return application
 
 
+def _require_discovery(application: Application) -> None:
+    """409 for the crawler-driven actions (pause/resume discovery, generate
+    scenarios) on an Application created with `discovery_required=false` — the
+    UI hides them, this stops any other caller from starting discovery-shaped
+    work for it."""
+    if not application.discovery_required:
+        raise HTTPException(status_code=409, detail="DISCOVERY_NOT_ENABLED")
+
+
 @app.get("/applications/{external_id}", response_model=ApplicationRead)
 def get_application(
     external_id: uuid.UUID,
@@ -872,7 +899,7 @@ def get_application(
 ) -> ApplicationRead:
     application = _get_org_application(session, organization_id, external_id)
     discovery_run = _latest_discovery_run(session, application.id)
-    assert discovery_run is not None
+    assert discovery_run is not None or not application.discovery_required
     return _to_application_read(session, application, discovery_run)
 
 
@@ -892,7 +919,7 @@ def list_applications(
     result = []
     for application in applications:
         discovery_run = _latest_discovery_run(session, application.id)
-        assert discovery_run is not None
+        assert discovery_run is not None or not application.discovery_required
         result.append(_to_application_read(session, application, discovery_run))
     return result
 
@@ -1057,8 +1084,10 @@ async def get_home(
         # down every application's dashboard card over one app's edge-case
         # state. Same "degrade this one badge, don't take down the whole
         # dashboard" principle this function already applies to a Temporal
-        # hiccup above — skip just this application instead.
-        if discovery_run is None:
+        # hiccup above — skip just this application instead. Not applicable
+        # to an Application created with `discovery_required=false`, which
+        # legitimately never has a crawler run.
+        if discovery_run is None and application.discovery_required:
             continue
         base = _to_application_read(session, application, discovery_run)
         runs = test_runs_by_app.get(application.id, [])
@@ -1093,7 +1122,9 @@ async def get_home(
                     for r in reversed(runs[:8])
                 ],
                 last_discovery_started_at=(
-                    discovery_run.created_at if discovery_run.status == "complete" else None
+                    discovery_run.created_at
+                    if discovery_run and discovery_run.status == "complete"
+                    else None
                 ),
                 live_exploration_generating=(
                     str(application.external_id) in live_exploration_generating_ids
@@ -1171,6 +1202,7 @@ async def pause_discovery(
 ) -> ApplicationRead:
     """Story 2.17 Task 1 (AC 1)."""
     application = _get_org_application(session, organization_id, external_id)
+    _require_discovery(application)
     discovery_run = _latest_discovery_run(session, application.id)
     if discovery_run is None or discovery_run.status != "running":
         raise HTTPException(status_code=409, detail="discovery run is not running")
@@ -1228,7 +1260,7 @@ def rename_application(
     session.add(application)
     session.commit()
     discovery_run = _latest_discovery_run(session, application.id)
-    assert discovery_run is not None
+    assert discovery_run is not None or not application.discovery_required
     return _to_application_read(session, application, discovery_run)
 
 
@@ -1255,7 +1287,7 @@ def update_application_context(
     session.add(application)
     session.commit()
     discovery_run = _latest_discovery_run(session, application.id)
-    assert discovery_run is not None
+    assert discovery_run is not None or not application.discovery_required
     return _to_application_read(session, application, discovery_run)
 
 
@@ -1283,7 +1315,7 @@ def update_application_credentials(
         creds["totp_seed"] = payload.totp_seed
     VaultSecretsClient().update(SecretRef(path=application.secret_ref), json.dumps(creds).encode())
     discovery_run = _latest_discovery_run(session, application.id)
-    assert discovery_run is not None
+    assert discovery_run is not None or not application.discovery_required
     return _to_application_read(session, application, discovery_run)
 
 
@@ -1451,6 +1483,7 @@ async def resume_discovery(
     `api.discovery.resume_discovery_run`'s own docstring for why that's the
     whole mechanism."""
     application = _get_org_application(session, organization_id, external_id)
+    _require_discovery(application)
     discovery_run = _latest_discovery_run(session, application.id)
     if discovery_run is None or discovery_run.status != "paused":
         raise HTTPException(status_code=409, detail="discovery run is not paused")
@@ -2162,6 +2195,7 @@ async def generate_scenarios(
     organization_id: CurrentOrgIdDep,
 ) -> dict[str, int]:
     application = _get_org_application(session, organization_id, external_id)
+    _require_discovery(application)
     journeys = session.exec(
         select(Journey).where(
             Journey.application_id == application.id,

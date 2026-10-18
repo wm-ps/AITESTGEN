@@ -18,6 +18,9 @@ export type ResetPasswordRequest = { token: string; password: string }
 // crawl — before there's ever a chance to visit the Notes tab.
 export type ApplicationCreate = components['schemas']['ApplicationCreate'] & {
   application_context?: ApplicationContext | null
+  // `discovery_required` isn't in api-types.gen.ts yet either. false = the
+  // backend never starts a crawl for this Application.
+  discovery_required?: boolean
 }
 // Every field optional — the user fills in only what they know
 // (`apps/api/src/api/main.py`'s `ApplicationContext`). Business/domain
@@ -33,10 +36,23 @@ export type ApplicationContext = {
 // `application_context` isn't in api-types.gen.ts yet (backend schema is
 // new, regenerate via `npm run generate:api-types` once the API is
 // running) — added by hand, same convention as HomeApplicationRead below.
-export type ApplicationRead = components['schemas']['ApplicationRead'] & {
+// `discovery_run_id` / `discovery_status` are overridden to nullable and
+// `discovery_required` added by hand for the same reason: both are null/absent
+// only for an Application created with discovery turned off.
+export type ApplicationRead = Omit<
+  components['schemas']['ApplicationRead'],
+  'discovery_run_id' | 'discovery_status'
+> & {
   application_context: ApplicationContext | null
   discovery_engine: 'explorer' | 'crawler'
+  discovery_required?: boolean
+  discovery_run_id: string | null
+  discovery_status: string | null
 }
+// The one place that reads the flag, so a missing value (older API response)
+// counts as "discovery on" and no caller repeats `!== false`.
+export const hasDiscovery = (application: Pick<ApplicationRead, 'discovery_required'>): boolean =>
+  application.discovery_required !== false
 export type HomeApplicationRead = ApplicationRead & {
   journey_count: number
   scenario_count: number

@@ -533,9 +533,13 @@ def test_test_connection_never_checks_login_url(monkeypatch: pytest.MonkeyPatch)
     assert response.json()["reachable"] is True
 
 
-def test_create_application_sets_discovery_stage_initializing() -> None:
+def test_create_application_sets_discovery_stage_initializing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Story 2.1 (CR-2): DiscoveryRun.stage is set to "initializing" in the
     same request, round-tripping through ApplicationRead.discovery_stage."""
+    # The classic crawler path (Explorer replaces it by default).
+    monkeypatch.setattr("api.discovery.EXPLORER_REPLACES_DISCOVERY", False)
     init_db()
     client = _signed_in_client("Org Discovery Stage")
 
@@ -543,6 +547,75 @@ def test_create_application_sets_discovery_stage_initializing() -> None:
 
     assert response.status_code == 201
     assert response.json()["discovery_stage"] == "initializing"
+
+
+def test_create_application_discovery_required_defaults_true() -> None:
+    init_db()
+    client = _signed_in_client("Org Discovery Default")
+
+    response = _post_application(client, "Default App")
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["discovery_required"] is True
+    assert body["discovery_run_id"] is not None
+
+
+def test_create_application_without_discovery_starts_no_run() -> None:
+    """Unchecked "Autonomous discovery": no crawler DiscoveryRun/workflow, and
+    every read path (get, list, home) still returns the application."""
+    init_db()
+    client = _signed_in_client("Org No Discovery")
+
+    response = client.post(
+        "/applications",
+        json={
+            "name": "No Discovery App",
+            "url": "https://app.example.com",
+            "environment": "staging",
+            "username": "qa-test-account",
+            "password": "irrelevant",
+            "discovery_required": False,
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["discovery_required"] is False
+    assert body["discovery_run_id"] is None
+    assert body["discovery_status"] is None
+    with Session(engine) as session:
+        application = session.exec(
+            select(Application).where(Application.external_id == uuid.UUID(body["id"]))
+        ).one()
+        assert session.exec(
+            select(DiscoveryRun).where(DiscoveryRun.application_id == application.id)
+        ).first() is None
+
+    assert client.get(f"/applications/{body['id']}").status_code == 200
+    assert [a["id"] for a in client.get("/applications").json()] == [body["id"]]
+    assert [a["id"] for a in client.get("/home").json()] == [body["id"]]
+
+
+def test_discovery_actions_return_409_when_discovery_not_enabled() -> None:
+    init_db()
+    client = _signed_in_client("Org Discovery Guard")
+    created = client.post(
+        "/applications",
+        json={
+            "name": "Guarded App",
+            "url": "https://app.example.com",
+            "environment": "staging",
+            "username": "qa-test-account",
+            "password": "irrelevant",
+            "discovery_required": False,
+        },
+    ).json()
+
+    for action in ("pause-discovery", "resume-discovery", "generate-scenarios"):
+        response = client.post(f"/applications/{created['id']}/{action}")
+        assert response.status_code == 409, action
+        assert response.json()["detail"] == "DISCOVERY_NOT_ENABLED"
 
 
 def test_create_application_reports_worker_unavailable_when_discovery_queue_has_no_worker(
@@ -554,6 +627,7 @@ def test_create_application_reports_worker_unavailable_when_discovery_queue_has_
     `failure_reason` the frontend can recognize and show distinctly, instead
     of the DiscoveryRun sitting at "running" forever with nothing to explain
     why."""
+    monkeypatch.setattr("api.discovery.EXPLORER_REPLACES_DISCOVERY", False)  # classic crawler path
     from api import discovery as api_discovery
 
     async def _no_pollers(client: object, task_queue: str) -> bool:

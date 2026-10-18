@@ -547,6 +547,18 @@ textarea::placeholder {
   }
 }
 
+/* Test cases tab: a just-recorded test case's row glows, then settles back
+   to its normal panel shadow (TestSuiteTab's AssetCard `highlighted`). */
+@keyframes aitg-row-highlight {
+  0%,
+  60% {
+    box-shadow: 0 0 0 4px var(--accent-wash), var(--panel-shadow);
+  }
+  100% {
+    box-shadow: var(--panel-shadow);
+  }
+}
+
 @keyframes aitg-line-flow {
   0% {
     background-position: 0 -100%;

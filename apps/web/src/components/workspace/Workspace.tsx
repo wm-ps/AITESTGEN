@@ -59,10 +59,15 @@ export function Workspace({
   onTabsChange,
   autoTriggerRun = false,
   byExplorer = false,
+  highlightScenarioId = null,
+  onHighlightConsumed,
+  discoveryEnabled = true,
 }: {
   applicationId: string
   applicationName: string
   applicationUrl: string
+  // false for an application added without discovery (see `hasDiscovery`).
+  discoveryEnabled?: boolean
   activeTab: WorkspaceTab
   // Widened beyond WorkspaceTab — OverviewTab's quick-action shortcuts can
   // also jump to 'journeys'/'scenarios'/'record', which live in App.tsx's
@@ -79,6 +84,10 @@ export function Workspace({
   // (if any) has somewhere to surface, mirroring what the old standalone
   // TestExecutionResults.tsx screen used to show.
   autoTriggerRun?: boolean
+  // A just-recorded test case's scenario for the Test cases tab to bring
+  // into view and flash once — passed straight through to TestSuiteTab.
+  highlightScenarioId?: string | null
+  onHighlightConsumed?: () => void
 }) {
   // Set once, the moment "Run Suite"/"Run All Tests" switches to the Runs
   // tab — consumed by RunsTab's own auto-select-newest-run poll, then never
@@ -248,9 +257,16 @@ export function Workspace({
         )}
 
         {activeTab === 'overview' && (
-          <OverviewTab applicationId={applicationId} onNavigateTab={onActiveTabChange} byExplorer={byExplorer} />
+          <OverviewTab applicationId={applicationId} onNavigateTab={onActiveTabChange} discoveryEnabled={discoveryEnabled} byExplorer={byExplorer} />
         )}
-        {activeTab === 'suite' && <TestSuiteTab applicationId={applicationId} />}
+        {activeTab === 'suite' && (
+          <TestSuiteTab
+            applicationId={applicationId}
+            highlightScenarioId={highlightScenarioId}
+            onHighlightConsumed={onHighlightConsumed}
+            discoveryEnabled={discoveryEnabled}
+          />
+        )}
         {activeTab === 'schedules' && <SchedulesTab applicationId={applicationId} />}
         {activeTab === 'export' && <DownloadTab applicationId={applicationId} applicationName={applicationName} />}
         {activeTab === 'runs' && (

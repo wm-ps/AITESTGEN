@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faCheck, faCode, faCodeBranch, faCopy, faTableList, faVial, faWandMagicSparkles, faXmark } from '@fortawesome/free-solid-svg-icons'
@@ -6,7 +6,7 @@ import { faIcon } from '../../faIcon'
 
 const FileCode = faIcon(faCode)
 const Vial = faIcon(faVial)
-import { ApiError, api, formatTestCaseNumber, type ScenarioRead, type TestAssetStatusRead } from '../../api'
+import { ApiError, api, formatTestCaseNumber, type ScenarioRead, type TestAssetStatusPageRead, type TestAssetStatusRead } from '../../api'
 import { Pagination } from '../Pagination'
 import { EmptyState, TestCasesIllustration } from '../EmptyState'
 import { GenerationLoader } from '../GenerationLoader'
@@ -16,6 +16,16 @@ import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { LiveExplorationPanel, requestIdStorageKey, TERMINAL_STATUSES } from './LiveExplorationPanel'
 
 const ASSETS_PER_PAGE = 10
+
+// A just-recorded test case's row flashes this long after it's brought
+// into view; the lookup gives up quietly after this many page-jump/refetch
+// attempts rather than staying pending forever.
+const HIGHLIGHT_DURATION_MS = 3000
+const HIGHLIGHT_MAX_ATTEMPTS = 2
+
+function assetsKey(page: number, search: string, sourceFilter: string) {
+  return `${page}|${search}|${sourceFilter}`
+}
 
 // Synthesized, not stored — no TestAsset field holds a filename (see
 // test_asset.py's own docstring: spec files are named at export/download
@@ -392,11 +402,13 @@ function AssetCard({
   scenario,
   onScenarioUpdated,
   onRegenerated,
+  highlighted = false,
 }: {
   asset: TestAssetStatusRead
   scenario: ScenarioRead | null
   onScenarioUpdated: (updated: ScenarioRead) => void
   onRegenerated: () => void
+  highlighted?: boolean
 }) {
   const [codeOpen, setCodeOpen] = useState(false)
   const [code, setCode] = useState<string | null>(null)
@@ -421,6 +433,7 @@ function AssetCard({
 
   return (
     <div
+      data-asset-id={asset.id}
       style={{
         background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
         backdropFilter: 'blur(16px) saturate(1.25)',
@@ -428,6 +441,11 @@ function AssetCard({
         borderRadius: 14,
         overflow: 'hidden',
         boxShadow: 'var(--panel-shadow)',
+        ...(highlighted && {
+          outline: '2px solid var(--accent)',
+          outlineOffset: 2,
+          animation: `aitg-row-highlight ${HIGHLIGHT_DURATION_MS}ms ease-out both`,
+        }),
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '17px 20px', flexWrap: 'wrap' }}>
@@ -540,13 +558,52 @@ function AssetCard({
 
 export function TestSuiteTab({
   applicationId,
+  highlightScenarioId = null,
+  onHighlightConsumed,
+  discoveryEnabled = true,
 }: {
   applicationId: string
+  // false for an application added without discovery — only the empty-state
+  // copy changes (there is no discovery to wait on).
+  discoveryEnabled?: boolean
+  // A just-recorded test case to bring into view and flash once (App.tsx
+  // sets it after a Record and Play save); reported back via
+  // `onHighlightConsumed` once found, or once it's definitively not there.
+  highlightScenarioId?: string | null
+  onHighlightConsumed?: () => void
 }) {
   const [assets, setAssets] = useState<TestAssetStatusRead[]>([])
   const [assetsLoaded, setAssetsLoaded] = useState(false)
+  // Which page/search/filter `assets` actually belongs to — right after a
+  // `setPage`, `assets` still holds the previous page until its fetch
+  // lands, and the highlight lookup must never judge that stale list.
+  const [loadedKey, setLoadedKey] = useState<string | null>(null)
+  // Bumped on every settled fetch (success *or* failure) — the highlight
+  // lookup only re-judges genuinely new results, so a re-render with the
+  // same data can't burn one of its bounded attempts.
+  const [assetsVersion, setAssetsVersion] = useState(0)
+  function markLoaded(key: string) {
+    setLoadedKey(key)
+    setAssetsVersion((v) => v + 1)
+  }
+  const [flashAssetId, setFlashAssetId] = useState<string | null>(null)
+  const highlightAttemptsRef = useRef(0)
+  const highlightJudgedVersionRef = useRef<number | null>(null)
   const [total, setTotal] = useState(0)
-  const [sourceCounts, setSourceCounts] = useState({ all: 0, nl: 0, recorded: 0 })
+  // `null` until known — and stays null if the API omits `source_counts`
+  // (an API process older than this field): the tabs then show without
+  // counts rather than crashing the whole tab or showing invented numbers.
+  const [sourceCounts, setSourceCounts] = useState<TestAssetStatusPageRead['source_counts'] | null>(null)
+  const warnedMissingCountsRef = useRef(false)
+  function applySourceCounts(counts: TestAssetStatusPageRead['source_counts'] | undefined) {
+    if (counts == null && !warnedMissingCountsRef.current) {
+      warnedMissingCountsRef.current = true
+      console.warn(
+        'GET /applications/{id}/test-suite-status returned no `source_counts` — the API process is likely older than the web app.',
+      )
+    }
+    setSourceCounts(counts ?? null)
+  }
   const [page, setPage] = useState(0)
   const [search, setSearch] = useState('')
   // All / Author test cases / Record-and-play tabs — a newly-authored or
@@ -637,10 +694,12 @@ export function TestSuiteTab({
       : `${total} test case${total === 1 ? '' : 's'} across ${journeyCount} journey${journeyCount === 1 ? '' : 's'} · each generated from its approved scenario`
 
   function refreshAssets() {
+    const key = assetsKey(page, search, sourceFilter)
     return api.getTestSuiteStatus(applicationId, page + 1, ASSETS_PER_PAGE, search, sourceFilter).then((body) => {
       setAssets(body.items)
       setTotal(body.total)
-      setSourceCounts(body.source_counts)
+      applySourceCounts(body.source_counts)
+      markLoaded(key)
     })
   }
 
@@ -655,12 +714,16 @@ export function TestSuiteTab({
         if (!cancelled) {
           setAssets(body.items)
           setTotal(body.total)
-          setSourceCounts(body.source_counts)
+          applySourceCounts(body.source_counts)
+          markLoaded(assetsKey(page, search, sourceFilter))
           setAssetsLoaded(true)
         }
       },
       () => {
-        if (!cancelled) setAssetsLoaded(true)
+        if (!cancelled) {
+          markLoaded(assetsKey(page, search, sourceFilter))
+          setAssetsLoaded(true)
+        }
       },
     )
     return () => {
@@ -707,7 +770,8 @@ export function TestSuiteTab({
         setSuiteGenerating(generating)
         setAssets(statusPage.items)
         setTotal(statusPage.total)
-        setSourceCounts(statusPage.source_counts)
+        applySourceCounts(statusPage.source_counts)
+        markLoaded(assetsKey(0, '', 'all'))
         if (!generating) clearInterval(interval)
       } catch {
         // best-effort poll — a transient failure just leaves the state as-is
@@ -720,6 +784,62 @@ export function TestSuiteTab({
       clearInterval(interval)
     }
   }, [applicationId, assetsLoaded, search, sourceFilter, page])
+
+  // Settled = the list for the current page/search/filter has loaded and
+  // isn't hidden behind the "Writing test cases…" template — true for an
+  // empty list too, so an empty result still runs the bounded retry below
+  // instead of leaving the highlight pending forever. Never acted on while
+  // loading or generating (and on page 0 the generation poll must resolve
+  // first — jumping pages before that cancels it and strands the skeleton).
+  const currentKey = assetsKey(page, search, sourceFilter)
+  const listSettled =
+    assetsLoaded && loadedKey === currentKey && (Boolean(search) || sourceFilter !== 'all' || suiteGenerating === false)
+
+  useEffect(() => {
+    highlightAttemptsRef.current = 0
+    highlightJudgedVersionRef.current = null
+  }, [highlightScenarioId])
+
+  useEffect(() => {
+    if (!highlightScenarioId || !listSettled) return
+    if (highlightJudgedVersionRef.current === assetsVersion) return
+    highlightJudgedVersionRef.current = assetsVersion
+    const target = assets.find((a) => a.scenario_id === highlightScenarioId)
+    if (target) {
+      setFlashAssetId(target.id)
+      onHighlightConsumed?.()
+      return
+    }
+    if (highlightAttemptsRef.current >= HIGHLIGHT_MAX_ATTEMPTS) {
+      onHighlightConsumed?.()
+      return
+    }
+    highlightAttemptsRef.current += 1
+    // Sorted by test case number ascending, so a just-recorded one is on
+    // the last page; already there means it may simply not have been
+    // visible yet — refetch once.
+    const lastPage = totalPages - 1
+    if (page !== lastPage) {
+      setPage(lastPage)
+    } else {
+      refreshAssets().catch(() => setAssetsVersion((v) => v + 1))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightScenarioId, listSettled, assetsVersion])
+
+  useEffect(() => {
+    if (!flashAssetId) return
+    const frame = requestAnimationFrame(() => {
+      document
+        .querySelector(`[data-asset-id="${CSS.escape(flashAssetId)}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    })
+    const timer = setTimeout(() => setFlashAssetId(null), HIGHLIGHT_DURATION_MS)
+    return () => {
+      cancelAnimationFrame(frame)
+      clearTimeout(timer)
+    }
+  }, [flashAssetId])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -749,7 +869,7 @@ export function TestSuiteTab({
                 whiteSpace: 'nowrap',
               }}
             >
-              {tab.label} ({sourceCounts[tab.value]})
+              {tab.label}{sourceCounts && ` (${sourceCounts[tab.value]})`}
             </button>
           )
         })}
@@ -811,6 +931,7 @@ export function TestSuiteTab({
                 <AssetCard
                   key={asset.id}
                   asset={asset}
+                  highlighted={asset.id === flashAssetId}
                   scenario={asset.scenario_id ? (scenariosById[asset.scenario_id] ?? null) : null}
                   onScenarioUpdated={(updated) =>
                     setScenarios((rows) => rows.map((s) => (s.id === updated.id ? updated : s)))
@@ -873,7 +994,11 @@ export function TestSuiteTab({
             illustration={<TestCasesIllustration />}
             variant="scene"
             title="No test cases generated yet"
-            subtitle="Test cases appear here once discovery finds journeys and the suite is generated."
+            subtitle={
+              discoveryEnabled
+                ? 'Test cases appear here once discovery finds journeys and the suite is generated.'
+                : 'Author a test case in plain language or record a flow to add your first test case.'
+            }
           />
         )
       })()}

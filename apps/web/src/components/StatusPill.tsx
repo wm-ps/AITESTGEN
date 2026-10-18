@@ -15,6 +15,8 @@ const STATUS_COLORS: Record<string, { background: string; foreground: string }> 
   generating_scenarios: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   generating_tests: { background: 'var(--accent-wash)', foreground: 'var(--accent)' },
   suite_generated: { background: 'var(--good-wash)', foreground: 'var(--good-strong)' },
+  // An application added without discovery that has no test cases yet.
+  no_tests_yet: { background: 'var(--hover)', foreground: 'var(--fg-4)' },
   // Home card overrides (Story: Home card redesign) — `suite_generated`
   // once Workspace is actually enterable, and an in-progress "Run All
   // Tests" TestRun, which is a different axis from discovery/generation
@@ -54,6 +56,7 @@ const LABELS: Record<string, string> = {
   generating_scenarios: 'Generating scenarios',
   generating_tests: 'Generating test cases',
   suite_generated: 'Test suite generated',
+  no_tests_yet: 'No test cases yet',
   ready_to_execute: 'Ready to run',
   test_run_running: 'Running',
   completed: 'Completed',
