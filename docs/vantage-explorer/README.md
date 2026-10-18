@@ -197,3 +197,111 @@ Explorer worker:
 14. **Debug logging for model calls.** Log each phase as it starts and ends,
     each model call (what it asks for), and a short form of what came back,
     so a run can be followed and debugged from the worker log.
+
+## To do next: fewer dropped scenarios (brainstormed 2026-10-18)
+
+**Where we are.** Across the four apps tested on 2026-10-18 (Keystone FNOL,
+Digital Banking, Sales vision, OrangeHRM), 141 scenarios were dropped. That
+excludes the ones trimmed to keep runs short and the ones you chose to ignore.
+About 40–57% of planned scenarios became tests.
+
+| Reason | Count | Share |
+|---|---|---|
+| Couldn't carry it out far enough | 69 | 49% |
+| Still passed with its key step removed | 32 | 23% |
+| No reliable proof on the screen | 16 | 11% |
+| Proof was already on screen before the test acted | 14 | 10% |
+| Different results on repeat runs | 9 | 6% |
+| Couldn't set up what it needed | 1 | 1% |
+
+To see the current numbers:
+
+```sql
+select split_part(split_part(drop_reason, ':', 1), ' (', 1), count(*)
+from explorer_test_case
+where status = 'dropped'
+  and drop_reason not in ('Left out to keep the run short', 'Ignored by you')
+group by 1
+order by 2 desc;
+```
+
+### 15. Measure the fixes already made (do this first)
+
+These went in on 2026-10-18 but have not run end to end yet:
+
+- Type-ahead fields pick the matching suggestion (`browser._pick_suggestion`).
+- Custom drop-downs are found by their caption (`browser.choose`).
+- Scenarios may take 20 steps instead of 12 and must finish every step before
+  stopping (`tests_stage.build_and_prove`).
+- A second press of Save/Submit no longer fails (`testkit.playwright_code`).
+- The scenario judge no longer counts missing extras as bugs.
+- F-20 is planned only when the screen itself can make the save fail.
+
+Re-run OrangeHRM (it had the most "couldn't carry it out" drops) and compare
+with the table above. Success: that row falls well below 49%.
+
+### 16. "Couldn't carry it out far enough" (49%)
+
+The agent stops before the outcome is on screen. Causes seen in the drop
+reasons, and ideas for each:
+
+- **Icon-only buttons on table rows** (edit, view, delete with no text): the
+  model can't name them, so it can't open a record (L-18, L-19, F-04, F-14).
+  - Option A: the machine reading of a screen also lists unlabelled buttons by
+    their `title`, `aria-label`, icon class or tooltip, and their row
+    ("row 1: pencil icon").
+  - Option B: a "click the Nth row's icon button" action, recorded with a
+    stable locator such as `row.getByRole('button').nth(k)`.
+  - A is cheaper; B is more reliable. Start with A, add B if needed.
+- **Date boxes with placeholders or a fixed format** ("yyyy-dd-mm"): the
+  agent's dates are refused. Read the format from the placeholder (or the
+  `pattern` attribute) and convert the date before typing. Look for the
+  existing date-to-app-format conversion in `browser.fill_field` (it uses
+  `resolve_relative` and `_type_into_picker`) and extend it.
+- **The agent says "done" too early.** Its instructions now say to finish
+  every step first. Also check the planned "how to run" against what was
+  done: if a step the plan names ("press Save") never happened, keep going
+  instead of stopping.
+- **One retry may not be enough.** Today a scenario that falls short gets one
+  more try with the lesson from the first. Consider a second try only when
+  the first retry got further (more steps matched the plan).
+- **Measure by cause.** Add a short `cause` tag to each drop: control,
+  early stop, out of steps, navigation. Then the next fix can target the
+  biggest bucket.
+
+### 17. "Still passed with its key step removed" (23%)
+
+Explorer replays each test with one step left out, to prove it would catch a
+broken app. Today it removes **only the last action**
+(`testkit.without_decisive_step`). In a validation test with several fields,
+that last action is often one more field, not the step that matters, so a
+good test is dropped.
+
+- Option A: try removing each of the last two or three actions. Drop the test
+  only if it still passes with every one of them removed. This costs up to
+  three extra replays per test.
+- Option B: ask the model which step decides the outcome when the proof is
+  chosen (`brain.decide_check`), and remove that one.
+- Option C: by kind of test. For validation, remove the bad value or the
+  empty field. For navigation, remove the click that leads away. For
+  form_submission, remove the Save.
+
+C is cheap and needs no model call; B is the fallback for anything else.
+Keep the rule that a test which proves nothing is still dropped.
+
+### 18. Proof problems (21%: "no reliable proof" plus "proof already on screen")
+
+- Use the data-call proof (`api_call`) more, for checklist items about the
+  server. The page's calls are already recorded.
+- When the first proof candidate was already on screen, the proof picker
+  gets up to three tries today. Show it what changed between the screen
+  before and after the test, so it picks text that only the test caused.
+- For "no reliable proof": check a few seconds later before giving up. Some
+  messages fade in or arrive after a data call.
+
+### 19. Different results on repeat runs (6%)
+
+Mostly shared demo data that other people change (OrangeHRM's public demo).
+Prefer proofs that don't depend on specific records (a heading or message,
+not "row 3 is John"). Note in the scenario when the data is shared, so
+Test cases can show "may be affected by other users' changes".
