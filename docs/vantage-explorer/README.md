@@ -162,3 +162,38 @@ The highlight video needs ffmpeg and a font on the machine running the worker. W
 - **Older crawler tests.** Apps onboarded before Explorer still carry the
   crawler's test cases next to Explorer's (Sales vision: 55). Decide whether to
   retire them.
+
+## To do next (from the 2026-10-18 review)
+
+Explorer UI (`apps/web/src/explorer/`):
+
+1. **What it learned → "What you told Explorer" and "Teach Explorer".** The
+   design needs work, and the two panels don't end at the same height.
+2. **Things that look wrong.** Add a "False alarm" option. The screen is too
+   dense: show the same information without scrolling.
+3. **Screens to cover.** Remove the "pending" state; it isn't needed.
+4. **Search input.** Make it match the other input fields.
+5. **Questions.** Replace the separate tab with a button that shows a
+   notification when there are questions and opens them in a tidy dialog.
+6. **Tab order.** "What it learned" comes right after Live.
+7. **Tab order.** Scenarios is the last tab.
+8. **Tabs.** The tab bar is uneven; use a better tabs component.
+9. **Questions for you.** Make them simple to read, and always offer an
+   "Other" option with a text box.
+10. **Labels like "Press icon to contact details"** (seen on FNOL) don't make
+    sense to a reader. Name what the button is for, in plain words.
+11. **Screens tab.** Remove "something looks wrong" there. It isn't clear, and
+    "things that look wrong" already covers it.
+12. **Screens tab order.** Show screens in the order Explorer found them (sign
+    in can't be last).
+
+Explorer worker:
+
+13. **Feed self-healing.** Healing relies on the database's `component`,
+    `component_locator` (buttons and how to find them), `form` and
+    `form_field` (fields and their input types). Have Explorer save this data
+    for the screens it learns, so healing finds what it expects. Persist only;
+    Explorer's own logic stays the same.
+14. **Debug logging for model calls.** Log each phase as it starts and ends,
+    each model call (what it asks for), and a short form of what came back,
+    so a run can be followed and debugged from the worker log.
