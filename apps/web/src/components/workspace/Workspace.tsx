@@ -79,10 +79,8 @@ export function Workspace({
   // Reports the currently-visible tab list up to the caller (AppShell's
   // sidebar renders it) whenever it changes.
   onTabsChange?: (tabs: typeof WORKSPACE_TABS) => void
-  // Set by App.tsx's "Run All Tests" wiring (TestSuiteResults's celebratory
-  // banner) — Workspace owns the actual trigger call so the resulting error
-  // (if any) has somewhere to surface, mirroring what the old standalone
-  // TestExecutionResults.tsx screen used to show.
+  // Starts a run once on mount — Workspace owns the actual trigger call so
+  // the resulting error (if any) has somewhere to surface.
   autoTriggerRun?: boolean
   // A just-recorded test case's scenario for the Test cases tab to bring
   // into view and flash once — passed straight through to TestSuiteTab.

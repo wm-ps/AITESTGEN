@@ -1,5 +1,13 @@
 # 8. Operations and configuration
 
+> **In short.** Explorer needs four things running:
+> - the usual Vantage stack (Postgres, Temporal, Vault, the API and the web app);
+> - **one Explorer worker** (`scripts/dev-start` starts it for you);
+> - access to the **LiteLLM** gateway;
+> - Playwright's **Chromium**.
+>
+> Most problems come down to one of three causes: no worker running, a missing saved login, or old worker processes still running after a reload.
+
 ## Running it locally
 
 Explorer needs the same infrastructure as the rest of Vantage: Postgres, Temporal and Vault (via Docker), the migrations at head, the API and the web app. It also needs:

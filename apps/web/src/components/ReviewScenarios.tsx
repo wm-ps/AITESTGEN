@@ -221,7 +221,7 @@ export function ReviewScenarios({
 
   // GenerationWorkflow runs one per Journey but each writes a variable
   // number of Scenarios (happy/negative/edge) — so a raw scenario count
-  // can't signal "done" the way TestSuiteResults' test-case count does.
+  // can't signal "done" on its own.
   // Distinct Journeys covered vs total candidate Journeys is the signal
   // that's actually stable: every Journey gets exactly one generation run.
   // `[FIXED]` A Journey whose generation genuinely failed (caught by
@@ -264,8 +264,8 @@ export function ReviewScenarios({
         // best-effort poll — a transient failure just skips this tick
       }
       // Scenario generation and Suite generation share one worker/task queue
-      // (GENERATION_TASK_QUEUE) — this is the same dead-worker check
-      // TestSuiteResults uses, catching a worker that crashes mid-run rather
+      // (GENERATION_TASK_QUEUE) — this dead-worker check catches a worker
+      // that crashes mid-run rather
       // than being down at submit time (already guarded separately).
       try {
         const { available } = await api.getGenerationStatus(applicationId)
@@ -519,9 +519,8 @@ export function ReviewScenarios({
           // Gated on `isComplete` (every Journey covered), not `scenarios.length
           // > 0` — otherwise this flips to the interactive list the instant the
           // first Scenario lands, showing a partial set while generation is
-          // still running in the background. TestSuiteResults gates its results
-          // screen the same way, so both "something is generating" flows read
-          // consistently: stay on the loader until the whole batch is done.
+          // still running in the background: stay on the loader until the
+          // whole batch is done.
           <div
             style={{
               background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',

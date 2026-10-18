@@ -1,5 +1,11 @@
 # 7. API and web UI
 
+> **In short.**
+> - **Explorer tab:** five views, in this order: **Live**, **Questions**, **Screens**, **Scenarios** and **What it learned**. They refresh by asking the API for news every 1.5–2.5 seconds while a run is working.
+> - **API:** 34 endpoints under `/explorer`. Only four of them touch Temporal: start, confirm, pause/stop, and resume. All the others read or write the database.
+
+![The Explorer tab](diagrams/img/t8-ui.png)
+
 ## Part A: the `/explorer` API
 
 File: `apps/api/src/api/explorer.py`. The router is `APIRouter(prefix="/explorer")`, mounted in `apps/api/src/api/main.py`.

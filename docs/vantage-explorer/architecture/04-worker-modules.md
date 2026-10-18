@@ -1,22 +1,29 @@
 # 4. Worker modules: who is responsible for what
 
+> **In short.** The worker is about 20 small Python modules. A few shared ones are used by every stage:
+> - `browser` drives Chromium;
+> - `mind` reads a screen;
+> - `brain` holds every AI prompt;
+> - `sense` holds the fixed rules;
+> - `journal` writes to the database;
+> - `memory` handles questions and knowledge.
+>
+> Each stage of a run then has its own module, from `understand` (stage 1) to `promote` (stage 8).
+
 All paths are under `apps/workers/explorer/src/explorer_worker/` unless stated otherwise.
 
-## Map by stage
+![Which code does what](diagrams/img/t7-modules.png)
 
-| Stage | What it does | Modules |
-|---|---|---|
-| Plumbing | Process, workflow, activities, DB, model client | `worker.py`, `workflow.py`, `activities.py`, `db.py`, `llm.py` |
-| Shared foundations | Browser, sign-in, reading screens, prompts, pure rules, journaling, memory | `browser.py`, `session.py`, `mind.py`, `brain.py`, `sense.py`, `journal.py`, `memory.py` |
-| 1 · Get to know the app | First look, health, App Summary | `understand.py` |
-| 2 · Missions | Plan, run, judge, record | `missions.py`, `pursue.py` |
-| 3 · Hidden screens | Choices, amounts, simulated server answers | `hunt.py` |
-| 4 · Questions and memory | Ask once, remember forever | `memory.py` |
-| 5 · Proven tests | Plan, build, prove, export code | `tests_stage.py`, `testkit.py`, `quality.py`, `samples.py` |
-| 6 · Breadth | Roles, unlinked pages, code coverage | `breadth.py` |
-| 7 · Highlight video | ffmpeg MP4 | `reel.py` |
-| 8 · Hand-off | Into Journeys and Scenarios | `promote.py` |
-| Resume | Restart from saved rows | `resume.py` |
+### How the shared modules work together on one screen
+
+Whatever stage is running, visiting one screen goes through the same path:
+
+1. **`browser.py`** opens the page, waits for it to settle, takes a photo, and lists what's on it.
+2. **`mind.py`** asks **`brain.py`** (GPT-5.6) what the screen is, unless it has seen the screen before.
+3. **`sense.py`** turns that answer into a screen fingerprint.
+4. **`journal.py`** saves the screen, the "how I got here" link, and any health problems.
+5. When the stage wants to *act*, **`pursue.py`** asks `brain.py` for the next step. It checks `sense.py`'s safety rules, then tells `browser.py` to click or type.
+6. If it needs a person, it asks through **`memory.py`**.
 
 ---
 
@@ -228,7 +235,7 @@ Each find is upserted as a screen variant with signature `<base>|<key>`, plus a 
   2. Balances the tests by kind and start screen, with a cap of `test_cap(screens) = max(10, min(60, 5 × screens))`.
   3. **Grounding rule:** a test whose start screen Explorer never saw is dropped.
   4. Adds page-quality checks per URL pattern (skipped for stateful apps).
-- **Build and prove:** see [document 5 §4](05-trust-safety-and-proof.md#4-how-a-test-is-proven).
+- **Build and prove:** see [document 5 §6](05-trust-safety-and-proof.md#6-the-exact-proof-steps).
 - **`testkit.replay`:**
   - replays a script with no AI;
   - can mark a step `optional` when the next step is already reachable;
@@ -267,7 +274,7 @@ Each find is upserted as a screen variant with signature `<base>|<key>`, plus a 
 
 ## Stage 8 · `promote.py`
 
-See [document 3 §8](03-technical-flow.md#8-after-the-run-hand-off-to-classic-vantage). The test-type mapping:
+See [document 6 §3](06-data-model.md#3-what-reaches-the-rest-of-vantage). The test-type mapping:
 
 - navigation, data_load, form_submission → `happy`
 - validation, error_state, page_quality → `negative`

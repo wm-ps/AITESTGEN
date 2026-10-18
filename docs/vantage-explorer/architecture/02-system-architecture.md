@@ -1,72 +1,78 @@
 # 2. System architecture
 
-> Diagram: [System architecture](diagrams/explorer-system.html). Use its guided views: *Start a run*, *Explore the app*, *Watch and answer*, *Hand off to Vantage*.
+> **In short.** You use the **Explorer tab** in the browser. It talks to the **Vantage API**, which hands the run to **Temporal**, a service that keeps the run's checklist. Temporal gives each step to the **Explorer worker**, a Python program that does the real work:
+> - it drives a **headless Chrome** browser against your app;
+> - it asks **GPT-5.6** what each screen means;
+> - it reads logins from **Vault**;
+> - it writes everything to **Postgres**.
+>
+> When it's done, proven tests are copied into **classic Vantage**.
 
-## Design principles
+![System architecture](diagrams/img/t1-system.png)
 
-1. **A standalone module.** Explorer has its own worker, its own tables (all prefixed `explorer_`) and its own LLM client. From the classic discovery world it reads only the `application` row and the app's saved login. Classic discovery still exists behind a flag.
-2. **Orchestration in Temporal, work in activities.** The workflow only sequences steps. Every browser and model action runs inside an activity, so a run survives worker restarts and can wait days for a human without using resources.
-3. **Everything is journaled row by row.** Each screen, event, mission and test is written as it happens. That is what makes the live view, pause/resume and the "resume from where it stopped" logic possible.
-4. **The app is evidence, not truth.** See [document 5](05-trust-safety-and-proof.md).
+## 1. The parts
 
-## Components
-
-| Component | Code location | Technology | Responsibility |
+| # | Part | In simple terms | Technology and code |
 |---|---|---|---|
-| **Explorer tab** | `apps/web/src/explorer/` | React + TypeScript (Vite SPA) | Start/pause/resume runs, live view, questions, screens, scenarios, App Summary review. Polls the API; it has no websocket. |
-| **Vantage API, `/explorer` router** | `apps/api/src/api/explorer.py` (mounted in `main.py`) | FastAPI, SQLModel | 34 endpoints: start runs, the confirm signal, stop/pause/resume, answers, knowledge and documents, roles, downloads. Enforces tenant isolation by organization. |
-| **Discovery hook** | `apps/api/src/api/discovery.py` | FastAPI | When `EXPLORER_REPLACES_DISCOVERY` is not `0` (the default), onboarding a new app starts Explorer instead of the classic crawler. |
-| **Temporal** | external service, `explorer-task-queue` | Temporal (Python SDK `temporalio>=1.9`) | Runs `ExplorerRunWorkflow`, holds the "App Summary confirmed" signal, and handles cancellation for Stop/Pause. |
-| **Explorer worker** | `apps/workers/explorer/` (package `explorer-worker`) | Python 3, `temporalio`, Playwright (`>=1.57`), `httpx`, SQLModel/psycopg | Registers the workflow and 16 activities. Does all browser driving, model calls, judging, proving and the hand-off. |
-| **explorer_core** | `packages/explorer_core/` | SQLModel | Shared table definitions, status constants, Temporal names (`EXPLORER_TASK_QUEUE`, signal names, workflow id format) and the "needs you" email helper. Used by both the API and the worker. |
-| **Headless Chromium** | launched by the worker | Playwright Chromium, 1440×900, headless | One browser per activity: the first look, each mission, the hunt, breadth checks, and each test build/proof. Records `.webm` video when asked. |
-| **LLM gateway** | `LITELLM_BASE_URL` | OpenAI-compatible `/chat/completions` through the company LiteLLM gateway | Two GPT-5.6 tiers. **Thinking** (`gpt-5.6-sol`) reads screens, decides steps, summarizes, plans, judges and picks proofs. **Fast** (`gpt-5.6-luna`) only picks where to look next. Every call must return a JSON object. |
-| **PostgreSQL** | `DATABASE_URL` | Postgres + Alembic migrations | All `explorer_*` tables, including screenshot JPEGs and recording `.webm`/`.mp4` bytes. |
-| **Vault** | `secrets_client` package | HashiCorp Vault | The app's login, and the logins of extra "roles" for the who-can-see-what check. Explorer stores only `secret_ref`. |
-| **Classic Vantage** | `Journey`, `Scenario`, `TestSuite`, `TestAsset`… tables; generation worker | Existing Vantage pipeline | Receives Explorer's proven tests (Stage 8). The generation worker reuses Explorer's already-proven Playwright code when it type-checks. |
-| **SMTP** | `SMTP_*` env vars | `smtplib` | Emails the run's starter when the run needs them. Without `SMTP_HOST` it logs instead of sending. |
-| **ffmpeg + a bold font** | on the worker machine | ffmpeg CLI | Builds the MP4 highlight video. It is skipped, with a feed message, when either is missing. |
+| — | **Explorer tab** | The screens you use: start, watch, answer, results | React + TypeScript · `apps/web/src/explorer/` |
+| — | **Vantage API** | The front desk: receives your clicks and starts, signals or stops runs | FastAPI · `apps/api/src/api/explorer.py` (34 endpoints under `/explorer`) |
+| — | **Discovery hook** | Makes new apps start Explorer automatically instead of the old crawler | `apps/api/src/api/discovery.py` · `EXPLORER_REPLACES_DISCOVERY` (default on) |
+| — | **Temporal** | The checklist keeper: runs steps in order, survives restarts, and waits for you at no cost | Temporal server · task queue `explorer-task-queue` · workflow `ExplorerRunWorkflow` |
+| — | **Explorer worker** | The worker that does everything: browsing, AI calls, judging, proving, handing over | Python · `apps/workers/explorer/` · 1 workflow + 16 activities |
+| — | **explorer_core** | Shared definitions used by both the API and the worker | `packages/explorer_core/`: table models, status lists, Temporal names, the email helper |
+| ⑤ | **Headless Chromium** | The robot browser | Playwright Chromium · 1440×900 · records `.webm` video |
+| ⑥ | **GPT-5.6** | The AI brain, in two sizes | Through the company LiteLLM gateway. **Thinking** (`gpt-5.6-sol`) does almost everything. **Fast** (`gpt-5.6-luna`) only picks where to go next. Every reply is JSON. |
+| ⑦ | **Vault** | The safe for logins | HashiCorp Vault via `secrets_client`. Only a reference (`secret_ref`) is stored in the database. |
+| ⑧ | **PostgreSQL** | The notebook | All `explorer_*` tables, including screenshot and video bytes |
+| ⑨ | **SMTP email** | Tells the person who started the run when it needs them | `smtplib`. Without `SMTP_HOST` the email is logged instead of sent. |
+| ⑩ | **Classic Vantage** | Where proven tests end up | Journey / Scenario / TestSuite / TestAsset tables. The generation worker reuses Explorer's proven code. |
+| — | **ffmpeg** (optional) | Makes the highlight video | ffmpeg plus a bold system font on the worker machine. Skipped if missing. |
 
-## Why these choices
+## 2. How one run flows through the parts
 
-| Choice | Reason |
+These match the numbers in the picture.
+
+1. **①–②** You press **Start exploring**. The tab calls `POST /explorer/applications/{id}/runs`.
+2. **③** The API saves a new `explorer_run` row and starts `ExplorerRunWorkflow` on Temporal.
+3. **④** Temporal hands the first step to the Explorer worker.
+4. **⑤–⑦** The worker:
+   - opens Chromium and signs in with the login from Vault;
+   - visits screens and asks GPT-5.6 about each one.
+5. **⑧** Every screen, event and photo is written to Postgres immediately. The tab checks for new events every 1.5 seconds and shows them live.
+6. **⑨** When the App Summary is ready, the worker emails you, and the workflow waits for your **Confirm**.
+7. Missions, the hidden-screen hunt, and test building follow the same pattern.
+8. **⑩** At the end, proven tests are copied into classic Vantage.
+
+Three things are worth knowing:
+
+- **The API never calls the worker directly.** It only starts, signals or cancels the workflow, and reads and writes the database.
+- **Answering a question needs no signal.** The API saves the answer, and the waiting mission notices it by checking the database every 5 seconds.
+- **The worker writes classic Vantage rows itself** in the hand-off step. It does not go through the API.
+
+## 3. Why it is built this way
+
+| Decision | Reason |
 |---|---|
-| Temporal workflow per run | A run lasts from minutes to days and waits on a person. Signals and durable timers make "wait up to 14 days for confirmation" free, and cancellation gives clean Stop/Pause. |
-| Activities never auto-retry (`maximum_attempts=1`) | A half-driven browser session can't be safely replayed. Each activity turns its own failure into a visible failed run, mission or test. The pool helper gives a crashed item **one** extra try. |
-| Polling instead of websockets | Simple and stateless. Events have an integer id, so the UI asks for `events?after=<last id>` every 1.5 s. |
-| Screenshots and videos in Postgres | No object-store setup for Explorer. Each shot is a 60–150 KB JPEG. This is marked as a `ponytail:` shortcut: move to the object store if runs grow to thousands of shots. |
-| A separate LLM client (not `ai_provider`) | Keeps Explorer standalone and pinned to GPT-5.6 with JSON-mode output. |
-| Plain-text memory recall | Knowledge is matched by keywords and recency, not vector search. This is also marked as a `ponytail:` shortcut: upgrade when an app's knowledge grows past a few hundred items. |
+| **A separate module** with its own worker, tables (`explorer_*`) and AI client | The old discovery keeps working untouched. Explorer reads only the `application` row and its saved login. |
+| **Temporal workflow per run** | A run can last minutes or days and must wait for a person. Temporal waits for free (up to 14 days for confirmation), survives restarts, and makes Stop/Pause clean. |
+| **No automatic retries** (`maximum_attempts=1`) | A half-finished browser session can't be safely repeated. Each step turns its own failure into a visible "failed" with a reason. A mission or test whose worker died gets **one** extra try. |
+| **Everything written as it happens** | Gives you the live view, lets Pause/Resume pick up exactly where it stopped, and means no work is lost. |
+| **The UI polls instead of using websockets** | Simple and stateless. Each event has a number, so the UI asks "anything after event 1234?" |
+| **Screenshots and videos in Postgres** | No extra storage setup. This is marked as a `ponytail:` shortcut: move to the object store if runs grow to thousands of screenshots. |
+| **Memory matched by keywords**, not vector search | Enough for a few hundred facts per app. Also marked `ponytail:`. |
 
-## How the pieces talk
+## 4. Processes to run
 
-```
-Browser ──HTTPS──▶ Explorer tab ──REST (poll)──▶ API ──start / signal / cancel──▶ Temporal
-                                                  │                                  │
-                                                  ▼                                  ▼ activities
-                                              Postgres ◀──────── journal ─────── Explorer worker
-                                                                                     │   │   │
-                                                         Vault (login) ◀─────────────┘   │   └──▶ LiteLLM ▶ GPT-5.6
-                                                                                         ▼
-                                                                     Headless Chromium ──▶ App under test
-```
+| Process | How it starts |
+|---|---|
+| API | Existing Vantage API. The Explorer router is part of it. |
+| Explorer worker | `uv run --env-file .env --package explorer-worker python -m explorer_worker.worker`. `scripts/dev-start` starts it for you (see [doc 8](08-operations-and-configuration.md)). |
+| Web | Existing Vite dev server or build |
 
-- **The API never talks to the worker directly.** It starts, signals or cancels the workflow, and otherwise reads and writes Postgres.
-- **Answers to questions need no signal.** The API stores the answer, and the waiting mission sees it by polling the database every 5 s.
-- **The worker writes classic Vantage rows directly** in the promote step. It does not call the API.
+If no Explorer worker is running, pressing Start returns **503 `EXPLORER_UNAVAILABLE`**, and onboarding a new app records a failed discovery with reason `worker_unavailable`.
 
-## Deployables and processes
+## 5. Security boundaries
 
-| Process | Start command | Notes |
-|---|---|---|
-| API | existing Vantage API process | The router is part of the API. |
-| Explorer worker | `uv run --env-file .env --package explorer-worker python -m explorer_worker.worker` | Dev scripts run it under `watchfiles` for hot reload. See [document 8](08-operations-and-configuration.md). |
-| Web | existing Vite dev server or build | |
-
-If no worker is polling `explorer-task-queue`, starting a run returns **503 `EXPLORER_UNAVAILABLE`**, and onboarding records a failed discovery run with reason `worker_unavailable`.
-
-## Tenant and security boundaries
-
-- Every endpoint resolves the caller's organization (`CurrentOrgIdDep`) and joins through `Application.organization_id`. A run, mission, test, question or shot from another organization returns 404. There are no finer role checks.
-- Logins never reach the model. Sign-in is done by code. Generated tests write `{{username}}`/`{{password}}` placeholders, which the exported project resolves from its own config.
-- "Simulated server answers" in the hunt are intercepted inside Explorer's own browser (`page.route`). Nothing is sent to the real server.
+- **Tenant isolation:** every endpoint checks that the run, mission, test, question or screenshot belongs to the caller's organization. Anything else returns 404. There are no finer role checks.
+- **Logins never reach the AI.** Sign-in is done by code. Exported tests use `{{username}}`/`{{password}}` placeholders that the test project fills in from its own config.
+- **Simulated server problems** (doc 1, section 9) are intercepted inside Explorer's own browser. Nothing is sent to the real server.

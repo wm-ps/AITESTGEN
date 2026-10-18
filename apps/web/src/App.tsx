@@ -17,7 +17,6 @@ import { Settings } from './components/Settings'
 import { ServiceError } from './components/ServiceError'
 import { SignIn } from './components/SignIn'
 import { TeamMembers } from './components/TeamMembers'
-import { TestSuiteResults } from './components/TestSuiteResults'
 import { Toast } from './components/Toast'
 import { Workspace, type WorkspaceTab, WORKSPACE_TABS } from './components/workspace/Workspace'
 import { AppShell, type AppShellTab, type ShellRoute } from './components/shell/AppShell'
@@ -119,13 +118,6 @@ function App() {
   // their own "nothing here yet" state, same as Workspace's tabs already
   // did before this merge).
   const [appTab, setAppTab] = useState<AppTab>('journeys')
-  // One-shot: set when "Generate Test Suite" (Scenarios tab) or "Run Tests"
-  // (the post-generate results screen) fires, so the Test cases / Test runs
-  // tab shows that transitional screen once, then reverts to the steady-
-  // state tab content on any other navigation — same one-time-screen
-  // behavior the old 'test-suite-results' view had.
-  const [justGeneratedSuite, setJustGeneratedSuite] = useState(false)
-  const [autoTriggerRun, setAutoTriggerRun] = useState(false)
   // One-shot: the scenario a just-saved recording created — Test cases
   // (TestSuiteTab) brings its row into view and flashes it, then reports it
   // consumed. Cleared on any navigation away from 'suite' or to another
@@ -249,8 +241,6 @@ function App() {
   async function handleResumeApplication(app: ApplicationRead) {
     if (globalLoading) return
     setApplication(app)
-    setJustGeneratedSuite(false)
-    setAutoTriggerRun(false)
     setAppTab('overview')
     setView('app')
     try {
@@ -259,37 +249,15 @@ function App() {
         api.listTestSuites(app.id),
       ])
       // A TestSuite row exists as soon as generation starts (before its
-      // TestAssets do) — resuming mid-generation must land back on the
-      // Test cases tab's generating state, not stay on Overview with a
-      // partial suite.
-      // `[FIXED]` `testCaseCount >= scenarios.length` looked like the right
-      // "is generation done" gate but a Scenario that's permanently skipped
-      // (over the max_test_cases_per_application cap) or failed all its wave
-      // retries never contributes a TestAsset — the count then never
-      // catches up even though generation genuinely finished, so every
-      // fresh resume of that application landed back on this fake
-      // "generating" state forever (until any manual sidebar tab click,
-      // which unconditionally clears this flag in `selectAppTab` below —
-      // that's why switching tabs and back always looked like it "fixed"
-      // it). `suites_generating_count`'s own status-based signal
-      // (Home.tsx's `suiteGenerating`) doesn't have this problem — mirror
-      // that here instead of re-deriving completion from counts.
-      //
-      // `[FIXED]` regression: that alone still isn't the right gate for
-      // this specific full-screen takeover — it's meant for "you just
-      // asked to bulk-generate the whole suite from scratch and nothing
-      // exists yet" (TestSuiteResults' own aggregate %/count reads as one
-      // suite-wide run). A live-exploration ("Author a test case") request
-      // also flips one Journey's TestSuite to 'generating' for its ~1-3
-      // scenarios while every other journey's suite is already 'complete'
-      // — that must land on the normal Test cases tab (which already shows
-      // the existing list plus its own inline progress via TestSuiteTab's
-      // own poll), not hijack the whole screen with an aggregate view that
-      // has nothing to do with what's actually generating.
+      // TestAssets do) — resuming a first-time bulk generation lands on the
+      // Test cases tab, which shows its own progress. Status-based, not
+      // count-based: a skipped/failed Scenario never yields a TestAsset, so
+      // counts never catch up. Only when no suite has finished yet — an
+      // "Author a test case" request also flips one journey's suite to
+      // 'generating' while the rest are complete; that resumes on Overview.
       const noSuiteHasFinishedYet = suites.length > 0 && !suites.some((s) => s.status === 'complete')
       const suiteGenerating =
         noSuiteHasFinishedYet && suites.some((s) => s.status === 'generating')
-      setJustGeneratedSuite(suiteGenerating)
       // No Journeys/Scenarios tabs when discovery is off — an empty app
       // lands on Test cases, where its tests get added.
       setAppTab(
@@ -326,7 +294,7 @@ function App() {
     setGlobalLoading('Generating test suite')
     try {
       await api.generateSuite(application.id)
-      setJustGeneratedSuite(true)
+      // The Test cases tab shows generation progress itself.
       setAppTab('suite')
     } catch {
       setErrorToast('Failed to start test suite generation. Please try again.')
@@ -336,12 +304,8 @@ function App() {
   }
 
   function selectAppTab(tab: string) {
-    // A deliberate sidebar click is never the one-shot "just generated /
-    // just triggered a run" transition — only the programmatic transitions
-    // below (Journeys' Continue, Scenarios' Generate, the results screen's
-    // Run Tests) set those flags.
-    setJustGeneratedSuite(false)
-    setAutoTriggerRun(false)
+    // A deliberate sidebar click is never the one-shot "just started
+    // scenarios" transition — only Journeys' Continue sets that flag.
     setJustStartedScenarios(false)
     setHighlightScenarioId(null)
     setAppTab(tab as AppTab)
@@ -432,7 +396,6 @@ function App() {
           applicationUrl={application.url}
           onSaved={(message, saved) => {
             setSuccessToast(message)
-            setJustGeneratedSuite(false)
             setHighlightScenarioId(saved.scenarioExternalId)
             setAppTab('suite')
           }}
@@ -440,29 +403,17 @@ function App() {
         />
       )}
       {view === 'app' && application && appTab !== 'journeys' && appTab !== 'explorer' && appTab !== 'scenarios' && appTab !== 'record' && (
-        justGeneratedSuite && appTab === 'suite' ? (
-          <TestSuiteResults
-            applicationId={application.id}
-            onRunTests={() => {
-              setJustGeneratedSuite(false)
-              setAutoTriggerRun(true)
-              setAppTab('runs')
-            }}
-          />
-        ) : (
-          <Workspace
-            applicationId={application.id}
-            applicationName={application.name}
-            applicationUrl={application.url}
-            discoveryEnabled={hasDiscovery(application)}
-            activeTab={appTab as WorkspaceTab}
-            onActiveTabChange={(tab) => setAppTab(byExplorer && (tab === 'journeys' || tab === 'scenarios') ? 'explorer' : tab)}
-            autoTriggerRun={autoTriggerRun}
-            byExplorer={byExplorer}
-            highlightScenarioId={highlightScenarioId}
-            onHighlightConsumed={() => setHighlightScenarioId(null)}
-          />
-        )
+        <Workspace
+          applicationId={application.id}
+          applicationName={application.name}
+          applicationUrl={application.url}
+          discoveryEnabled={hasDiscovery(application)}
+          activeTab={appTab as WorkspaceTab}
+          onActiveTabChange={(tab) => setAppTab(byExplorer && (tab === 'journeys' || tab === 'scenarios') ? 'explorer' : tab)}
+          byExplorer={byExplorer}
+          highlightScenarioId={highlightScenarioId}
+          onHighlightConsumed={() => setHighlightScenarioId(null)}
+        />
       )}
       {view === 'settings' && user && <Settings user={user} onCancel={() => setView(previousView)} />}
       {view === 'team' && user && <TeamMembers user={user} />}
