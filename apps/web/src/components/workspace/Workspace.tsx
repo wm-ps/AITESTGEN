@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faClock, faDownload, faFlaskVial, faGauge, faPen, faTableList } from '@fortawesome/free-solid-svg-icons'
+import { faClock, faDownload, faFlaskVial, faGauge, faTableList } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api } from '../../api'
 import { AppIdentityLine } from '../AppIdentityLine'
 import { ServiceErrorNote } from '../ServiceError'
 import { Toast } from '../Toast'
 import { DownloadTab } from './DownloadTab'
-import { NotesTab } from './NotesTab'
 import { OverviewTab } from './OverviewTab'
 import { RunJourneysDialog } from './RunJourneysDialog'
 import { RunSuiteButton } from './RunSuiteButton'
@@ -14,7 +13,7 @@ import { SchedulesTab } from './SchedulesTab'
 import { TestSuiteTab } from './TestSuiteTab'
 import { RunsTab } from './RunsTab'
 
-export type WorkspaceTab = 'overview' | 'suite' | 'runs' | 'schedules' | 'export' | 'notes'
+export type WorkspaceTab = 'overview' | 'suite' | 'runs' | 'schedules' | 'export'
 
 // Matches the prototype's per-application nav (fa-gauge/fa-table-list/
 // fa-flask-vial/fa-clock/fa-download), replacing the previous hand-drawn SVGs.
@@ -38,10 +37,6 @@ function DownloadIcon() {
   return <FontAwesomeIcon icon={faDownload} style={{ fontSize: 15 }} />
 }
 
-function NotesIcon() {
-  return <FontAwesomeIcon icon={faPen} style={{ fontSize: 15 }} />
-}
-
 const RUN_IS_ACTIVE = (status: string) => status === 'pending' || status === 'running'
 const RUN_POLL_MS = 2000
 
@@ -53,7 +48,6 @@ export const WORKSPACE_TABS: { key: WorkspaceTab; label: string; heading: string
   { key: 'runs', label: 'Test runs', heading: 'Test runs', icon: RunsIcon },
   { key: 'schedules', label: 'Schedules and CI', heading: 'Schedules and CI', icon: SchedulesIcon },
   { key: 'export', label: 'Download project', heading: 'Download project', icon: DownloadIcon },
-  { key: 'notes', label: 'Notes', heading: 'Notes', icon: NotesIcon },
 ]
 
 export function Workspace({
@@ -64,6 +58,7 @@ export function Workspace({
   onActiveTabChange,
   onTabsChange,
   autoTriggerRun = false,
+  byExplorer = false,
 }: {
   applicationId: string
   applicationName: string
@@ -74,6 +69,8 @@ export function Workspace({
   // `appTab` state, not this component's own `activeTab`. The caller
   // (App.tsx) already handles every value in that broader union.
   onActiveTabChange: (tab: WorkspaceTab | 'journeys' | 'scenarios' | 'record') => void
+  // An Explorer-discovered app (no Journeys / Scenarios pages).
+  byExplorer?: boolean
   // Reports the currently-visible tab list up to the caller (AppShell's
   // sidebar renders it) whenever it changes.
   onTabsChange?: (tabs: typeof WORKSPACE_TABS) => void
@@ -227,14 +224,7 @@ export function Workspace({
                 <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>
                   {WORKSPACE_TABS.find((tab) => tab.key === activeTab)?.heading}
                 </h1>
-                {activeTab === 'notes' ? (
-                  <div style={{ fontSize: 13.5, color: 'var(--fg-3)' }}>
-                    Application context Vantage reads whenever it generates scenarios and test cases for{' '}
-                    {applicationName}.
-                  </div>
-                ) : (
-                  <AppIdentityLine name={applicationName} url={applicationUrl} />
-                )}
+                <AppIdentityLine name={applicationName} url={applicationUrl} />
               </>
             )}
           </div>
@@ -258,11 +248,10 @@ export function Workspace({
         )}
 
         {activeTab === 'overview' && (
-          <OverviewTab applicationId={applicationId} onNavigateTab={onActiveTabChange} />
+          <OverviewTab applicationId={applicationId} onNavigateTab={onActiveTabChange} byExplorer={byExplorer} />
         )}
         {activeTab === 'suite' && <TestSuiteTab applicationId={applicationId} />}
         {activeTab === 'schedules' && <SchedulesTab applicationId={applicationId} />}
-        {activeTab === 'notes' && <NotesTab applicationId={applicationId} />}
         {activeTab === 'export' && <DownloadTab applicationId={applicationId} applicationName={applicationName} />}
         {activeTab === 'runs' && (
           <RunsTab

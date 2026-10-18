@@ -9,9 +9,11 @@ calls directly in the same request, not a route of its own. `pause_discovery_run
 """
 
 import logging
+import os
+import uuid
 
 from domain import Application, DiscoveryRun
-from sqlmodel import Session
+from sqlmodel import Session, col, select
 from workflows import DISCOVERY_TASK_QUEUE, DiscoveryWorkflow
 
 from api.temporal_client import get_temporal_client, has_pollers
@@ -19,9 +21,21 @@ from api.temporal_client import get_temporal_client, has_pollers
 logger = logging.getLogger(__name__)
 
 
+# Stage 8 of docs/vantage-explorer/PLAN.md: Vantage Explorer is the
+# discovery. Set EXPLORER_REPLACES_DISCOVERY=0 to go back to the classic
+# crawler (its code is unchanged).
+EXPLORER_REPLACES_DISCOVERY = os.environ.get("EXPLORER_REPLACES_DISCOVERY", "1") != "0"
+
+
 async def start_discovery_run(
-    session: Session, application: Application, *, resume: bool = False
+    session: Session,
+    application: Application,
+    *,
+    resume: bool = False,
+    started_by: uuid.UUID | None = None,
 ) -> DiscoveryRun:
+    if EXPLORER_REPLACES_DISCOVERY and not resume:
+        return await _start_explorer(session, application, started_by)
     client = await get_temporal_client()
 
     # Checked before writing anything: if the discovery worker pod is down,
@@ -107,3 +121,37 @@ async def resume_discovery_run(session: Session, application: Application) -> Di
     states rather than re-crawl and reclassify them (Story 2.10's normal
     fresh-run behaviour is otherwise unchanged for a plain new run)."""
     return await start_discovery_run(session, application, resume=True)
+
+
+async def _start_explorer(
+    session: Session, application: Application, started_by: uuid.UUID | None
+) -> DiscoveryRun:
+    """Onboarding with Explorer: the discovery record is created here so the
+    app shows "discovering" right away; Explorer completes it when it hands
+    its proven tests to Journeys/Scenarios/Test cases."""
+    from fastapi import HTTPException
+
+    from api.explorer import begin_run
+
+    try:
+        await begin_run(session, application, None, started_by=started_by)
+    except HTTPException as exc:
+        logger.warning("could not start Explorer for %s: %s", application.id, exc.detail)
+        failed = DiscoveryRun(
+            application_id=application.id,
+            status="failed",
+            stage="explorer",
+            failure_reason="worker_unavailable",
+        )
+        session.add(failed)
+        session.commit()
+        session.refresh(failed)
+        return failed
+    run = session.exec(
+        select(DiscoveryRun)
+        .where(DiscoveryRun.application_id == application.id)
+        .order_by(col(DiscoveryRun.created_at).desc())
+    ).first()
+    assert run is not None
+    session.refresh(application)
+    return run

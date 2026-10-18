@@ -9,7 +9,18 @@ import os
 import uuid
 
 import pytest
-from domain import Application, DiscoveryRun, Form, FormField, Organization, Page
+from domain import (
+    Application,
+    DiscoveryRun,
+    Form,
+    FormField,
+    Journey,
+    Organization,
+    Page,
+    Scenario,
+    TestAsset,
+    TestSuite,
+)
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, SQLModel
@@ -128,3 +139,64 @@ def test_falls_back_to_login_url_when_set_for_a_cross_origin_oauth_redirect() ->
 
         assert evidence is not None
         assert evidence.url == "https://acme.example.com/login"
+
+
+def _seed_app_without_login_form(session: Session, *, requires_auth: bool) -> Application:
+    """Explorer-discovered app: no crawler `Form` rows, only promoted tests."""
+    org = Organization(name=f"Test Org {uuid.uuid4()}")
+    session.add(org)
+    session.flush()
+    application = Application(
+        organization_id=org.id,
+        name="Test App",
+        url="https://acme.example.com",
+        login_url="https://acme.example.com/login",
+        environment="staging",
+        secret_ref="applications/org/secret",
+        auth_method="standard_login",
+    )
+    session.add(application)
+    session.flush()
+    run = DiscoveryRun(application_id=application.id)
+    session.add(run)
+    session.flush()
+    journey = Journey(
+        application_id=application.id,
+        discovery_run_id=run.id,
+        name="Claims",
+        identity_key=f"claims-{uuid.uuid4()}",
+    )
+    session.add(journey)
+    session.flush()
+    scenario = Scenario(journey_id=journey.id, type="happy_path", name="File a claim", generation_run_id=1)
+    suite = TestSuite(journey_id=journey.id, name="Claims", generation_run_id=1)
+    session.add(scenario)
+    session.add(suite)
+    session.flush()
+    session.add(
+        TestAsset(scenario_id=scenario.id, test_suite_id=suite.id, code="", requires_auth=requires_auth)
+    )
+    session.flush()
+    return application
+
+
+def test_falls_back_to_login_url_when_explorer_tests_need_sign_in() -> None:
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        application = _seed_app_without_login_form(session, requires_auth=True)
+        session.commit()
+
+        evidence = find_login_page_evidence(session, application)
+
+        assert evidence is not None
+        assert evidence.url == "https://acme.example.com/login"
+        assert evidence.username_locator is None
+
+
+def test_no_evidence_when_no_login_form_and_no_test_needs_sign_in() -> None:
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        application = _seed_app_without_login_form(session, requires_auth=False)
+        session.commit()
+
+        assert find_login_page_evidence(session, application) is None

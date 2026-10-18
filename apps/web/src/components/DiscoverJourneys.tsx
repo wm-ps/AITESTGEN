@@ -169,6 +169,7 @@ export function DiscoverJourneys({
   discoveryStage,
   discoveryFailureReason,
   onContinueToScenarios,
+  onOpenExplorer,
 }: {
   applicationId: string
   applicationName: string
@@ -177,6 +178,10 @@ export function DiscoverJourneys({
   discoveryStage: string | null
   discoveryFailureReason: string | null
   onContinueToScenarios: () => void
+  // Stage 8 (docs/vantage-explorer/PLAN.md): set when Explorer did this app's
+  // discovery — Journeys are filled by Explorer's proven tests, so the old
+  // crawler's pause/resume/progress UI and scenario generation don't apply.
+  onOpenExplorer?: () => void
 }) {
   const [journeys, setJourneys] = useState<JourneyRead[]>([])
   // Vantage V2: every journey on the current page shows its own nav timeline
@@ -355,6 +360,10 @@ export function DiscoverJourneys({
   const canContinue = journeys.length > 0 && !continuing
 
   async function handleContinueToScenarios() {
+    if (onOpenExplorer) {
+      onContinueToScenarios()
+      return
+    }
     setContinuing(true)
     setContinueError(false)
     try {
@@ -417,7 +426,11 @@ export function DiscoverJourneys({
                 color: 'var(--fg)',
               }}
             />
-            {(status === 'running' || status === 'paused') && (
+            {onOpenExplorer ? (
+              <button type="button" className="button-secondary" onClick={onOpenExplorer}>
+                Open Explorer
+              </button>
+            ) : (status === 'running' || status === 'paused') && (
               <button
                 type="button"
                 className="button-secondary"
@@ -456,7 +469,11 @@ export function DiscoverJourneys({
           </div>
         </div>
 
-        {sessionExpired ? (
+        {onOpenExplorer ? (
+          <p className="caption" style={{ marginBottom: 'var(--space-5)' }}>
+            Explorer is finding this app's journeys. They appear here when it has finished.
+          </p>
+        ) : sessionExpired ? (
           <p className="caption" role="alert" style={{ color: 'var(--danger)' }}>
             Session expired mid-discovery. Re-authenticate to continue discovery.
           </p>
@@ -470,7 +487,7 @@ export function DiscoverJourneys({
           )
         )}
 
-        {status === 'running' && retryCount > 0 && (
+        {!onOpenExplorer && status === 'running' && retryCount > 0 && (
           <p className="caption" style={{ color: 'var(--warn-strong)' }}>
             Recovered from a worker restart — resuming from where it left off.
           </p>
@@ -478,7 +495,7 @@ export function DiscoverJourneys({
 
         {continueError && <ServiceErrorNote code="GENERATION_UNAVAILABLE" />}
 
-        {status === 'paused' && (
+        {!onOpenExplorer && status === 'paused' && (
           <p className="caption" style={{ color: 'var(--warn-strong)' }}>
             Discovery paused. Resume to continue exploring from where it left off.
           </p>
@@ -660,12 +677,12 @@ export function DiscoverJourneys({
           </div>
         )}
 
-        {journeys.length === 0 && status !== 'failed' && (
-          hadJourneysRef.current ? (
+        {journeys.length === 0 && (onOpenExplorer || status !== 'failed') && (
+          hadJourneysRef.current || onOpenExplorer ? (
             <EmptyState
               illustration={<JourneysIllustration />}
               title="No journeys"
-              subtitle="All journeys have been removed."
+              subtitle={hadJourneysRef.current ? 'All journeys have been removed.' : 'Explorer has not finished yet.'}
             />
           ) : (
             <ImportProgress applicationName={applicationName} />

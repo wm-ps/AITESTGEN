@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Explorer Pipeline — Activities in Order",
+    "subtitle": "ExplorerRunWorkflow steps and the Temporal activity behind each",
+    "output": "explorer-pipeline.html",
+    "quality_profile": "standard"
+  },
+  "lanes": [
+    {
+      "id": "you",
+      "label": "You (web)"
+    },
+    {
+      "id": "learn",
+      "label": "Stage 1 · learn"
+    },
+    {
+      "id": "explore",
+      "label": "Stages 2–4 · explore"
+    },
+    {
+      "id": "waits",
+      "label": "Waits on a person",
+      "variant": "exception"
+    },
+    {
+      "id": "prove",
+      "label": "Stages 5–8 · prove and hand off"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "start",
+      "lane": "you",
+      "col": 0,
+      "type": "frontend",
+      "label": "Start",
+      "sublabel": "POST /runs"
+    },
+    {
+      "id": "confirm",
+      "lane": "you",
+      "col": 3,
+      "type": "frontend",
+      "label": "Confirm",
+      "sublabel": "signal"
+    },
+    {
+      "id": "answer",
+      "lane": "you",
+      "col": 5,
+      "type": "frontend",
+      "label": "Answer",
+      "sublabel": "Questions tab"
+    },
+    {
+      "id": "look",
+      "lane": "learn",
+      "col": 0,
+      "type": "backend",
+      "label": "Look around",
+      "sublabel": "sign in · ≤24"
+    },
+    {
+      "id": "summary",
+      "lane": "learn",
+      "col": 2,
+      "type": "backend",
+      "label": "App Summary",
+      "sublabel": "health score"
+    },
+    {
+      "id": "plan",
+      "lane": "explore",
+      "col": 3,
+      "type": "backend",
+      "label": "Plan",
+      "sublabel": "6–15 missions"
+    },
+    {
+      "id": "missions",
+      "lane": "explore",
+      "col": 5,
+      "type": "backend",
+      "label": "Missions",
+      "sublabel": "3 at once"
+    },
+    {
+      "id": "question",
+      "lane": "waits",
+      "col": 4,
+      "type": "messagebus",
+      "label": "Question",
+      "sublabel": "only it waits"
+    },
+    {
+      "id": "hunt",
+      "lane": "prove",
+      "col": 0,
+      "type": "backend",
+      "label": "Hunt",
+      "sublabel": "+ breadth"
+    },
+    {
+      "id": "tests",
+      "lane": "prove",
+      "col": 1,
+      "type": "backend",
+      "label": "Plan tests",
+      "sublabel": "5 kinds"
+    },
+    {
+      "id": "prove",
+      "lane": "prove",
+      "col": 3,
+      "type": "backend",
+      "label": "Prove",
+      "sublabel": "3 replays"
+    },
+    {
+      "id": "promote",
+      "lane": "prove",
+      "col": 5,
+      "type": "database",
+      "label": "Promote",
+      "sublabel": "+ highlight"
+    }
+  ],
+  "edges": [
+    {
+      "id": "look-summary",
+      "from": "look",
+      "to": "summary"
+    },
+    {
+      "id": "summary-confirm",
+      "from": "summary",
+      "to": "confirm",
+      "label": "awaiting",
+      "variant": "emphasis"
+    },
+    {
+      "id": "confirm-plan",
+      "from": "confirm",
+      "to": "plan",
+      "label": "confirmed",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "plan-missions",
+      "from": "plan",
+      "to": "missions"
+    },
+    {
+      "id": "missions-question",
+      "from": "missions",
+      "to": "question",
+      "label": "asks",
+      "variant": "dashed",
+      "route": "drop"
+    },
+    {
+      "id": "answer-missions",
+      "from": "answer",
+      "to": "missions",
+      "label": "answer",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "missions-hunt",
+      "from": "missions",
+      "to": "hunt",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "via": [
+        [
+          625,
+          538
+        ],
+        [
+          88,
+          538
+        ]
+      ]
+    },
+    {
+      "id": "hunt-tests",
+      "from": "hunt",
+      "to": "tests"
+    },
+    {
+      "id": "tests-prove",
+      "from": "tests",
+      "to": "prove"
+    },
+    {
+      "id": "prove-promote",
+      "from": "prove",
+      "to": "promote",
+      "variant": "emphasis"
+    },
+    {
+      "id": "start-look",
+      "from": "start",
+      "to": "look",
+      "label": "workflow",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ],
+  "cards": []
+}

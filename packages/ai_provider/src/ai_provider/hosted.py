@@ -591,8 +591,11 @@ locator action, so it gets its own, longer `NAVIGATION_TIMEOUT_MS` budget rather
 `ASSERTION_TIMEOUT_MS`; never locate or assert on an element right after `goto(...)` resolves \
 without this wait in between, since the initial HTML can still be mid-parse at that point:
 const response = await page.goto(url, {{ timeout: NAVIGATION_TIMEOUT_MS }});
-if (!response || response.status() >= 400) {{
-  throw new Error(`Failed to load page. HTTP status: ${{response?.status()}}`);
+// `goto` resolves to null when only the address's #fragment or history state
+// changes (single-page apps of every framework): same document, nothing was
+// loaded — that is not a failure. Only a real HTTP error status is.
+if (response && response.status() >= 400) {{
+  throw new Error(`Failed to load page. HTTP status: ${{response.status()}}`);
 }}
 await page.waitForLoadState('domcontentloaded', {{ timeout: NAVIGATION_TIMEOUT_MS }});
 This applies just as much when a step reaches a new page by clicking a link/button instead of \

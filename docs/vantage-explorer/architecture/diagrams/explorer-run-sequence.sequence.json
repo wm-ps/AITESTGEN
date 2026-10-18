@@ -1,0 +1,282 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "Explorer Run — Request Sequence",
+    "subtitle": "Who calls whom from Start to proven tests",
+    "output": "explorer-run-sequence.html",
+    "quality_profile": "standard",
+    "viewBox": [
+      920,
+      950
+    ]
+  },
+  "participants": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "QA user",
+      "sublabel": "browser"
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "Explorer tab",
+      "sublabel": "React"
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "Vantage API",
+      "sublabel": "FastAPI"
+    },
+    {
+      "id": "pg",
+      "type": "database",
+      "label": "Postgres",
+      "sublabel": "explorer_*"
+    },
+    {
+      "id": "temporal",
+      "type": "messagebus",
+      "label": "Temporal",
+      "sublabel": "workflow"
+    },
+    {
+      "id": "worker",
+      "type": "backend",
+      "label": "Worker",
+      "sublabel": "Explorer"
+    },
+    {
+      "id": "llm",
+      "type": "external",
+      "label": "GPT-5.6",
+      "sublabel": "LiteLLM"
+    },
+    {
+      "id": "aut",
+      "type": "external",
+      "label": "Your app",
+      "sublabel": "under test"
+    }
+  ],
+  "segments": [
+    {
+      "from": 180,
+      "to": 320,
+      "label": "01 / START"
+    },
+    {
+      "from": 320,
+      "to": 460,
+      "label": "02 / LEARN"
+    },
+    {
+      "from": 460,
+      "to": 572,
+      "label": "03 / CONFIRM"
+    },
+    {
+      "from": 572,
+      "to": 740,
+      "label": "04 / MISSIONS"
+    },
+    {
+      "from": 740,
+      "to": 824,
+      "label": "05 / TESTS"
+    }
+  ],
+  "messages": [
+    {
+      "id": "m00",
+      "from": "user",
+      "to": "web",
+      "y": 208,
+      "label": "Start exploring",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m01",
+      "from": "web",
+      "to": "api",
+      "y": 222,
+      "label": "POST /runs",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m02",
+      "from": "api",
+      "to": "pg",
+      "y": 250,
+      "label": "insert explorer_run"
+    },
+    {
+      "id": "m03",
+      "from": "api",
+      "to": "temporal",
+      "y": 278,
+      "label": "start_workflow",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m04",
+      "from": "temporal",
+      "to": "worker",
+      "y": 306,
+      "label": "understand_app",
+      "variant": "dashed"
+    },
+    {
+      "id": "m05",
+      "from": "worker",
+      "to": "aut",
+      "y": 334,
+      "label": "sign in · look",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m06",
+      "from": "worker",
+      "to": "llm",
+      "y": 362,
+      "label": "read screens"
+    },
+    {
+      "id": "m07",
+      "from": "worker",
+      "to": "pg",
+      "y": 390,
+      "label": "screens · events"
+    },
+    {
+      "id": "m08",
+      "from": "worker",
+      "to": "llm",
+      "y": 418,
+      "label": "summarize"
+    },
+    {
+      "id": "m09",
+      "from": "worker",
+      "to": "pg",
+      "y": 446,
+      "label": "brief · awaiting"
+    },
+    {
+      "id": "m10",
+      "from": "web",
+      "to": "api",
+      "y": 474,
+      "label": "GET /events (1.5 s poll)"
+    },
+    {
+      "id": "m11",
+      "from": "user",
+      "to": "web",
+      "y": 502,
+      "label": "Looks right — confirm",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m12",
+      "from": "web",
+      "to": "api",
+      "y": 530,
+      "label": "POST /confirm",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m13",
+      "from": "api",
+      "to": "temporal",
+      "y": 558,
+      "label": "signal brief_confirmed",
+      "variant": "security"
+    },
+    {
+      "id": "m14",
+      "from": "temporal",
+      "to": "worker",
+      "y": 586,
+      "label": "plan + run missions (×3)",
+      "variant": "dashed"
+    },
+    {
+      "id": "m15",
+      "from": "worker",
+      "to": "aut",
+      "y": 614,
+      "label": "pursue goal step by step",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m16",
+      "from": "worker",
+      "to": "pg",
+      "y": 642,
+      "label": "question · mission waits"
+    },
+    {
+      "id": "m17",
+      "from": "web",
+      "to": "api",
+      "y": 670,
+      "label": "POST /answer"
+    },
+    {
+      "id": "m18",
+      "from": "api",
+      "to": "pg",
+      "y": 698,
+      "label": "answer + knowledge"
+    },
+    {
+      "id": "m19",
+      "from": "pg",
+      "to": "worker",
+      "y": 726,
+      "label": "5 s poll sees answer",
+      "variant": "return"
+    },
+    {
+      "id": "m20",
+      "from": "temporal",
+      "to": "worker",
+      "y": 754,
+      "label": "hunt · tests",
+      "variant": "dashed"
+    },
+    {
+      "id": "m21",
+      "from": "worker",
+      "to": "aut",
+      "y": 782,
+      "label": "replay ×3 + broken copy",
+      "variant": "emphasis"
+    },
+    {
+      "id": "m22",
+      "from": "worker",
+      "to": "pg",
+      "y": 810,
+      "label": "proven tests · promote"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "worker",
+      "from": 306,
+      "to": 456,
+      "type": "backend"
+    },
+    {
+      "participant": "worker",
+      "from": 586,
+      "to": 820,
+      "type": "backend"
+    }
+  ],
+  "cards": []
+}

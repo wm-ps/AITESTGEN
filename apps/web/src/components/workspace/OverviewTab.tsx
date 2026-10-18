@@ -133,10 +133,18 @@ function ChevronRightIcon() {
 // Fixed 3-per-row (not auto-fit) — a wide viewport would otherwise pack 4+
 // of these ~240px-minimum cards onto one row; the prototype's grid is
 // strictly 3 wide, wrapping to further rows instead of stretching wider.
-function QuickActionsGrid({ onNavigate }: { onNavigate: (target: QuickActionTarget) => void }) {
+// An Explorer app has no Journeys / Scenarios pages (Explorer's own
+// Scenarios tab replaces both — App.tsx routes those targets there), so one
+// honest "Open Explorer" tile stands in for the two.
+const EXPLORER_ACTION = { target: 'scenarios' as const, label: 'Open Explorer', hint: 'See what it learned and the scenarios it proved.', icon: DiscoveryIcon }
+
+function QuickActionsGrid({ onNavigate, byExplorer }: { onNavigate: (target: QuickActionTarget) => void; byExplorer: boolean }) {
+  const actions = byExplorer
+    ? [EXPLORER_ACTION, ...QUICK_ACTIONS.filter((a) => a.target !== 'journeys' && a.target !== 'scenarios')]
+    : QUICK_ACTIONS
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 14 }}>
-      {QUICK_ACTIONS.map((action) => {
+      {actions.map((action) => {
         const Icon = action.icon
         return (
           <div
@@ -183,9 +191,11 @@ function QuickActionsGrid({ onNavigate }: { onNavigate: (target: QuickActionTarg
 export function OverviewTab({
   applicationId,
   onNavigateTab,
+  byExplorer = false,
 }: {
   applicationId: string
   onNavigateTab: (target: QuickActionTarget) => void
+  byExplorer?: boolean
 }) {
   const [overview, setOverview] = useState<OverviewRead | null>(null)
 
@@ -237,7 +247,7 @@ export function OverviewTab({
           title="No test runs yet"
           subtitle="Health, pass rate, and trend will show up here once your first run finishes."
         />
-        <QuickActionsGrid onNavigate={onNavigateTab} />
+        <QuickActionsGrid onNavigate={onNavigateTab} byExplorer={byExplorer} />
       </div>
     )
   }
@@ -341,7 +351,7 @@ export function OverviewTab({
         </div>
       </div>
 
-      <QuickActionsGrid onNavigate={onNavigateTab} />
+      <QuickActionsGrid onNavigate={onNavigateTab} byExplorer={byExplorer} />
     </div>
   )
 }

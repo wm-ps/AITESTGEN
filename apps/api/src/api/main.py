@@ -15,6 +15,7 @@ from typing import Annotated, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+import hvac.exceptions
 from domain import (
     Action,
     ApiEndpoint,
@@ -35,8 +36,8 @@ from domain import (
     PlatformUser,
     RetentionPeriod,
     Scenario,
-    ScreenshotCapture,
     Schedule,
+    ScreenshotCapture,
     TestAsset,
     TestDataEntry,
     TestResult,
@@ -45,7 +46,7 @@ from domain import (
     TestSuite,
     aggregation_key,
 )
-import hvac.exceptions
+from explorer_core import ExplorerRun
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from object_store import ObjectStore
@@ -61,9 +62,9 @@ from temporalio.client import (
     ScheduleActionStartWorkflow,
     ScheduleState,
     ScheduleUpdateInput,
+    WorkflowExecutionStatus,
 )
 from temporalio.client import ScheduleUpdate as TemporalScheduleUpdate
-from temporalio.client import WorkflowExecutionStatus
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
@@ -104,6 +105,7 @@ from api.auth import (
 from api.coverage_report import build_coverage_report
 from api.db import get_session
 from api.discovery import pause_discovery_run, resume_discovery_run, start_discovery_run
+from api.explorer import router as explorer_router
 from api.invites import InviteAcceptError, accept_invite, create_invite, send_invite_email
 from api.password_reset import (
     PasswordResetError,
@@ -169,6 +171,9 @@ app.add_middleware(
 )
 
 SessionDep = Annotated[Session, Depends(get_session)]
+
+# Vantage Explorer (docs/vantage-explorer/PLAN.md) — standalone module.
+app.include_router(explorer_router)
 
 
 @app.get("/health")
@@ -560,6 +565,8 @@ class ApplicationRead(BaseModel):
     discovery_status: str
     discovery_stage: str | None
     discovery_failure_reason: str | None
+    # "explorer" | "crawler" — which discovery filled this app's Journeys.
+    discovery_engine: str = "crawler"
     # Story 2.22 AC 2: `status` never travels alone — whenever it's
     # "complete", these counts ride along in the same response so a bare
     # "Complete" can't be misread as "the whole application was covered"
@@ -680,6 +687,16 @@ def _to_application_read(
         discovery_status=discovery_run.status,
         discovery_stage=discovery_run.stage,
         discovery_failure_reason=discovery_run.failure_reason,
+        # Stage 8 (docs/vantage-explorer/PLAN.md): apps discovered by Explorer
+        # get Explorer-aware Journeys/Scenarios screens.
+        discovery_engine=(
+            "explorer"
+            if session.exec(
+                select(ExplorerRun.id).where(ExplorerRun.application_id == application.id)
+            ).first()
+            is not None
+            else "crawler"
+        ),
         discovery_coverage_summary=(
             _coverage_counts(session, discovery_run) if discovery_run.status == "complete" else None
         ),
@@ -737,6 +754,7 @@ async def create_application(
     payload: ApplicationCreate,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> ApplicationRead:
     # FR-31 (CR-3): fail fast before any write if the Base URL isn't reachable.
     async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
@@ -776,7 +794,7 @@ async def create_application(
     # Absorbed from removed Story 1.5: start a DiscoveryRun immediately, in
     # the same request — no separate "start discovery" action (AC 4). The
     # DiscoveryRun-creation logic itself is Story 2.1's (api.discovery).
-    discovery_run = await start_discovery_run(session, application)
+    discovery_run = await start_discovery_run(session, application, started_by=user.id)
 
     # Three ready-made-but-disabled schedules so a team can flip one on
     # instead of hand-configuring cadence from a blank dialog.

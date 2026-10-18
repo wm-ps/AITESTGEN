@@ -1,0 +1,35 @@
+[project]
+name = "explorer-worker"
+version = "0.1.0"
+description = "apps/workers/explorer — Vantage Explorer: intelligent, human-in-the-loop discovery (standalone from the discovery worker)"
+requires-python = ">=3.14"
+dependencies = [
+    "temporalio>=1.9",
+    "explorer-core",
+    "domain",
+    "secrets-client",
+    "object-store",
+    "sqlmodel>=0.0.24",
+    "psycopg[binary]>=3.2",
+    "httpx>=0.28",
+    "playwright>=1.57",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+]
+
+[tool.uv.sources]
+explorer-core = { workspace = true }
+domain = { workspace = true }
+secrets-client = { workspace = true }
+object-store = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/explorer_worker"]

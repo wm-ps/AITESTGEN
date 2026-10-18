@@ -19,6 +19,8 @@ dependencies = [
     "bcrypt>=5.0.0",
     "itsdangerous>=2.2.0",
     "httpx>=0.28",
+    "explorer-core",
+    "pypdf>=5.0",
 ]
 
 [dependency-groups]
@@ -33,6 +35,7 @@ secrets-client = { workspace = true }
 object-store = { workspace = true }
 test-suite-assembler = { workspace = true }
 safety-classifier = { workspace = true }
+explorer-core = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

@@ -1,8 +1,10 @@
 import type { ComponentType, ReactNode } from 'react'
-import { faClock, faFileCode, faFileZipper, faFlaskVial, faListCheck } from '@fortawesome/free-solid-svg-icons'
+import { faClock, faFileCode, faFileZipper, faFlaskVial, faLayerGroup, faListCheck, faQuestion } from '@fortawesome/free-solid-svg-icons'
 import { faIcon } from '../faIcon'
 
+const Layers = faIcon(faLayerGroup)
 const ListCheck = faIcon(faListCheck)
+const QuestionMark = faIcon(faQuestion)
 const FileCode = faIcon(faFileCode)
 const FlaskVial = faIcon(faFlaskVial)
 const FileZipper = faIcon(faFileZipper)
@@ -150,6 +152,84 @@ function FolderIllustration({ icon: Icon }: { icon: ComponentType<{ size?: numbe
   )
 }
 
+// A conversation scene, same stage/glow/badge geometry as the two above: a
+// question bubble from Explorer and the reply bubble beside it. `answered`
+// fills the reply and swaps the badge for a check; otherwise the reply is a
+// dashed outline still waiting to be written.
+function ConversationIllustration({ answered }: { answered: boolean }) {
+  const bubble = { position: 'absolute', borderRadius: 14, border: '1px solid var(--border-2)', boxShadow: '0 16px 34px rgba(18,22,54,0.14)' } as const
+  return (
+    <div aria-hidden="true" style={{ position: 'relative', width: 196, height: 130 }}>
+      <div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', width: 230, height: 230, borderRadius: 1000, background: 'var(--glow)' }} />
+      <div style={{ ...bubble, left: 14, top: 22, width: 108, height: 46, background: 'var(--panel-2)', borderBottomLeftRadius: 4 }}>
+        <div style={{ position: 'absolute', left: 12, top: 14, width: 64, height: 6, borderRadius: 1000, background: 'var(--chip)' }} />
+        <div style={{ position: 'absolute', left: 12, top: 27, width: 40, height: 6, borderRadius: 1000, background: 'var(--chip)' }} />
+      </div>
+      <div
+        style={{
+          ...bubble,
+          left: 70,
+          top: 78,
+          width: 92,
+          height: 36,
+          borderBottomRightRadius: 4,
+          background: answered ? 'var(--accent-wash-soft, var(--accent-wash))' : 'transparent',
+          border: answered ? '1px solid color-mix(in srgb, var(--accent-2) 30%, transparent)' : '1.5px dashed var(--border-3)',
+          boxShadow: answered ? bubble.boxShadow : 'none',
+        }}
+      >
+        {answered ? (
+          <div style={{ position: 'absolute', left: 12, top: 15, width: 54, height: 6, borderRadius: 1000, background: 'color-mix(in srgb, var(--accent-2) 35%, transparent)' }} />
+        ) : (
+          <div style={{ position: 'absolute', left: 14, top: 16, display: 'flex', gap: 5 }}>
+            {[0, 1, 2].map((i) => <span key={i} style={{ width: 5, height: 5, borderRadius: 1000, background: 'var(--border-3)' }} />)}
+          </div>
+        )}
+      </div>
+      <div
+        style={{
+          position: 'absolute',
+          right: 8,
+          top: 4,
+          width: 54,
+          height: 54,
+          borderRadius: 1000,
+          background: answered ? 'var(--good-strong, var(--accent-2))' : 'var(--panel-hi)',
+          border: answered ? 'none' : '1px solid var(--border-2)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          boxShadow: '0 14px 30px rgba(18,22,54,0.16)',
+          color: answered ? 'var(--panel)' : 'var(--accent-2)',
+        }}
+      >
+        {answered ? (
+          <svg width={22} height={22} viewBox="0 0 24 24" fill="none"><path d="M6 12.5 10 16.5 18 8" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" /></svg>
+        ) : (
+          <QuestionMark size={20} />
+        )}
+      </div>
+      {answered ? (
+        <>
+          <span style={{ position: 'absolute', left: 4, bottom: 18, width: 7, height: 7, borderRadius: 1000, background: 'var(--accent-2)', opacity: 0.5 }} />
+          <span style={{ position: 'absolute', left: 30, bottom: 2, width: 5, height: 5, borderRadius: 1000, background: 'var(--warn-2, var(--accent-2))', opacity: 0.6 }} />
+          <span style={{ position: 'absolute', right: 2, bottom: 30, width: 6, height: 6, borderRadius: 1000, background: 'var(--accent-2)', opacity: 0.4 }} />
+        </>
+      ) : (
+        <div style={{ position: 'absolute', left: 2, bottom: 16, width: 14, height: 14, borderRadius: 1000, border: '1px solid var(--border-3)' }} />
+      )}
+    </div>
+  )
+}
+
+export function QuestionsIllustration() {
+  return <ConversationIllustration answered={false} />
+}
+
+export function AllAnsweredIllustration() {
+  return <ConversationIllustration answered />
+}
+
 export function RunsIllustration() {
   return <BrowserCardIllustration icon={FlaskVial} />
 }
@@ -201,6 +281,10 @@ export function AccessDeniedIllustration({ size = 64 }: { size?: number }) {
 
 export function ScenariosIllustration() {
   return <BrowserCardIllustration icon={ListCheck} />
+}
+
+export function ScreensIllustration() {
+  return <BrowserCardIllustration icon={Layers} />
 }
 
 export function TestCasesIllustration() {

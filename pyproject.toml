@@ -5,6 +5,7 @@ members = [
     "apps/workers/generation",
     "apps/workers/execution",
     "apps/workers/recording",
+    "apps/workers/explorer",
     "packages/domain",
     "packages/workflows",
     "packages/ai_provider",
@@ -16,6 +17,7 @@ members = [
     "packages/safety_classifier",
     "packages/locator_capture",
     "packages/playwright_typecheck",
+    "packages/explorer_core",
 ]
 
 [dependency-groups]
@@ -55,6 +57,7 @@ include = [
     "apps/workers/generation",
     "apps/workers/execution",
     "apps/workers/recording",
+    "apps/workers/explorer",
     "packages/domain",
     "packages/workflows",
     "packages/ai_provider",
@@ -66,4 +69,5 @@ include = [
     "packages/safety_classifier",
     "packages/locator_capture",
     "packages/playwright_typecheck",
+    "packages/explorer_core",
 ]

@@ -169,6 +169,7 @@ export function ReviewScenarios({
   generationJustStarted,
   onContinueToGenerate,
   onGoToJourneys,
+  fromExplorer = false,
 }: {
   applicationId: string
   applicationName: string
@@ -179,6 +180,9 @@ export function ReviewScenarios({
   generationJustStarted: boolean
   onContinueToGenerate: () => void
   onGoToJourneys: () => void
+  // Stage 8: Explorer already turned its proven tests into Scenarios *and*
+  // Test cases, so there is nothing to generate here.
+  fromExplorer?: boolean
 }) {
   const [scenarios, setScenarios] = useState<ScenarioRead[]>([])
   const [journeys, setJourneys] = useState<JourneyRead[]>([])
@@ -416,6 +420,11 @@ export function ReviewScenarios({
             )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)', flexShrink: 0 }}>
+            {fromExplorer && (
+              <span className="caption" style={{ fontSize: 13, maxWidth: 280 }}>
+                Explorer worked these out by using the app. Generate test cases to turn them into tests.
+              </span>
+            )}
               <button
                 type="button"
                 onClick={onContinueToGenerate}
@@ -469,7 +478,7 @@ export function ReviewScenarios({
           </div>
         )}
 
-        {scenarios.length === 0 && !generationStarted ? (
+        {scenarios.length === 0 && (!generationStarted || fromExplorer) ? (
           <EmptyState
             illustration={<ScenariosIllustration />}
             variant="scene"
@@ -477,7 +486,9 @@ export function ReviewScenarios({
             subtitle={
               hadScenariosRef.current
                 ? 'Add journeys back to generate new scenarios.'
-                : 'Scenarios appear here once discovered journeys are turned into drafted test scenarios.'
+                : fromExplorer
+                  ? 'Scenarios appear here once Explorer has proven its tests.'
+                  : 'Scenarios appear here once discovered journeys are turned into drafted test scenarios.'
             }
           />
         ) : !isComplete && generationUnavailable ? (

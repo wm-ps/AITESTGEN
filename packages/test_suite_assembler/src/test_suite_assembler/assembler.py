@@ -45,7 +45,16 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from domain import Application, ComponentLocator, Form, FormField, Page, TestSuite
+from domain import (
+    Application,
+    ComponentLocator,
+    Form,
+    FormField,
+    Journey,
+    Page,
+    TestAsset,
+    TestSuite,
+)
 from sqlmodel import Session, select
 
 # Windows-reserved device names (case-insensitive) — never emit one of these
@@ -160,6 +169,39 @@ def _field_locator_call(session: Session, field: FormField | None) -> str | None
 def find_login_page_evidence(
     session: Session, application: Application
 ) -> LoginPageEvidence | None:
+    """Crawler-captured login form first. Explorer (docs/vantage-explorer)
+    records no `Form`/`FormField` rows, so an app whose current tests need
+    sign-in falls back to its own `login_url`/`url` with generic field
+    locators — otherwise its `@auth` tests would run signed out."""
+    evidence = _crawler_login_evidence(session, application)
+    if evidence is not None:
+        return evidence
+    needs_auth = session.exec(
+        select(TestAsset.id)
+        .join(TestSuite, TestAsset.test_suite_id == TestSuite.id)  # type: ignore[arg-type]
+        .join(Journey, TestSuite.journey_id == Journey.id)  # type: ignore[arg-type]
+        .where(
+            Journey.application_id == application.id,
+            TestAsset.current == True,  # noqa: E712
+            TestAsset.requires_auth == True,  # noqa: E712
+        )
+    ).first()
+    if needs_auth is None:
+        return None
+    return generic_login_evidence(application)
+
+
+def generic_login_evidence(application: Application) -> LoginPageEvidence:
+    """The app's own login address with generic field locators — for apps
+    whose sign-in no crawler recorded (Explorer)."""
+    return LoginPageEvidence(
+        url=application.login_url or application.url,
+        username_locator=None,
+        password_locator="page.locator('input[type=\"password\"]').first()",
+    )
+
+
+def _crawler_login_evidence(session: Session, application: Application) -> LoginPageEvidence | None:
     """Heuristic query (see module docstring): the captured `Form` with a
     password-type `FormField` is treated as the login form. Returns `None`
     if Discovery never captured one — the caller falls back to generic
@@ -228,7 +270,7 @@ def find_login_page_evidence(
             username_locator=_field_locator_call(session, username_field),
             password_locator=(
                 _field_locator_call(session, password_field)
-                or 'page.locator(\'input[type="password"]\').first()'
+                or "page.locator('input[type=\"password\"]').first()"
             ),
         )
     return None
@@ -399,7 +441,7 @@ def _build_auth_setup_script(auth_method: str, login_evidence: LoginPageEvidence
     password_field = (
         login_evidence.password_locator
         if login_evidence
-        else 'page.locator(\'input[type="password"]\').first()'
+        else "page.locator('input[type=\"password\"]').first()"
     )
     return (
         "import { test as setup } from '@playwright/test'\n"
@@ -594,13 +636,16 @@ def _build_fixtures_helper_script(login_url: str | None) -> str:
     page_fixture = (
         "  page: async ({ page }, use, testInfo) => {\n"
         "    await use(page)\n"
-        "    if (testInfo.tags.includes('@auth') && testInfo.status !== 'passed') {\n"
+        # Only a real failure: a test skipped on purpose (`test.fixme`, a
+        # known bug) is not a broken session.
+        "    if (testInfo.tags.includes('@auth') && (testInfo.status === 'failed' || "
+        "testInfo.status === 'timedOut')) {\n"
         "      throw new Error(\n"
         "        'AUTH_SESSION_INVALID: this @auth test failed — retrying once against a ' +\n"
         "        'freshly re-established session in case a concurrently-running test ' +\n"
         "        'logged out or otherwise invalidated the shared account session. If it ' +\n"
         "        'fails again after the retry, this is the original failure, not a ' +\n"
-        "        'session problem.',\n"
+        "        'session problem. Original failure: ' + (testInfo.error?.message ?? 'unknown'),\n"
         "      )\n"
         "    }\n"
         "  },\n"
@@ -668,7 +713,7 @@ def _build_auth_helper_script(login_evidence: LoginPageEvidence | None) -> str:
     password_locator = (
         login_evidence.password_locator
         if login_evidence
-        else 'page.locator(\'input[type="password"]\').first()'
+        else "page.locator('input[type=\"password\"]').first()"
     )
     return (
         "import type { Locator, Page } from '@playwright/test'\n"
@@ -690,7 +735,7 @@ def _build_auth_helper_script(login_evidence: LoginPageEvidence | None) -> str:
         "): Promise<void> {\n"
         f"  await nativeField({username_locator}).fill(username)\n"
         f"  await nativeField({password_locator}).fill(password)\n"
-        "  const submit = page.locator('button[type=\"submit\"], input[type=\"submit\"]').first()\n"
+        '  const submit = page.locator(\'button[type="submit"], input[type="submit"]\').first()\n'
         "  if (await submit.count() > 0) {\n"
         "    await submit.click()\n"
         "  } else {\n"
@@ -699,19 +744,19 @@ def _build_auth_helper_script(login_evidence: LoginPageEvidence | None) -> str:
         "}\n\n"
         "// `[FIXED]` Shared by auth.setup.ts (verifying the initial login) and\n"
         "// support/fixtures.ts (verifying a *restored* session is still valid before an\n"
-        "// `@auth` test runs) — one implementation of what \"actually authenticated\" means,\n"
+        '// `@auth` test runs) — one implementation of what "actually authenticated" means,\n'
         "// not two heuristics that can drift apart. A password field being gone is not\n"
         "// enough on its own — some apps land on a generic error page, not the login form,\n"
         "// when a session is rejected. Combined with a URL check (still on the exact login\n"
         "// page path) covers both a traditional server-rendered redirect-to-login and an\n"
         "// SPA that just re-renders the same route's form without leaving it.\n"
         "//\n"
-        "// `[FIXED]` Neither of those catches a server that renders an \"invalid session\"\n"
+        '// `[FIXED]` Neither of those catches a server that renders an "invalid session"\n'
         "// page in place — HTTP 200, same URL the test asked for, no login form at all —\n"
         "// instead of a status code or a redirect. There is no reliable structural signal\n"
         "// for this (unlike the login form itself, this markup is different for every\n"
         "// app), so this falls back to scanning the rendered text for the same small set\n"
-        "// of phrasings essentially every app uses for it — the same \"curated marker\n"
+        '// of phrasings essentially every app uses for it — the same "curated marker\n'
         "// list, not a guess at one app's exact wording\" approach every generated spec's\n"
         "// own `assertNoServerError` already uses for a *server* error page. Deliberately\n"
         "// broad (session OR generic auth phrasing) since the point is to catch the class,\n"
@@ -725,8 +770,8 @@ def _build_auth_helper_script(login_evidence: LoginPageEvidence | None) -> str:
         "  /authentication\\s+(required|failed)/i,\n"
         "  /not\\s+authenticated/i,\n"
         "  // `[FIXED]` Some apps route an invalid/expired session through the same\n"
-        "  // generic error boundary as any other unhandled failure — no \"session\"/\"log\n"
-        "  // in\" wording at all, just a catch-all \"something broke\" page. Still a\n"
+        '  // generic error boundary as any other unhandled failure — no "session"/"log\n'
+        '  // in" wording at all, just a catch-all "something broke" page. Still a\n'
         "  // generic, framework-level phrasing (a React/Next.js-style error boundary's\n"
         "  // stock copy), not one app's exact text, so it belongs in this same curated\n"
         "  // list rather than being hardcoded as a one-off special case. A false\n"
@@ -740,9 +785,9 @@ def _build_auth_helper_script(login_evidence: LoginPageEvidence | None) -> str:
         "export async function isAuthenticated(page: Page, loginUrl: string): Promise<boolean> {\n"
         "  // `pathname` alone is not enough: a hash-routed SPA (e.g. `#/Login` ->\n"
         "  // `#/Dashboard`) keeps the same server `pathname` for every route, so a\n"
-        "  // pathname-only check never leaves \"the login page\" even after a real,\n"
+        '  // pathname-only check never leaves "the login page" even after a real,\n'
         "  // successful login. The hash is part of the route there, so it must match\n"
-        "  // too before this counts as \"still on the login page\".\n"
+        '  // too before this counts as "still on the login page".\n'
         "  const loginRoute = new URL(loginUrl, page.url())\n"
         "  const currentRoute = new URL(page.url())\n"
         "  if (\n"
@@ -920,9 +965,7 @@ def compute_spec_paths(
             [
                 (
                     str(a.id),
-                    sanitize_slug(
-                        scenario_name_by_asset_id.get(a.id, str(a.id)), fallback="test"
-                    ),
+                    sanitize_slug(scenario_name_by_asset_id.get(a.id, str(a.id)), fallback="test"),
                 )
                 for a in assets
             ]
@@ -931,6 +974,34 @@ def compute_spec_paths(
             spec_path_by_asset_id[asset.id] = f"tests/{folder}/{asset_slugs[str(asset.id)]}.spec.ts"
 
     return spec_path_by_asset_id
+
+
+def write_project_scaffold(
+    writer: "_ProjectWriter", application: Application, login_evidence: LoginPageEvidence | None
+) -> None:
+    """Everything but the specs: config, the shared sign-in (`auth.setup.ts`,
+    used by every `@auth` spec) and the support helpers. Explorer's own
+    download writes the same scaffold around its proven tests."""
+    writer.write("package.json", _build_package_json())
+    writer.write("tsconfig.json", _build_tsconfig())
+    writer.write(
+        "playwright.config.ts",
+        _build_playwright_config(application.url, has_login=login_evidence is not None),
+    )
+    writer.write("README.md", _build_readme(application.name, application.auth_method))
+    writer.write("fixtures/.gitkeep", "")
+    writer.write("utils/.gitkeep", "")
+    writer.write(
+        "tests/auth.setup.ts",
+        _build_auth_setup_script(application.auth_method, login_evidence),
+    )
+    writer.write("support/config.ts", _build_config_script())
+    writer.write("support/auth.ts", _build_auth_helper_script(login_evidence))
+    writer.write("support/interactions.ts", _build_interactions_helper_script())
+    writer.write(
+        "support/fixtures.ts",
+        _build_fixtures_helper_script(login_evidence.url if login_evidence else None),
+    )
 
 
 def _write_project_files(
@@ -958,26 +1029,7 @@ def _write_project_files(
         test_suites, journeys_by_id, assets_by_suite, scenario_name_by_asset_id
     )
 
-    writer.write("package.json", _build_package_json())
-    writer.write("tsconfig.json", _build_tsconfig())
-    writer.write(
-        "playwright.config.ts",
-        _build_playwright_config(application.url, has_login=login_evidence is not None),
-    )
-    writer.write("README.md", _build_readme(application.name, application.auth_method))
-    writer.write("fixtures/.gitkeep", "")
-    writer.write("utils/.gitkeep", "")
-    writer.write(
-        "tests/auth.setup.ts",
-        _build_auth_setup_script(application.auth_method, login_evidence),
-    )
-    writer.write("support/config.ts", _build_config_script())
-    writer.write("support/auth.ts", _build_auth_helper_script(login_evidence))
-    writer.write("support/interactions.ts", _build_interactions_helper_script())
-    writer.write(
-        "support/fixtures.ts",
-        _build_fixtures_helper_script(login_evidence.url if login_evidence else None),
-    )
+    write_project_scaffold(writer, application, login_evidence)
 
     written_suite_folders = 0
     written_test_files = 0

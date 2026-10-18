@@ -35,6 +35,7 @@ export type ApplicationContext = {
 // running) — added by hand, same convention as HomeApplicationRead below.
 export type ApplicationRead = components['schemas']['ApplicationRead'] & {
   application_context: ApplicationContext | null
+  discovery_engine: 'explorer' | 'crawler'
 }
 export type HomeApplicationRead = ApplicationRead & {
   journey_count: number
@@ -80,7 +81,7 @@ export type ScenarioRead = components['schemas']['ScenarioRead'] & { test_case_n
 // browser through the real `playwright codegen` CLI). Mirrors
 // `Scenario.source`/`TestCaseRead.source` (apps/api/src/api/main.py).
 export type TestCaseSource = 'discovery' | 'nl' | 'recorded'
-export type TestCaseRead = components['schemas']['TestCaseRead'] & {
+export type TestCaseRead = components['schemas']['api__main__TestCaseRead'] & {
   description: string
   source: TestCaseSource
   // Test Case Number feature — see ScenarioRead's own comment.
@@ -356,7 +357,7 @@ export type ScheduleCreate = {
 }
 export type ScheduleUpdate = Partial<ScheduleCreate>
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
 class ApiError extends Error {
   status: number
@@ -367,7 +368,7 @@ class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },

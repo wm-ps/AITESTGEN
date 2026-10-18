@@ -260,10 +260,16 @@ def resolve_requires_auth(
     to the authenticated page it needs as a precondition redirects to
     login and fails immediately — the exact same bug class as the logout
     one, just for a sibling set of phrasings. `scenario` is kept as a
-    parameter (unused) rather than dropped, in case a future phrasing
+    parameter rather than dropped (now used only for an explicit
+    `grounding["requires_auth"]`, see above), in case a future phrasing
     genuinely never establishes a session and needs a fresh, real
     override — not to be reintroduced from words alone without the same
     against-real-generated-code verification this removal was based on."""
+    # A scenario that already knows (Vantage Explorer records it) wins over
+    # the captured-login-page heuristic below.
+    known = (scenario.grounding or {}).get("requires_auth") if scenario is not None else None
+    if isinstance(known, bool):
+        return known
     login_url = _find_login_page_url(session, application.id)
     if login_url is None:
         return False

@@ -164,6 +164,7 @@ stop_pids "api (8000)"          "$(api_pids)"
 stop_pids "discovery worker"    "$(worker_pids 'discovery_worker\.worker')"
 stop_pids "generation worker"   "$(worker_pids 'generation_worker\.worker')"
 stop_pids "execution worker"    "$(worker_pids 'execution_worker\.worker')"
+stop_pids "explorer worker"     "$(worker_pids 'explorer_worker\.worker')"
 
 if [ "$KEEP_DOCKER" = 1 ]; then
   echo "[dev-stop] docker: left running (--keep-docker)"
@@ -191,7 +192,8 @@ fi
 leftovers=$(collect $(web_pids) $(api_pids) \
   $(worker_pids 'discovery_worker\.worker') \
   $(worker_pids 'generation_worker\.worker') \
-  $(worker_pids 'execution_worker\.worker'))
+  $(worker_pids 'execution_worker\.worker') \
+  $(worker_pids 'explorer_worker\.worker'))
 
 if [ -n "${leftovers// /}" ]; then
   echo "[dev-stop] WARNING: still alive after stop:" >&2

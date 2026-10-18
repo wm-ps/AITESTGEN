@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCircleDot, faListCheck, faRoute } from '@fortawesome/free-solid-svg-icons'
+import { faCircleDot, faCompass, faListCheck, faRoute } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type ApplicationRead, type UserRead } from './api'
 import { AcceptInvite } from './components/AcceptInvite'
 import { ConnectAppForm } from './components/ConnectAppForm'
 import { DiscoverJourneys } from './components/DiscoverJourneys'
+import { ExplorerTab } from './explorer/ExplorerTab'
 import { AppBootLoader, GlobalLoadingOverlay } from './components/GlobalLoadingOverlay'
 import { Home } from './components/Home'
 import { Overview } from './components/Overview'
@@ -53,6 +54,9 @@ function JourneysIcon() {
 function ScenariosIcon() {
   return <FontAwesomeIcon icon={faListCheck} style={{ fontSize: 15 }} />
 }
+function ExplorerIcon() {
+  return <FontAwesomeIcon icon={faCompass} style={{ fontSize: 15 }} />
+}
 function RecordIcon() {
   return <FontAwesomeIcon icon={faCircleDot} style={{ fontSize: 15 }} />
 }
@@ -63,7 +67,9 @@ function RecordIcon() {
 const JOURNEYS_TAB = { key: 'journeys', label: 'Journeys', heading: 'Discover Journeys', icon: JourneysIcon }
 const SCENARIOS_TAB = { key: 'scenarios', label: 'Scenarios', heading: 'Review Scenarios', icon: ScenariosIcon }
 const RECORD_TAB = { key: 'record', label: 'Record and play', heading: 'Record and play', icon: RecordIcon }
-const TAB_ORDER = ['overview', 'journeys', 'scenarios', 'suite', 'runs', 'record', 'schedules', 'export', 'notes']
+// Vantage Explorer (docs/vantage-explorer/PLAN.md) — the discovery module.
+const EXPLORER_TAB = { key: 'explorer', label: 'Explorer', heading: 'Explorer', icon: ExplorerIcon }
+const TAB_ORDER = ['overview', 'journeys', 'explorer', 'scenarios', 'suite', 'runs', 'record', 'schedules', 'export']
 
 // Invite links point at /accept-invite?token=... — handled before the
 // signed-in check below since accepting an invite never requires an
@@ -82,7 +88,7 @@ function getResetTokenFromUrl(): string | null {
     : null
 }
 
-type AppTab = 'journeys' | 'scenarios' | 'record' | WorkspaceTab
+type AppTab = 'journeys' | 'explorer' | 'scenarios' | 'record' | WorkspaceTab
 
 type View = 'overview' | 'home' | 'connect-app' | 'app' | 'settings' | 'team'
 
@@ -270,9 +276,11 @@ function App() {
           ? 'suite'
           : suites.length > 0
             ? 'overview'
-            : scenarios.length > 0
-              ? 'scenarios'
-              : 'journeys',
+            : app.discovery_engine === 'explorer'
+              ? 'explorer'
+              : scenarios.length > 0
+                ? 'scenarios'
+                : 'journeys',
       )
     } catch {
       setApplication(null)
@@ -286,6 +294,22 @@ function App() {
   function goAddApplication() {
     setApplication(null)
     setView('connect-app')
+  }
+
+  // Turns the app's scenarios into a test suite — from the Scenarios page,
+  // or straight from Explorer's Scenarios tab for an Explorer app.
+  async function generateTests() {
+    if (!application || globalLoading) return
+    setGlobalLoading('Generating test suite')
+    try {
+      await api.generateSuite(application.id)
+      setJustGeneratedSuite(true)
+      setAppTab('suite')
+    } catch {
+      setErrorToast('Failed to start test suite generation. Please try again.')
+    } finally {
+      setGlobalLoading(null)
+    }
   }
 
   function selectAppTab(tab: string) {
@@ -306,10 +330,14 @@ function App() {
   // list) once the user actually visits one of its own tabs, so waiting on
   // `workspaceTabs` for these would leave the sidebar missing Overview the
   // whole time a user sits on Journeys/Scenarios.
+  // Explorer's output *is* the scenarios (its own Scenarios tab), so an
+  // Explorer app has no separate Journeys / Scenarios pages. Their rows
+  // still exist underneath: test generation reads them.
+  const byExplorer = application?.discovery_engine === 'explorer'
   const mergedAppTabs: AppShellTab[] = application
-    ? [...WORKSPACE_TABS, JOURNEYS_TAB, SCENARIOS_TAB, RECORD_TAB]
+    ? [...WORKSPACE_TABS, ...(byExplorer ? [] : [JOURNEYS_TAB]), EXPLORER_TAB, ...(byExplorer ? [] : [SCENARIOS_TAB]), RECORD_TAB]
         .sort((a, b) => TAB_ORDER.indexOf(a.key) - TAB_ORDER.indexOf(b.key))
-        .map((t) => ({ key: t.key, label: t.label, icon: t.icon }))
+        .map((t) => ({ key: t.key, label: t.label, icon: t.icon, badge: (t as { badge?: string }).badge }))
     : []
 
   const mainContent = (
@@ -323,7 +351,7 @@ function App() {
           application={application}
           onConnected={(connectedApplication) => {
             setApplication(connectedApplication)
-            setAppTab('journeys')
+            setAppTab(connectedApplication.discovery_engine === 'explorer' ? 'explorer' : 'journeys')
             setView('app')
           }}
           onCancel={() => setView('home')}
@@ -338,9 +366,10 @@ function App() {
           discoveryStage={application.discovery_stage ?? null}
           discoveryFailureReason={application.discovery_failure_reason ?? null}
           onContinueToScenarios={() => {
-            setJustStartedScenarios(true)
+            setJustStartedScenarios(application.discovery_engine !== 'explorer')
             setAppTab('scenarios')
           }}
+          onOpenExplorer={application.discovery_engine === 'explorer' ? () => setAppTab('explorer') : undefined}
         />
       )}
       {view === 'app' && application && appTab === 'scenarios' && (
@@ -349,21 +378,13 @@ function App() {
           applicationName={application.name}
           applicationUrl={application.url}
           generationJustStarted={justStartedScenarios}
+          fromExplorer={application.discovery_engine === 'explorer'}
           onGoToJourneys={() => setAppTab('journeys')}
-          onContinueToGenerate={async () => {
-            if (globalLoading) return
-            setGlobalLoading('Generating test suite')
-            try {
-              await api.generateSuite(application.id)
-              setJustGeneratedSuite(true)
-              setAppTab('suite')
-            } catch {
-              setErrorToast('Failed to start test suite generation. Please try again.')
-            } finally {
-              setGlobalLoading(null)
-            }
-          }}
+          onContinueToGenerate={generateTests}
         />
+      )}
+      {view === 'app' && application && appTab === 'explorer' && (
+        <ExplorerTab applicationId={application.id} applicationName={application.name} applicationUrl={application.url} onGenerateTests={generateTests} />
       )}
       {view === 'app' && application && appTab === 'record' && (
         <RecordAndPlay
@@ -374,7 +395,7 @@ function App() {
           onCancelled={setSuccessToast}
         />
       )}
-      {view === 'app' && application && appTab !== 'journeys' && appTab !== 'scenarios' && appTab !== 'record' && (
+      {view === 'app' && application && appTab !== 'journeys' && appTab !== 'explorer' && appTab !== 'scenarios' && appTab !== 'record' && (
         justGeneratedSuite && appTab === 'suite' ? (
           <TestSuiteResults
             applicationId={application.id}
@@ -390,8 +411,9 @@ function App() {
             applicationName={application.name}
             applicationUrl={application.url}
             activeTab={appTab as WorkspaceTab}
-            onActiveTabChange={(tab) => setAppTab(tab)}
+            onActiveTabChange={(tab) => setAppTab(byExplorer && (tab === 'journeys' || tab === 'scenarios') ? 'explorer' : tab)}
             autoTriggerRun={autoTriggerRun}
+            byExplorer={byExplorer}
           />
         )
       )}
