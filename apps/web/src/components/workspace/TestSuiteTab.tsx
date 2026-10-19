@@ -560,8 +560,12 @@ export function TestSuiteTab({
   applicationId,
   highlightScenarioId = null,
   onHighlightConsumed,
+  discoveryEnabled = true,
 }: {
   applicationId: string
+  // false for an application added without discovery — only the empty-state
+  // copy changes (there is no discovery to wait on).
+  discoveryEnabled?: boolean
   // A just-recorded test case to bring into view and flash once (App.tsx
   // sets it after a Record and Play save); reported back via
   // `onHighlightConsumed` once found, or once it's definitively not there.
@@ -990,7 +994,11 @@ export function TestSuiteTab({
             illustration={<TestCasesIllustration />}
             variant="scene"
             title="No test cases generated yet"
-            subtitle="Test cases appear here once discovery finds journeys and the suite is generated."
+            subtitle={
+              discoveryEnabled
+                ? 'Test cases appear here once discovery finds journeys and the suite is generated.'
+                : 'Author a test case in plain language or record a flow to add your first test case.'
+            }
           />
         )
       })()}

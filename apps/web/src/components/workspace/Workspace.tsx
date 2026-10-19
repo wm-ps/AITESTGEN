@@ -66,10 +66,13 @@ export function Workspace({
   autoTriggerRun = false,
   highlightScenarioId = null,
   onHighlightConsumed,
+  discoveryEnabled = true,
 }: {
   applicationId: string
   applicationName: string
   applicationUrl: string
+  // false for an application added without discovery (see `hasDiscovery`).
+  discoveryEnabled?: boolean
   activeTab: WorkspaceTab
   // Widened beyond WorkspaceTab — OverviewTab's quick-action shortcuts can
   // also jump to 'journeys'/'scenarios'/'record', which live in App.tsx's
@@ -264,13 +267,14 @@ export function Workspace({
         )}
 
         {activeTab === 'overview' && (
-          <OverviewTab applicationId={applicationId} onNavigateTab={onActiveTabChange} />
+          <OverviewTab applicationId={applicationId} onNavigateTab={onActiveTabChange} discoveryEnabled={discoveryEnabled} />
         )}
         {activeTab === 'suite' && (
           <TestSuiteTab
             applicationId={applicationId}
             highlightScenarioId={highlightScenarioId}
             onHighlightConsumed={onHighlightConsumed}
+            discoveryEnabled={discoveryEnabled}
           />
         )}
         {activeTab === 'schedules' && <SchedulesTab applicationId={applicationId} />}

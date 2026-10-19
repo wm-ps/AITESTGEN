@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBolt, faChevronDown, faChevronRight, faPen, faPlay, faPlugCircleCheck } from '@fortawesome/free-solid-svg-icons'
-import { ApiError, api, type ApplicationCreate, type ApplicationRead } from '../api'
+import { faBolt, faChevronDown, faChevronRight, faPen, faPlay, faPlugCircleCheck, faPlus } from '@fortawesome/free-solid-svg-icons'
+import { ApiError, api, hasDiscovery, type ApplicationCreate, type ApplicationRead } from '../api'
 import { LoadingDots } from './LoadingDots'
 import { EMPTY_NOTES_FORM, NotesFields, toNotesPayload, type NotesFormState } from './NotesFields'
 
@@ -59,6 +59,11 @@ export function ConnectAppForm({
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [notes, setNotes] = useState<NotesFormState>(EMPTY_NOTES_FORM)
+  // Checked (today's behavior) starts a crawl on submit; unchecked only saves
+  // the application — the submit button's label follows it so the user can
+  // tell which one they're about to do.
+  const [discoveryRequired, setDiscoveryRequired] = useState(application ? hasDiscovery(application) : true)
+  const submitLabel = discoveryRequired ? 'Start discovery' : 'Add application'
   // Collapsed by default — Notes is optional and secondary to the required
   // connection fields above it. `notes` itself stays lifted in this
   // component regardless of collapse state, so toggling never loses what
@@ -114,6 +119,7 @@ export function ConnectAppForm({
         url,
         login_url: loginUrl || undefined,
         environment: environment === 'other' ? customEnvironment : environment,
+        discovery_required: discoveryRequired,
         auth_method: 'standard_login' as ApplicationCreate['auth_method'],
         username,
         password,
@@ -139,7 +145,9 @@ export function ConnectAppForm({
           <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 4 }}>
             {readOnly
               ? 'What was submitted when this application connected.'
-              : 'Enter the deployed URL and sign-in credentials. Discovery starts immediately — journeys, scenarios and Playwright code follow automatically.'}
+              : discoveryRequired
+                ? 'Enter the deployed URL and sign-in credentials. Discovery starts immediately — journeys, scenarios and Playwright code follow automatically.'
+                : 'Enter the deployed URL and sign-in credentials. No discovery runs — add test cases yourself by writing them or recording them.'}
           </div>
         </div>
 
@@ -274,7 +282,9 @@ export function ConnectAppForm({
               <div>
                 <div style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--fg-1)' }}>This application requires sign-in</div>
                 <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
-                  Credentials are stored encrypted and injected at discovery and run time only.
+                  {discoveryRequired
+                    ? 'Credentials are stored encrypted and injected at discovery and run time only.'
+                    : 'Credentials are stored encrypted and injected at run time only.'}
                 </div>
               </div>
             </div>
@@ -349,7 +359,27 @@ export function ConnectAppForm({
               </div>
             )}
 
-            {!readOnly && (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '13px 16px', border: '1px solid var(--border-2)', borderRadius: 10, background: 'var(--panel)' }}>
+              <input
+                id="connect-app-discovery"
+                type="checkbox"
+                checked={discoveryRequired}
+                disabled={readOnly}
+                onChange={(e) => setDiscoveryRequired(e.target.checked)}
+                style={{ marginTop: 2, accentColor: 'var(--accent)', flexShrink: 0 }}
+              />
+              <div>
+                <label htmlFor="connect-app-discovery" style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--fg-1)' }}>
+                  Autonomous discovery
+                </label>
+                <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
+                  Crawl the application to map journeys and scenarios automatically. Uncheck to only add the application
+                  and create test cases yourself.
+                </div>
+              </div>
+            </div>
+
+            {!readOnly && discoveryRequired && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', border: '1px solid var(--border-2)', borderRadius: 10, background: 'var(--panel)' }}>
                 <FontAwesomeIcon icon={faBolt} style={{ fontSize: 13, color: 'var(--fg-3)', flexShrink: 0 }} />
                 <div style={{ flex: 1, fontSize: 12.5, color: 'var(--fg-3)' }}>
@@ -401,7 +431,7 @@ export function ConnectAppForm({
                           zIndex: 10,
                         }}
                       >
-                        Test the connection above to enable Start discovery.
+                        Test the connection above to enable {submitLabel}.
                       </div>
                     )}
                     <button
@@ -428,8 +458,8 @@ export function ConnectAppForm({
                         <LoadingDots label="Connecting" />
                       ) : (
                         <>
-                          <FontAwesomeIcon icon={faPlay} style={{ fontSize: 11 }} />
-                          Start discovery
+                          <FontAwesomeIcon icon={discoveryRequired ? faPlay : faPlus} style={{ fontSize: 11 }} />
+                          {submitLabel}
                         </>
                       )}
                     </button>

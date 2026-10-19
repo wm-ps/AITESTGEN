@@ -133,10 +133,23 @@ function ChevronRightIcon() {
 // Fixed 3-per-row (not auto-fit) — a wide viewport would otherwise pack 4+
 // of these ~240px-minimum cards onto one row; the prototype's grid is
 // strictly 3 wide, wrapping to further rows instead of stretching wider.
-function QuickActionsGrid({ onNavigate }: { onNavigate: (target: QuickActionTarget) => void }) {
+function QuickActionsGrid({
+  onNavigate,
+  discoveryEnabled,
+}: {
+  onNavigate: (target: QuickActionTarget) => void
+  discoveryEnabled: boolean
+}) {
+  // Without discovery there are no Journeys/Scenarios tabs to jump to, and
+  // Schedules only ever automates suite runs.
+  const actions = discoveryEnabled
+    ? QUICK_ACTIONS
+    : QUICK_ACTIONS.filter((a) => a.target !== 'journeys' && a.target !== 'scenarios').map((a) =>
+        a.target === 'schedules' ? { ...a, hint: 'Automate suite runs on a cadence.' } : a,
+      )
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 14 }}>
-      {QUICK_ACTIONS.map((action) => {
+      {actions.map((action) => {
         const Icon = action.icon
         return (
           <div
@@ -183,9 +196,13 @@ function QuickActionsGrid({ onNavigate }: { onNavigate: (target: QuickActionTarg
 export function OverviewTab({
   applicationId,
   onNavigateTab,
+  discoveryEnabled = true,
 }: {
   applicationId: string
   onNavigateTab: (target: QuickActionTarget) => void
+  // false for an application added without discovery: hides the Journeys/
+  // Scenarios shortcuts and the "Journeys mapped" tile.
+  discoveryEnabled?: boolean
 }) {
   const [overview, setOverview] = useState<OverviewRead | null>(null)
 
@@ -237,7 +254,7 @@ export function OverviewTab({
           title="No test runs yet"
           subtitle="Health, pass rate, and trend will show up here once your first run finishes."
         />
-        <QuickActionsGrid onNavigate={onNavigateTab} />
+        <QuickActionsGrid onNavigate={onNavigateTab} discoveryEnabled={discoveryEnabled} />
       </div>
     )
   }
@@ -270,11 +287,13 @@ export function OverviewTab({
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(210px,1fr))', gap: 14 }}>
-        <StatTile
-          label="Journeys mapped"
-          value={overview.journey_count}
-          sub={overview.last_discovery_started_at ? `Last discovery ${formatDateTime(overview.last_discovery_started_at)}` : 'No discovery yet'}
-        />
+        {discoveryEnabled && (
+          <StatTile
+            label="Journeys mapped"
+            value={overview.journey_count}
+            sub={overview.last_discovery_started_at ? `Last discovery ${formatDateTime(overview.last_discovery_started_at)}` : 'No discovery yet'}
+          />
+        )}
         <StatTile label="Test cases" value={overview.total_tests} sub={`${overview.not_run} not yet run`} />
         <StatTile
           label="Pass rate"
@@ -341,7 +360,7 @@ export function OverviewTab({
         </div>
       </div>
 
-      <QuickActionsGrid onNavigate={onNavigateTab} />
+      <QuickActionsGrid onNavigate={onNavigateTab} discoveryEnabled={discoveryEnabled} />
     </div>
   )
 }

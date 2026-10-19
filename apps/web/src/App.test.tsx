@@ -145,6 +145,76 @@ describe('App', () => {
     expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.png')
   })
 
+  it('adds an application without discovery, landing on Test cases with no Journeys/Scenarios tabs', async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = String(url)
+      if (path.endsWith('/auth/me')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ name: 'Ada Lovelace', email: 'ada@example.com', role: 'admin' }),
+        }
+      }
+      if (path.endsWith('/home')) return { ok: true, status: 200, json: async () => [] }
+      if (path.endsWith('/applications/test-connection')) {
+        return { ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) }
+      }
+      if (path.endsWith('/applications') && init?.method === 'POST') {
+        return {
+          ok: true,
+          status: 201,
+          json: async () => ({
+            id: 'app-1',
+            name: 'My App',
+            url: 'https://staging.example.com',
+            environment: 'staging',
+            auth_method: 'standard_login',
+            created_at: new Date(0).toISOString(),
+            discovery_required: false,
+            discovery_run_id: null,
+            discovery_status: null,
+            discovery_stage: null,
+          }),
+        }
+      }
+      return { ok: true, status: 200, json: async () => [] }
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Overview' })).toBeTruthy()
+    })
+    fireEvent.click(screen.getByText('Applications'))
+    await waitFor(() => {
+      expect(screen.getByText('Add your first application')).toBeTruthy()
+    })
+    fireEvent.click(screen.getAllByRole('button', { name: 'Add application' })[0])
+
+    fireEvent.change(screen.getByLabelText('Application name'), { target: { value: 'My App' } })
+    fireEvent.change(screen.getByLabelText('Deployed URL'), {
+      target: { value: 'https://staging.example.com' },
+    })
+    fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'qa-password' } })
+    fireEvent.click(screen.getByLabelText('Autonomous discovery'))
+    fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
+    await screen.findByText('URL is reachable.')
+    // The topbar CTA shares this name — the form's own submit is the one to click.
+    const submit = screen
+      .getAllByRole('button', { name: 'Add application' })
+      .find((b) => b.getAttribute('type') === 'submit')!
+    fireEvent.click(submit)
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Test cases' })).toBeTruthy()
+    })
+    expect(screen.queryByRole('heading', { name: 'Journeys' })).toBeNull()
+    expect(screen.queryByText('Scenarios')).toBeNull()
+    expect(screen.queryByText('Journeys')).toBeNull()
+    expect(screen.getByText('Record and play')).toBeTruthy()
+  })
+
   it('resumes an existing application from its Home card, landing on the app view', async () => {
     const APPLICATION = {
       id: 'app-1',

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faEllipsisVertical, faLayerGroup, faPlus } from '@fortawesome/free-solid-svg-icons'
-import { api, type ApplicationRead, type HomeApplicationRead, type UserRead } from '../api'
+import { api, hasDiscovery, type ApplicationRead, type HomeApplicationRead, type UserRead } from '../api'
 import { StatusPill } from './StatusPill'
 import { Pagination } from './Pagination'
 import { SkeletonRows } from './Skeleton'
@@ -23,6 +23,7 @@ export type ApplicationStage =
   | 'journeys_generated'
   | 'discovery_completed'
   | 'running'
+  | 'no_tests_yet'
 
 // Single source of truth for "what is this application doing right now" —
 // shared with Overview.tsx's Active pipelines widget so the two screens
@@ -71,13 +72,17 @@ export function applicationStage(application: HomeApplicationRead): {
           ? 'suite_generated'
           : scenariosGenerating
             ? 'generating_scenarios'
-            : application.scenario_count > 0
-              ? 'scenarios_generated'
-              : application.journey_count > 0
-                ? 'journeys_generated'
-                : discoveryStatus === 'complete' && application.discovery_stage === 'analyzed'
-                  ? 'discovery_completed'
-                  : 'running'
+            : // No discovery was ever started, so none of the discovery-
+              // progress stages below apply — just "nothing authored yet".
+              !hasDiscovery(application)
+              ? 'no_tests_yet'
+              : application.scenario_count > 0
+                ? 'scenarios_generated'
+                : application.journey_count > 0
+                  ? 'journeys_generated'
+                  : discoveryStatus === 'complete' && application.discovery_stage === 'analyzed'
+                    ? 'discovery_completed'
+                    : 'running'
   return {
     stage,
     isRunning: discoveryStatus === 'running',
@@ -259,7 +264,7 @@ function ApplicationRow({
         style={{ ...cellStyle, textAlign: 'center', fontFamily: 'var(--font-mono)', color: 'var(--fg-3)' }}
         title={hasJourneys ? `${Math.round(coveragePct * 100)}% of journeys covered by scenarios` : undefined}
       >
-        {application.journey_count}
+        {hasDiscovery(application) ? application.journey_count : '–'}
       </td>
       <td style={{ ...cellStyle, textAlign: 'center', fontFamily: 'var(--font-mono)', color: 'var(--fg-1)' }}>
         {testCasesComplete ? application.test_case_count : '–'}
