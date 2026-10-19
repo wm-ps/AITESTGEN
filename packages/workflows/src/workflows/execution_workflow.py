@@ -43,6 +43,7 @@ EXECUTE_TEST_ACTIVITY_NAME = "ExecuteTestActivity"
 FINALIZE_TEST_RUN_ACTIVITY_NAME = "FinalizeTestRunActivity"
 FORCE_COMPLETE_TEST_RUN_ACTIVITY_NAME = "ForceCompleteTestRunActivity"
 HEAL_TEST_ACTIVITY_NAME = "HealTestActivity"
+GENERATE_ALLURE_REPORT_ACTIVITY_NAME = "GenerateAllureReportActivity"
 
 DEFAULT_MAX_CONCURRENCY = 5
 
@@ -122,6 +123,11 @@ class FinalizeTestRunActivityInput:
 
 @dataclass
 class ForceCompleteTestRunActivityInput:
+    test_run_id: str
+
+
+@dataclass
+class GenerateAllureReportActivityInput:
     test_run_id: str
 
 
@@ -217,6 +223,32 @@ class ApplicationTestExecutionWorkflow:
                 *[run_one(item) for item in prep.executable], return_exceptions=True
             )
 
+        # Before Finalize, which deletes the project dir the Allure results
+        # live in. Best-effort: the activity itself never raises, and this
+        # guard means even a timeout can never keep the run from finalizing.
+        # Patched so runs already in flight at deploy replay unchanged.
+        #
+        # ponytail: built before Finalize turns stuck "pending" results into
+        # "errored", so those few tests are missing from the report while
+        # still counted on the run. Finalizing first would need cleanup moved
+        # out of Finalize into its own step after the report.
+        if workflow.patched("allure-report"):
+            try:
+                await workflow.execute_activity(
+                    GENERATE_ALLURE_REPORT_ACTIVITY_NAME,
+                    GenerateAllureReportActivityInput(test_run_id=prep.test_run_id),
+                    # Strictly above the activity's own 3-minute
+                    # `allure generate` subprocess timeout, so that process is
+                    # always killed by its own timeout first.
+                    start_to_close_timeout=timedelta(minutes=5),
+                    retry_policy=RetryPolicy(maximum_attempts=1),
+                )
+            except Exception:
+                workflow.logger.warning(
+                    "Allure report generation failed for test run %s; finalizing anyway",
+                    prep.test_run_id,
+                )
+
         try:
             await workflow.execute_activity(
                 FINALIZE_TEST_RUN_ACTIVITY_NAME,
@@ -286,6 +318,7 @@ __all__ = [
     "EXECUTE_TEST_ACTIVITY_NAME",
     "EXECUTION_TASK_QUEUE",
     "FINALIZE_TEST_RUN_ACTIVITY_NAME",
+    "GENERATE_ALLURE_REPORT_ACTIVITY_NAME",
     "HEALABLE_STATUSES",
     "HEAL_CLAIM_STALE_AFTER",
     "HEAL_TEST_ACTIVITY_NAME",
@@ -295,6 +328,7 @@ __all__ = [
     "ExecuteTestActivityInput",
     "ExecutionWorkflowInput",
     "FinalizeTestRunActivityInput",
+    "GenerateAllureReportActivityInput",
     "HealTestActivityInput",
     "HealTestExecutionWorkflow",
     "PrepareTestRunActivityInput",

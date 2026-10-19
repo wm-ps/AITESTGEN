@@ -57,6 +57,8 @@ from sqlalchemy import or_, update
 from sqlmodel import Session, select
 from temporalio import activity
 from test_suite_assembler import (
+    ALLURE_RESULTS_DIR_ENV,
+    REPORT_TITLE_ENV,
     assemble_test_suite_project_to_dir,
     compute_spec_paths,
     find_login_page_evidence,
@@ -70,6 +72,7 @@ from workflows import (
     ExecuteTestActivityInput,
     FinalizeTestRunActivityInput,
     ForceCompleteTestRunActivityInput,
+    GenerateAllureReportActivityInput,
     HealTestActivityInput,
     PrepareTestRunActivityInput,
     PrepareTestRunActivityResult,
@@ -444,7 +447,10 @@ def _run_auth_setup_once(dest_dir: Path, application: Application) -> None:
     resulting file read-only instead of repeating the race."""
     try:
         subprocess.run(
-            [_resolve_bin("npx"), "playwright", "test", "--project=setup"],
+            # `--reporter=list` overrides the project config's reporters, so
+            # this login step never lands in the run's Allure report as if
+            # it were one of the run's test cases.
+            [_resolve_bin("npx"), "playwright", "test", "--project=setup", "--reporter=list"],
             cwd=dest_dir,
             env=_build_subprocess_env(application),
             check=True,
@@ -658,6 +664,30 @@ def _build_subprocess_env(application: Application) -> dict:
     return env
 
 
+ALLURE_RESULTS_DIR = "allure-results"
+# Written next to a TestResult's attempt folders each time Vantage persists
+# an outcome for it — the only link from a saved TestResult to the one
+# attempt that produced it (see `_write_allure_final_marker`).
+ALLURE_FINAL_MARKER = "final.json"
+
+
+def _allure_attempts_supported(project_dir: Path) -> bool:
+    """Whether this project can write Allure results into a per-invocation
+    folder. Needs allure-playwright installed *and* a playwright.config.ts
+    whose reporter list reads ALLURE_RESULTS_DIR_ENV (see
+    test_suite_assembler's `_ALLURE_REPORTER_LINES`). Otherwise — a partly
+    failed `npm install`, or a project dir assembled before this config —
+    the test runs with plain `--reporter=json`: running tests never depends
+    on the report."""
+    if not (project_dir / "node_modules" / "allure-playwright").is_dir():
+        return False
+    try:
+        config = (project_dir / "playwright.config.ts").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return ALLURE_RESULTS_DIR_ENV in config
+
+
 async def _run_playwright_test(
     project_dir: Path,
     spec_path: str,
@@ -665,7 +695,7 @@ async def _run_playwright_test(
     timeout_seconds: float,
     test_result_id: str,
 ) -> dict:
-    """Runs `npx playwright test <spec_path> --reporter=json` in
+    """Runs `npx playwright test <spec_path>` with the JSON reporter in
     `project_dir`. Never raises for the test's own outcome.
 
     `--output` is set to a per-`test_result_id` subdirectory — Playwright's
@@ -692,12 +722,28 @@ async def _run_playwright_test(
     metadata) — revisit if a real run surfaces a shape this doesn't handle.
     """
     output_dir = f"test-results/{test_result_id}"
+    # Every invocation — first run, auth-refresh rerun, infra retry, heal
+    # rerun — gets its own Allure results folder, so the report can use
+    # exactly the one attempt whose outcome Vantage persisted (see
+    # `_write_allure_final_marker`) and nothing from the others. The config's
+    # reporter list switches to `json` + allure-playwright when the env var
+    # is set, so `--reporter` stays off the command line in that case.
+    allure_attempt: str | None = None
+    if _allure_attempts_supported(project_dir):
+        allure_attempt = uuid.uuid4().hex
+        env = {
+            **env,
+            ALLURE_RESULTS_DIR_ENV: f"{ALLURE_RESULTS_DIR}/{test_result_id}/{allure_attempt}",
+        }
+        reporter_args: list[str] = []
+    else:
+        reporter_args = ["--reporter=json"]
     proc = await asyncio.create_subprocess_exec(
         _resolve_bin("npx"),
         "playwright",
         "test",
         spec_path,
-        "--reporter=json",
+        *reporter_args,
         f"--output={output_dir}",
         # `PrepareTestRunActivity` already ran the `setup` project's login
         # once (see `_run_auth_setup_once`) — skip re-running it as a
@@ -729,6 +775,7 @@ async def _run_playwright_test(
             "stack_trace": None,
             "console_output": None,
             "artifact_paths": [],
+            "allure_attempt": allure_attempt,
         }
 
     result = _parse_playwright_report(stdout, stderr, spec_path)
@@ -736,6 +783,7 @@ async def _run_playwright_test(
     # kept (Screenshot capture setting), so a passed test's screenshot isn't
     # discarded here.
     result["artifact_paths"] = _find_artifacts(project_dir / output_dir)
+    result["allure_attempt"] = allure_attempt
     return result
 
 
@@ -934,6 +982,63 @@ def _persist_test_result_sync(test_run_id: str, context: _ExecutionContext, outc
         session.add(test_run)
 
         session.commit()
+        test_result_external_id = str(test_result.external_id)
+        completed_at = test_result.completed_at
+
+    _write_allure_final_marker(
+        project_dir_for(uuid.UUID(test_run_id)),
+        test_result_external_id,
+        outcome.get("allure_attempt"),
+        outcome["status"],
+        completed_at,
+    )
+
+
+def _as_utc(value: datetime) -> datetime:
+    return (value if value.tzinfo else value.replace(tzinfo=UTC)).astimezone(UTC)
+
+
+def _timestamp_key(value: datetime | None) -> str | None:
+    return None if value is None else _as_utc(value).isoformat()
+
+
+def _write_allure_final_marker(
+    project_dir: Path,
+    test_result_id: str,
+    attempt: str | None,
+    status: str,
+    completed_at: datetime | None,
+) -> None:
+    """Records which attempt folder holds the outcome just persisted for
+    this TestResult — written only *after* the commit, so it can never name
+    an attempt whose outcome didn't land. An attempt that ran but was never
+    persisted (a crash or activity timeout mid-run) is simply never named.
+    The status and `completed_at` are copied from the committed row so
+    `_collect_final_allure_results` can tell a stale marker (a crash between
+    a later commit and its marker write) from a current one. `attempt` is
+    None when the invocation couldn't write Allure results at all.
+
+    Best-effort: a marker that can't be written only means the report shows
+    this test without its detailed results, never a failed test run."""
+    if not project_dir.is_dir():
+        return
+    try:
+        marker_dir = project_dir / ALLURE_RESULTS_DIR / test_result_id
+        marker_dir.mkdir(parents=True, exist_ok=True)
+        tmp = marker_dir / f"{ALLURE_FINAL_MARKER}.tmp"
+        tmp.write_text(
+            json.dumps(
+                {"attempt": attempt, "status": status, "completed_at": _timestamp_key(completed_at)}
+            ),
+            encoding="utf-8",
+        )
+        os.replace(tmp, marker_dir / ALLURE_FINAL_MARKER)
+    except OSError:
+        logger.warning(
+            "could not write the Allure final-attempt marker for test_result_id=%s",
+            test_result_id,
+            exc_info=True,
+        )
 
 
 # --- Self-healing (HealTestActivity) --------------------------------------
@@ -1484,6 +1589,293 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
             # evidence as the next attempt's input.
     finally:
         await asyncio.to_thread(_release_heal_claim_sync, input.test_result_id)
+
+
+# Below the workflow's 5-minute start_to_close for this activity, so a stuck
+# `allure generate` is always killed here first, never orphaned.
+ALLURE_GENERATE_TIMEOUT_SECONDS = 180
+# ponytail: a run whose single-file report exceeds this gets no report —
+# the Vantage report plugin inlines attachments (screenshots, plus traces
+# within its own per-file caps) as base64. A fuller version would
+# upload the multi-file report directory instead of one HTML file.
+ALLURE_REPORT_MAX_BYTES = 100 * 1024 * 1024
+
+
+def allure_report_key(test_run_id: str) -> str:
+    return f"test-runs/{test_run_id}/allure-report.html"
+
+
+# Only these generated the report's inventory: a TestResult that actually
+# ran. `pending` never finished, `blocked` never started.
+_EXECUTED_STATUSES = ("passed", "failed", "timed_out", "errored")
+ALLURE_FINAL_RESULTS_DIR = "allure-results-final"
+
+
+@dataclass
+class _ReportInventoryItem:
+    external_id: str
+    status: str
+    completed_at: datetime | None
+    started_at: datetime | None
+    error_message: str | None
+    stack_trace: str | None
+    name: str
+    spec_path: str | None
+
+
+def _load_report_inventory_sync(test_run_id: str) -> tuple[list[_ReportInventoryItem], str]:
+    """Every TestResult of this run that ran, plus the report title. Spec
+    paths are recomputed the same way ExecuteTestActivity does, keyed by
+    Scenario rather than TestAsset — a healed test's current TestAsset is a
+    newer row than the one the TestResult was created for."""
+    with Session(engine) as session:
+        test_run = session.exec(
+            select(TestRun).where(TestRun.external_id == uuid.UUID(test_run_id))
+        ).one()
+        application = session.exec(
+            select(Application).where(Application.id == test_run.application_id)
+        ).one()
+        results = session.exec(
+            select(TestResult).where(
+                TestResult.test_run_id == test_run.id,
+                TestResult.status.in_(_EXECUTED_STATUSES),  # type: ignore[attr-defined]
+            )
+        ).all()
+        scenario_ids = {r.scenario_id for r in results}
+        scenarios = (
+            {
+                s.id: s
+                for s in session.exec(
+                    select(Scenario).where(Scenario.id.in_(scenario_ids))  # type: ignore[attr-defined]
+                ).all()
+            }
+            if scenario_ids
+            else {}
+        )
+        inputs = _load_assembly_inputs_sync(session, application)
+        spec_path_by_asset_id = compute_spec_paths(
+            test_suites=inputs.test_suites,
+            journeys_by_id=inputs.journeys_by_id,
+            assets_by_suite=inputs.assets_by_suite,
+            scenario_name_by_asset_id=inputs.scenario_name_by_asset_id,
+        )
+        spec_path_by_scenario_id = {
+            asset.scenario_id: spec_path_by_asset_id[asset.id]
+            for assets in inputs.assets_by_suite.values()
+            for asset in assets
+            if asset.id in spec_path_by_asset_id
+        }
+        items = [
+            _ReportInventoryItem(
+                external_id=str(r.external_id),
+                status=r.status,
+                completed_at=r.completed_at,
+                started_at=r.started_at,
+                error_message=r.error_message,
+                stack_trace=r.stack_trace,
+                name=scenarios[r.scenario_id].name if r.scenario_id in scenarios else "Test",
+                spec_path=spec_path_by_scenario_id.get(r.scenario_id),
+            )
+            for r in results
+        ]
+        return items, f"{application.name} · Run #{test_run.run_number}"
+
+
+def _read_marker(folder: Path) -> dict | None:
+    try:
+        marker = json.loads((folder / ALLURE_FINAL_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return marker if isinstance(marker, dict) else None
+
+
+def _valid_final_attempt(folder: Path, item: _ReportInventoryItem) -> Path | None:
+    """The attempt folder holding `item`'s persisted outcome, or None if it
+    can't be trusted. Only the attempt the marker names is ever considered
+    — earlier (pre-heal, auth-refresh, infra-retry) and unpersisted attempts
+    sit beside it and are never read."""
+    marker = _read_marker(folder)
+    if (
+        marker is None
+        or marker.get("status") != item.status
+        or marker.get("completed_at") != _timestamp_key(item.completed_at)
+        or not isinstance(marker.get("attempt"), str)
+        or not re.fullmatch(r"[0-9a-f]{32}", marker["attempt"])
+    ):
+        return None
+    attempt_dir = folder / marker["attempt"]
+    statuses = []
+    for result_file in attempt_dir.glob("*-result.json"):
+        try:
+            statuses.append(json.loads(result_file.read_text(encoding="utf-8")).get("status"))
+        except (OSError, ValueError):
+            return None
+    if not statuses:
+        return None
+    # Allure's status must tell the same story Vantage persisted.
+    all_passed = all(s == "passed" for s in statuses)
+    if (item.status == "passed") != all_passed:
+        return None
+    return attempt_dir
+
+
+def _synthesized_result(item: _ReportInventoryItem) -> dict:
+    """Stands in for a test that ran but left no usable Allure result (killed
+    at the process timeout, a stale marker, a crash before the reporter
+    wrote). Its status follows Vantage's own: Broken unless Vantage saved it
+    as passed — the report must never contradict the run."""
+
+    def millis(value: datetime | None) -> int | None:
+        return None if value is None else int(_as_utc(value).timestamp() * 1000)
+
+    spec = (item.spec_path or "").removeprefix("tests/")
+    passed = item.status == "passed"
+    return {
+        "uuid": str(uuid.uuid4()),
+        "historyId": f"vantage-{item.external_id}",
+        "testCaseId": f"vantage-{item.external_id}",
+        "name": item.name,
+        "fullName": f"{spec} › {item.name}" if spec else item.name,
+        "status": "passed" if passed else "broken",
+        "statusDetails": {}
+        if passed
+        else {
+            "message": item.error_message or "The test produced no detailed results.",
+            "trace": item.stack_trace or "",
+        },
+        "stage": "finished",
+        "start": millis(item.started_at),
+        "stop": millis(item.completed_at),
+        "labels": [{"name": "framework", "value": "playwright"}],
+        "parameters": [],
+        "links": [],
+        "steps": [],
+        "attachments": [],
+    }
+
+
+def _collect_final_allure_results(
+    project_dir: Path, inventory: list[_ReportInventoryItem]
+) -> tuple[Path, int, int]:
+    """Builds `allure-results-final/` with exactly one entry per executed
+    TestResult: the files of its persisted attempt, or a synthesized result
+    when that attempt can't be trusted. Returns (dir, used, synthesized).
+
+    Tests that never ran (blocked, still pending, or errored by Prepare
+    before any Playwright process started) have no `allure-results/<id>/`
+    folder and are left out — nothing is invented for them."""
+    results_root = project_dir / ALLURE_RESULTS_DIR
+    final_dir = project_dir / ALLURE_FINAL_RESULTS_DIR
+    shutil.rmtree(final_dir, ignore_errors=True)
+    final_dir.mkdir(parents=True)
+    used = synthesized = 0
+    for item in inventory:
+        folder = results_root / item.external_id
+        if not folder.is_dir():
+            continue
+        attempt_dir = _valid_final_attempt(folder, item)
+        if attempt_dir is not None:
+            for file in attempt_dir.iterdir():
+                if file.is_file():
+                    shutil.copy2(file, final_dir / file.name)
+            used += 1
+        else:
+            synthetic = _synthesized_result(item)
+            (final_dir / f"{synthetic['uuid']}-result.json").write_text(
+                json.dumps(synthetic), encoding="utf-8"
+            )
+            synthesized += 1
+    return final_dir, used, synthesized
+
+
+@activity.defn(name="GenerateAllureReportActivity")
+async def generate_allure_report_activity(input: GenerateAllureReportActivityInput) -> str | None:
+    return await asyncio.to_thread(_generate_allure_report_sync, input)
+
+
+def _generate_allure_report_sync(input: GenerateAllureReportActivityInput) -> str | None:
+    """Builds the Vantage report from the Allure results of each executed
+    test's persisted attempt (see `_collect_final_allure_results`), uploads
+    it as one HTML file, and records its key on the TestRun. Best-effort:
+    returns None and never raises — a missing or broken report must never
+    block Finalize.
+
+    ponytail: assumes one execution worker host per run (k8s runs
+    `replicas: 1`) — results are written to, and the report built from, that
+    host's local project dir. With several replicas a run's tests could
+    spread across hosts and this would see only part of them, or none."""
+    try:
+        project_dir = project_dir_for(uuid.UUID(input.test_run_id))
+        results_dir = project_dir / ALLURE_RESULTS_DIR
+        if not results_dir.is_dir() or not any(results_dir.iterdir()):
+            logger.info(
+                "GenerateAllureReportActivity: test_run_id=%s has no Allure results, skipping",
+                input.test_run_id,
+            )
+            return None
+
+        inventory, title = _load_report_inventory_sync(input.test_run_id)
+        final_dir, used, synthesized = _collect_final_allure_results(project_dir, inventory)
+        logger.info(
+            "GenerateAllureReportActivity: test_run_id=%s report covers %d executed tests "
+            "(%d from Allure results, %d without usable results)",
+            input.test_run_id,
+            used + synthesized,
+            used,
+            synthesized,
+        )
+        if used + synthesized == 0:
+            return None
+
+        subprocess.run(
+            [_resolve_bin("npx"), "allure", "generate", final_dir.name],
+            cwd=project_dir,
+            check=True,
+            capture_output=True,
+            timeout=ALLURE_GENERATE_TIMEOUT_SECONDS,
+            env={**os.environ, REPORT_TITLE_ENV: title},
+        )
+        report_path = project_dir / "allure-report" / "index.html"
+        if not report_path.is_file():
+            logger.warning(
+                "GenerateAllureReportActivity: test_run_id=%s produced no %s",
+                input.test_run_id,
+                report_path,
+            )
+            return None
+        size = report_path.stat().st_size
+        if size > ALLURE_REPORT_MAX_BYTES:
+            logger.warning(
+                "GenerateAllureReportActivity: test_run_id=%s report is %d bytes, "
+                "over the %d limit; not uploading",
+                input.test_run_id,
+                size,
+                ALLURE_REPORT_MAX_BYTES,
+            )
+            return None
+
+        key = ObjectStore().put_at_key(
+            allure_report_key(input.test_run_id), report_path.read_bytes(), "text/html"
+        )
+        with Session(engine) as session:
+            test_run = session.exec(
+                select(TestRun).where(TestRun.external_id == uuid.UUID(input.test_run_id))
+            ).one()
+            test_run.allure_report_key = key
+            session.add(test_run)
+            session.commit()
+        logger.info(
+            "GenerateAllureReportActivity: test_run_id=%s uploaded report (%d bytes)",
+            input.test_run_id,
+            size,
+        )
+        return key
+    except Exception:
+        logger.exception(
+            "GenerateAllureReportActivity: test_run_id=%s failed; continuing without a report",
+            input.test_run_id,
+        )
+        return None
 
 
 @activity.defn(name="FinalizeTestRunActivity")

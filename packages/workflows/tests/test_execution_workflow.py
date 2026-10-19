@@ -26,6 +26,7 @@ from workflows import (
     EXECUTE_TEST_ACTIVITY_NAME,
     EXECUTION_TASK_QUEUE,
     FINALIZE_TEST_RUN_ACTIVITY_NAME,
+    GENERATE_ALLURE_REPORT_ACTIVITY_NAME,
     HEAL_TEST_ACTIVITY_NAME,
     PREPARE_TEST_RUN_ACTIVITY_NAME,
     ApplicationTestExecutionWorkflow,
@@ -33,6 +34,7 @@ from workflows import (
     ExecuteTestActivityInput,
     ExecutionWorkflowInput,
     FinalizeTestRunActivityInput,
+    GenerateAllureReportActivityInput,
     HealTestActivityInput,
     PrepareTestRunActivityInput,
     PrepareTestRunActivityResult,
@@ -280,3 +282,72 @@ async def test_heal_test_activity_invoked_once_per_executable_test() -> None:
         by_test.setdefault(tid, []).append(kind)
     for tid, kinds in by_test.items():
         assert kinds == ["execute", "heal"], f"{tid}: expected execute-then-heal, got {kinds}"
+
+
+def _fake_prepare_with(executable: list[ExecutableTest], blocked: bool = False):
+    @activity.defn(name=PREPARE_TEST_RUN_ACTIVITY_NAME)
+    async def _prepare(input: PrepareTestRunActivityInput) -> PrepareTestRunActivityResult:
+        return PrepareTestRunActivityResult(
+            test_run_id="run-1", blocked=blocked, executable=executable
+        )
+
+    return _prepare
+
+
+async def _run_with_allure(*, report_fails: bool, blocked: bool = False) -> list[str]:
+    """Runs the workflow with a fake GenerateAllureReportActivity and returns
+    the order activities ran in."""
+    order: list[str] = []
+    executable = [ExecutableTest(test_result_id="result-1", test_asset_id="asset-1")]
+
+    @activity.defn(name=EXECUTE_TEST_ACTIVITY_NAME)
+    async def _execute(input: ExecuteTestActivityInput) -> str:
+        order.append("execute")
+        return input.test_result_id
+
+    @activity.defn(name=GENERATE_ALLURE_REPORT_ACTIVITY_NAME)
+    async def _generate(input: GenerateAllureReportActivityInput) -> str | None:
+        order.append("generate")
+        if report_fails:
+            raise RuntimeError("simulated allure failure")
+        return "test-runs/run-1/allure-report.html"
+
+    @activity.defn(name=FINALIZE_TEST_RUN_ACTIVITY_NAME)
+    async def _finalize(input: FinalizeTestRunActivityInput) -> None:
+        order.append("finalize")
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=EXECUTION_TASK_QUEUE,
+            workflows=[ApplicationTestExecutionWorkflow],
+            activities=[
+                _fake_prepare_with(executable, blocked=blocked),
+                _execute,
+                _generate,
+                _finalize,
+                _fake_heal([]),
+            ],
+        ):
+            await env.client.execute_workflow(
+                ApplicationTestExecutionWorkflow.run,
+                ExecutionWorkflowInput(application_id="app-1"),
+                id=f"execution-test-{uuid.uuid4()}",
+                task_queue=EXECUTION_TASK_QUEUE,
+            )
+    return order
+
+
+@pytest.mark.asyncio
+async def test_allure_report_is_generated_after_tests_and_before_finalize() -> None:
+    assert await _run_with_allure(report_fails=False) == ["execute", "generate", "finalize"]
+
+
+@pytest.mark.asyncio
+async def test_allure_report_failure_never_blocks_finalize() -> None:
+    assert await _run_with_allure(report_fails=True) == ["execute", "generate", "finalize"]
+
+
+@pytest.mark.asyncio
+async def test_blocked_run_generates_no_allure_report() -> None:
+    assert await _run_with_allure(report_fails=False, blocked=True) == []

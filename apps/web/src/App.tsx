@@ -11,6 +11,8 @@ import { Overview } from './components/Overview'
 import { RecordAndPlay } from './components/RecordAndPlay'
 import { getRecordingPopupParamsFromUrl, RecordingSessionWindow } from './components/RecordingSessionWindow'
 import { ResetPassword } from './components/ResetPassword'
+import { OpenAllureReport } from './components/OpenAllureReport'
+import { getAllureReportRouteFromUrl } from './allureReportRoute'
 import { ReviewScenarios } from './components/ReviewScenarios'
 import { Settings } from './components/Settings'
 import { ServiceError } from './components/ServiceError'
@@ -102,6 +104,11 @@ function App() {
   // signed-in session here either: the vnc/control URLs already carry the
   // recording token the service re-validates on every connect.
   const [recordingPopupParams] = useState(getRecordingPopupParamsFromUrl)
+  // /applications/:appId/test-runs/:runId/report — the stable link to a run's
+  // Allure report. Unlike the routes above it *does* need a session, so it's
+  // deliberately absent from the me() effect's skip list: signed out it goes
+  // through SignIn (which leaves the URL alone), then opens the report.
+  const [allureReportRoute] = useState(getAllureReportRouteFromUrl)
   // Covers logout and resume-application — both involve an API round trip
   // before the screen changes, and users were reading the pause as a hang.
   const [globalLoading, setGlobalLoading] = useState<string | null>(null)
@@ -209,6 +216,10 @@ function App() {
 
   if (user === null) {
     return <SignIn onSignedIn={setUser} />
+  }
+
+  if (allureReportRoute) {
+    return <OpenAllureReport {...allureReportRoute} />
   }
 
   async function handleLogout() {

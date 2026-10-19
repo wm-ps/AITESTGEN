@@ -13,13 +13,13 @@ import uuid
 
 import pytest
 from api.db import engine, init_db
+from api.main import app
 from api.scripts.seed_dev_data import seed
 from api.temporal_client import get_temporal_client
 from domain import (
     Application,
     DiscoveryRun,
     Journey,
-    Organization,
     Scenario,
     TestAsset,
     TestResult,
@@ -30,8 +30,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
-
-from api.main import app
 
 
 def _db_available() -> bool:
@@ -356,6 +354,90 @@ class TestGetTestRun:
         assert body["run_number"] == 1
         assert len(body["results"]) == 1
         assert body["results"][0]["scenario_name"] == "Guest checkout"
+
+
+class _FakeObjectStore:
+    presigned: list = []
+
+    def presigned_get_url(self, key: str, expires_seconds: int = 900, **kwargs) -> str:
+        _FakeObjectStore.presigned.append((key, kwargs))
+        return f"https://s3.example.com/{key}?signed"
+
+
+class TestGetAllureReport:
+    def _app_pk(self, application: dict) -> uuid.UUID:
+        external_id = uuid.UUID(application["id"])
+        with Session(engine) as session:
+            return session.exec(
+                select(Application.id).where(Application.external_id == external_id)
+            ).one()
+
+    def test_returns_a_presigned_html_url_when_the_run_has_a_report(self, monkeypatch) -> None:
+        init_db()
+        import api.main as main_module
+
+        monkeypatch.setattr(main_module, "ObjectStore", _FakeObjectStore)
+        _FakeObjectStore.presigned = []
+        client, _ = _signed_in_client("Org Allure Report")
+        application = _create_application(client, "Allure Report App")
+        key = "test-runs/x/allure-report.html"
+        test_run = _seed_test_run(self._app_pk(application), allure_report_key=key)
+
+        response = client.get(
+            f"/applications/{application['id']}/test-runs/{test_run.external_id}/allure-report"
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"url": f"https://s3.example.com/{key}?signed"}
+        assert _FakeObjectStore.presigned == [(key, {"response_content_type": "text/html"})]
+
+    def test_404_when_the_run_has_no_report(self) -> None:
+        init_db()
+        client, _ = _signed_in_client("Org Allure No Report")
+        application = _create_application(client, "Allure No Report App")
+        test_run = _seed_test_run(self._app_pk(application))
+
+        response = client.get(
+            f"/applications/{application['id']}/test-runs/{test_run.external_id}/allure-report"
+        )
+
+        assert response.status_code == 404
+
+    def test_another_org_cannot_open_the_report(self, monkeypatch) -> None:
+        init_db()
+        import api.main as main_module
+
+        monkeypatch.setattr(main_module, "ObjectStore", _FakeObjectStore)
+        owner, _ = _signed_in_client("Org Allure Owner")
+        application = _create_application(owner, "Allure Owner App")
+        test_run = _seed_test_run(
+            self._app_pk(application), allure_report_key="test-runs/y/allure-report.html"
+        )
+        outsider, _ = _signed_in_client("Org Allure Outsider")
+
+        response = outsider.get(
+            f"/applications/{application['id']}/test-runs/{test_run.external_id}/allure-report"
+        )
+
+        assert response.status_code == 404
+
+    def test_run_read_reports_whether_a_report_is_available(self) -> None:
+        init_db()
+        client, _ = _signed_in_client("Org Allure Flag")
+        application = _create_application(client, "Allure Flag App")
+        app_pk = self._app_pk(application)
+        with_report = _seed_test_run(app_pk, allure_report_key="test-runs/z/allure-report.html")
+        without_report = _seed_test_run(app_pk)
+
+        def flag(run: TestRun) -> bool:
+            response = client.get(
+                f"/applications/{application['id']}/test-runs/{run.external_id}"
+            )
+            assert response.status_code == 200
+            return response.json()["allure_report_available"]
+
+        assert flag(with_report) is True
+        assert flag(without_report) is False
 
 
 class TestGetTestSuiteStatus:

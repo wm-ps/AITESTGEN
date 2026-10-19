@@ -828,3 +828,368 @@ def test_reconcile_stale_test_runs_completes_only_runs_past_the_cutoff() -> None
         assert stale_run.completed_at is not None
         assert fresh_run.status == "running"
         assert fresh_run.completed_at is None
+
+
+async def test_run_playwright_test_gives_each_invocation_its_own_allure_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Without allure-playwright installed, or with a config that predates
+    the per-attempt reporter switch, the test runs with plain
+    `--reporter=json` (running tests never depends on the report). With
+    both, `--reporter` stays off the command line — a CLI reporter would
+    drop the config's `resultsDir` — and every invocation, including a
+    rerun of the same TestResult, writes into a fresh folder."""
+
+    class _FakeProcess:
+        async def communicate(self):
+            return b'{"suites": []}', b""
+
+    calls: list = []
+
+    async def fake_create_subprocess_exec(*args, **kwargs):
+        calls.append((args, kwargs["env"]))
+        return _FakeProcess()
+
+    monkeypatch.setattr(
+        activities_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec
+    )
+    env_name = activities_module.ALLURE_RESULTS_DIR_ENV
+
+    not_installed = await activities_module._run_playwright_test(
+        tmp_path, "tests/a.spec.ts", {}, 30.0, "r1"
+    )
+    (tmp_path / "node_modules" / "allure-playwright").mkdir(parents=True)
+    (tmp_path / "playwright.config.ts").write_text("reporter: [['list']]", encoding="utf-8")
+    old_config = await activities_module._run_playwright_test(
+        tmp_path, "tests/a.spec.ts", {}, 30.0, "r1"
+    )
+    (tmp_path / "playwright.config.ts").write_text(
+        f"reporter: process.env.{env_name} ? [] : []", encoding="utf-8"
+    )
+    first = await activities_module._run_playwright_test(tmp_path, "tests/a.spec.ts", {}, 30.0, "r1")
+    rerun = await activities_module._run_playwright_test(tmp_path, "tests/a.spec.ts", {}, 30.0, "r1")
+
+    for (args, env), outcome in zip(calls[:2], (not_installed, old_config), strict=True):
+        assert "--reporter=json" in args
+        assert env_name not in env
+        assert outcome["allure_attempt"] is None
+    for (args, env), outcome in zip(calls[2:], (first, rerun), strict=True):
+        assert not any(a.startswith("--reporter") for a in args)
+        assert env[env_name] == f"allure-results/r1/{outcome['allure_attempt']}"
+    assert first["allure_attempt"] != rerun["allure_attempt"]
+
+
+class _FakeObjectStore:
+    uploads: list = []
+
+    def put_at_key(self, key: str, data: bytes, content_type: str) -> str:
+        _FakeObjectStore.uploads.append((key, data, content_type))
+        return key
+
+
+def _seed_completed_test_run() -> tuple[TestRun, TestAsset]:
+    """A run (Run #7) plus the one TestAsset its TestResults point at."""
+    application = _seed_application()
+    asset = _seed_test_asset(application, safety_classification="SAFE")
+    with Session(engine) as session:
+        test_run = TestRun(
+            application_id=application.id,
+            run_number=7,
+            status="running",
+            environment_snapshot=application.environment,
+            target_base_url_snapshot=application.url,
+        )
+        session.add(test_run)
+        session.commit()
+        session.refresh(test_run)
+        return test_run, asset
+
+
+def _patch_allure_env(monkeypatch: pytest.MonkeyPatch, project_dir, run_result=None) -> list:
+    """Points the activity at `project_dir`, fakes `npx allure generate`
+    (writing the report unless `run_result` overrides it) and the object
+    store. Returns the captured subprocess calls."""
+    calls: list = []
+    _FakeObjectStore.uploads = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        if run_result is not None:
+            return run_result(args, **kwargs)
+        report_dir = project_dir / "allure-report"
+        report_dir.mkdir(parents=True, exist_ok=True)
+        (report_dir / "index.html").write_text("<html>report</html>", encoding="utf-8")
+        return None
+
+    monkeypatch.setattr(activities_module, "project_dir_for", lambda _id: project_dir)
+    monkeypatch.setattr(activities_module, "_resolve_bin", lambda name: name)
+    monkeypatch.setattr(activities_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(activities_module, "ObjectStore", _FakeObjectStore)
+    return calls
+
+
+def _add_test_result(test_run: TestRun, asset: TestAsset, status: str, **fields) -> TestResult:
+    with Session(engine) as session:
+        test_result = TestResult(
+            test_run_id=test_run.id,
+            test_asset_id=asset.id,
+            scenario_id=asset.scenario_id,
+            status=status,
+            **fields,
+        )
+        session.add(test_result)
+        session.commit()
+        session.refresh(test_result)
+        return test_result
+
+
+def _write_attempt(project_dir, test_result: TestResult, status: str, attempt=None) -> str:
+    """One invocation's Allure output for `test_result`, as allure-playwright
+    lays it out under the per-attempt folder."""
+    attempt = attempt or uuid.uuid4().hex
+    folder = project_dir / "allure-results" / str(test_result.external_id) / attempt
+    folder.mkdir(parents=True, exist_ok=True)
+    result_uuid = str(uuid.uuid4())
+    (folder / f"{result_uuid}-result.json").write_text(
+        f'{{"uuid": "{result_uuid}", "name": "{attempt}", "status": "{status}"}}', encoding="utf-8"
+    )
+    (folder / f"{uuid.uuid4()}-attachment.png").write_bytes(b"png")
+    return attempt
+
+
+def _mark_persisted(project_dir, test_result: TestResult, attempt: str | None) -> None:
+    """The marker `_persist_test_result_sync` writes, from the row as saved."""
+    with Session(engine) as session:
+        saved = session.get(TestResult, test_result.id)
+        activities_module._write_allure_final_marker(
+            project_dir, str(saved.external_id), attempt, saved.status, saved.completed_at
+        )
+
+
+def _write_allure_result(project_dir) -> TestRun:
+    """A run with one passed TestResult and its persisted attempt."""
+    test_run, asset = _seed_completed_test_run()
+    test_result = _add_test_result(test_run, asset, "passed", completed_at=datetime.now(UTC))
+    _mark_persisted(project_dir, test_result, _write_attempt(project_dir, test_result, "passed"))
+    return test_run
+
+
+def test_persist_writes_final_marker_from_the_committed_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    init_db()
+    test_run, asset = _seed_completed_test_run()
+    test_result = _add_test_result(test_run, asset, "pending")
+    monkeypatch.setattr(activities_module, "project_dir_for", lambda _id: tmp_path)
+    attempt = uuid.uuid4().hex
+
+    activities_module._persist_test_result_sync(
+        str(test_run.external_id),
+        activities_module._ExecutionContext(
+            application=Application(name="x"), test_result_pk=test_result.id, spec_path="tests/a.spec.ts"
+        ),
+        {"status": "failed", "error_message": "boom", "allure_attempt": attempt},
+    )
+
+    marker = activities_module._read_marker(
+        tmp_path / "allure-results" / str(test_result.external_id)
+    )
+    with Session(engine) as session:
+        saved = session.get(TestResult, test_result.id)
+        assert marker == {
+            "attempt": attempt,
+            "status": "failed",
+            "completed_at": activities_module._timestamp_key(saved.completed_at),
+        }
+
+
+def test_collect_uses_only_each_executed_tests_persisted_attempt(tmp_path) -> None:
+    """The report's inventory comes from the database, and each test's
+    content from the one attempt its marker names. Earlier attempts (the
+    failed run before a heal, an auth-refresh rerun) and a later attempt
+    that was never persisted sit in the same folder and must not leak."""
+    init_db()
+    test_run, asset = _seed_completed_test_run()
+    now = datetime.now(UTC)
+
+    healed = _add_test_result(test_run, asset, "passed", completed_at=now)
+    _write_attempt(tmp_path, healed, "failed", attempt="0" * 32)  # failed run before the heal
+    persisted = _write_attempt(tmp_path, healed, "passed", attempt="1" * 32)
+    _write_attempt(tmp_path, healed, "failed", attempt="f" * 32)  # never persisted
+    _mark_persisted(tmp_path, healed, persisted)
+
+    stale = _add_test_result(test_run, asset, "failed", completed_at=now, error_message="stale")
+    _mark_persisted(tmp_path, stale, _write_attempt(tmp_path, stale, "failed"))
+    with Session(engine) as session:  # a later persist whose marker write never happened
+        row = session.get(TestResult, stale.id)
+        row.completed_at = now + timedelta(seconds=5)
+        session.add(row)
+        session.commit()
+
+    killed = _add_test_result(
+        test_run, asset, "timed_out", completed_at=now, error_message="exceeded the execution timeout"
+    )
+    empty_attempt = uuid.uuid4().hex
+    (tmp_path / "allure-results" / str(killed.external_id) / empty_attempt).mkdir(parents=True)
+    _mark_persisted(tmp_path, killed, empty_attempt)
+
+    disagreeing = _add_test_result(test_run, asset, "passed", completed_at=now)
+    _mark_persisted(tmp_path, disagreeing, _write_attempt(tmp_path, disagreeing, "failed"))
+
+    _add_test_result(test_run, asset, "blocked")
+    started_never_finished = _add_test_result(test_run, asset, "pending")
+    _write_attempt(tmp_path, started_never_finished, "passed")
+    _add_test_result(  # Prepare failed before any Playwright process ran
+        test_run, asset, "errored", completed_at=now, error_message="failed to prepare the test project"
+    )
+
+    inventory, title = activities_module._load_report_inventory_sync(str(test_run.external_id))
+    final_dir, used, synthesized = activities_module._collect_final_allure_results(
+        tmp_path, inventory
+    )
+
+    assert title == "Execution Test App · Run #7"
+    assert (used, synthesized) == (1, 3)
+    results = [
+        activities_module.json.loads(file.read_text(encoding="utf-8"))
+        for file in final_dir.glob("*-result.json")
+    ]
+    assert len(results) == 4
+    assert [r["status"] for r in results if r["name"] == "1" * 32] == ["passed"]
+    assert not any(r["name"] in ("0" * 32, "f" * 32) for r in results)
+    synthetic = [r for r in results if r["name"] == "Completes checkout"]
+    assert sorted(r["status"] for r in synthetic) == ["broken", "broken", "passed"]
+    assert {r["statusDetails"].get("message") for r in synthetic} == {
+        "stale",
+        "exceeded the execution timeout",
+        None,
+    }
+    assert all(
+        r["fullName"] == "checkout/completes-checkout.spec.ts › Completes checkout" for r in synthetic
+    )
+    # Only the persisted attempt's own attachment was copied.
+    assert len(list(final_dir.glob("*-attachment.png"))) == 1
+
+
+@pytest.mark.parametrize("make_empty_dir", [False, True])
+async def test_generate_allure_report_skips_without_results(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, make_empty_dir: bool
+) -> None:
+    init_db()
+    test_run, _ = _seed_completed_test_run()
+    if make_empty_dir:
+        (tmp_path / "allure-results").mkdir()
+    calls = _patch_allure_env(monkeypatch, tmp_path)
+
+    result = await activities_module.generate_allure_report_activity(
+        activities_module.GenerateAllureReportActivityInput(test_run_id=str(test_run.external_id))
+    )
+
+    assert result is None
+    assert calls == []
+    assert _FakeObjectStore.uploads == []
+
+
+async def test_generate_allure_report_skips_when_no_test_finished(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Allure output from an attempt that never got persisted (the test is
+    still pending) is no reason to publish a report of zero tests."""
+    init_db()
+    test_run, asset = _seed_completed_test_run()
+    pending = _add_test_result(test_run, asset, "pending")
+    _write_attempt(tmp_path, pending, "passed")
+    calls = _patch_allure_env(monkeypatch, tmp_path)
+
+    result = await activities_module.generate_allure_report_activity(
+        activities_module.GenerateAllureReportActivityInput(test_run_id=str(test_run.external_id))
+    )
+
+    assert result is None
+    assert calls == []
+
+
+async def test_generate_allure_report_uploads_and_records_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    init_db()
+    test_run = _write_allure_result(tmp_path)
+    calls = _patch_allure_env(monkeypatch, tmp_path)
+
+    result = await activities_module.generate_allure_report_activity(
+        activities_module.GenerateAllureReportActivityInput(test_run_id=str(test_run.external_id))
+    )
+
+    expected_key = f"test-runs/{test_run.external_id}/allure-report.html"
+    assert result == expected_key
+    (args, kwargs), = calls
+    assert args == ["npx", "allure", "generate", "allure-results-final"]
+    assert kwargs["cwd"] == tmp_path
+    assert kwargs["env"]["AITESTGEN_REPORT_TITLE"] == "Execution Test App · Run #7"
+    assert kwargs["timeout"] == activities_module.ALLURE_GENERATE_TIMEOUT_SECONDS
+    assert _FakeObjectStore.uploads == [(expected_key, b"<html>report</html>", "text/html")]
+    with Session(engine) as session:
+        refreshed = session.get(TestRun, test_run.id)
+        assert refreshed.allure_report_key == expected_key
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        activities_module.subprocess.CalledProcessError(1, ["npx"]),
+        activities_module.subprocess.TimeoutExpired(["npx"], 180),
+    ],
+)
+async def test_generate_allure_report_never_raises_on_generate_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, error: Exception
+) -> None:
+    init_db()
+    test_run = _write_allure_result(tmp_path)
+
+    def failing_run(args, **kwargs):
+        raise error
+
+    _patch_allure_env(monkeypatch, tmp_path, run_result=failing_run)
+
+    result = await activities_module.generate_allure_report_activity(
+        activities_module.GenerateAllureReportActivityInput(test_run_id=str(test_run.external_id))
+    )
+
+    assert result is None
+    assert _FakeObjectStore.uploads == []
+    with Session(engine) as session:
+        assert session.get(TestRun, test_run.id).allure_report_key is None
+
+
+async def test_generate_allure_report_skips_upload_over_size_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    init_db()
+    test_run = _write_allure_result(tmp_path)
+    _patch_allure_env(monkeypatch, tmp_path)
+    monkeypatch.setattr(activities_module, "ALLURE_REPORT_MAX_BYTES", 5)
+
+    result = await activities_module.generate_allure_report_activity(
+        activities_module.GenerateAllureReportActivityInput(test_run_id=str(test_run.external_id))
+    )
+
+    assert result is None
+    assert _FakeObjectStore.uploads == []
+
+
+def test_auth_setup_run_stays_out_of_the_allure_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """The once-per-run login uses the project config's reporters unless
+    told otherwise — and that config now includes `allure-playwright`, which
+    would list the login step in the run's report as if it were a test."""
+    captured: list = []
+    monkeypatch.setattr(activities_module, "_build_subprocess_env", lambda _app: {})
+    monkeypatch.setattr(activities_module, "_resolve_bin", lambda name: name)
+    monkeypatch.setattr(
+        activities_module.subprocess, "run", lambda args, **kwargs: captured.append(args)
+    )
+
+    activities_module._run_auth_setup_once(tmp_path, Application(name="x"))
+
+    assert captured == [["npx", "playwright", "test", "--project=setup", "--reporter=list"]]

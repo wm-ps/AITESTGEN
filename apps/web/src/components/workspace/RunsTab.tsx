@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCircleExclamation, faClapperboard, faImage, faShieldHalved, faTriangleExclamation, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
+import { faArrowUpRightFromSquare, faCircleExclamation, faClapperboard, faImage, faShieldHalved, faTriangleExclamation, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipContentProps } from 'recharts'
 import {
   ApiError,
@@ -18,6 +18,7 @@ import { SkeletonRows } from '../Skeleton'
 import { Pagination } from '../Pagination'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { ChevronIcon } from './TestSuiteTab'
+import { allureReportRoute } from '../../allureReportRoute'
 
 const POLL_INTERVAL_MS = 1500
 const RUNS_PER_PAGE = 10
@@ -1007,6 +1008,33 @@ function RunDetail({
             {run.trigger} · {formatDateTime(run.created_at)}
           </div>
         </div>
+        {/* A plain link to the app's own report route (which fetches a
+            fresh presigned URL, then redirects) — opening the presigned URL
+            after an `await` would lose the click and get popup-blocked. */}
+        {run.allure_report_available && (
+          <a
+            href={allureReportRoute(applicationId, run.id)}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              marginLeft: 'auto',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '8px 14px',
+              borderRadius: 8,
+              border: '1px solid var(--border-2)',
+              background: 'var(--panel)',
+              color: 'var(--fg-2)',
+              fontSize: 13,
+              fontWeight: 600,
+              textDecoration: 'none',
+            }}
+          >
+            View Allure report
+            <FontAwesomeIcon icon={faArrowUpRightFromSquare} style={{ fontSize: 11 }} />
+          </a>
+        )}
       </div>
 
       {!isRunning && run.results && results.length > 0 && (

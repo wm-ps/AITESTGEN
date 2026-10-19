@@ -3316,6 +3316,9 @@ class TestRunRead(BaseModel):
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
+    # True once GenerateAllureReportActivity stored this run's report — the
+    # Runs tab shows "View Allure report" only then.
+    allure_report_available: bool = False
     results: list[TestResultRead] | None = None
 
 
@@ -3370,6 +3373,7 @@ def _to_test_run_read(
         created_at=test_run.created_at,
         started_at=test_run.started_at,
         completed_at=test_run.completed_at,
+        allure_report_available=test_run.allure_report_key is not None,
         results=results,
     )
 
@@ -4280,6 +4284,40 @@ def list_test_runs(
     return TestRunCursorPageRead(
         items=[_to_test_run_read(tr, results=None) for tr in test_runs],
         next_cursor=next_cursor,
+    )
+
+
+class AllureReportUrlRead(BaseModel):
+    url: str
+
+
+@app.get(
+    "/applications/{external_id}/test-runs/{test_run_external_id}/allure-report",
+    response_model=AllureReportUrlRead,
+)
+def get_test_run_allure_report(
+    external_id: uuid.UUID,
+    test_run_external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> AllureReportUrlRead:
+    """A short-lived presigned URL for the run's single-file Allure report.
+    Callers link to the app's own `/applications/:id/test-runs/:id/report`
+    route (which signs in first, then calls this), never to the presigned
+    URL directly — so a shared/emailed link never expires."""
+    application = _get_org_application(session, organization_id, external_id)
+    test_run = session.exec(
+        select(TestRun).where(
+            TestRun.external_id == test_run_external_id,
+            TestRun.application_id == application.id,
+        )
+    ).first()
+    if test_run is None or test_run.allure_report_key is None:
+        raise HTTPException(status_code=404, detail="report not found")
+    return AllureReportUrlRead(
+        url=ObjectStore().presigned_get_url(
+            test_run.allure_report_key, response_content_type="text/html"
+        )
     )
 
 

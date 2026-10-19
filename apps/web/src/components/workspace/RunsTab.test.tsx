@@ -37,6 +37,7 @@ describe('RunsTab', () => {
                   created_at: '2026-09-01T00:00:00Z',
                   started_at: null,
                   completed_at: null,
+                  allure_report_available: false,
                 },
               ],
               next_cursor: null,

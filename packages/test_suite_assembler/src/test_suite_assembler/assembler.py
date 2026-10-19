@@ -36,7 +36,9 @@ during Discovery — never a hard failure.
 
 from __future__ import annotations
 
+import base64
 import io
+import json
 import re
 import zipfile
 from urllib.parse import urlsplit
@@ -243,10 +245,75 @@ def _build_package_json() -> str:
         '    "test": "playwright test"\n'
         "  },\n"
         '  "devDependencies": {\n'
-        '    "@playwright/test": "^1.48.0"\n'
+        '    "@playwright/test": "^1.48.0",\n'
+        # Allure 3 (Node-only CLI, no Java): `allure-playwright` writes raw
+        # results while tests run, `allure` turns them into the HTML report
+        # configured by allurerc.mjs.
+        '    "allure": "^3.20.1",\n'
+        '    "allure-playwright": "^3.13.0"\n'
         "  }\n"
         "}\n"
     )
+
+
+# The execution worker sets AITESTGEN_ALLURE_RESULTS_DIR to give every test
+# invocation its own results folder (see its `_run_playwright_test`) and
+# leaves `--reporter` off the command line: verified against Playwright
+# 1.64, a CLI `--reporter=…,allure-playwright` drops this entry's options, so
+# `resultsDir` only reaches the reporter from here. JSON must stay the
+# stdout reporter in that branch — the worker parses it. Unset (an exported
+# suite run locally/in CI), it's the usual list output plus allure-results/.
+# The worker looks for ALLURE_RESULTS_DIR_ENV in this file before relying on it.
+ALLURE_RESULTS_DIR_ENV = "AITESTGEN_ALLURE_RESULTS_DIR"
+_ALLURE_REPORTER_LINES = (
+    "  // allure-results/ feeds the Vantage report: `npx allure generate allure-results`.\n"
+    f"  reporter: process.env.{ALLURE_RESULTS_DIR_ENV}\n"
+    f"    ? [['json'], ['allure-playwright', {{ resultsDir: process.env.{ALLURE_RESULTS_DIR_ENV} }}]]\n"
+    "    : [['list'], ['allure-playwright']],\n"
+)
+
+# Report title override the execution worker passes to `allure generate`
+# (application name + run number); exported suites fall back to the app name.
+REPORT_TITLE_ENV = "AITESTGEN_REPORT_TITLE"
+# Allure 3 plugin (plus its page template) that renders the Vantage-styled
+# report — shipped inside every assembled project under this folder.
+VANTAGE_REPORT_DIR = "vantage-report"
+_VANTAGE_REPORT_SOURCE = Path(__file__).parent / "vantage_report"
+_VANTAGE_REPORT_FILES = ("plugin.mjs", "model.mjs", "template.html")
+
+
+def _build_allurerc(application_name: str) -> str:
+    """Allure 3 report config — the Vantage report plugin writes one
+    self-contained `allure-report/index.html`, so the execution worker can
+    upload and serve the report as one object.
+
+    The plugin is imported by absolute path: Allure resolves `import` with
+    `require.resolve` from its own install directory, so a path relative to
+    this file would never be found."""
+    return (
+        "import { fileURLToPath } from 'node:url'\n"
+        "import { defineConfig } from 'allure'\n\n"
+        "export default defineConfig({\n"
+        f"  name: process.env.{REPORT_TITLE_ENV} || {json.dumps(f'{application_name} tests')},\n"
+        "  output: './allure-report',\n"
+        "  plugins: {\n"
+        "    vantage: {\n"
+        f"      import: fileURLToPath(new URL('./{VANTAGE_REPORT_DIR}/plugin.mjs', import.meta.url)),\n"
+        "    },\n"
+        "  },\n"
+        "})\n"
+    )
+
+
+def _write_vantage_report_files(writer: _ProjectWriter) -> None:
+    for name in _VANTAGE_REPORT_FILES:
+        writer.write(
+            f"{VANTAGE_REPORT_DIR}/{name}",
+            (_VANTAGE_REPORT_SOURCE / name).read_text(encoding="utf-8"),
+        )
+    # The project writer only takes text, and the page inlines the logo anyway.
+    logo = base64.b64encode((_VANTAGE_REPORT_SOURCE / "vantage-logo.png").read_bytes()).decode()
+    writer.write(f"{VANTAGE_REPORT_DIR}/logo.datauri.txt", f"data:image/png;base64,{logo}")
 
 
 def _build_playwright_config(base_url: str, *, has_login: bool) -> str:
@@ -269,6 +336,7 @@ def _build_playwright_config(base_url: str, *, has_login: bool) -> str:
             "export default defineConfig({\n"
             "  testDir: './tests',\n"
             "  fullyParallel: true,\n"
+            f"{_ALLURE_REPORTER_LINES}"
             "  use: {\n"
             f"    baseURL: '{base_url}',\n"
             "    trace: 'retain-on-failure',\n"
@@ -284,6 +352,7 @@ def _build_playwright_config(base_url: str, *, has_login: bool) -> str:
         "export default defineConfig({\n"
         "  testDir: './tests',\n"
         "  fullyParallel: true,\n"
+        f"{_ALLURE_REPORTER_LINES}"
         "  use: {\n"
         f"    baseURL: '{base_url}',\n"
         "    trace: 'retain-on-failure',\n"
@@ -964,6 +1033,8 @@ def _write_project_files(
         "playwright.config.ts",
         _build_playwright_config(application.url, has_login=login_evidence is not None),
     )
+    writer.write("allurerc.mjs", _build_allurerc(application.name))
+    _write_vantage_report_files(writer)
     writer.write("README.md", _build_readme(application.name, application.auth_method))
     writer.write("fixtures/.gitkeep", "")
     writer.write("utils/.gitkeep", "")
