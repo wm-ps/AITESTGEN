@@ -20,24 +20,29 @@ import uuid
 
 import pytest
 from temporalio import activity
+from temporalio.client import WorkflowFailureError
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 from workflows import (
     EXECUTE_TEST_ACTIVITY_NAME,
     EXECUTION_TASK_QUEUE,
     FINALIZE_TEST_RUN_ACTIVITY_NAME,
+    FORCE_COMPLETE_TEST_RUN_ACTIVITY_NAME,
     GENERATE_ALLURE_REPORT_ACTIVITY_NAME,
     HEAL_TEST_ACTIVITY_NAME,
     PREPARE_TEST_RUN_ACTIVITY_NAME,
+    SEND_TEST_RUN_REPORT_EMAIL_ACTIVITY_NAME,
     ApplicationTestExecutionWorkflow,
     ExecutableTest,
     ExecuteTestActivityInput,
     ExecutionWorkflowInput,
     FinalizeTestRunActivityInput,
+    ForceCompleteTestRunActivityInput,
     GenerateAllureReportActivityInput,
     HealTestActivityInput,
     PrepareTestRunActivityInput,
     PrepareTestRunActivityResult,
+    SendTestRunReportEmailActivityInput,
 )
 
 
@@ -294,9 +299,15 @@ def _fake_prepare_with(executable: list[ExecutableTest], blocked: bool = False):
     return _prepare
 
 
-async def _run_with_allure(*, report_fails: bool, blocked: bool = False) -> list[str]:
-    """Runs the workflow with a fake GenerateAllureReportActivity and returns
-    the order activities ran in."""
+async def _run_with_allure(
+    *,
+    report_fails: bool = False,
+    blocked: bool = False,
+    email_fails: bool = False,
+    finalize_fails: bool = False,
+) -> list[str]:
+    """Runs the workflow with fake GenerateAllureReport / SendTestRunReportEmail
+    activities and returns the order activities ran in."""
     order: list[str] = []
     executable = [ExecutableTest(test_result_id="result-1", test_asset_id="asset-1")]
 
@@ -315,6 +326,18 @@ async def _run_with_allure(*, report_fails: bool, blocked: bool = False) -> list
     @activity.defn(name=FINALIZE_TEST_RUN_ACTIVITY_NAME)
     async def _finalize(input: FinalizeTestRunActivityInput) -> None:
         order.append("finalize")
+        if finalize_fails:
+            raise RuntimeError("simulated finalize failure")
+
+    @activity.defn(name=FORCE_COMPLETE_TEST_RUN_ACTIVITY_NAME)
+    async def _force_complete(input: ForceCompleteTestRunActivityInput) -> None:
+        order.append("force_complete")
+
+    @activity.defn(name=SEND_TEST_RUN_REPORT_EMAIL_ACTIVITY_NAME)
+    async def _email(input: SendTestRunReportEmailActivityInput) -> None:
+        order.append("email")
+        if email_fails:
+            raise RuntimeError("simulated SMTP failure")
 
     async with await WorkflowEnvironment.start_time_skipping() as env:
         async with Worker(
@@ -326,26 +349,38 @@ async def _run_with_allure(*, report_fails: bool, blocked: bool = False) -> list
                 _execute,
                 _generate,
                 _finalize,
+                _force_complete,
+                _email,
                 _fake_heal([]),
             ],
         ):
-            await env.client.execute_workflow(
-                ApplicationTestExecutionWorkflow.run,
-                ExecutionWorkflowInput(application_id="app-1"),
-                id=f"execution-test-{uuid.uuid4()}",
-                task_queue=EXECUTION_TASK_QUEUE,
-            )
+            try:
+                result = await env.client.execute_workflow(
+                    ApplicationTestExecutionWorkflow.run,
+                    ExecutionWorkflowInput(application_id="app-1"),
+                    id=f"execution-test-{uuid.uuid4()}",
+                    task_queue=EXECUTION_TASK_QUEUE,
+                )
+            except WorkflowFailureError:
+                order.append("workflow_failed")
+            else:
+                assert result == "run-1"
     return order
 
 
 @pytest.mark.asyncio
 async def test_allure_report_is_generated_after_tests_and_before_finalize() -> None:
-    assert await _run_with_allure(report_fails=False) == ["execute", "generate", "finalize"]
+    assert await _run_with_allure() == ["execute", "generate", "finalize", "email"]
 
 
 @pytest.mark.asyncio
 async def test_allure_report_failure_never_blocks_finalize() -> None:
-    assert await _run_with_allure(report_fails=True) == ["execute", "generate", "finalize"]
+    assert await _run_with_allure(report_fails=True) == [
+        "execute",
+        "generate",
+        "finalize",
+        "email",
+    ]
 
 
 @pytest.mark.asyncio
@@ -393,3 +428,19 @@ async def test_self_signing_in_tests_run_after_shared_session_tests() -> None:
 
     assert executed[-1] == "login"
     assert sorted(executed[:2]) == ["shared-1", "shared-2"]
+
+
+@pytest.mark.asyncio
+async def test_email_failure_never_fails_the_completed_run() -> None:
+    order = await _run_with_allure(email_fails=True)
+    # Retried (up to 3 attempts), then swallowed: the workflow still returns.
+    assert order[:3] == ["execute", "generate", "finalize"]
+    assert order[3:] == ["email"] * 3
+    assert "workflow_failed" not in order
+
+
+@pytest.mark.asyncio
+async def test_no_email_when_finalize_fails() -> None:
+    order = await _run_with_allure(finalize_fails=True)
+    assert "email" not in order
+    assert order[-2:] == ["force_complete", "workflow_failed"]

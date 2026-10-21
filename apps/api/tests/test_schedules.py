@@ -28,7 +28,7 @@ from api.db import engine, init_db
 from api.main import app
 from api.scripts.seed_dev_data import seed
 from api.temporal_client import get_temporal_client
-from domain import Application, TestRun
+from domain import Application, PlatformUser, Schedule, TestRun
 from fastapi.testclient import TestClient
 from hvac.exceptions import VaultError
 from secrets_client.vault_client import VAULT_ADDR, VAULT_TOKEN
@@ -183,6 +183,16 @@ class TestDefaultSchedules:
             description = asyncio.run(_describe(f"app-schedule-{schedule['id']}"))
             assert description.schedule.state.paused is True
 
+        # Seeded defaults have no owner, so their runs send no email.
+        with Session(engine) as session:
+            rows = session.exec(
+                select(Schedule).where(
+                    Schedule.external_id.in_([uuid.UUID(s["id"]) for s in body])  # type: ignore[attr-defined]
+                )
+            ).all()
+            assert len(rows) == 3
+            assert all(row.created_by_user_id is None for row in rows)
+
 
 class TestCreateSchedule:
     def test_create_daily_schedule(self, temporal_schedule_cleanup: list[str]) -> None:
@@ -218,6 +228,14 @@ class TestCreateSchedule:
         assert isinstance(action, ScheduleActionStartWorkflow)
         assert action.id == f"scheduled-execution-{body['id']}"
         assert action.task_queue == "execution-task-queue"
+
+        # The creator receives the run-completed email for this schedule.
+        with Session(engine) as session:
+            row = session.exec(
+                select(Schedule).where(Schedule.external_id == uuid.UUID(body["id"]))
+            ).one()
+            creator = session.get(PlatformUser, row.created_by_user_id)
+            assert creator is not None and creator.name == "Tester"
 
     def test_create_weekly_non_contiguous_days_round_trips(
         self, temporal_schedule_cleanup: list[str]

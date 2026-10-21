@@ -80,6 +80,18 @@ class TestRun(SQLModel, table=True):
     environment_snapshot: str
     target_base_url_snapshot: str
     triggered_by_name: str | None = Field(default=None)
+    # Who clicked Run, for a manual run — the run-completed email goes to
+    # them. Null for scheduled runs (their email goes to the schedule's
+    # creator), runs from before this column, and once the user is removed
+    # (users are hard-deleted, hence SET NULL).
+    triggered_by_user_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey("platform_user.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
     # Traceability for a scheduled run (Schedules feature). Nullable: a
     # manual run has no schedule, and `Schedule` rows are soft-deleted
     # rather than removed precisely so this FK never dangles. Deliberately
@@ -106,6 +118,15 @@ class TestRun(SQLModel, table=True):
     # GenerateAllureReportActivity just before Finalize. Null when the run
     # produced no report (blocked, nothing executed, or generation failed).
     allure_report_key: str | None = Field(default=None)
+    # Run-completed email bookkeeping (SendTestRunReportEmailActivity):
+    # claimed just before sending so concurrent or retried activities never
+    # both send, emailed once the SMTP server accepted it.
+    report_email_claimed_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    report_emailed_at: datetime | None = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     started_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )

@@ -41,7 +41,7 @@ export function OpenAllureReport({ applicationId, testRunId }: AllureReportRoute
     >
       {failed ? (
         <>
-          <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--fg)', margin: 0 }}>This run has no Allure report</h1>
+          <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--fg)', margin: 0 }}>This run has no report</h1>
           <p style={{ fontSize: 14, color: 'var(--fg-4)', margin: 0, maxWidth: 380 }}>
             The report may still be generating, or this run didn&apos;t produce one.
           </p>

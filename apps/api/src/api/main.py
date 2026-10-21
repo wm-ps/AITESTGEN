@@ -3460,6 +3460,7 @@ async def trigger_test_run(
         ExecutionWorkflowInput(
             application_id=str(application.external_id),
             triggered_by_name=user.name,
+            triggered_by_user_id=str(user.id),
             suite_name=body.suite_name,
             test_asset_ids=(
                 [str(x) for x in body.test_case_ids] if body.test_case_ids else None
@@ -3798,6 +3799,9 @@ async def _create_schedule_row(
     time_zone: str,
     enabled: bool,
     created_by_name: str | None,
+    # Gets the run-completed email for this schedule's runs. None for the
+    # seeded defaults, which have no owner.
+    created_by_user_id: uuid.UUID | None = None,
 ) -> Schedule:
     """Row + matching Temporal Schedule, shared by the user-triggered
     `create_schedule` endpoint and default-schedule seeding at Application
@@ -3827,6 +3831,7 @@ async def _create_schedule_row(
         enabled=enabled,
         temporal_schedule_id="",  # set below, derived from external_id
         created_by_name=created_by_name,
+        created_by_user_id=created_by_user_id,
     )
     schedule.temporal_schedule_id = f"app-schedule-{schedule.external_id}"
     session.add(schedule)
@@ -3966,6 +3971,7 @@ async def create_schedule(
             time_zone=SCHEDULE_DEFAULT_TIME_ZONE,
             enabled=True,
             created_by_name=user.name,
+            created_by_user_id=user.id,
         )
     except ScheduleSpecError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None

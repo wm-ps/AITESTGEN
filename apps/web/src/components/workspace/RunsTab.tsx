@@ -1031,7 +1031,7 @@ function RunDetail({
               textDecoration: 'none',
             }}
           >
-            View Allure report
+            View report
             <FontAwesomeIcon icon={faArrowUpRightFromSquare} style={{ fontSize: 11 }} />
           </a>
         )}
@@ -1257,6 +1257,8 @@ export function RunsTab({
   autoSelectLatest,
   onAutoSelectConsumed,
   onDetailChange,
+  initialRunId = null,
+  onInitialRunConsumed,
 }: {
   applicationId: string
   // `triggerTestRun` starts a Temporal workflow fire-and-forget and only
@@ -1274,8 +1276,17 @@ export function RunsTab({
   // page-title `<h1>` while it's showing, not a way to trigger the back
   // navigation itself.
   onDetailChange?: (onBack: (() => void) | null) => void
+  // Opens this run's detail on mount (the run-completed email's "Open in
+  // Vantage" link). Reported consumed straight away, so coming back to the
+  // tab later shows the run list as usual.
+  initialRunId?: string | null
+  onInitialRunConsumed?: () => void
 }) {
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null)
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(initialRunId)
+  useEffect(() => {
+    if (initialRunId) onInitialRunConsumed?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [selectedRun, setSelectedRun] = useState<TestRunRead | null>(null)
   const [executionUnavailable, setExecutionUnavailable] = useState(false)
   const [runs, setRuns] = useState<TestRunRead[]>([])

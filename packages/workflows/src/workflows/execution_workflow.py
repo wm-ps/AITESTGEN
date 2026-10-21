@@ -44,6 +44,7 @@ FINALIZE_TEST_RUN_ACTIVITY_NAME = "FinalizeTestRunActivity"
 FORCE_COMPLETE_TEST_RUN_ACTIVITY_NAME = "ForceCompleteTestRunActivity"
 HEAL_TEST_ACTIVITY_NAME = "HealTestActivity"
 GENERATE_ALLURE_REPORT_ACTIVITY_NAME = "GenerateAllureReportActivity"
+SEND_TEST_RUN_REPORT_EMAIL_ACTIVITY_NAME = "SendTestRunReportEmailActivity"
 
 DEFAULT_MAX_CONCURRENCY = 5
 
@@ -84,6 +85,10 @@ class ExecutionWorkflowInput:
     # tests execute — a "Run Journey(s)" run.
     suite_name: str | None = None
     test_asset_ids: list[str] | None = None
+    # `PlatformUser.id` of whoever clicked Run — the run-completed email's
+    # recipient. None for scheduled runs (their schedule's creator gets it
+    # instead) and for histories started before this field existed.
+    triggered_by_user_id: str | None = None
 
 
 @dataclass
@@ -93,6 +98,7 @@ class PrepareTestRunActivityInput:
     schedule_id: str | None = None
     suite_name: str | None = None
     test_asset_ids: list[str] | None = None
+    triggered_by_user_id: str | None = None
 
 
 @dataclass
@@ -135,6 +141,11 @@ class GenerateAllureReportActivityInput:
 
 
 @dataclass
+class SendTestRunReportEmailActivityInput:
+    test_run_id: str
+
+
+@dataclass
 class HealTestActivityInput:
     application_id: str
     test_run_id: str
@@ -159,6 +170,7 @@ class ApplicationTestExecutionWorkflow:
                 schedule_id=input.schedule_id,
                 suite_name=input.suite_name,
                 test_asset_ids=input.test_asset_ids,
+                triggered_by_user_id=input.triggered_by_user_id,
             ),
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=RetryPolicy(maximum_attempts=3),
@@ -288,6 +300,29 @@ class ApplicationTestExecutionWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=2),
             )
             raise
+
+        # Only after a successful Finalize — counts and statuses are final.
+        # Best-effort like the report: the run is already completed, so an
+        # email failure is logged and never fails or reopens it. Patched so
+        # runs already in flight at deploy replay unchanged.
+        #
+        # ponytail: no email when Finalize fails (the ForceComplete branch
+        # above), for runs the stale-run reconciler closes, for the early
+        # `prep.blocked` return, or after a later manual "Retry with
+        # self-heal" — all rare or infrastructure-failure paths. Emailing
+        # them would mean sending from those activities too.
+        if workflow.patched("run-report-email"):
+            try:
+                await workflow.execute_activity(
+                    SEND_TEST_RUN_REPORT_EMAIL_ACTIVITY_NAME,
+                    SendTestRunReportEmailActivityInput(test_run_id=prep.test_run_id),
+                    start_to_close_timeout=timedelta(minutes=1),
+                    retry_policy=RetryPolicy(maximum_attempts=3),
+                )
+            except Exception:
+                workflow.logger.warning(
+                    "Run-completed email failed for test run %s", prep.test_run_id
+                )
         return prep.test_run_id
 
 
@@ -338,6 +373,7 @@ __all__ = [
     "EXECUTION_TASK_QUEUE",
     "FINALIZE_TEST_RUN_ACTIVITY_NAME",
     "GENERATE_ALLURE_REPORT_ACTIVITY_NAME",
+    "SEND_TEST_RUN_REPORT_EMAIL_ACTIVITY_NAME",
     "HEALABLE_STATUSES",
     "HEAL_CLAIM_STALE_AFTER",
     "HEAL_TEST_ACTIVITY_NAME",
@@ -351,5 +387,6 @@ __all__ = [
     "HealTestActivityInput",
     "HealTestExecutionWorkflow",
     "PrepareTestRunActivityInput",
+    "SendTestRunReportEmailActivityInput",
     "PrepareTestRunActivityResult",
 ]
