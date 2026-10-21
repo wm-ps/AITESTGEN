@@ -1281,6 +1281,10 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
                 requires_auth = spec_linter.resolve_requires_auth(
                     session, application, primary_page, scenario
                 )
+        elif application is not None and application.discovery_required is False:
+            # No primary page (e.g. a live-exploration case on an app with no
+            # Discovery) — left False before; discovery_required=true keeps that.
+            requires_auth = spec_linter.resolve_requires_auth(session, application, None, scenario)
 
         intent_text = f"{scenario.name} {' '.join(scenario.steps)}"
         updated_fields = [dict(field) for field in scenario.test_data]

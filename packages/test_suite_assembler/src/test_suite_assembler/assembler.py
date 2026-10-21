@@ -42,7 +42,7 @@ import zipfile
 from urllib.parse import urlsplit
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from domain import Application, ComponentLocator, Form, FormField, Page, TestSuite
@@ -106,6 +106,9 @@ def dedupe_slugs(items: list[tuple[str, str]]) -> dict[str, str]:
     return result
 
 
+DEFAULT_SETUP_TIMEOUT_MS = 60000
+
+
 @dataclass(frozen=True)
 class LoginPageEvidence:
     """Non-secret login-page facts captured by Discovery — never a credential
@@ -117,6 +120,24 @@ class LoginPageEvidence:
     url: str
     username_locator: str | None
     password_locator: str
+    # Defaults reproduce the setup script's original `goto` exactly. Only
+    # `discovery_required=false` Applications (`find_login_page_evidence`)
+    # override them: their login page is a real, slow-loading app (observed
+    # 11-19s to the `load` event) that the original 10s/`load` budget can never
+    # satisfy.
+    goto_timeout_ms: int = 10000
+    goto_wait_until: str = "load"
+    # The whole `setup` login test's own timeout (playwright.config.ts).
+    setup_timeout_ms: int = DEFAULT_SETUP_TIMEOUT_MS
+
+
+# Login budget for a `discovery_required=false` Application's slow login page:
+# its whole setup login was observed taking ~67s end to end.
+_NO_DISCOVERY_LOGIN_BUDGET = {
+    "goto_timeout_ms": 30000,
+    "goto_wait_until": "domcontentloaded",
+    "setup_timeout_ms": 120000,
+}
 
 
 def _playwright_locator_call(strategy: str, value: str) -> str:
@@ -158,6 +179,35 @@ def _field_locator_call(session: Session, field: FormField | None) -> str | None
 
 
 def find_login_page_evidence(
+    session: Session, application: Application
+) -> LoginPageEvidence | None:
+    """Captured login evidence (unchanged lookup below). An Application with
+    `discovery_required=false` never runs Discovery; its login form is
+    captured by its first live exploration instead (`generation_worker`'s
+    `login_capture`), so the same lookup finds it, with the slower `goto`
+    budget its login page needs. Until that first capture exists, a
+    `standard_login` one gets a synthetic fallback so the Run's `setup` +
+    `authenticated` projects (one shared login, `storageState` reuse) still
+    exist.
+
+    ponytail: the fallback is a generic password locator + the Application's
+    own `login_url`/`url`, not a captured form. It only covers a Run made
+    before any live exploration has captured the real one."""
+    no_discovery = application.discovery_required is False
+    captured = _find_captured_login_page_evidence(session, application)
+    if captured is not None:
+        return replace(captured, **_NO_DISCOVERY_LOGIN_BUDGET) if no_discovery else captured
+    if no_discovery and application.auth_method == "standard_login":
+        return LoginPageEvidence(
+            url=application.login_url or application.url,
+            username_locator=None,
+            password_locator='page.locator(\'input[type="password"]\').first()',
+            **_NO_DISCOVERY_LOGIN_BUDGET,
+        )
+    return None
+
+
+def _find_captured_login_page_evidence(
     session: Session, application: Application
 ) -> LoginPageEvidence | None:
     """Heuristic query (see module docstring): the captured `Form` with a
@@ -249,7 +299,9 @@ def _build_package_json() -> str:
     )
 
 
-def _build_playwright_config(base_url: str, *, has_login: bool) -> str:
+def _build_playwright_config(
+    base_url: str, *, has_login: bool, setup_timeout_ms: int = DEFAULT_SETUP_TIMEOUT_MS
+) -> str:
     """No manual chromium/signed-in project split to maintain: when Discovery
     captured a login page, the split below is driven entirely by the
     `@auth`/`@public` tag every generated spec carries — deterministically
@@ -304,7 +356,7 @@ def _build_playwright_config(base_url: str, *, has_login: bool) -> str:
         "      // or browser has been closed' (a symptom of the timeout tearing the context\n"
         "      // down mid-call, not the real cause) and failed every dependent test in the\n"
         "      // suite, since none of them can even start without this step succeeding.\n"
-        "      timeout: 60000,\n"
+        f"      timeout: {setup_timeout_ms},\n"
         "    },\n"
         "    {\n"
         "      name: 'authenticated',\n"
@@ -401,6 +453,12 @@ def _build_auth_setup_script(auth_method: str, login_evidence: LoginPageEvidence
         if login_evidence
         else 'page.locator(\'input[type="password"]\').first()'
     )
+    goto_options = (
+        f"{{ timeout: {login_evidence.goto_timeout_ms}, "
+        f"waitUntil: '{login_evidence.goto_wait_until}' }}"
+        if login_evidence and login_evidence.goto_wait_until != "load"
+        else "{ timeout: 10000 }"
+    )
     return (
         "import { test as setup } from '@playwright/test'\n"
         "import { fillCredentials, isAuthenticated } from '../support/auth'\n"
@@ -432,7 +490,7 @@ def _build_auth_setup_script(auth_method: str, login_evidence: LoginPageEvidence
         "  let alreadyAuthenticated = false\n"
         "  for (let attempt = 0; attempt < 2 && !ready; attempt++) {\n"
         "    const navigated = await page\n"
-        "      .goto(loginUrl, { timeout: 10000 })\n"
+        f"      .goto(loginUrl, {goto_options})\n"
         "      .then(() => true)\n"
         "      .catch(() => false)\n"
         "    if (!navigated) continue\n"
@@ -962,7 +1020,13 @@ def _write_project_files(
     writer.write("tsconfig.json", _build_tsconfig())
     writer.write(
         "playwright.config.ts",
-        _build_playwright_config(application.url, has_login=login_evidence is not None),
+        _build_playwright_config(
+            application.url,
+            has_login=login_evidence is not None,
+            setup_timeout_ms=(
+                login_evidence.setup_timeout_ms if login_evidence else DEFAULT_SETUP_TIMEOUT_MS
+            ),
+        ),
     )
     writer.write("README.md", _build_readme(application.name, application.auth_method))
     writer.write("fixtures/.gitkeep", "")

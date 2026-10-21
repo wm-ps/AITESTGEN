@@ -429,6 +429,12 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
         )
 
 
+# A `discovery_required=false` app's setup login was observed taking ~67s end
+# to end, past the 60s every other app gets; its suite's `setup` project
+# timeout is raised to match (assembler `_NO_DISCOVERY_LOGIN_BUDGET`).
+_AUTH_SETUP_TIMEOUT_NO_DISCOVERY_S = 150
+
+
 def _run_auth_setup_once(dest_dir: Path, application: Application) -> None:
     """Logs in exactly once per TestRun, here in `PrepareTestRunActivity` —
     which always runs alone, no concurrency to race (see module docstring)
@@ -449,7 +455,9 @@ def _run_auth_setup_once(dest_dir: Path, application: Application) -> None:
             env=_build_subprocess_env(application),
             check=True,
             capture_output=True,
-            timeout=60,
+            timeout=_AUTH_SETUP_TIMEOUT_NO_DISCOVERY_S
+            if application.discovery_required is False
+            else 60,
         )
     except subprocess.CalledProcessError as exc:
         # `[FIXED]` `logger.exception` on the caller side only ever logged

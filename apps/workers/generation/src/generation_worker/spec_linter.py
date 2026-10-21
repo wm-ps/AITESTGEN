@@ -232,6 +232,16 @@ def _find_login_page_url(session: Session, application_id: uuid.UUID) -> str | N
     return None
 
 
+_LOGIN_SCENARIO_NAME_RE = re.compile(r"\b(log[\s-]?in|sign[\s-]?in|login|authenticat)", re.IGNORECASE)
+
+
+def _is_login_scenario(scenario: Scenario | None) -> bool:
+    # ponytail: scenario-name keyword match stands in for knowing the login
+    # page (a no-Discovery app has none captured). "logged in" doesn't match.
+    # A fuller version would carry an explicit "tests login" flag on Scenario.
+    return scenario is not None and bool(_LOGIN_SCENARIO_NAME_RE.search(scenario.name))
+
+
 def resolve_requires_auth(
     session: Session,
     application: Application,
@@ -266,6 +276,15 @@ def resolve_requires_auth(
     against-real-generated-code verification this removal was based on."""
     login_url = _find_login_page_url(session, application.id)
     if login_url is None:
+        # `discovery_required=false` + `standard_login` never has a captured
+        # login form (no Discovery), but still logs in once via the assembler's
+        # fallback login evidence — so its non-login cases start authenticated.
+        if (
+            application.discovery_required is False
+            and application.auth_method == "standard_login"
+            and not _is_login_scenario(scenario)
+        ):
+            return True
         return False
     if primary_page is not None and primary_page.url == login_url:
         return False
