@@ -24,7 +24,9 @@ from domain import (
     Journey,
     Organization,
     Page,
+    PlatformUser,
     Scenario,
+    Schedule,
     TestAsset,
     TestResult,
     TestRun,
@@ -41,6 +43,7 @@ from workflows import (
     FinalizeTestRunActivityInput,
     ForceCompleteTestRunActivityInput,
     PrepareTestRunActivityInput,
+    SendTestRunReportEmailActivityInput,
 )
 
 
@@ -1193,3 +1196,257 @@ def test_auth_setup_run_stays_out_of_the_allure_report(
     activities_module._run_auth_setup_once(tmp_path, Application(name="x"))
 
     assert captured == [["npx", "playwright", "test", "--project=setup", "--reporter=list"]]
+
+
+# --- Run-completed email ------------------------------------------------------
+
+
+def _seed_user(application: Application, name: str = "Sam") -> PlatformUser:
+    with Session(engine) as session:
+        user = PlatformUser(
+            organization_id=application.organization_id,
+            email=f"{name.lower()}-{uuid.uuid4()}@example.com",
+            name=name,
+            hashed_password="x",
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        return user
+
+
+def _seed_schedule(application: Application, created_by_user_id=None) -> Schedule:
+    with Session(engine) as session:
+        schedule = Schedule(
+            application_id=application.id,
+            name="Nightly Regression",
+            cadence_type="daily",
+            hour=2,
+            minute=0,
+            time_zone="UTC",
+            temporal_schedule_id=f"app-schedule-{uuid.uuid4()}",
+            created_by_user_id=created_by_user_id,
+        )
+        session.add(schedule)
+        session.commit()
+        session.refresh(schedule)
+        return schedule
+
+
+def _seed_finished_run(application: Application, **fields) -> TestRun:
+    defaults = dict(
+        application_id=application.id,
+        run_number=12,
+        status="completed",
+        environment_snapshot=application.environment,
+        target_base_url_snapshot=application.url,
+        triggered_by_name="Sam",
+        total_count=2,
+        passed_count=1,
+        failed_count=1,
+        started_at=datetime.now(UTC) - timedelta(minutes=3),
+        completed_at=datetime.now(UTC),
+    )
+    defaults.update(fields)
+    with Session(engine) as session:
+        test_run = TestRun(**defaults)
+        session.add(test_run)
+        session.commit()
+        session.refresh(test_run)
+        return test_run
+
+
+@pytest.fixture
+def outbox(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
+    sent: list[tuple] = []
+    monkeypatch.setattr(activities_module, "smtp_configured", lambda: True)
+    monkeypatch.setattr(activities_module, "send_email", lambda *args: sent.append(args))
+    return sent
+
+
+def _send(test_run: TestRun) -> None:
+    activities_module._send_test_run_report_email_sync(
+        SendTestRunReportEmailActivityInput(test_run_id=str(test_run.external_id))
+    )
+
+
+def _email_state(test_run: TestRun) -> tuple:
+    with Session(engine) as session:
+        row = session.get(TestRun, test_run.id)
+        return row.report_email_claimed_at, row.report_emailed_at
+
+
+def test_manual_run_emails_the_starter_once(outbox) -> None:
+    init_db()
+    application = _seed_application()
+    starter = _seed_user(application)
+    asset = _seed_test_asset(application, safety_classification="SAFE", journey_name="Sign in")
+    test_run = _seed_finished_run(application, triggered_by_user_id=starter.id)
+    _add_test_result(test_run, asset, "passed")
+    _add_test_result(test_run, asset, "failed", error_message="expected Welcome", duration_ms=1200)
+
+    _send(test_run)
+    _send(test_run)  # a retry or duplicate activity after success
+
+    [(to, subject, text, html)] = outbox
+    assert to == starter.email
+    assert subject == "✕ Run #12 · Execution Test App — 1 of 2 tests didn't pass"
+    assert "Completes checkout" in html and "Sign in" in html and "expected Welcome" in html
+    assert f"/applications/{application.external_id}/test-runs/{test_run.external_id}" in text
+    claimed_at, emailed_at = _email_state(test_run)
+    assert claimed_at is not None and emailed_at is not None
+
+
+def test_email_leaves_out_a_failed_heal_attempts_typecheck_error(outbox) -> None:
+    # Seen live: a heal whose generated fix fails typecheck overwrites the
+    # test's error_message — the email must not show that heal detail.
+    init_db()
+    application = _seed_application()
+    starter = _seed_user(application)
+    asset = _seed_test_asset(application, safety_classification="SAFE", journey_name="Sign in")
+    test_run = _seed_finished_run(application, triggered_by_user_id=starter.id)
+    _add_test_result(test_run, asset, "passed")
+    _add_test_result(
+        test_run,
+        asset,
+        "failed",
+        error_message=activities_module.HEAL_TYPECHECK_ERROR_PREFIX + "spec.ts(59,5): TS2353",
+    )
+
+    _send(test_run)
+
+    [(_, _, text, html)] = outbox
+    assert "Completes checkout" in html
+    assert "typecheck" not in html and "typecheck" not in text and "TS2353" not in text
+
+
+def test_scheduled_run_and_run_now_email_the_schedule_creator(outbox) -> None:
+    init_db()
+    application = _seed_application()
+    creator = _seed_user(application, "Creator")
+    clicker = _seed_user(application, "Clicker")
+    schedule = _seed_schedule(application, created_by_user_id=creator.id)
+    # Run now never records a starter on a scheduled run; even if one were
+    # recorded, the schedule's creator is still the recipient.
+    test_run = _seed_finished_run(
+        application,
+        schedule_id=schedule.id,
+        triggered_by_name=schedule.name,
+        triggered_by_user_id=clicker.id,
+    )
+
+    _send(test_run)
+
+    [(to, _, text, _)] = outbox
+    assert to == creator.email
+    assert "you created the schedule “Nightly Regression”" in text
+
+
+@pytest.mark.parametrize("case", ["seeded_schedule", "no_starter", "removed_user", "other_org"])
+def test_unresolvable_recipient_skips_without_claiming(outbox, case, caplog) -> None:
+    init_db()
+    application = _seed_application()
+    if case == "seeded_schedule":
+        schedule = _seed_schedule(application, created_by_user_id=None)
+        test_run = _seed_finished_run(application, schedule_id=schedule.id)
+    elif case == "no_starter":
+        test_run = _seed_finished_run(application)
+    elif case == "removed_user":
+        user = _seed_user(application)
+        test_run = _seed_finished_run(application, triggered_by_user_id=user.id)
+        with Session(engine) as session:
+            session.delete(session.get(PlatformUser, user.id))
+            session.commit()
+        with Session(engine) as session:
+            assert session.get(TestRun, test_run.id).triggered_by_user_id is None  # SET NULL
+    else:
+        outsider = _seed_user(_seed_application())
+        test_run = _seed_finished_run(application, triggered_by_user_id=outsider.id)
+
+    with caplog.at_level("INFO"):
+        _send(test_run)
+
+    assert outbox == []
+    assert "has no recipient" in caplog.text
+    assert _email_state(test_run) == (None, None)
+
+
+def test_smtp_failure_releases_the_claim_so_a_retry_sends(monkeypatch) -> None:
+    init_db()
+    application = _seed_application()
+    starter = _seed_user(application)
+    test_run = _seed_finished_run(application, triggered_by_user_id=starter.id)
+    sent: list = []
+    failures = [OSError("connection reset")]
+
+    def failing_once(*args):
+        if failures:
+            raise failures.pop()
+        sent.append(args)
+
+    monkeypatch.setattr(activities_module, "smtp_configured", lambda: True)
+    monkeypatch.setattr(activities_module, "send_email", failing_once)
+
+    with pytest.raises(OSError):
+        _send(test_run)
+    assert _email_state(test_run) == (None, None)
+
+    _send(test_run)  # Temporal's retry
+    assert len(sent) == 1
+    assert _email_state(test_run)[1] is not None
+
+
+def test_a_held_claim_blocks_another_send(outbox) -> None:
+    init_db()
+    application = _seed_application()
+    starter = _seed_user(application)
+    test_run = _seed_finished_run(application, triggered_by_user_id=starter.id)
+    # Another attempt claimed it, then died before the SMTP server accepted:
+    # at most once means this email is skipped rather than risk a duplicate.
+    assert activities_module._claim_report_email_sync(test_run.id)
+    assert not activities_module._claim_report_email_sync(test_run.id)
+
+    _send(test_run)
+
+    assert outbox == []
+    assert _email_state(test_run)[1] is None
+
+
+def test_unfinished_run_and_missing_smtp_send_nothing(monkeypatch, outbox) -> None:
+    init_db()
+    application = _seed_application()
+    starter = _seed_user(application)
+    running = _seed_finished_run(application, status="running", triggered_by_user_id=starter.id)
+    _send(running)
+    assert outbox == []
+
+    done = _seed_finished_run(application, run_number=13, triggered_by_user_id=starter.id)
+    monkeypatch.setattr(activities_module, "smtp_configured", lambda: False)
+    _send(done)
+    assert outbox == []
+    assert _email_state(done) == (None, None)
+
+
+def test_prepare_records_who_started_the_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    init_db()
+    application = _seed_application()
+    starter = _seed_user(application)
+
+    def _stop_after_the_row_exists(*_a, **_k):
+        raise RuntimeError("stop before assembly")
+
+    monkeypatch.setattr(activities_module, "_load_assembly_inputs_sync", _stop_after_the_row_exists)
+
+    result = activities_module._prepare_test_run_sync(
+        PrepareTestRunActivityInput(
+            application_id=str(application.external_id),
+            triggered_by_name=starter.name,
+            triggered_by_user_id=str(starter.id),
+        )
+    )
+
+    with Session(engine) as session:
+        test_run = session.exec(
+            select(TestRun).where(TestRun.external_id == uuid.UUID(result.test_run_id))
+        ).one()
+        assert test_run.triggered_by_user_id == starter.id

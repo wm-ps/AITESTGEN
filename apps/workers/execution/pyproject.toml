@@ -9,6 +9,7 @@ dependencies = [
     "domain",
     "secrets-client",
     "object-store",
+    "mailer",
     "test-suite-assembler",
     "ai-provider",
     "generation-worker",
@@ -33,6 +34,7 @@ workflows = { workspace = true }
 domain = { workspace = true }
 secrets-client = { workspace = true }
 object-store = { workspace = true }
+mailer = { workspace = true }
 test-suite-assembler = { workspace = true }
 ai-provider = { workspace = true }
 locator-capture = { workspace = true }

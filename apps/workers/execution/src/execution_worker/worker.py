@@ -54,6 +54,7 @@ from execution_worker.activities import (
     heal_test_activity,
     prepare_test_run_activity,
     reconcile_stale_test_runs_activity,
+    send_test_run_report_email_activity,
 )
 from execution_worker.add_test_case_activities import (
     discard_test_run_activity,
@@ -93,6 +94,7 @@ async def main() -> None:
             execute_test_activity,
             heal_test_activity,
             generate_allure_report_activity,
+            send_test_run_report_email_activity,
             finalize_test_run_activity,
             force_complete_test_run_activity,
             find_purge_candidates_activity,

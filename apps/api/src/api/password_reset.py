@@ -1,33 +1,20 @@
 """Forgot-password issuing/consumption — mirrors `api.invites`'s token design.
 
 The raw token is the sole secret and is never persisted: only its sha256
-(`token_hash`) is stored, same rationale as Invite. Reuses `invites.py`'s
-SMTP config/`_hash_token` rather than re-declaring them.
+(`token_hash`) is stored, same rationale as Invite. Sends through the shared
+`mailer` package and reuses `invites.py`'s `_hash_token`.
 """
 
 import logging
 import secrets
-import smtplib
 from datetime import UTC, datetime, timedelta
-from email.message import EmailMessage
-from email.utils import formataddr
 
 from domain import PasswordReset, PlatformUser
+from mailer import EMAIL_HEADER, FRONTEND_BASE_URL, send_email, smtp_configured
 from sqlmodel import Session, select
 
 from api.auth import hash_password
-from api.invites import (
-    _EMAIL_HEADER,
-    FRONTEND_BASE_URL,
-    _attach_logo,
-    SMTP_FROM,
-    SMTP_FROM_NAME,
-    SMTP_HOST,
-    SMTP_PASSWORD,
-    SMTP_PORT,
-    SMTP_USER,
-    _hash_token,
-)
+from api.invites import _hash_token
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +34,7 @@ def _reset_html(name: str, link: str) -> str:
     <tr><td align="center">
       <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
         <tr><td style="background:#ffffff;border-bottom:1px solid #e8eaec;padding:24px 32px;">
-{_EMAIL_HEADER}
+{EMAIL_HEADER}
         </td></tr>
         <tr><td style="padding:32px;">
           <p style="margin:0 0 16px;font-size:16px;color:#1a1a1a;">Hi {name},</p>
@@ -68,30 +55,22 @@ def _reset_html(name: str, link: str) -> str:
 
 def send_reset_email(to_email: str, name: str, token: str) -> None:
     link = _reset_link(token)
-    if not SMTP_HOST:
+    if not smtp_configured():
         # ponytail: dev fallback, no SMTP configured — log the link instead
         # of failing, same as invites.py's send_invite_email.
         logger.info("password reset link for %s: %s", to_email, link)
         return
 
-    message = EmailMessage()
-    message["Subject"] = "Reset your Vantage password"
-    message["From"] = formataddr((SMTP_FROM_NAME, SMTP_FROM))
-    message["To"] = to_email
-    message.set_content(
+    send_email(
+        to_email,
+        "Reset your Vantage password",
         f"Hi {name},\n\n"
         f"We received a request to reset your password.\n\n"
         f"Reset it here: {link}\n\n"
         f"This link expires in 1 hour and can only be used once. "
-        f"If you didn't request this, you can ignore this email."
+        f"If you didn't request this, you can ignore this email.",
+        _reset_html(name, link),
     )
-    message.add_alternative(_reset_html(name, link), subtype="html")
-    _attach_logo(message)
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as smtp:
-        smtp.starttls()
-        if SMTP_USER and SMTP_PASSWORD:
-            smtp.login(SMTP_USER, SMTP_PASSWORD)
-        smtp.send_message(message)
 
 
 def request_password_reset(session: Session, email: str) -> None:

@@ -37,6 +37,7 @@ from domain import (
     Application,
     DiscoverySettings,
     Journey,
+    PlatformUser,
     Scenario,
     Schedule,
     TestAsset,
@@ -51,6 +52,7 @@ from generation_worker.activities import (
     supersede_test_asset,
 )
 from generation_worker.typecheck import typecheck_playwright_code
+from mailer import FRONTEND_BASE_URL, send_email, smtp_configured
 from object_store import ObjectStore
 from secrets_client.vault_client import SecretRef, VaultSecretsClient
 from sqlalchemy import or_, update
@@ -76,11 +78,19 @@ from workflows import (
     HealTestActivityInput,
     PrepareTestRunActivityInput,
     PrepareTestRunActivityResult,
+    SendTestRunReportEmailActivityInput,
 )
 
 from execution_worker.db import engine
 from execution_worker.live_inspection import _live_inspection_enabled, run_live_inspection
 from execution_worker.project_cache import cleanup_project_dir, project_dir_for
+from execution_worker.run_report_email import (
+    FailedTest,
+    RunCounts,
+    RunEmail,
+    build_email,
+    run_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -327,6 +337,9 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
             environment_snapshot=application.environment,
             target_base_url_snapshot=application.url,
             triggered_by_name=input.triggered_by_name,
+            triggered_by_user_id=(
+                uuid.UUID(input.triggered_by_user_id) if input.triggered_by_user_id else None
+            ),
             suite_name=input.suite_name,
             started_at=datetime.now(UTC),
         )
@@ -1326,6 +1339,9 @@ def _fetch_latest_screenshot_sync(test_result_pk: uuid.UUID) -> bytes | None:
         return None
 
 
+HEAL_TYPECHECK_ERROR_PREFIX = "generated fix failed typecheck: "
+
+
 def _record_typecheck_failure_sync(
     test_result_pk: uuid.UUID, tsc_errors: list[str], triggered_manually: bool
 ) -> None:
@@ -1335,7 +1351,7 @@ def _record_typecheck_failure_sync(
             test_result.manual_heal_attempt_count += 1
         else:
             test_result.auto_heal_attempt_count += 1
-        test_result.error_message = "generated fix failed typecheck: " + "; ".join(tsc_errors[:5])
+        test_result.error_message = HEAL_TYPECHECK_ERROR_PREFIX + "; ".join(tsc_errors[:5])
         session.add(test_result)
         session.commit()
 
@@ -1876,6 +1892,212 @@ def _generate_allure_report_sync(input: GenerateAllureReportActivityInput) -> st
             input.test_run_id,
         )
         return None
+
+
+# --- Run-completed email (SendTestRunReportEmailActivity) -----------------
+
+
+def _resolve_report_recipient(
+    session: Session, test_run: TestRun, application: Application
+) -> tuple[PlatformUser | None, str]:
+    """(recipient, reason). A scheduled run — "Run now" included, which goes
+    through the same ScheduledExecutionWorkflow — always goes to the
+    schedule's creator, never to whoever clicked; a manual run goes to the
+    user who clicked Run. No owner is ever inferred from a stored *name*."""
+    if test_run.schedule_id is not None:
+        schedule = session.get(Schedule, test_run.schedule_id)
+        user_id = schedule.created_by_user_id if schedule is not None else None
+        if user_id is None:
+            # Seeded default schedules, schedules from before owners were
+            # recorded, and schedules whose creator was removed (SET NULL).
+            return None, "the schedule has no owner on record"
+    else:
+        user_id = test_run.triggered_by_user_id
+        if user_id is None:
+            # Runs from before starters were recorded, or the starter was
+            # removed (SET NULL).
+            return None, "the run has no starter on record"
+    user = session.get(PlatformUser, user_id)
+    if user is None:
+        return None, "the recipient's account no longer exists"
+    if user.organization_id != application.organization_id:
+        return None, "the recipient isn't in the application's organization"
+    return user, "ok"
+
+
+def _test_failure_message(error_message: str | None) -> str | None:
+    """The email shows final statuses only, never self-healing detail.
+
+    ponytail: a heal attempt whose generated fix fails typecheck overwrites
+    `TestResult.error_message` with that typecheck error, losing the test's
+    own failure message — so the email drops it (the row still shows the test,
+    and the report link has the run's own failure details). A fuller fix would
+    store heal errors in their own field and leave `error_message` as the
+    test's last real failure.
+    """
+    if error_message and error_message.startswith(HEAL_TYPECHECK_ERROR_PREFIX):
+        return None
+    return error_message
+
+
+def _load_run_email_sync(
+    test_run_id: str,
+) -> tuple[TestRun, RunEmail, PlatformUser | None, str]:
+    with Session(engine) as session:
+        test_run = session.exec(
+            select(TestRun).where(TestRun.external_id == uuid.UUID(test_run_id))
+        ).one()
+        application = session.exec(
+            select(Application).where(Application.id == test_run.application_id)
+        ).one()
+        recipient, reason = _resolve_report_recipient(session, test_run, application)
+        rows = session.exec(
+            select(TestResult, Scenario, Journey)
+            .join(Scenario, Scenario.id == TestResult.scenario_id)  # type: ignore[arg-type]
+            .join(Journey, Journey.id == Scenario.journey_id, isouter=True)  # type: ignore[arg-type]
+            .where(
+                TestResult.test_run_id == test_run.id,
+                TestResult.status.in_(("failed", "timed_out", "errored")),  # type: ignore[attr-defined]
+            )
+        ).all()
+        email = RunEmail(
+            application_id=str(application.external_id),
+            test_run_id=str(test_run.external_id),
+            app_name=application.name,
+            run_number=test_run.run_number,
+            counts=RunCounts(
+                total=test_run.total_count,
+                passed=test_run.passed_count,
+                failed=test_run.failed_count,
+                timed_out=test_run.timed_out_count,
+                errored=test_run.errored_count,
+                blocked=test_run.blocked_count,
+            ),
+            started_at=test_run.started_at,
+            completed_at=test_run.completed_at,
+            target_url=test_run.target_base_url_snapshot,
+            triggered_by_name=test_run.triggered_by_name,
+            scheduled=test_run.schedule_id is not None,
+            report_available=test_run.allure_report_key is not None,
+            base_url=FRONTEND_BASE_URL,
+            failed_tests=[
+                FailedTest(
+                    name=scenario.name,
+                    journey=journey.name if journey is not None else None,
+                    status=result.status,
+                    error_message=_test_failure_message(result.error_message),
+                    duration_ms=result.duration_ms,
+                )
+                for result, scenario, journey in rows
+            ],
+        )
+        session.expunge(test_run)
+        if recipient is not None:
+            session.expunge(recipient)
+        return test_run, email, recipient, reason
+
+
+def _claim_report_email_sync(test_run_pk: uuid.UUID) -> bool:
+    """One conditional UPDATE, so two concurrent or retried activities can
+    never both send: only the call that flips `report_email_claimed_at` from
+    NULL proceeds."""
+    with Session(engine) as session:
+        result = session.execute(
+            update(TestRun)
+            .where(
+                TestRun.id == test_run_pk,  # type: ignore[arg-type]
+                TestRun.report_email_claimed_at.is_(None),  # type: ignore[union-attr]
+                TestRun.report_emailed_at.is_(None),  # type: ignore[union-attr]
+            )
+            .values(report_email_claimed_at=datetime.now(UTC))
+        )
+        session.commit()
+        return (result.rowcount or 0) > 0  # type: ignore[attr-defined]
+
+
+def _set_report_email_state_sync(test_run_pk: uuid.UUID, *, sent: bool) -> None:
+    values = (
+        {"report_emailed_at": datetime.now(UTC)} if sent else {"report_email_claimed_at": None}
+    )
+    with Session(engine) as session:
+        session.execute(
+            update(TestRun).where(TestRun.id == test_run_pk).values(**values)  # type: ignore[arg-type]
+        )
+        session.commit()
+
+
+@activity.defn(name="SendTestRunReportEmailActivity")
+async def send_test_run_report_email_activity(
+    input: SendTestRunReportEmailActivityInput,
+) -> None:
+    await asyncio.to_thread(_send_test_run_report_email_sync, input)
+
+
+def _send_test_run_report_email_sync(input: SendTestRunReportEmailActivityInput) -> None:
+    """Emails the run's owner (see `_resolve_report_recipient`) once the run
+    has completed. Skips, with the reason logged, when the run isn't
+    completed, the email was already sent or claimed, there's no recipient,
+    or SMTP isn't configured.
+
+    Delivery is at most once, not exactly once: claim
+    (`_claim_report_email_sync`) → SMTP send → `report_emailed_at`. An SMTP
+    error releases the claim and re-raises, so Temporal's retry can send.
+
+    ponytail: two windows remain, accepted for this stage instead of an
+    outbox/relay with message ids — (1) the worker dies after claiming but
+    before the SMTP server accepts: the claim is never released, so the
+    email is skipped (lost) rather than risking a duplicate; (2) the server
+    accepts the message but the connection fails before its reply: that
+    surfaces as an SMTP error, the claim is released, and a retry can send a
+    duplicate. A crash after acceptance but before `report_emailed_at`
+    commits sends no duplicate (the claim stays) but leaves the run marked
+    claimed, not sent."""
+    test_run, email, recipient, reason = _load_run_email_sync(input.test_run_id)
+    if test_run.status != "completed":
+        logger.warning(
+            "run-completed email: test_run_id=%s is %r, not completed; skipping",
+            input.test_run_id,
+            test_run.status,
+        )
+        return
+    if test_run.report_emailed_at is not None or test_run.report_email_claimed_at is not None:
+        logger.info(
+            "run-completed email: test_run_id=%s already sent or in progress; skipping",
+            input.test_run_id,
+        )
+        return
+    if recipient is None:
+        logger.info(
+            "run-completed email: test_run_id=%s has no recipient (%s); skipping",
+            input.test_run_id,
+            reason,
+        )
+        return
+    subject, text, html = build_email(email)
+    if not smtp_configured():
+        # Same dev fallback as invites and password resets: log, don't send.
+        logger.info(
+            "run-completed email (SMTP not configured) to %s: %s — %s",
+            recipient.email,
+            subject,
+            run_url(email),
+        )
+        return
+    if not _claim_report_email_sync(test_run.id):
+        logger.info(
+            "run-completed email: test_run_id=%s claimed by another attempt; skipping",
+            input.test_run_id,
+        )
+        return
+    try:
+        send_email(recipient.email, subject, text, html)
+    except Exception:
+        _set_report_email_state_sync(test_run.id, sent=False)
+        raise
+    _set_report_email_state_sync(test_run.id, sent=True)
+    logger.info(
+        "run-completed email: test_run_id=%s sent to %s", input.test_run_id, recipient.email
+    )
 
 
 @activity.defn(name="FinalizeTestRunActivity")

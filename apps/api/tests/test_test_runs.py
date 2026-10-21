@@ -20,6 +20,7 @@ from domain import (
     Application,
     DiscoveryRun,
     Journey,
+    PlatformUser,
     Scenario,
     TestAsset,
     TestResult,
@@ -190,6 +191,40 @@ class TestTriggerTestRun:
 
         assert response.status_code == 503
         assert response.json()["detail"] == "EXECUTION_UNAVAILABLE"
+
+
+class TestTriggerRecordsStarter:
+    def test_trigger_passes_the_starter_user_id_to_the_workflow(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from api import main as api_main
+
+        started: list = []
+
+        class _FakeClient:
+            async def start_workflow(self, _run, workflow_input, **_kwargs) -> None:
+                started.append(workflow_input)
+
+        async def _fake_client() -> _FakeClient:
+            return _FakeClient()
+
+        async def _has_pollers(client: object, task_queue: str) -> bool:
+            return True
+
+        init_db()
+        client, email = _signed_in_client("Org Trigger Starter")
+        application = _create_application(client, "Starter App")
+        monkeypatch.setattr(api_main, "get_temporal_client", _fake_client)
+        monkeypatch.setattr(api_main, "has_pollers", _has_pollers)
+
+        response = client.post(f"/applications/{application['id']}/test-runs")
+
+        assert response.status_code == 202
+        [workflow_input] = started
+        with Session(engine) as session:
+            user = session.exec(select(PlatformUser).where(PlatformUser.email == email)).one()
+        assert workflow_input.triggered_by_user_id == str(user.id)
+        assert workflow_input.triggered_by_name == "Tester"
 
 
 class TestExecutionStatus:

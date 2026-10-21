@@ -12,7 +12,7 @@ import { RecordAndPlay } from './components/RecordAndPlay'
 import { getRecordingPopupParamsFromUrl, RecordingSessionWindow } from './components/RecordingSessionWindow'
 import { ResetPassword } from './components/ResetPassword'
 import { OpenAllureReport } from './components/OpenAllureReport'
-import { getAllureReportRouteFromUrl } from './allureReportRoute'
+import { getAllureReportRouteFromUrl, getTestRunRouteFromUrl } from './allureReportRoute'
 import { ReviewScenarios } from './components/ReviewScenarios'
 import { Settings } from './components/Settings'
 import { ServiceError } from './components/ServiceError'
@@ -109,6 +109,11 @@ function App() {
   // deliberately absent from the me() effect's skip list: signed out it goes
   // through SignIn (which leaves the URL alone), then opens the report.
   const [allureReportRoute] = useState(getAllureReportRouteFromUrl)
+  // /applications/:appId/test-runs/:runId — the run-completed email's "Open
+  // in Vantage" link. Also needs a session; handled once signed in (below).
+  const [testRunLink, setTestRunLink] = useState(getTestRunRouteFromUrl)
+  // One-shot: the run the Runs tab opens on after following that link.
+  const [openRunId, setOpenRunId] = useState<string | null>(null)
   // Covers logout and resume-application — both involve an API round trip
   // before the screen changes, and users were reading the pause as a hang.
   const [globalLoading, setGlobalLoading] = useState<string | null>(null)
@@ -189,6 +194,27 @@ function App() {
         }
       })
   }, [inviteToken, resetToken, recordingPopupParams])
+
+  // Both lookups go through the normal org-scoped endpoints, so a link to
+  // another organization's (or a deleted) run just 404s into a toast.
+  useEffect(() => {
+    if (!user || !testRunLink) return
+    const { applicationId, testRunId } = testRunLink
+    setTestRunLink(null)
+    window.history.replaceState({}, '', '/')
+    setGlobalLoading('Opening test run')
+    Promise.all([api.getApplication(applicationId), api.getTestRun(applicationId, testRunId)])
+      .then(([app]) => {
+        setApplication(app)
+        setJustGeneratedSuite(false)
+        setAutoTriggerRun(false)
+        setOpenRunId(testRunId)
+        setAppTab('runs')
+        setView('app')
+      })
+      .catch(() => setErrorToast("That test run couldn't be opened. It may have been deleted."))
+      .finally(() => setGlobalLoading(null))
+  }, [user, testRunLink])
 
   function handleSignedIn(signedInUser: UserRead) {
     window.history.replaceState({}, '', '/')
@@ -437,6 +463,8 @@ function App() {
             autoTriggerRun={autoTriggerRun}
             highlightScenarioId={highlightScenarioId}
             onHighlightConsumed={() => setHighlightScenarioId(null)}
+            openRunId={openRunId}
+            onOpenRunConsumed={() => setOpenRunId(null)}
           />
         )
       )}

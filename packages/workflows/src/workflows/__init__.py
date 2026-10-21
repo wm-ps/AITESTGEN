@@ -54,6 +54,7 @@ from workflows.execution_workflow import (
     FINALIZE_TEST_RUN_ACTIVITY_NAME,
     FORCE_COMPLETE_TEST_RUN_ACTIVITY_NAME,
     GENERATE_ALLURE_REPORT_ACTIVITY_NAME,
+    SEND_TEST_RUN_REPORT_EMAIL_ACTIVITY_NAME,
     HEAL_CLAIM_STALE_AFTER,
     HEAL_TEST_ACTIVITY_NAME,
     HEALABLE_STATUSES,
@@ -68,6 +69,7 @@ from workflows.execution_workflow import (
     HealTestActivityInput,
     HealTestExecutionWorkflow,
     PrepareTestRunActivityInput,
+    SendTestRunReportEmailActivityInput,
     PrepareTestRunActivityResult,
 )
 from workflows.generation_workflow import (
@@ -140,6 +142,7 @@ __all__ = [
     "FIND_PURGE_CANDIDATES_ACTIVITY_NAME",
     "FORCE_COMPLETE_TEST_RUN_ACTIVITY_NAME",
     "GENERATE_ALLURE_REPORT_ACTIVITY_NAME",
+    "SEND_TEST_RUN_REPORT_EMAIL_ACTIVITY_NAME",
     "GENERATION_TASK_QUEUE",
     "HEALABLE_STATUSES",
     "HEAL_CLAIM_STALE_AFTER",
@@ -199,6 +202,7 @@ __all__ = [
     "PrepareSingleTestRunActivityInput",
     "PrepareSingleTestRunActivityResult",
     "PrepareTestRunActivityInput",
+    "SendTestRunReportEmailActivityInput",
     "PrepareTestRunActivityResult",
     "PromptAnalysisResult",
     "PurgeApplicationInput",

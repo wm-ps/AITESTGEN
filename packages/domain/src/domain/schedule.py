@@ -89,6 +89,17 @@ class Schedule(SQLModel, table=True):
         sa_column=Column(String, nullable=False, unique=True, index=True)
     )
     created_by_name: str | None = Field(default=None, sa_column=Column(String, nullable=True))
+    # Receives the run-completed email for every run this schedule starts
+    # (including "Run now"). Null for the seeded default schedules, rows
+    # from before this column, and once the user is removed (SET NULL).
+    created_by_user_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey("platform_user.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
 
     deleted_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)

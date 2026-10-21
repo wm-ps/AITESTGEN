@@ -66,6 +66,8 @@ export function Workspace({
   autoTriggerRun = false,
   highlightScenarioId = null,
   onHighlightConsumed,
+  openRunId = null,
+  onOpenRunConsumed,
   discoveryEnabled = true,
 }: {
   applicationId: string
@@ -91,6 +93,10 @@ export function Workspace({
   // into view and flash once — passed straight through to TestSuiteTab.
   highlightScenarioId?: string | null
   onHighlightConsumed?: () => void
+  // A run to open straight away (the run-completed email's "Open in
+  // Vantage" link) — passed through to RunsTab.
+  openRunId?: string | null
+  onOpenRunConsumed?: () => void
 }) {
   // Set once, the moment "Run Suite"/"Run All Tests" switches to the Runs
   // tab — consumed by RunsTab's own auto-select-newest-run poll, then never
@@ -98,7 +104,8 @@ export function Workspace({
   // the user leaves and returns to any of its tabs (App.tsx swaps it out for
   // Journeys/Scenarios in between), so reading `activeTab` once at mount —
   // not in an effect — still captures "did we land here already on Runs".
-  const [autoSelectLatest, setAutoSelectLatest] = useState(activeTab === 'runs')
+  // Not when a specific run was asked for — that one opens instead.
+  const [autoSelectLatest, setAutoSelectLatest] = useState(activeTab === 'runs' && !openRunId)
   // Overview has nothing to show before a run exists (health/pass-rate/
   // trend are all meaningless) — kept out of the nav rail entirely until
   // then, rather than showing it just to land on its own empty state.
@@ -286,6 +293,8 @@ export function Workspace({
             autoSelectLatest={autoSelectLatest}
             onAutoSelectConsumed={() => setAutoSelectLatest(false)}
             onDetailChange={(onBack) => setRunsBack(() => onBack)}
+            initialRunId={openRunId}
+            onInitialRunConsumed={onOpenRunConsumed}
           />
         )}
       </div>
