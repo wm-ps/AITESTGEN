@@ -394,6 +394,18 @@ export function LiveExplorationPanel({
               : 'Test case added to the suite.'}{' '}
             Run them from the Test Suite tab to see results.
           </p>
+          {!!statusRow?.skipped_cases?.length && (
+            <div style={{ marginTop: 10 }}>
+              <p style={{ fontSize: 13, color: 'var(--bad)', margin: '0 0 4px' }}>
+                Not generated — Vantage couldn't do these in the application:
+              </p>
+              <ul style={{ fontSize: 13, color: 'var(--fg)', margin: 0, paddingLeft: 18 }}>
+                {statusRow.skipped_cases.map((c) => (
+                  <li key={c}>{c}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-2)', marginTop: 16, paddingTop: 14 }}>
             <button
               type="button"
@@ -411,10 +423,9 @@ export function LiveExplorationPanel({
 
       {status === 'failed' && (
         <div style={{ marginTop: 16 }}>
-          <p style={{ color: 'var(--bad)', fontSize: 13.5, margin: '0 0 8px' }}>Something went wrong during live exploration.</p>
-          {statusRow?.error_message && (
-            <p style={{ fontSize: 13, color: 'var(--fg-4)', margin: '0 0 12px' }}>{statusRow.error_message}</p>
-          )}
+          <p style={{ color: 'var(--bad)', fontSize: 13.5, margin: '0 0 12px' }}>
+            {statusRow?.error_message || 'Something went wrong during live exploration.'}
+          </p>
           <button type="button" onClick={reset} style={secondaryButtonStyle}>
             Try again
           </button>

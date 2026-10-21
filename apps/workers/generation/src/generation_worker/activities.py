@@ -70,7 +70,11 @@ logger = logging.getLogger(__name__)
 # since it's separate, non-AI code).
 _EMAIL_FIELD_RE = re.compile(r"user|email|login", re.IGNORECASE)
 _PASSWORD_FIELD_RE = re.compile(r"pass(word)?", re.IGNORECASE)
-_CARD_FIELD_RE = re.compile(r"card", re.IGNORECASE)
+# A payment card field, not any field with "card" in it — a bare `card`
+# match filled "application card title" with 4111111111111111.
+_CARD_FIELD_RE = re.compile(
+    r"card\W*(number|no\b|num)|credit|debit|\bcc\W*(number|num)|\bpan\b", re.IGNORECASE
+)
 # Same convention discovery_worker/crawler.py's `_generic_value` already uses
 # for its own (different, exploratory-crawl) purpose: a field's declared
 # HTML `type` isn't a reliable signal on its own (many real quantity boxes
@@ -208,6 +212,145 @@ _CREDENTIAL_VALUE_UNDER_TEST_RE = re.compile(
     r"special\s+character|whitespace|case-sensitiv\w*|leading\s+or\s+trailing|boundary)\b",
     re.IGNORECASE,
 )
+
+
+_DISMISS_WORDS_RE = re.compile(r"\b(close|dismiss|got it|skip|not now|no thanks|later)\b", re.I)
+_OVERLAY_WORDS_RE = re.compile(
+    r"popover|pop-?up|dialog|modal|notification|what'?s new|banner|toast|tour|announcement"
+    r"|support|cookie|promo",
+    re.I,
+)
+
+
+def overlay_dismissals_from(captured_flow: list[dict] | None) -> list[str]:
+    """Proven locators of the controls the live session clicked to get an
+    unrequested pop-up out of the way (a notifications popover, a "What's
+    New" dialog) — such pop-ups appear on their own, so a test needs a
+    handler for them, not a step. Only name-identified controls: an
+    unnamed one could be anything."""
+    found: list[str] = []
+    for step in captured_flow or []:
+        locator = step.get("playwright_locator") or ""
+        description = step.get("element_description") or ""
+        if (
+            step.get("tool_name") == "browser_click"
+            and "name: ''" not in locator
+            and _DISMISS_WORDS_RE.search(description)
+            and _OVERLAY_WORDS_RE.search(description)
+            and locator not in found
+        ):
+            found.append(locator)
+    return found
+
+
+def app_overlay_dismissals_sync(session: Session, application_id: uuid.UUID) -> list[str]:
+    """Every pop-up dismissal any live exploration of this application ever
+    recorded — a pop-up that didn't happen to show during one exploration
+    still shows up on test runs (observed: notifications/"What's New" seen
+    in earlier explorations, absent from the latest one)."""
+    flows = session.exec(
+        select(Journey.captured_flow).where(
+            Journey.application_id == application_id,
+            Journey.captured_flow.is_not(None),  # type: ignore[union-attr]
+        )
+    ).all()
+    found: list[str] = []
+    for flow in flows:
+        for locator in overlay_dismissals_from(flow):
+            if locator not in found:
+                found.append(locator)
+    return found
+
+
+def live_action_sequence_from(
+    captured_flow: list[dict] | None, overlay_dismissals: list[str] | None = None
+) -> list[dict] | None:
+    """The proven-working ordered path through the app from live exploration
+    (only ever set for an "nl"-sourced Journey), as code generation and the
+    test-run self-heal both consume it. An earlier entry is very often a
+    prerequisite (opening a dropdown/combobox) a later target only becomes
+    interactable after; `element_description`/`context`/`semantic_target`
+    are what tell two otherwise-identical locators apart;
+    `playwright_locator` is Playwright's own proven locator for the element
+    (see agent._ran_playwright_locator), preferred over `value`. Waits are
+    kept too: where the live session had to wait (an AI reply, a slow load),
+    the test's next assertion needs the same patience."""
+    sequence = [
+        {
+            "tool_name": step["tool_name"],
+            "element_tag": step.get("element_tag", ""),
+            "value": step.get("value", ""),
+            "element_description": step.get("element_description"),
+            "context": step.get("context"),
+            "semantic_target": step.get("semantic_target"),
+            "playwright_locator": step.get("playwright_locator"),
+            "took_seconds": step.get("took_seconds"),
+        }
+        for step in (captured_flow or [])
+        if step.get("value")
+        or step.get("playwright_locator")
+        or step.get("tool_name") == "browser_wait_for"
+    ]
+    # Leading/trailing/repeated waits carry no ordering information.
+    collapsed: list[dict] = []
+    for entry in sequence:
+        if entry["tool_name"] == "browser_wait_for" and (
+            not collapsed or collapsed[-1]["tool_name"] == "browser_wait_for"
+        ):
+            continue
+        collapsed.append(entry)
+    while collapsed and collapsed[-1]["tool_name"] == "browser_wait_for":
+        collapsed.pop()
+    # Slowest real step anywhere in the flow (navigations included, which
+    # aren't entries themselves) — sizes the test's timeouts.
+    slowest = max((step.get("took_seconds") or 0 for step in (captured_flow or [])), default=0)
+    if collapsed and slowest:
+        collapsed[0] = {**collapsed[0], "slowest_live_seconds": slowest}
+    dismissals = (
+        overlay_dismissals if overlay_dismissals is not None else overlay_dismissals_from(captured_flow)
+    )
+    if collapsed and dismissals:
+        collapsed[0] = {**collapsed[0], "overlay_dismissals": dismissals}
+    return collapsed or None
+
+
+def _app_overlay_dismissals_for_scenario_sync(scenario_pk: uuid.UUID) -> list[str]:
+    with Session(engine) as session:
+        scenario = session.get(Scenario, scenario_pk)
+        journey = session.get(Journey, scenario.journey_id) if scenario else None
+        return app_overlay_dismissals_sync(session, journey.application_id) if journey else []
+
+
+def ground_scenarios_in_own_live_case(
+    captured_flow: list[dict] | None, scenarios: Sequence[Scenario]
+) -> None:
+    """Multi-test-case live exploration records one session for every listed
+    case; handing each scenario's codegen that whole transcript produced a
+    "open the project" test that also ran every later case's AI Studio steps.
+    When the scenarios line up one-to-one with the completed cases (they are
+    generated in the prompt's order, one per completed case), ground each in
+    its own case's steps only, starting where that case started.
+    ponytail: positional match; have scenario generation name its source
+    case if counts ever stop lining up in practice."""
+    if not captured_flow:
+        return
+    completed: list[str] = []
+    for step in captured_flow:
+        name = step.get("test_case")
+        if name and step.get("test_case_completed") and name not in completed:
+            completed.append(name)
+    if not completed or len(completed) != len(scenarios):
+        return
+    # Pop-ups appear on their own — one a different case's steps had to
+    # dismiss can just as well block this one.
+    dismissals = overlay_dismissals_from(captured_flow)
+    for scenario, case_name in zip(scenarios, completed, strict=True):
+        own_steps = [step for step in captured_flow if step.get("test_case") == case_name]
+        scenario.grounding = {
+            **(scenario.grounding or {}),
+            "captured_flow": own_steps,
+            "overlay_dismissals": dismissals,
+        }
 
 
 def _is_existing_credential_field(
@@ -408,11 +551,51 @@ def _provided_value_for_field(
     whole point is a deliberately different or missing value, so the user's
     single literal is never a safe default for those."""
     target = _normalize_field_key(field_name)
+    target_words = _field_words(field_name)
     for key, value in provided_test_data.items():
         candidate = _normalize_field_key(key)
         if candidate and (candidate in target or target in candidate):
             return value
+        # Word overlap too — the two sides name the same thing differently
+        # ("application/project title" vs "application card title"), and a
+        # miss falls through to a generic placeholder typed into the app.
+        shared = target_words & _field_words(key)
+        if len(shared) >= 2 and len(shared) * 2 >= len(target_words | _field_words(key)):
+            return value
     return None
+
+
+_GENERIC_FIELD_WORDS = frozenset({"the", "a", "an", "of", "for", "to", "field", "input", "box", "value"})
+
+
+def _live_typed_value(
+    captured_flow: list[dict] | None, field_name: str, used_values: set[str], blank_fields: int
+) -> str | None:
+    """What the live agent actually typed for this field — proven to work in
+    the real app, unlike a "Test value" placeholder (observed: an AI Studio
+    prompt field defaulted to "Test value" while the session had typed a
+    real, working prompt). Matched by shared words between the field name
+    and the step's element description; a scenario with exactly one typed
+    step and one field to fill takes that step's value. Never for secrets —
+    credentials come from the vault, not the transcript."""
+    if not captured_flow or _PASSWORD_FIELD_RE.search(field_name):
+        return None
+    typed = [
+        (step.get("element_description") or "", step["typed_value"])
+        for step in captured_flow
+        if step.get("typed_value") and step["typed_value"] not in used_values
+    ]
+    if not typed:
+        return None
+    words = _field_words(field_name) - _GENERIC_FIELD_WORDS
+    best = max(typed, key=lambda t: len(words & _field_words(t[0])))
+    if words & _field_words(best[0]):
+        return best[1]
+    return typed[0][1] if len(typed) == 1 and blank_fields == 1 else None
+
+
+def _field_words(name: str) -> set[str]:
+    return {w for w in re.split(r"[^a-z0-9]+", name.lower()) if w}
 
 
 @activity.defn(name="ScenarioGenerationActivity")
@@ -556,6 +739,7 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
             )
 
             scenario_external_ids: list[str] = []
+            created_scenarios: list[Scenario] = []
             for candidate in candidates:
                 safety_classification, safety_classification_reason = classify_scenario_steps(
                     candidate.steps
@@ -600,6 +784,7 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
                 session.add(scenario)
                 session.flush()
                 scenario_external_ids.append(str(scenario.external_id))
+                created_scenarios.append(scenario)
                 logger.info(
                     "ScenarioGenerationActivity: journey_id=%s created scenario_id=%s name=%r",
                     input.journey_id,
@@ -607,6 +792,7 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
                     scenario.name,
                 )
 
+            ground_scenarios_in_own_live_case(journey.captured_flow, created_scenarios)
             session.commit()
             logger.info(
                 "ScenarioGenerationActivity: journey_id=%s generated %d scenarios",
@@ -866,28 +1052,10 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
     # unlabeled combobox/input roles). Dropping it here left the code-gen
     # prompt with no way to tell such steps apart except position, which is
     # exactly what pushed it toward fragile `.first()`/`.last()` locators.
-    live_action_sequence = [
-        {
-            "tool_name": step["tool_name"],
-            "element_tag": step.get("element_tag", ""),
-            "value": step["value"],
-            "element_description": step.get("element_description"),
-            # Ancestor/sibling/attribute evidence from the live snapshot at
-            # the moment this step acted (see `extract_snapshot_context`) —
-            # same rationale as `element_description` above: the only other
-            # thing that can distinguish two steps whose `value` is
-            # otherwise identical.
-            "context": step.get("context"),
-            # The decide-agent's own explicit intent for this step (see
-            # `ai_provider.LiveExplorationDecision.semantic_target`) —
-            # action/target name/value/relationship, independent of DOM
-            # shape. Additive: `None` for any step recorded before this
-            # field existed.
-            "semantic_target": step.get("semantic_target"),
-        }
-        for step in (captured_flow or [])
-        if step.get("value")
-    ] or None
+    live_action_sequence = live_action_sequence_from(
+        captured_flow,
+        await asyncio.to_thread(_app_overlay_dismissals_for_scenario_sync, scenario.id),
+    )
 
     # Checklist rule 3: a spec isn't "generated successfully" until it
     # compiles against real @playwright/test types — this catches
@@ -1265,8 +1433,14 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
         ) = resolve_known_application_model_sync(session, scenario.journey_id, scenario)
 
         journey = session.get(Journey, scenario.journey_id)
-        captured_flow = (scenario.grounding or {}).get("captured_flow") or (
-            journey.captured_flow if journey else None
+        # Key presence, not truthiness: a multi-case scenario grounded in its
+        # own (possibly empty, e.g. an already-signed-in login case) slice
+        # must not fall back to the whole session's transcript.
+        grounding = scenario.grounding or {}
+        captured_flow = (
+            grounding["captured_flow"]
+            if "captured_flow" in grounding
+            else (journey.captured_flow if journey else None)
         )
         application = session.get(Application, journey.application_id) if journey else None
 
@@ -1315,10 +1489,12 @@ def _resolve_scenario_defaults_sync(scenario_external_id: str) -> _ScenarioDefau
         for field in other_fields:
             current_value = field.get("value")
             if not current_value or current_value in _KNOWN_GENERIC_PLACEHOLDERS:
-                value = _scenario_intent_default_value(
-                    intent_text, field["name"]
-                ) or _default_test_data_value(
-                    field["name"], used_values, field_input_types.get(field["name"], "text")
+                value = (
+                    _live_typed_value(captured_flow, field["name"], used_values, len(other_fields))
+                    or _scenario_intent_default_value(intent_text, field["name"])
+                    or _default_test_data_value(
+                        field["name"], used_values, field_input_types.get(field["name"], "text")
+                    )
                 )
                 if value != current_value:
                     field["value"] = value

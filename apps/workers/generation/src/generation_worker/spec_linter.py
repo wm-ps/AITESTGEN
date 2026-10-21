@@ -288,6 +288,14 @@ def resolve_requires_auth(
         return False
     if primary_page is not None and primary_page.url == login_url:
         return False
+    # A test of the login itself must start signed out even when its first
+    # recorded page isn't the login page (live exploration starts already
+    # signed in, so it never records one) — with the shared session applied
+    # the login form never appears and the test can't pass. The execution
+    # workflow runs these after the shared-session tests (a fresh login logs
+    # out every other test on one-session-per-account apps).
+    if _is_login_scenario(scenario):
+        return False
     return True
 
 

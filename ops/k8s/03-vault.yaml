@@ -1,8 +1,81 @@
-# Dev-mode Vault, in-cluster, no persistence (matches local docker-compose
-# parity) — its data is scoped to storing onboarded Applications' target-app
-# credentials (packages/secrets_client.VaultSecretsClient), not deployment
-# secrets. The root token itself comes from the aitestgen-secrets k8s Secret,
-# not a hardcoded value.
+# In-cluster Vault on file storage backed by a PVC — its data is scoped to
+# storing onboarded Applications' target-app credentials
+# (packages/secrets_client.VaultSecretsClient), not deployment secrets.
+#
+# Was dev mode (in-memory): every pod restart (eviction, node recycle, OOM,
+# re-apply) wiped every stored credential while Postgres kept the
+# Application.secret_ref pointing at it, so every run of a previously
+# connected app failed with "failed to prepare the test project: None, on get
+# http://vault:8200/v1/secret/data/applications/...". Same bootstrap as local
+# dev (scripts/vault/entrypoint.sh): init on first boot, auto-unseal on every
+# boot, and a fixed root token taken from the aitestgen-secrets k8s Secret.
+#
+# ponytail: unseal key + generated root token live on the same PVC as the
+# data, and unseal is automatic. Fine for test-app logins; a hardened setup
+# needs the deferred Vault-vs-cloud-KMS decision (KMS auto-unseal, scoped
+# policies instead of a root token).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vault-data
+  namespace: aitestgen
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-bootstrap
+  namespace: aitestgen
+data:
+  config.hcl: |
+    storage "file" {
+      path = "/vault/file"
+    }
+    listener "tcp" {
+      address     = "0.0.0.0:8200"
+      tls_disable = 1
+    }
+    disable_mlock = true
+  entrypoint.sh: |
+    #!/bin/sh
+    set -e
+    export VAULT_ADDR=http://127.0.0.1:8200
+    INIT_FILE=/vault/file/init.txt
+    FIXED_TOKEN="$VAULT_TOKEN"
+    unset VAULT_TOKEN
+
+    vault server -config=/vault/bootstrap/config.hcl &
+    SERVER_PID=$!
+
+    # `vault status` exits 1 while unreachable, 2 once up-but-sealed.
+    until vault status >/dev/null 2>&1 || [ $? -eq 2 ]; do
+      sleep 1
+    done
+
+    if [ ! -f "$INIT_FILE" ]; then
+      echo "[vault-bootstrap] first boot: initializing"
+      vault operator init -key-shares=1 -key-threshold=1 > "$INIT_FILE"
+      FIRST_BOOT=1
+    fi
+
+    UNSEAL_KEY=$(sed -n 's/^Unseal Key 1: //p' "$INIT_FILE")
+    vault operator unseal "$UNSEAL_KEY" >/dev/null
+    echo "[vault-bootstrap] unsealed"
+
+    if [ -n "$FIRST_BOOT" ]; then
+      VAULT_TOKEN=$(sed -n 's/^Initial Root Token: //p' "$INIT_FILE")
+      export VAULT_TOKEN
+      vault token create -id="$FIXED_TOKEN" -policy=root -orphan >/dev/null
+      vault secrets enable -path=secret kv-v2 >/dev/null
+      echo "[vault-bootstrap] created fixed root token and secret/ (kv-v2)"
+    fi
+
+    wait "$SERVER_PID"
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -10,6 +83,9 @@ metadata:
   namespace: aitestgen
 spec:
   replicas: 1
+  # RWO volume + file-storage lock: never run two pods at once.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: vault
@@ -24,22 +100,35 @@ spec:
           securityContext:
             capabilities:
               add: ["IPC_LOCK"]
+          command: ["/bin/sh", "/vault/bootstrap/entrypoint.sh"]
           ports:
             - containerPort: 8200
           env:
-            - name: VAULT_DEV_LISTEN_ADDRESS
-              value: "0.0.0.0:8200"
-            - name: VAULT_DEV_ROOT_TOKEN_ID
+            - name: VAULT_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: aitestgen-secrets
                   key: VAULT_TOKEN
+          volumeMounts:
+            - name: data
+              mountPath: /vault/file
+            - name: bootstrap
+              mountPath: /vault/bootstrap
+              readOnly: true
           readinessProbe:
             httpGet:
+              # 200 only once initialized + unsealed.
               path: /v1/sys/health
               port: 8200
             initialDelaySeconds: 5
             periodSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: vault-data
+        - name: bootstrap
+          configMap:
+            name: vault-bootstrap
 ---
 apiVersion: v1
 kind: Service

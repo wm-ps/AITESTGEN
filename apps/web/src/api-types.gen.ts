@@ -1107,6 +1107,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/{external_id}/test-runs/{test_run_external_id}/allure-report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Test Run Allure Report
+         * @description A short-lived presigned URL for the run's single-file Allure report.
+         *     Callers link to the app's own `/applications/:id/test-runs/:id/report`
+         *     route (which signs in first, then calls this), never to the presigned
+         *     URL directly — so a shared/emailed link never expires.
+         */
+        get: operations["get_test_run_allure_report_applications__external_id__test_runs__test_run_external_id__allure_report_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications/{external_id}/test-runs/{test_run_external_id}": {
         parameters: {
             query?: never;
@@ -1287,6 +1310,11 @@ export interface components {
             name: string;
             /** Password */
             password: string;
+        };
+        /** AllureReportUrlRead */
+        AllureReportUrlRead: {
+            /** Url */
+            url: string;
         };
         /**
          * ApplicationContext
@@ -2307,6 +2335,11 @@ export interface components {
             started_at: string | null;
             /** Completed At */
             completed_at: string | null;
+            /**
+             * Allure Report Available
+             * @default false
+             */
+            allure_report_available: boolean;
             /** Results */
             results?: components["schemas"]["TestResultRead"][] | null;
         };
@@ -4701,6 +4734,40 @@ export interface operations {
                     "application/json": {
                         [key: string]: boolean;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_test_run_allure_report_applications__external_id__test_runs__test_run_external_id__allure_report_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+                test_run_external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AllureReportUrlRead"];
                 };
             };
             /** @description Validation Error */

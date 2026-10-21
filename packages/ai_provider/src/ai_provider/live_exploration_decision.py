@@ -41,3 +41,18 @@ class LiveExplorationDecision:
     # Context reason, requires broad/all-item coverage). `None` when this
     # turn isn't acting on a collection at all.
     exploration_scope: dict[str, Any] | None = None
+    # Set when a step of the requirement can't be done in this application
+    # (a named item doesn't exist, a page/control never appears) — one or two
+    # plain sentences shown to the author as-is. Ends the exploration.
+    blocked_reason: str | None = None
+    # Multi-test-case requirements only: one listed case can't be done, the
+    # rest still can — {"name": "<the case as the author named it>",
+    # "reason": "<plain sentence>"}. Recorded, then exploration moves on.
+    skipped_case: dict[str, str] | None = None
+    # Multi-test-case requirements only: the listed case whose expected
+    # result was just observed, as the author named it.
+    completed_case: str | None = None
+    # Multi-test-case requirements only: the listed case THIS turn's action
+    # works on — tags the step directly (a late completion marker otherwise
+    # pulls the next case's first steps into the previous one).
+    current_case: str | None = None

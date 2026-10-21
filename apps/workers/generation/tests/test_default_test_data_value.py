@@ -276,3 +276,70 @@ def test_is_existing_credential_field_never_spares_a_sibling_fields_own_wording(
     # contain "new"/"confirm" — but its own segment says nothing special,
     # so it must stay a real, stripped credential field.
     assert _is_existing_credential_field("current password", segments) is True
+
+
+def test_card_only_means_payment_card_when_it_says_so() -> None:
+    from generation_worker.activities import _default_test_data_value
+
+    assert _default_test_data_value("Card number", set()) == "4111111111111111"
+    assert _default_test_data_value("credit card", set()) == "4111111111111111"
+    assert _default_test_data_value("application card title", set()) == "Test value"
+    assert _default_test_data_value("Dashboard card", set()) == "Test value"
+
+
+def test_provided_value_matches_on_shared_words() -> None:
+    from generation_worker.activities import _provided_value_for_field
+
+    provided = {"application/project title": "bm_catalog_backoffice_ui"}
+    assert _provided_value_for_field("application card title", provided) == "bm_catalog_backoffice_ui"
+    assert _provided_value_for_field("user email", provided) is None
+    assert _provided_value_for_field("title", provided) == "bm_catalog_backoffice_ui"
+
+
+def test_live_typed_value_reuses_what_the_session_typed() -> None:
+    from generation_worker.activities import _live_typed_value
+
+    flow = [
+        {"element_description": "AI Studio chat input", "typed_value": "Add a welcome heading"},
+        {"element_description": "Password field", "typed_value": None},
+    ]
+    assert _live_typed_value(flow, "AI Studio prompt", set(), 1) == "Add a welcome heading"
+    # Only typed step, only blank field: taken even without shared words.
+    assert _live_typed_value(flow, "conversation stop-test prompt", set(), 1) == "Add a welcome heading"
+    assert _live_typed_value(flow, "conversation stop-test prompt", set(), 2) is None
+    assert _live_typed_value(flow, "password", set(), 1) is None
+    assert _live_typed_value(None, "AI Studio prompt", set(), 1) is None
+
+
+def test_live_action_sequence_keeps_proven_locators_and_meaningful_waits() -> None:
+    from generation_worker.activities import live_action_sequence_from
+
+    flow = [
+        {"tool_name": "browser_wait_for"},
+        {"tool_name": "browser_click", "playwright_locator": "getByTitle('Preview')"},
+        {"tool_name": "browser_wait_for"},
+        {"tool_name": "browser_wait_for"},
+        {"tool_name": "browser_click", "value": 'get_by_role("button", name="Apply All")'},
+        {"tool_name": "browser_snapshot"},
+        {"tool_name": "browser_wait_for"},
+    ]
+    seq = live_action_sequence_from(flow)
+    assert [s["tool_name"] for s in seq] == ["browser_click", "browser_wait_for", "browser_click"]
+    assert seq[0]["playwright_locator"] == "getByTitle('Preview')"
+    assert live_action_sequence_from(None) is None
+
+
+def test_overlay_dismissals_only_named_closes_of_popups() -> None:
+    from generation_worker.activities import overlay_dismissals_from
+
+    flow = [
+        {"tool_name": "browser_click", "element_description": "Close What's New dialog",
+         "playwright_locator": "getByRole('button', { name: 'Close' })"},
+        {"tool_name": "browser_click", "element_description": "Dismiss notifications popover",
+         "playwright_locator": "getByRole('button', { name: '' })"},
+        {"tool_name": "browser_click", "element_description": "Close the project",
+         "playwright_locator": "getByRole('button', { name: 'Close project' })"},
+        {"tool_name": "browser_click", "element_description": "Close What's New dialog",
+         "playwright_locator": "getByRole('button', { name: 'Close' })"},
+    ]
+    assert overlay_dismissals_from(flow) == ["getByRole('button', { name: 'Close' })"]

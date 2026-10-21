@@ -26,6 +26,8 @@ from domain import (
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio import activity
+from temporalio.exceptions import ApplicationError
+from workflows.live_exploration_workflow import EXPLORATION_BLOCKED_ERROR_TYPE
 from workflows import (
     AUTO_HEAL_ATTEMPT_CAP,
     LiveExploreActivityInput,
@@ -80,6 +82,9 @@ def _captured_flow_from(live_flow: LiveFlowModel) -> list[dict]:
             "page_heading": step.page_heading,
             "rationale": step.rationale,
             "semantic_target": step.semantic_target,
+            "test_case": step.test_case,
+            "test_case_completed": step.test_case_completed,
+            "took_seconds": step.took_seconds,
             **(step.locator_candidate or {}),
         }
         for step in live_flow.steps
@@ -214,7 +219,8 @@ def _merge_live_journey_sync(input: MergeLiveJourneyActivityInput) -> MergeLiveJ
             # EnsureTestSuiteActivity/ScenarioGenerationActivity key off
             # the Journey's current attempt.
             scenario.generation_run_id = target.attempt
-            scenario.grounding = grounding
+            # Keeps a per-case slice ScenarioGenerationActivity already set.
+            scenario.grounding = {**grounding, **(scenario.grounding or {})}
             session.add(scenario)
         for step in source_steps:
             session.delete(step)
@@ -242,12 +248,22 @@ async def live_explore_activity(input: LiveExploreActivityInput) -> LiveExploreA
                 ai_provider=HostedAIProvider(),
                 requirement=input.requirement,
                 start_url=application.url,
-                max_turns=_EXPLORE_MAX_TURNS,
+                max_turns=input.max_turns or _EXPLORE_MAX_TURNS,
                 heartbeat=activity.heartbeat,
                 application_context=application.application_context,
             )
     finally:
         storage_state_path.unlink(missing_ok=True)
+
+    # Generating from a transcript of a dead end produced test cases for
+    # screens nobody reached. Tell the author what's wrong instead.
+    if live_flow.blocked_reason:
+        raise ApplicationError(
+            f"{live_flow.blocked_reason} No test cases were generated — "
+            "check the description and try again.",
+            type=EXPLORATION_BLOCKED_ERROR_TYPE,
+            non_retryable=True,
+        )
 
     result = await asyncio.to_thread(materialize_live_flow_sync, application.id, live_flow)
     logger.info(
@@ -265,7 +281,11 @@ async def live_explore_activity(input: LiveExploreActivityInput) -> LiveExploreA
         # the pre-merge id would find zero Components for a URL Discovery
         # already knew about (see `MaterializeResult.canonical_page_ids`).
         page_ids=result.canonical_page_ids,
-        requirement=input.requirement,
+        # Journey.description is the requirement scenario generation reads —
+        # it must not invent a test case for a case the agent never reached.
+        requirement=input.requirement
+        + _completed_cases_note(live_flow.completed_cases)
+        + _skipped_cases_note(live_flow.skipped_cases),
         functionality_summary=input.functionality_summary,
         captured_flow=_captured_flow_from(live_flow),
         journey_name=input.journey_name,
@@ -276,6 +296,28 @@ async def live_explore_activity(input: LiveExploreActivityInput) -> LiveExploreA
         goal_satisfied=live_flow.goal_satisfied,
         journey_id=journey_id,
         journey_name=journey_name,
+        skipped_cases=[f"{c['name']}: {c['reason']}" for c in live_flow.skipped_cases],
+        completed_case_count=len(live_flow.completed_cases),
+    )
+
+
+def _completed_cases_note(completed_cases: list[str]) -> str:
+    if not completed_cases:
+        return ""
+    lines = "\n".join(f"- {name}" for name in completed_cases)
+    return (
+        "\n\nOnly these test cases were completed in the live application — generate exactly "
+        f"one test case for each of them, and nothing else:\n{lines}"
+    )
+
+
+def _skipped_cases_note(skipped_cases: list[dict[str, str]]) -> str:
+    if not skipped_cases:
+        return ""
+    lines = "\n".join(f"- {c['name']} ({c['reason']})" for c in skipped_cases)
+    return (
+        "\n\nThese test cases could not be done in the live application and must NOT be "
+        f"generated:\n{lines}"
     )
 
 

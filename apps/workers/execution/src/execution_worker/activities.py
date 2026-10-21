@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ai_provider.hosted import HostedAIProvider
+from ai_provider.hosted import HostedAIProvider, invented_locator_names
 from domain import (
     Application,
     DiscoverySettings,
@@ -47,6 +47,8 @@ from domain import (
 )
 from generation_worker import spec_linter
 from generation_worker.activities import (
+    app_overlay_dismissals_sync,
+    live_action_sequence_from,
     resolve_known_application_model_sync,
     supersede_test_asset,
 )
@@ -419,6 +421,7 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
                 ExecutableTest(
                     test_result_id=str(test_result.external_id),
                     test_asset_id=str(asset.external_id),
+                    signs_in_itself=_signs_in_itself(asset),
                 )
             )
 
@@ -500,10 +503,33 @@ _last_auth_refresh_at: dict[uuid.UUID, float] = {}
 _AUTH_REFRESH_DEDUP_SECONDS = 5.0
 
 
-async def _refresh_auth_once(test_run_id: uuid.UUID, dest_dir: Path, application: Application) -> None:
+def _signs_in_itself(asset: TestAsset) -> bool:
+    """A public (no shared session) test that logs in with the shared
+    account — via the suite's fillCredentials helper or the login env vars.
+    Run after the shared-session tests: its fresh login would log all of
+    them out on a one-session-per-account app."""
+    code = asset.code or ""
+    return not asset.requires_auth and (
+        "fillCredentials(" in code or "AITESTGEN_LOGIN_" in code
+    )
+
+
+async def _refresh_auth_once(
+    test_run_id: uuid.UUID,
+    dest_dir: Path,
+    application: Application,
+    *,
+    test_started_at: float,
+) -> None:
     async with _auth_refresh_lock:
         last = _last_auth_refresh_at.get(test_run_id, 0.0)
-        if time.monotonic() - last < _AUTH_REFRESH_DEDUP_SECONDS:
+        # A refresh that happened after this test started is very likely
+        # what invalidated it (on a one-session-per-account app every fresh
+        # login logs the previous session out) — retry on that newer session
+        # instead of logging in yet again and knocking out every other test
+        # still running (observed: several AI Studio tests bounced to the
+        # login page in one run).
+        if last > test_started_at or time.monotonic() - last < _AUTH_REFRESH_DEDUP_SECONDS:
             return
         # `[FIXED]` Recorded even when the attempt below fails — this used to
         # only record on success, so a genuinely broken login (bad
@@ -564,6 +590,7 @@ async def execute_test_activity(input: ExecuteTestActivityInput) -> str:
     await _ensure_project_dir(test_run_id, uuid.UUID(input.application_id))
     env = await asyncio.to_thread(_build_subprocess_env, context.application)
     project_dir = project_dir_for(test_run_id)
+    test_started_at = time.monotonic()
     outcome = await _run_playwright_test(
         project_dir,
         context.spec_path,
@@ -590,7 +617,9 @@ async def execute_test_activity(input: ExecuteTestActivityInput) -> str:
             input.test_result_id,
         )
         try:
-            await _refresh_auth_once(test_run_id, project_dir, context.application)
+            await _refresh_auth_once(
+                test_run_id, project_dir, context.application, test_started_at=test_started_at
+            )
         except Exception:  # noqa: BLE001 — retry is best-effort; report the original outcome
             logger.exception(
                 "ExecuteTestActivity: test_result_id=%s auth refresh failed, keeping "
@@ -1195,6 +1224,10 @@ class _HealContext:
     # heal repeatedly regenerating the same TS2345 type mismatch.
     field_input_types: dict[str, str]
     spec_path: str
+    # The scenario's proven live steps (generation_worker.activities.
+    # live_action_sequence_from) — without them a heal threw away locators
+    # Playwright had proven live for guesses from a one-page inspection.
+    live_action_sequence: list[dict] | None
     # The resolved cap for *this* invocation's origin — AUTO_HEAL_ATTEMPT_CAP
     # for automatic (input.triggered_manually=False), or
     # DiscoverySettings.max_heal_attempts for manual. Never a shared value.
@@ -1262,6 +1295,12 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
             known_locators=known_locators,
             field_input_types=field_input_types,
             spec_path=spec_path_by_asset_id[test_asset.id],
+            live_action_sequence=live_action_sequence_from(
+                (scenario.grounding or {})["captured_flow"]
+                if "captured_flow" in (scenario.grounding or {})
+                else journey.captured_flow,
+                app_overlay_dismissals_sync(session, journey.application_id),
+            ),
             attempt_cap=attempt_cap,
         )
 
@@ -1526,6 +1565,7 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
                         live_inspection_result.aria_snapshot if live_inspection_result else None
                     ),
                     application_context=ctx.application.application_context,
+                    live_action_sequence=ctx.live_action_sequence,
                 )
             except Exception:
                 logger.exception(
@@ -1552,6 +1592,28 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
                 )
                 repair = (code_result.code, tsc_errors)
                 continue
+
+            # A heal that can't see the real cause invents element names
+            # (observed: getByText('Test value 2'), getByText('Copy
+            # response') — on nothing the app or the live session showed),
+            # turning a sound test into a broken one. Keep the current test.
+            invented = invented_locator_names(
+                code_result.code,
+                evidence=[
+                    state.test_asset.code or "",
+                    (live_inspection_result.aria_snapshot or "") if live_inspection_result else "",
+                    repr(live_inspection_result.locator_candidates) if live_inspection_result else "",
+                    repr(ctx.live_action_sequence or []),
+                ],
+            )
+            if invented:
+                logger.info(
+                    "HealTestActivity: test_result_id=%s candidate locates elements by names no "
+                    "evidence shows (%s) — keeping the current test",
+                    input.test_result_id,
+                    ", ".join(sorted(invented))[:300],
+                )
+                break
 
             # Typecheck passed — this candidate becomes the new baseline.
             # Clear any in-flight repair turn: a subsequent failure (if any)

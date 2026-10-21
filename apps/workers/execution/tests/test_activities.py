@@ -1193,3 +1193,34 @@ def test_auth_setup_run_stays_out_of_the_allure_report(
     activities_module._run_auth_setup_once(tmp_path, Application(name="x"))
 
     assert captured == [["npx", "playwright", "test", "--project=setup", "--reporter=list"]]
+
+
+async def test_refresh_is_skipped_when_session_was_refreshed_after_test_started(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    import time as _time
+
+    logins = []
+    monkeypatch.setattr(activities_module, "_run_auth_setup_once", lambda *a: logins.append(a))
+    run_id = uuid.uuid4()
+    started = _time.monotonic()
+    # Another test's refresh landed after this one started, and long enough
+    # ago that the 5s dedup alone wouldn't catch it.
+    activities_module._last_auth_refresh_at[run_id] = started + 1
+    monkeypatch.setattr(activities_module.time, "monotonic", lambda: started + 60)
+
+    await activities_module._refresh_auth_once(run_id, tmp_path, None, test_started_at=started)
+    assert logins == []
+
+    await activities_module._refresh_auth_once(run_id, tmp_path, None, test_started_at=started + 30)
+    assert len(logins) == 1
+
+
+def test_signs_in_itself_only_for_public_tests_that_log_in() -> None:
+    from types import SimpleNamespace
+
+    sign_in = activities_module._signs_in_itself
+    assert sign_in(SimpleNamespace(requires_auth=False, code="await fillCredentials(page)"))
+    assert sign_in(SimpleNamespace(requires_auth=False, code="process.env.AITESTGEN_LOGIN_USERNAME"))
+    assert not sign_in(SimpleNamespace(requires_auth=True, code="await fillCredentials(page)"))
+    assert not sign_in(SimpleNamespace(requires_auth=False, code="await page.goto('/about')"))

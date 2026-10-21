@@ -1834,3 +1834,60 @@ async def test_decide_live_exploration_action_prompt_forbids_generic_context_fro
     system_prompt = captured["json"]["messages"][0]["content"]
     assert "not merely that the collection exists, or is large/important" in system_prompt
     assert "requirement's own explicit wording always takes precedence" in system_prompt
+
+
+def test_enforce_live_evidence_swaps_guessed_locators_and_raises_short_timeouts() -> None:
+    from ai_provider.hosted import enforce_live_evidence
+
+    sequence = [
+        {"tool_name": "browser_click", "playwright_locator": "getByTitle('Mention agent')",
+         "slowest_live_seconds": 30.3},
+        {"tool_name": "browser_click", "playwright_locator": "getByRole('button', { name: 'Send' })"},
+        {"tool_name": "browser_click", "playwright_locator": "locator('#agent-0')"},
+    ]
+    code = (
+        "const ASSERTION_TIMEOUT_MS = 15000;\n"
+        "const TEST_TIMEOUT_MS = 180000;\n"
+        "await page.getByText('Mention agent', { exact: true }).click();\n"
+        "await page.getByRole('button', { name: 'Send', exact: true }).click();\n"
+        "await expect(x).toBeVisible({ timeout: 15000 });\n"
+        "await expect(y).toBeVisible({ timeout: 200000 });\n"
+        "await page.getByTitle('Mention agent').click();\n"
+    )
+    out = enforce_live_evidence(code, sequence)
+    assert "getByText('Mention agent'" not in out
+    assert out.count("getByTitle('Mention agent')") == 2
+    assert "getByRole('button', { name: 'Send' })" in out
+    assert "ASSERTION_TIMEOUT_MS = 90900" in out
+    assert "TEST_TIMEOUT_MS = 240000" in out
+    assert "timeout: 90900" in out
+    assert "timeout: 200000" in out  # never shortened
+
+
+def test_enforce_live_evidence_leaves_code_alone_without_proven_locators() -> None:
+    from ai_provider.hosted import enforce_live_evidence
+
+    code = "await page.getByText('Home').click();\nawait expect(a).toBeVisible({ timeout: 5000 });"
+    assert enforce_live_evidence(code, [{"tool_name": "browser_click", "value": "x"}]) == code
+
+
+def test_enforce_live_evidence_registers_overlay_handlers() -> None:
+    from ai_provider.hosted import enforce_live_evidence
+
+    sequence = [
+        {"tool_name": "browser_click", "value": "x",
+         "overlay_dismissals": ["getByRole('button', { name: 'Close' })"]},
+    ]
+    code = "test('t', { tag: '@auth' }, async ({ page }) => {\n  await page.goto('/');\n});\n"
+    out = enforce_live_evidence(code, sequence)
+    assert "await page.addLocatorHandler(page.getByRole('button', { name: 'Close' })" in out
+    assert out.index("addLocatorHandler") < out.index("page.goto")
+    assert enforce_live_evidence(out, sequence).count("addLocatorHandler") == 1
+
+
+def test_invented_locator_names_flags_names_no_evidence_shows() -> None:
+    from ai_provider.hosted import invented_locator_names
+
+    candidate = "page.getByText('Test value 2'); page.getByRole('button', { name: 'Send' })"
+    assert invented_locator_names(candidate, evidence=["button \"Send\""]) == {"Test value 2"}
+    assert invented_locator_names(candidate, evidence=["Test value 2", "Send"]) == set()

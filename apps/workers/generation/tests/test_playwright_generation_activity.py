@@ -793,6 +793,8 @@ def test_playwright_generation_activity_passes_live_action_sequence_from_capture
                 "element_description": "Notifications menu button",
                 "context": None,
                 "semantic_target": None,
+                "playwright_locator": None,
+                "took_seconds": None,
             },
             {
                 "tool_name": "browser_click",
@@ -801,6 +803,8 @@ def test_playwright_generation_activity_passes_live_action_sequence_from_capture
                 "element_description": "Mark all as read menu item",
                 "context": None,
                 "semantic_target": None,
+                "playwright_locator": None,
+                "took_seconds": None,
             },
         ]
     ]

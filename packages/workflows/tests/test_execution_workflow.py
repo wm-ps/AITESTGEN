@@ -351,3 +351,45 @@ async def test_allure_report_failure_never_blocks_finalize() -> None:
 @pytest.mark.asyncio
 async def test_blocked_run_generates_no_allure_report() -> None:
     assert await _run_with_allure(report_fails=False, blocked=True) == []
+
+
+@pytest.mark.asyncio
+async def test_self_signing_in_tests_run_after_shared_session_tests() -> None:
+    executable = [
+        ExecutableTest(test_result_id="login", test_asset_id="a0", signs_in_itself=True),
+        ExecutableTest(test_result_id="shared-1", test_asset_id="a1"),
+        ExecutableTest(test_result_id="shared-2", test_asset_id="a2"),
+    ]
+    executed: list[str] = []
+    heal_calls: list[str] = []
+
+    @activity.defn(name=PREPARE_TEST_RUN_ACTIVITY_NAME)
+    async def _fake_prepare(input: PrepareTestRunActivityInput) -> PrepareTestRunActivityResult:
+        return PrepareTestRunActivityResult(test_run_id="run-1", blocked=False, executable=executable)
+
+    @activity.defn(name=EXECUTE_TEST_ACTIVITY_NAME)
+    async def _fake_execute(input: ExecuteTestActivityInput) -> str:
+        await asyncio.sleep(0.05)
+        executed.append(input.test_result_id)
+        return input.test_result_id
+
+    @activity.defn(name=FINALIZE_TEST_RUN_ACTIVITY_NAME)
+    async def _fake_finalize(input: FinalizeTestRunActivityInput) -> None:
+        pass
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=EXECUTION_TASK_QUEUE,
+            workflows=[ApplicationTestExecutionWorkflow],
+            activities=[_fake_prepare, _fake_execute, _fake_finalize, _fake_heal(heal_calls)],
+        ):
+            await env.client.execute_workflow(
+                ApplicationTestExecutionWorkflow.run,
+                ExecutionWorkflowInput(application_id="app-1"),
+                id=f"execution-test-{uuid.uuid4()}",
+                task_queue=EXECUTION_TASK_QUEUE,
+            )
+
+    assert executed[-1] == "login"
+    assert sorted(executed[:2]) == ["shared-1", "shared-2"]

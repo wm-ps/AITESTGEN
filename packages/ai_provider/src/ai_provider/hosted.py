@@ -434,7 +434,23 @@ locator that actually distinguishes it — e.g. scope the selector to the dialog
 that context names, or locate it relative to a nearby element the context or an earlier entry
 identifies — rather than defaulting straight to `.first()`/`.nth()`/`.last()`. Positional
 selection is a last resort, only once no other distinguishing evidence exists anywhere in this
-sequence, its context, or the Known locators above:
+sequence, its context, or the Known locators above.
+
+An entry marked `PROVEN:` carries the exact locator Playwright itself generated for the element
+the live session actually acted on — it resolved to that one element on the real page at that
+moment. Use that locator VERBATIM for that interaction (still through `ensureVisible`); never
+replace it with a getByText/getByRole guess built from the entry's name — an icon button's
+name is often a title/tooltip, not visible text, so a guessed `getByText(...)` matches nothing.
+When healing a failure, keep every PROVEN locator unless the failure is on that exact element.
+
+Assert the expected result only with evidence this sequence itself produced or reached (the
+page/dialog it ended on, controls it used, a response area it waited for) — never with content
+left behind by other tests or earlier runs (e.g. elements an earlier AI change added), never an
+exact full URL including volatile query/hash parts (match the stable part with a RegExp), never
+the wording of content an AI assistant or other non-deterministic process generated (it differs
+every run — assert that the response/proposal/applied change appeared, e.g. its container or the
+controls it brings up, not its words), and never with a locator that may match several elements
+without scoping it or taking `.first()`:
 
 {action_sequence_listing}"""
 
@@ -1002,6 +1018,13 @@ def _describe_known_locators(known_locators: list[dict[str, str]] | None) -> str
     return "\n".join(_describe_one(loc) for loc in known_locators)
 
 
+def _parse_skipped_case(raw: Any) -> dict[str, str] | None:
+    if not isinstance(raw, dict):
+        return None
+    name, reason = str(raw.get("name") or "").strip(), str(raw.get("reason") or "").strip()
+    return {"name": name, "reason": reason} if name and reason else None
+
+
 def _describe_semantic_target(semantic_target: dict | None) -> str:
     """Renders a `LiveExplorationDecision.semantic_target` dict (see that
     dataclass and the live-exploration/heal system prompts above) into a
@@ -1042,6 +1065,97 @@ def _describe_live_locators(locator_candidates: list[dict] | None) -> str:
         return f"- <{loc['element_tag']}> -> {loc['value']}"
 
     return "\n".join(_describe_one(loc) for loc in locator_candidates)
+
+
+_PROVEN_NAME_RE = re.compile(
+    r"^getBy(?:Title|Label|Placeholder|AltText)\((['\"])(?P<a>.+?)\1"
+    r"|^getByRole\([^)]*?name:\s*(['\"])(?P<b>.+?)\3"
+)
+
+
+def enforce_live_evidence(code: str, live_action_sequence: list[dict]) -> str:
+    """Deterministic backstop for two prompt rules the model was observed
+    ignoring (a guessed `getByText('Mention agent')` where the live session
+    proved `getByTitle('Mention agent')`; 15s assertion timeouts on an app
+    whose AI replies took 30s live):
+
+    - a guessed `getByText('X')` / `getByRole(..., { name: 'X' })` for an
+      element whose PROVEN locator names X differently is rewritten to the
+      proven locator;
+    - every literal timeout below the measured floor (3x the slowest live
+      step, 30s..240s — same budget the prompt states) is raised to it.
+
+    Only ever swaps in a locator Playwright resolved live, and only ever
+    lengthens waits, so it can't make a passing test fail."""
+    for step in live_action_sequence:
+        proven = step.get("playwright_locator") or ""
+        match = _PROVEN_NAME_RE.match(proven)
+        if not match:
+            continue
+        name = re.escape(match.group("a") or match.group("b"))
+        guessed = (
+            rf"getByText\((['\"]){name}\1(?:\s*,\s*\{{[^}}]*\}})?\)"
+            rf"|getByRole\(\s*(['\"])\w+\2\s*,\s*\{{[^}}]*name:\s*(['\"]){name}\3[^}}]*\}}\s*\)"
+        )
+        code = re.sub(guessed, lambda m, p=proven: p if m.group(0) != p else m.group(0), code)
+    slowest = live_action_sequence[0].get("slowest_live_seconds")
+    if slowest:
+        floor_ms = int(min(max(slowest * 3, 30), 240) * 1000)
+
+        def _raise(m: re.Match[str]) -> str:
+            return f"{m.group(1)}{max(int(m.group(2)), floor_ms)}"
+
+        # The whole test must fit several such waits; done first so the
+        # generic `_TIMEOUT_MS =` pass below doesn't cap it at one wait.
+        # Capped at 4 min: the worker gives one test process 8 min and one
+        # ExecuteTestActivity 10 min, and a session retry runs the test
+        # twice (observed: a 6-min test timeout errored the activity).
+        test_floor_ms = min(floor_ms * 4, 240_000)
+
+        def _raise_test(m: re.Match[str]) -> str:
+            return f"{m.group(1)}{max(int(m.group(2)), test_floor_ms)}"
+
+        code = re.sub(r"(TEST_TIMEOUT_MS\s*=\s*)(\d{4,6})\b", _raise_test, code)
+        code = re.sub(r"(test\.setTimeout\(\s*)(\d{4,6})\b", _raise_test, code)
+        code = re.sub(r"(timeout:\s*)(\d{4,6})\b", _raise, code)
+        code = re.sub(r"((?<!TEST)_TIMEOUT_MS\s*=\s*)(\d{4,6})\b", _raise, code)
+    # Pop-ups the live session had to dismiss appear on their own, so a step
+    # can't handle them — Playwright's locator handler closes one whenever
+    # it shows up and blocks an action (observed: notifications/"What's New"
+    # covering controls on some runs but not others).
+    dismissals = [
+        d for d in live_action_sequence[0].get("overlay_dismissals") or [] if f"page.{d}" not in code
+    ]
+    if dismissals:
+        handlers = "".join(
+            f"  await page.addLocatorHandler(page.{d}, async (overlay) => {{\n"
+            "    await overlay.click();\n"
+            "  });\n"
+            for d in dismissals
+        )
+        code = re.sub(
+            r"(test\([^\n]*async\s*\(\s*\{[^}]*\bpage\b[^}]*\}[^)]*\)\s*=>\s*\{\n)",
+            lambda m: m.group(1) + handlers,
+            code,
+            count=1,
+        )
+    return code
+
+
+_LOCATOR_NAME_RE = re.compile(
+    r"getBy(?:Text|Title|Label|Placeholder|AltText)\(\s*(['\"])(?P<a>[^'\"]+)\1"
+    r"|getByRole\([^)]*?name:\s*(['\"])(?P<b>[^'\"]+)\3"
+)
+
+
+def invented_locator_names(candidate: str, *, evidence: list[str]) -> set[str]:
+    """Names a candidate locates elements by that appear in none of the
+    evidence (the current test, the live inspection's snapshot/candidates,
+    the scenario's proven live steps) — i.e. made up. Case-insensitive
+    substring match, so a name the snapshot shows in any form counts."""
+    haystack = "\n".join(evidence).lower()
+    names = {m.group("a") or m.group("b") for m in _LOCATOR_NAME_RE.finditer(candidate)}
+    return {name for name in names if name.strip() and name.lower() not in haystack}
 
 
 def _describe_live_action_sequence(steps: list[dict] | None) -> str:
@@ -1092,12 +1206,36 @@ def _describe_live_action_sequence(steps: list[dict] | None) -> str:
         described = f' ("{description}")' if description else ""
         context_note = _describe_context(step.get("context"))
         semantic_note = _describe_semantic_target(step.get("semantic_target"))
+        took = step.get("took_seconds")
+        took_note = f" (took {took:g}s live)" if took and took >= 3 else ""
+        if tool == "browser_wait_for":
+            return (
+                f"{index}. WAIT{took_note} — the live session had to wait here for the "
+                "application (e.g. an AI-generated response, a long save or load) before the "
+                "next step was possible; wait for the next step's element with a generous "
+                "timeout, never a short default"
+            )
+        proven = step.get("playwright_locator")
+        target = f"PROVEN: page.{proven}" if proven else step.get("value", "")
         return (
-            f"{index}. {tool} on <{tag}>{described}{semantic_note}{context_note} "
-            f"-> {step.get('value', '')}"
+            f"{index}. {tool} on <{tag}>{described}{semantic_note}{context_note}{took_note} "
+            f"-> {target}"
         )
 
-    return "\n".join(_describe_one(step, i) for i, step in enumerate(steps, start=1))
+    lines = [_describe_one(step, i) for i, step in enumerate(steps, start=1)]
+    slowest = steps[0].get("slowest_live_seconds")
+    if slowest:
+        # The real app's measured speed, not a guess: fixed 15-30s defaults
+        # failed on a heavy app whose loads/AI replies took far longer.
+        budget_ms = int(min(max(slowest * 3, 30), 240) * 1000)
+        lines.insert(
+            0,
+            f"TIMING: the slowest step in the live session took {slowest:g}s. Every navigation "
+            f"and every wait/assertion that follows a slow step must allow at least {budget_ms}ms "
+            "(3x the observed time, never below 30000ms), and set the test timeout "
+            "(test.setTimeout) large enough for all of them together.",
+        )
+    return "\n".join(lines)
 
 
 # --- NLM prompt classification — is this request a genuine, testable
@@ -1269,6 +1407,20 @@ Available tools (call exactly one per turn):
 - browser_press_key({{"key": "Enter"}})
 - browser_wait_for({{"text": "..."}}) or ({{"time": <seconds>}})
 - browser_go_back({{}})
+- browser_tabs({{"action": "list"}}) or ({{"action": "select", "index": <n>}}) — when an action \
+opens a new browser tab/window, list the tabs and select the new one; the snapshot only ever \
+shows the selected tab
+
+Each history entry ends with "-> <result>" when the tool returned an error or notable output — \
+if a previous call failed (stale ref, element not found, timeout), do not repeat it unchanged; \
+re-observe and pick a different approach.
+
+When the requirement lists several separate test cases or flows, complete them in order, one \
+after another, in this single session — reuse state already reached (e.g. stay logged in, \
+re-navigate only when a flow needs a fresh start), and set "goal_satisfied" only after the last \
+one has been observed. When something takes time to appear (a long-running operation, a \
+response being generated), use browser_wait_for with the expected text, or a time wait, rather \
+than giving up.
 
 The requirement describes the user's intent and expected outcome in their own words — it \
 names no DOM locator, HTML tag, ARIA role, or CSS selector, and never assume its wording IS \
@@ -1341,12 +1493,43 @@ you expect to exist but haven't actually seen.
 result of your last action, direct evidence the requirement is fully met (e.g. the created \
 item visibly appears in a list) — never assume success from an action alone.
 - If a form/dialog appears, fill only the fields necessary to proceed.
+- The browser starts already signed in. Never type a guessed, invented, or example username, \
+password, one-time code, or CAPTCHA answer, and never use password-recovery or sign-up flows \
+to get past a login — each wrong login can lock the real account. If the requirement itself \
+asks to log in, use only credentials the requirement states; if it states none, treat the \
+already-signed-in session as the logged-in result and move on to the next step.
+- If a step cannot be done in this application — something the requirement names (an item, \
+page, button, option) is not there after you have looked properly (searched, scrolled, checked \
+the obvious navigation), or the app keeps showing an error/loading state — stop instead of \
+retrying the same thing. Set "blocked_reason" to one or two plain sentences for the person who \
+wrote the requirement: what you could not find or do, where you looked, and what you saw \
+instead if it is relevant (e.g. "Couldn't find a project named \\"X\\" on the Apps page. The \
+closest names there are \\"Y\\" and \\"Z\\"."). No technical terms, refs, or selectors. Leave \
+"blocked_reason" null on every other turn.
+- When the requirement lists several separate test cases and only ONE of them can't be done \
+(same test as above — something it needs isn't there, or it needs something you don't have, \
+such as a file to upload), don't block the whole requirement: set "skipped_case" to \
+{{"name": "<that test case as the requirement names it, e.g. \\"TC5 – Verify X\\">", "reason": \
+"<one plain sentence, same style as blocked_reason>"}} and, in the same turn, take the first \
+action of the next test case. Never skip a case you haven't genuinely tried. Moving on from a \
+listed test case you did not complete WITHOUT setting "skipped_case" in that same turn is a \
+mistake — the author would never learn it was missed. Use "blocked_reason" only when nothing \
+further in the requirement can be done. A history line starting "STOPPED:" means the system \
+refused your repeated action — follow its instruction in your very next turn.
+- When the requirement lists several separate test cases: on EVERY turn set "current_case" to \
+the name of the case this turn's action works on, exactly as the requirement names it (e.g. \
+"TC3 – Verify X") — the first action of a new case already belongs to the new case. In the \
+turn right after you have observed one case's expected result, set "completed_case" to that \
+case's name. Only cases marked completed become test cases. \
+If the LAST remaining case can't be done, mark it with "skipped_case" and set "goal_satisfied" \
+true instead of using "blocked_reason".
 
 Respond with ONLY a JSON object of this shape, no prose: {{"semantic_target": {{"action": \
 "...", "target": {{"name": "..."}}, "value": null, "relationship": null, "context": null}}, \
 "exploration_scope": {{"collection": null, "scope": "representative"}}, "tool_name": "...", \
 "tool_args": {{...}}, "rationale": "<one sentence>", "goal_satisfied": \
-false}}"""
+false, "blocked_reason": null, "skipped_case": null, "completed_case": null, "current_case": \
+null}}"""
 
 _LIVE_EXPLORATION_PROMPT_USER = """Requirement: {requirement}
 {application_context_section}
@@ -1787,6 +1970,7 @@ class HostedAIProvider:
                 f"{i}. called {turn.get('tool_name')}({turn.get('tool_args')}) — "
                 f"{turn.get('rationale', '')}"
                 f"{_describe_semantic_target(turn.get('semantic_target'))}"
+                f"{' -> ' + turn['result'] if turn.get('result') else ''}"
                 for i, turn in enumerate(history)
             )
             or "(none yet)"
@@ -1809,7 +1993,19 @@ class HostedAIProvider:
             response_format={"type": "json_object"},
             timeout=60,
         )
-        parsed = json.loads(content)
+        # One malformed reply (bad JSON, or no tool_name on a non-final turn)
+        # used to raise here and kill the whole multi-turn exploration — the
+        # activity retry then restarted it from turn 0. Degrade that turn to
+        # a re-look instead; the next turn gets a fresh decision.
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            logger.warning("decide_live_exploration_action: unparseable reply %r", content[:200])
+            parsed = {}
+        if not isinstance(parsed, dict):
+            parsed = {}
+        if not parsed.get("tool_name") and not parsed.get("goal_satisfied"):
+            parsed = {**parsed, "tool_name": "browser_snapshot", "tool_args": {}}
         # Hallucination guard, same spirit as elsewhere in this file: only a
         # genuine (non-empty) object is trusted as a semantic target — a
         # malformed/omitted value degrades to `None`, exactly like it
@@ -1831,12 +2027,22 @@ class HostedAIProvider:
             else None
         )
         return LiveExplorationDecision(
-            tool_name=parsed["tool_name"],
+            tool_name=parsed.get("tool_name") or "browser_snapshot",
             tool_args=parsed.get("tool_args") or {},
             rationale=parsed.get("rationale", ""),
             goal_satisfied=bool(parsed.get("goal_satisfied", False)),
             semantic_target=semantic_target,
             exploration_scope=exploration_scope,
+            blocked_reason=(str(parsed.get("blocked_reason") or "").strip() or None)
+            if not is_heal
+            else None,
+            skipped_case=_parse_skipped_case(parsed.get("skipped_case")) if not is_heal else None,
+            completed_case=(str(parsed.get("completed_case") or "").strip() or None)
+            if not is_heal
+            else None,
+            current_case=(str(parsed.get("current_case") or "").strip() or None)
+            if not is_heal
+            else None,
         )
 
     async def generate_playwright(
@@ -2058,4 +2264,6 @@ class HostedAIProvider:
             if code.endswith("```"):
                 code = code.rsplit("```", 1)[0]
             code = code.removeprefix("typescript\n").removeprefix("ts\n").strip()
+        if live_action_sequence:
+            code = enforce_live_evidence(code, live_action_sequence)
         return TestAssetCode(code=code, requests_live_inspection=requests_live_inspection)

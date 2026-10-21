@@ -158,6 +158,7 @@ export type LiveTestCaseRequestStatusRead = {
   status: LiveTestCaseRequestStatus
   rejection_reason: string | null
   error_message: string | null
+  skipped_cases?: string[]
   journey_name: string | null
   pages: LiveTestCasePageRead[]
   generated_tests: LiveTestCaseGeneratedTestRead[]

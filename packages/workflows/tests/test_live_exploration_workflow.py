@@ -359,3 +359,16 @@ async def test_a_failing_verify_pass_still_completes_the_request() -> None:
     assert _finalize_suite_statuses == ["complete"]
     # The first verify run is still discarded even though the pass failed.
     assert _discard_calls == ["run-1"]
+
+
+def test_live_scenario_counts_match_what_was_done_live() -> None:
+    from workflows.live_exploration_workflow import _live_scenario_counts
+
+    assert _live_scenario_counts({"happy": 10}, skipped=1, completed=0) == {"happy": 9}
+    assert _live_scenario_counts({"happy": 10}, skipped=4, completed=6) == {"happy": 6}
+    assert _live_scenario_counts({"happy": 3, "negative": 1}, skipped=5, completed=0) == {
+        "happy": 1,
+        "negative": 1,
+    }
+    assert _live_scenario_counts({}, skipped=2, completed=0) == {}
+    assert _live_scenario_counts({"happy": 4}, skipped=0, completed=0) == {"happy": 4}

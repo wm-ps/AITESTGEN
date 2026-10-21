@@ -2569,6 +2569,9 @@ class LiveTestCaseRequestStatusRead(BaseModel):
     status: str  # exploring | generating | complete | rejected | failed
     rejection_reason: str | None = None
     error_message: str | None = None
+    # Listed test cases the live agent couldn't do ("<name>: <reason>");
+    # the rest were generated.
+    skipped_cases: list[str] = Field(default_factory=list)
     journey_name: str | None = None
     pages: list[LiveTestCasePageRead] = Field(default_factory=list)
     generated_tests: list[LiveTestCaseGeneratedTestRead] = Field(default_factory=list)
@@ -2816,6 +2819,8 @@ async def get_live_test_case_request(
             request_id=str(request_id),
             status=result.status,
             rejection_reason=result.rejection_reason,
+            error_message=result.error_message,
+            skipped_cases=result.skipped_cases,
             journey_name=result.journey_name,
             pages=_live_test_case_page_inventory(session, result.journey_id)
             if result.journey_id
@@ -2827,10 +2832,13 @@ async def get_live_test_case_request(
             else [],
         )
 
+    # Shown as-is in the panel. Expected failures (login, a blocked step)
+    # come back COMPLETED with their own message above; this is the rest.
     return LiveTestCaseRequestStatusRead(
         request_id=str(request_id),
         status="failed",
-        error_message=f"the request did not finish normally (workflow status: {desc.status.name})",
+        error_message="Vantage couldn't finish this request because of an internal error. "
+        "Try again; if it keeps failing, contact support.",
     )
 
 

@@ -18,8 +18,11 @@ from pathlib import Path
 from discovery_worker.crawler import CapturedForm, CapturedPage
 from discovery_worker.session import establish_session
 from domain import Application
-from playwright.async_api import async_playwright
+from playwright.async_api import BrowserContext, async_playwright
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 from secrets_client import SecretRef, VaultSecretsClient
+from temporalio.exceptions import ApplicationError
+from workflows.live_exploration_workflow import LOGIN_FAILED_ERROR_TYPE
 
 from generation_worker.live_exploration.login_capture import (
     login_capture_kwargs,
@@ -28,6 +31,21 @@ from generation_worker.live_exploration.login_capture import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def _still_on_login_form(context: BrowserContext, url: str) -> bool:
+    """True when a fresh page at the app's URL still shows a password field —
+    the same login-form signal establish_session itself keys off."""
+    page = await context.new_page()
+    try:
+        await page.goto(url, timeout=30000)
+        try:
+            await page.wait_for_selector('input[type="password"]', state="visible", timeout=8000)
+        except PlaywrightTimeoutError:
+            return False
+        return True
+    finally:
+        await page.close()
 
 
 async def bootstrap_storage_state(application: Application) -> Path:
@@ -59,6 +77,20 @@ async def bootstrap_storage_state(application: Application) -> Path:
                 login_url=application.login_url,
                 **capture_kwargs,
             )
+            # establish_session is best-effort and never says whether the login
+            # took. A rejected login used to slip through as a logged-out
+            # session: the agent then guessed credentials against the real
+            # login form (burning lockout attempts) and the request still
+            # generated test cases from a transcript of login failures.
+            if await _still_on_login_form(context, application.url):
+                raise ApplicationError(
+                    "Vantage couldn't sign in to the application with its saved credentials. "
+                    "Update the application's login details in Settings, then try again.",
+                    type=LOGIN_FAILED_ERROR_TYPE,
+                    # A retry is another failed login against an account
+                    # that may lock out after a few.
+                    non_retryable=True,
+                )
             storage_state = await context.storage_state()
         finally:
             await browser.close()

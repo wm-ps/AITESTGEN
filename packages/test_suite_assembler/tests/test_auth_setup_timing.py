@@ -97,3 +97,9 @@ if __name__ == "__main__":
     test_auth_setup_throws_clearly_when_login_never_becomes_ready()
     test_auth_setup_detects_already_authenticated_state()
     print("ok")
+
+
+def test_setup_reuses_saved_session_so_refresh_skips_relogin_when_still_valid() -> None:
+    config = _build_playwright_config("https://acme.example.com", has_login=True)
+    assert "import { existsSync } from 'fs'" in config
+    assert "use: existsSync('.auth/state.json') ? { storageState: '.auth/state.json' } : {}" in config

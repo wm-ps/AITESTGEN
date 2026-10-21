@@ -283,6 +283,14 @@ class LiveFlowStep:
     # carried alongside `locator_candidate` (the DOM realization of that
     # intent) rather than merged into it. Optional and best-effort.
     semantic_target: dict[str, Any] | None = None
+    # Multi-test-case requirements: which listed case this step was working
+    # on, and whether that case was completed (vs skipped) — lets each
+    # generated test be grounded in its own steps only, not the whole
+    # session. None for a single-flow requirement.
+    test_case: str | None = None
+    test_case_completed: bool = False
+    # Wall-clock seconds the live app took for this step (action + settle).
+    took_seconds: float | None = None
 
 
 @dataclass
@@ -293,6 +301,15 @@ class LiveFlowModel:
     requirement: str
     steps: list[LiveFlowStep] = field(default_factory=list)
     goal_satisfied: bool = False
+    # Why the exploration stopped short — the agent's own `blocked_reason`,
+    # or the stall guard in agent.py. None when it didn't get stuck.
+    blocked_reason: str | None = None
+    # Listed test cases the agent couldn't do while the rest still could —
+    # [{"name", "reason"}], reported to the author, never generated.
+    skipped_cases: list[dict[str, str]] = field(default_factory=list)
+    # Listed test cases whose expected result the agent observed — the only
+    # ones generated, when the requirement lists several.
+    completed_cases: list[str] = field(default_factory=list)
     # Full per-page element inventory (see `sweep_interactive_nodes`) — every
     # interactive element the ARIA snapshot exposed for a page, keyed by
     # page_url, populated once per distinct page (not per turn). Each entry

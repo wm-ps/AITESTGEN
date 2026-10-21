@@ -10,6 +10,9 @@ crawler/discovery DB data.
 
 import asyncio
 import logging
+import re
+import time
+from collections import deque
 from collections.abc import Callable
 from typing import TypedDict
 
@@ -39,6 +42,13 @@ _ELEMENT_TOOLS = frozenset(
 # the very next `observe` can snapshot the page mid-transition.
 _SETTLE_AFTER_TOOLS = frozenset({"browser_click", "browser_select_option"})
 
+# Same tool on the same semantic target this many times within the last
+# _STALL_WINDOW actions: tell the model in its history; past
+# _STALL_STOP_REPEATS: stop the exploration as blocked.
+_STALL_WINDOW = 15
+_STALL_NUDGE_REPEATS = 3
+_STALL_STOP_REPEATS = 6
+
 
 class _AgentState(TypedDict):
     turn: int
@@ -48,6 +58,7 @@ class _AgentState(TypedDict):
     decision_rationale: str
     decision_semantic_target: dict | None
     decision_exploration_scope: dict | None
+    decision_current_case: str | None
     done: bool
 
 
@@ -82,6 +93,77 @@ def _summarize_semantic_target(semantic_target: dict | None) -> str:
     if value:
         parts.append(f"value={value!r}")
     return " ".join(parts) if parts else "(none)"
+
+
+def _case_key(name: str) -> str:
+    normalized = " ".join(name.lower().split())
+    # "TC6 – Verify X" → "tc6": a leading id token (has a digit) is the
+    # case's identity — the agent re-types the title differently turn to
+    # turn (observed: "…in AI Stu" and "…in AI Studio" for one case).
+    first = re.split(r"[\s:–—-]+", normalized, maxsplit=1)[0]
+    return first if any(ch.isdigit() for ch in first) else normalized
+
+
+def _known_case(name: str, known: list[str]) -> str | None:
+    """The already-recorded spelling of `name`'s case, if any."""
+    key = _case_key(name)
+    for existing in known:
+        existing_key = _case_key(existing)
+        if existing_key == key:
+            return existing
+        # Untitled-by-id cases: a truncated retyping is a prefix of the full
+        # title. Never for id tokens — "tc1" is a prefix of "tc10".
+        is_id = " " not in key and " " not in existing_key
+        if not is_id and (existing_key.startswith(key) or key.startswith(existing_key)):
+            return existing
+    return None
+
+
+def _canonical_case(name: str, seen: list[str]) -> str:
+    known = _known_case(name, seen)
+    if known is None:
+        seen.append(name)
+        return name
+    return known
+
+
+def _tag_untagged_steps(live_flow: LiveFlowModel, case_name: str, *, completed: bool) -> None:
+    """A completed/skipped marker arrives the turn the agent moves on, so
+    every step since the previous marker belonged to that case. Runs before
+    this turn's own action is recorded — that action starts the next case."""
+    for step in live_flow.steps:
+        if step.test_case is None:
+            step.test_case = case_name
+            step.test_case_completed = completed
+
+
+_RAN_CODE_RE = re.compile(
+    r"^\s*await page\.(?P<locator>.+)\.(?:click|dblclick|fill|hover|selectOption|press"
+    r"|pressSequentially|check|uncheck|setInputFiles)\(.*$",
+    re.MULTILINE,
+)
+
+
+def _ran_playwright_locator(tool_result: str) -> str | None:
+    """The locator Playwright MCP reports it actually ran ("### Ran
+    Playwright code" → `await page.getByTitle('Preview').click();`) —
+    Playwright's own generator, proven against the live element. Our
+    snapshot-node conversion guesses from the accessible name instead
+    (observed: an icon button titled "Preview" became getByText('Preview'),
+    which matches nothing on the real page)."""
+    match = _RAN_CODE_RE.search(tool_result or "")
+    return match.group("locator") if match else None
+
+
+def _notable_result(tool_name: str, result: str) -> str | None:
+    """The part of an MCP tool's reply the agent must see next turn: an
+    error (otherwise it retries the same dead ref forever) or a tab list."""
+    if tool_name == "browser_tabs":
+        return result[:600]
+    lowered = result.lower()
+    if "error" in lowered or "tool call failed" in lowered or "timeout" in lowered:
+        return result[:300]
+    return None
 
 
 def _extract_url(snapshot_text: str) -> str | None:
@@ -128,6 +210,12 @@ async def run_exploration(
     # remembering across turns that Tenant's one representative row has
     # already been explored.
     explored_collections: set[str] = set()
+    recent_attempts: deque[tuple[str, str]] = deque(maxlen=_STALL_WINDOW)
+    # Stall-guard strikes since the last skipped test case (see act()).
+    stall = {"strikes": 0}
+    # Every case name the agent has used, first spelling wins (see
+    # `_canonical_case`).
+    seen_cases: list[str] = []
 
     async def observe(state: _AgentState) -> _AgentState:
         if heartbeat:
@@ -167,11 +255,56 @@ async def run_exploration(
         state["decision_rationale"] = decision.rationale
         state["decision_semantic_target"] = decision.semantic_target
         state["decision_exploration_scope"] = decision.exploration_scope
+        state["decision_current_case"] = (
+            _canonical_case(decision.current_case, seen_cases) if decision.current_case else None
+        )
         state["done"] = decision.goal_satisfied
+        skipped = decision.skipped_case
+        known_names = live_flow.completed_cases + [c["name"] for c in live_flow.skipped_cases]
+        if skipped and _known_case(skipped["name"], known_names) is None:
+            live_flow.skipped_cases.append(skipped)
+            _tag_untagged_steps(live_flow, skipped["name"], completed=False)
+            history.append(
+                {
+                    "tool_name": None,
+                    "tool_args": {},
+                    "rationale": f"Skipped {skipped['name']}: {skipped['reason']}",
+                    "semantic_target": None,
+                }
+            )
+            # A new test case starts here — its repeats aren't the old one's.
+            recent_attempts.clear()
+            stall["strikes"] = 0
+            logger.info("live-exploration: skipped case %r reason=%r", skipped["name"], skipped["reason"])
+        if decision.completed_case:
+            same = _known_case(decision.completed_case, live_flow.completed_cases)
+            if same is None:
+                live_flow.completed_cases.append(decision.completed_case)
+                logger.info("live-exploration: completed case %r", decision.completed_case)
+            # A repeat marker for the same case still claims the steps since
+            # (the agent re-confirming it), under the first spelling.
+            _tag_untagged_steps(live_flow, same or decision.completed_case, completed=True)
+        if decision.blocked_reason and not decision.goal_satisfied:
+            if live_flow.completed_cases:
+                # Multi-case run with real progress: the block ends exploring,
+                # it doesn't throw away the cases already done (observed: TC1-9
+                # handled, TC10's preview down, all ten lost).
+                live_flow.skipped_cases.append(
+                    {"name": "Remaining test cases", "reason": decision.blocked_reason}
+                )
+                live_flow.goal_satisfied = True
+            else:
+                live_flow.blocked_reason = decision.blocked_reason
+            state["done"] = True
         return state
 
     async def act(state: _AgentState) -> _AgentState:
         state["turn"] += 1
+        if live_flow.blocked_reason:
+            logger.info(
+                "live-exploration turn %d: blocked reason=%r", state["turn"], live_flow.blocked_reason
+            )
+            return state
         if state["done"]:
             live_flow.goal_satisfied = True
             logger.info(
@@ -205,6 +338,54 @@ async def run_exploration(
 
         tool_name = state["decision_tool_name"]
         tool_args = state["decision_tool_args"]
+
+        # Stall guard: the prompt asks the model to report a blocker, but it
+        # can still loop (observed: 120 turns re-searching for a project that
+        # didn't exist). Same action on the same target, over and over, is
+        # the signal. First nudge it via history, then stop for it.
+        # Windowed, so a multi-test-case prompt that legitimately repeats
+        # an action once per test case (e.g. "open AI Studio") never trips it.
+        attempt_key = (tool_name, _summarize_semantic_target(state["decision_semantic_target"]))
+        repeats = 0
+        if tool_name not in ("browser_snapshot", "browser_wait_for"):
+            recent_attempts.append(attempt_key)
+            repeats = recent_attempts.count(attempt_key)
+        if repeats > _STALL_STOP_REPEATS and not stall["strikes"]:
+            # First stall: one stuck step shouldn't throw away every other
+            # test case in the requirement (observed: TC1-8 done, stuck on
+            # TC9's agent picker, whole run lost). Don't run the action; make
+            # the model skip this case or report a real blocker.
+            stall["strikes"] += 1
+            recent_attempts.clear()
+            history.append(
+                {
+                    "tool_name": None,
+                    "tool_args": {},
+                    "rationale": (
+                        f"STOPPED: '{attempt_key[1]}' was tried {repeats - 1} times without "
+                        "progress and will not be run again. If the requirement lists several "
+                        "test cases, set skipped_case for the current one now and start the "
+                        "next; otherwise set blocked_reason."
+                    ),
+                    "semantic_target": None,
+                }
+            )
+            logger.info("live-exploration turn %d: stall guard strike 1 on %r", state["turn"], attempt_key)
+            return state
+        if repeats > _STALL_STOP_REPEATS:
+            reason = (
+                "Vantage got stuck on one step and stopped: "
+                f"{state['decision_rationale'].rstrip('.')}. It tried this {repeats - 1} times "
+                "without getting past it."
+            )
+            if live_flow.completed_cases:
+                live_flow.skipped_cases.append({"name": "Remaining test cases", "reason": reason})
+                live_flow.goal_satisfied = True
+            else:
+                live_flow.blocked_reason = reason
+            state["done"] = True
+            logger.info("live-exploration turn %d: stall guard stopped on %r", state["turn"], attempt_key)
+            return state
         locator_candidate = None
         if tool_name in _ELEMENT_TOOLS and "ref" in tool_args:
             node = find_snapshot_node(state["last_snapshot"], tool_args["ref"])
@@ -222,7 +403,8 @@ async def run_exploration(
                     locator_candidate["context"] = context
 
         pre_action_snapshot = state["last_snapshot"]
-        await mcp_client.call_tool(tool_name, tool_args)
+        started = time.monotonic()
+        tool_result = await mcp_client.call_tool(tool_name, tool_args)
 
         # `[FIXED]` A click/select that triggers a client-side route change
         # (no full page load, so nothing above waits for it) could still be
@@ -242,6 +424,10 @@ async def run_exploration(
                 if settled_snapshot != pre_action_snapshot:
                     break
 
+        proven_locator = _ran_playwright_locator(tool_result) if tool_name in _ELEMENT_TOOLS else None
+        if proven_locator:
+            locator_candidate = {**(locator_candidate or {}), "playwright_locator": proven_locator}
+
         semantic_target = state["decision_semantic_target"]
         step = LiveFlowStep(
             tool_name=tool_name,
@@ -251,6 +437,10 @@ async def run_exploration(
             page_heading=_extract_title(state["last_snapshot"]),
             locator_candidate=locator_candidate,
             semantic_target=semantic_target,
+            test_case=state["decision_current_case"],
+            # How long the real app took for this step (action + settle) —
+            # the generated test's timeouts are sized from it.
+            took_seconds=round(time.monotonic() - started, 1),
         )
         live_flow.steps.append(step)
         logger.info(
@@ -269,6 +459,15 @@ async def run_exploration(
                 "tool_args": tool_args,
                 "rationale": step.rationale,
                 "semantic_target": semantic_target,
+                # Errors/tab lists only — a successful action's echo is noise,
+                # and the next snapshot already shows its effect.
+                "result": _notable_result(tool_name, tool_result)
+                or (
+                    f"this is attempt {repeats} of the same action — if the step can't be done "
+                    "here, set blocked_reason"
+                    if repeats >= _STALL_NUDGE_REPEATS
+                    else None
+                ),
             }
         )
         return state
@@ -309,9 +508,17 @@ async def run_exploration(
         "decision_rationale": "",
         "decision_semantic_target": None,
         "decision_exploration_scope": None,
+        "decision_current_case": None,
         "done": False,
     }
-    await compiled.ainvoke(final_state, config={"recursion_limit": max_turns * 4})
+    final_state = await compiled.ainvoke(final_state, config={"recursion_limit": max_turns * 4})
+    # Completed-ness is known only now (a case's marker can come after its
+    # steps): a step counts toward a test only if its case was completed.
+    for step in live_flow.steps:
+        if step.test_case:
+            step.test_case_completed = (
+                _known_case(step.test_case, live_flow.completed_cases) is not None
+            )
 
     logger.info(
         "live-exploration finished: goal_satisfied=%s steps=%d turns=%d/%d requirement=%r is_heal=%s",

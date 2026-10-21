@@ -688,3 +688,246 @@ class TestExplorationScope:
         click_calls = [c for c in mcp_client.calls if c[0] == "browser_click"]
         assert len(click_calls) == 2
         assert len(live_flow.steps) == 2
+
+
+async def test_stops_with_reason_when_model_reports_blocked() -> None:
+    ai_provider = _FakeAIProvider(
+        [
+            LiveExplorationDecision(
+                tool_name="browser_snapshot",
+                rationale="not there",
+                blocked_reason='Couldn\'t find a project named "X" on the Apps page.',
+            )
+        ]
+    )
+
+    live_flow = await run_exploration(
+        mcp_client=_FakeMCPClient(),
+        ai_provider=ai_provider,
+        requirement="Open project X.",
+        start_url="https://app.example.com/",
+        max_turns=10,
+        settle_retries=0,
+    )
+
+    assert live_flow.blocked_reason == 'Couldn\'t find a project named "X" on the Apps page.'
+    assert live_flow.goal_satisfied is False
+    assert live_flow.steps == []
+
+
+async def test_stall_guard_stops_a_repeating_action() -> None:
+    click = LiveExplorationDecision(
+        tool_name="browser_click",
+        tool_args={"element": "Create connection button", "ref": "e12"},
+        rationale="Click Create connection",
+        semantic_target={"action": "click", "target": {"name": "Create connection"}},
+    )
+    ai_provider = _FakeAIProvider([click] * 30)
+
+    live_flow = await run_exploration(
+        mcp_client=_FakeMCPClient(),
+        ai_provider=ai_provider,
+        requirement="Create a new MCP connection.",
+        start_url="https://app.example.com/",
+        max_turns=30,
+        settle_retries=0,
+    )
+
+    # First stall only refuses the action (a chance to skip this case);
+    # still stuck after that, the run stops as blocked.
+    assert live_flow.blocked_reason is not None
+    assert "Click Create connection" in live_flow.blocked_reason
+    assert len(live_flow.steps) == 12
+
+
+async def test_skipped_case_is_recorded_and_exploration_continues() -> None:
+    ai_provider = _FakeAIProvider(
+        [
+            LiveExplorationDecision(
+                tool_name="browser_click",
+                tool_args={"element": "Create connection button", "ref": "e12"},
+                rationale="start TC2",
+                skipped_case={"name": "TC1", "reason": "It needs a file to upload."},
+            ),
+            LiveExplorationDecision(tool_name="browser_snapshot", rationale="done", goal_satisfied=True),
+        ]
+    )
+
+    live_flow = await run_exploration(
+        mcp_client=_FakeMCPClient(),
+        ai_provider=ai_provider,
+        requirement="TC1 upload. TC2 create.",
+        start_url="https://app.example.com/",
+        max_turns=10,
+        settle_retries=0,
+    )
+
+    assert live_flow.skipped_cases == [{"name": "TC1", "reason": "It needs a file to upload."}]
+    assert live_flow.goal_satisfied is True
+    assert live_flow.blocked_reason is None
+    assert len(live_flow.steps) == 1
+
+
+async def test_block_after_completed_cases_keeps_them() -> None:
+    ai_provider = _FakeAIProvider(
+        [
+            LiveExplorationDecision(
+                tool_name="browser_click",
+                tool_args={"element": "Create connection button", "ref": "e12"},
+                rationale="TC1 done, start TC2",
+                completed_case="TC1",
+            ),
+            LiveExplorationDecision(
+                tool_name="browser_snapshot",
+                rationale="preview down",
+                blocked_reason="TC2's preview refused to connect.",
+            ),
+        ]
+    )
+
+    live_flow = await run_exploration(
+        mcp_client=_FakeMCPClient(),
+        ai_provider=ai_provider,
+        requirement="TC1 create. TC2 preview.",
+        start_url="https://app.example.com/",
+        max_turns=10,
+        settle_retries=0,
+    )
+
+    assert live_flow.blocked_reason is None
+    assert live_flow.goal_satisfied is True
+    assert live_flow.completed_cases == ["TC1"]
+    assert live_flow.skipped_cases == [
+        {"name": "Remaining test cases", "reason": "TC2's preview refused to connect."}
+    ]
+
+
+async def test_steps_are_tagged_with_the_case_they_belong_to() -> None:
+    click = {"tool_name": "browser_click", "tool_args": {"element": "Create connection button", "ref": "e12"}}
+    ai_provider = _FakeAIProvider(
+        [
+            LiveExplorationDecision(**click, rationale="TC1 step"),
+            LiveExplorationDecision(**click, rationale="TC2 step", completed_case="TC1"),
+            LiveExplorationDecision(
+                tool_name="browser_snapshot", rationale="done", goal_satisfied=True, completed_case="TC2"
+            ),
+        ]
+    )
+
+    live_flow = await run_exploration(
+        mcp_client=_FakeMCPClient(),
+        ai_provider=ai_provider,
+        requirement="TC1. TC2.",
+        start_url="https://app.example.com/",
+        max_turns=10,
+        settle_retries=0,
+    )
+
+    assert [(s.rationale, s.test_case, s.test_case_completed) for s in live_flow.steps] == [
+        ("TC1 step", "TC1", True),
+        ("TC2 step", "TC2", True),
+    ]
+
+
+def test_scenarios_are_grounded_in_their_own_case() -> None:
+    from types import SimpleNamespace
+
+    from generation_worker.activities import ground_scenarios_in_own_live_case
+
+    flow = [
+        {"value": "a", "test_case": "TC1", "test_case_completed": True},
+        {"value": "b", "test_case": "TC2", "test_case_completed": False},
+        {"value": "c", "test_case": "TC3", "test_case_completed": True},
+    ]
+    first, second = SimpleNamespace(grounding=None), SimpleNamespace(grounding=None)
+    ground_scenarios_in_own_live_case(flow, [first, second])
+    assert first.grounding == {"captured_flow": [flow[0]], "overlay_dismissals": []}
+    assert second.grounding == {"captured_flow": [flow[2]], "overlay_dismissals": []}
+
+    unmatched = SimpleNamespace(grounding=None)
+    ground_scenarios_in_own_live_case(flow, [unmatched])
+    assert unmatched.grounding is None
+
+
+def test_case_name_variants_are_one_case() -> None:
+    from generation_worker.live_exploration.agent import _known_case
+
+    known = ["TC6 – Verify Apply All Functionality in AI Stu", "TC1 – Verify Login"]
+    assert _known_case("TC6 – Verify Apply All Functionality in AI Studio", known) == known[0]
+    assert _known_case("tc6: apply all", known) == known[0]
+    assert _known_case("TC10 – Verify Preview", known) is None
+    assert _known_case("Verify the checkout flow", ["Verify the checkout"]) == "Verify the checkout"
+    assert _known_case("Open settings", ["Verify the checkout"]) is None
+
+
+async def test_current_case_tags_steps_even_when_completion_is_marked_late() -> None:
+    click = {"tool_name": "browser_click", "tool_args": {"element": "Create connection button", "ref": "e12"}}
+    ai_provider = _FakeAIProvider(
+        [
+            LiveExplorationDecision(**click, rationale="TC1 step", current_case="TC1 – Create"),
+            LiveExplorationDecision(**click, rationale="TC2 step", current_case="TC2 – Edit"),
+            # TC1 marked done only now, a turn late.
+            LiveExplorationDecision(
+                **click, rationale="TC2 more", current_case="TC2 – Edit", completed_case="TC1 – Create"
+            ),
+            LiveExplorationDecision(
+                tool_name="browser_snapshot",
+                rationale="done",
+                goal_satisfied=True,
+                completed_case="tc2: edit",
+            ),
+        ]
+    )
+
+    live_flow = await run_exploration(
+        mcp_client=_FakeMCPClient(),
+        ai_provider=ai_provider,
+        requirement="TC1. TC2.",
+        start_url="https://app.example.com/",
+        max_turns=10,
+        settle_retries=0,
+    )
+
+    assert [(s.rationale, s.test_case, s.test_case_completed) for s in live_flow.steps] == [
+        ("TC1 step", "TC1 – Create", True),
+        ("TC2 step", "TC2 – Edit", True),
+        ("TC2 more", "TC2 – Edit", True),
+    ]
+
+
+def test_ran_playwright_locator_is_taken_from_mcp_output() -> None:
+    from generation_worker.live_exploration.agent import _ran_playwright_locator
+
+    out = "### Ran Playwright code\n```js\nawait page.getByTitle('Preview').click();\n```\n### Page state"
+    assert _ran_playwright_locator(out) == "getByTitle('Preview')"
+    out = "```js\nawait page.getByRole('textbox', { name: 'Chat input' }).fill('Add a. heading');\n```"
+    assert _ran_playwright_locator(out) == "getByRole('textbox', { name: 'Chat input' })"
+    assert _ran_playwright_locator("(tool call failed: timed out)") is None
+
+
+async def test_proven_locator_is_recorded_on_the_step() -> None:
+    class _MCP(_FakeMCPClient):
+        async def call_tool(self, name, args):
+            if name == "browser_click":
+                return "### Ran Playwright code\n```js\nawait page.getByTitle('Create').click();\n```"
+            return await super().call_tool(name, args)
+
+    ai_provider = _FakeAIProvider(
+        [
+            LiveExplorationDecision(
+                tool_name="browser_click",
+                tool_args={"element": "Create connection button", "ref": "e12"},
+                rationale="click",
+            ),
+            LiveExplorationDecision(tool_name="browser_snapshot", rationale="done", goal_satisfied=True),
+        ]
+    )
+    live_flow = await run_exploration(
+        mcp_client=_MCP(),
+        ai_provider=ai_provider,
+        requirement="Create.",
+        start_url="https://app.example.com/",
+        max_turns=5,
+        settle_retries=0,
+    )
+    assert live_flow.steps[0].locator_candidate["playwright_locator"] == "getByTitle('Create')"

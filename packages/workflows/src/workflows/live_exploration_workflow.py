@@ -47,7 +47,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
-from temporalio.exceptions import ActivityError
+from temporalio.exceptions import ActivityError, ApplicationError
 
 from workflows.add_test_case_workflow import (
     ANALYZE_PROMPT_ACTIVITY_NAME,
@@ -86,6 +86,13 @@ LIVE_EXPLORATION_TASK_QUEUE = "live-exploration-task-queue"
 LIVE_EXPLORE_ACTIVITY_NAME = "LiveExploreActivity"
 LIVE_HEAL_ACTIVITY_NAME = "LiveHealActivity"
 MERGE_LIVE_JOURNEY_ACTIVITY_NAME = "MergeLiveJourneyActivity"
+# ApplicationError type LiveExploreActivity raises when the saved credentials
+# don't get past the login form — reported to the author, never retried.
+LOGIN_FAILED_ERROR_TYPE = "LiveExplorationLoginFailed"
+# Raised when the agent couldn't do a step the requirement asks for (a named
+# item missing, a stall) — its message is plain language for the author.
+EXPLORATION_BLOCKED_ERROR_TYPE = "LiveExplorationBlocked"
+_AUTHOR_FACING_ERROR_TYPES = (LOGIN_FAILED_ERROR_TYPE, EXPLORATION_BLOCKED_ERROR_TYPE)
 
 # Each internal verify+heal pass (execute -> heal -> re-execute) takes
 # several real minutes (a live browser run, and on failure a whole second
@@ -99,6 +106,35 @@ MERGE_LIVE_JOURNEY_ACTIVITY_NAME = "MergeLiveJourneyActivity"
 # `[TEMPORARY 2026-09-10]` Set to 1, not the originally-requested 5, at the
 # user's explicit request while testing — expected to be raised again later.
 MAX_VERIFIED_SCENARIOS_PER_JOURNEY = 1
+
+# A flat 30-turn budget covers one flow; a prompt listing ten test cases ran
+# out of turns a third of the way in and generated from a partial transcript.
+# Scale by the analyzed action count (AnalyzePromptActivity's `actions`, one
+# per distinct flow/step group). Timeout follows at ~40s/turn (an LLM call on
+# a full snapshot plus the action and its settle).
+# ponytail: linear per-action budget, a planner that explores each test case
+# in its own session would scale better for very long prompts.
+EXPLORE_MIN_TURNS = 30
+EXPLORE_TURNS_PER_ACTION = 12
+EXPLORE_MAX_TURNS_CAP = 150
+
+
+def _live_scenario_counts(counts: dict[str, int], *, skipped: int, completed: int) -> dict[str, int]:
+    """A prompt saying "create exactly 10" where only some cases were done live
+    must ask for that many, or generation pads the set with invented ones.
+    The completed count wins when the agent reported one ("Remaining test
+    cases" can stand for several); otherwise skips come off. Applied to the
+    largest bucket — listed test cases are almost always one type.
+    ponytail: per-type attribution if mixed-type lists ever need it."""
+    if not counts or not (skipped or completed):
+        return counts
+    largest = max(counts, key=lambda k: counts[k])
+    target = completed or counts[largest] - skipped
+    return {**counts, largest: max(1, target)}
+
+
+def explore_turn_budget(action_count: int) -> int:
+    return max(EXPLORE_MIN_TURNS, min(EXPLORE_MAX_TURNS_CAP, EXPLORE_TURNS_PER_ACTION * action_count))
 
 
 @dataclass
@@ -123,6 +159,8 @@ class LiveExploreActivityInput:
     functionality_summary: str = ""
     # User-given name for the new Journey; overrides `functionality_summary`.
     journey_name: str = ""
+    # `explore_turn_budget(...)`; 0 = the activity's own default.
+    max_turns: int = 0
 
 
 @dataclass
@@ -132,6 +170,11 @@ class LiveExploreActivityResult:
     goal_satisfied: bool
     journey_id: str
     journey_name: str
+    # "<case name>: <plain reason>" per listed test case the agent couldn't do.
+    skipped_cases: list[str] = field(default_factory=list)
+    # Listed test cases the agent saw through to their expected result; 0
+    # for a single-flow requirement (nothing to count).
+    completed_case_count: int = 0
 
 
 @dataclass
@@ -161,10 +204,12 @@ class MergeLiveJourneyActivityResult:
 
 @dataclass
 class LiveExplorationResult:
-    status: str  # rejected | complete
+    status: str  # rejected | failed | complete
     journey_id: str | None = None
     journey_name: str | None = None
     rejection_reason: str | None = None
+    error_message: str | None = None
+    skipped_cases: list[str] = field(default_factory=list)
     # The Scenarios this request generated — a merged-into existing Journey
     # also holds older ones, so the status read filters to these.
     scenario_ids: list[str] = field(default_factory=list)
@@ -321,27 +366,38 @@ class LiveExplorationTestWorkflow:
                 status="rejected", rejection_reason=analysis.rejection_reason
             )
 
-        explore_result: LiveExploreActivityResult = await workflow.execute_activity(
-            LIVE_EXPLORE_ACTIVITY_NAME,
-            LiveExploreActivityInput(
-                application_id=input.application_id,
-                requirement=input.prompt,
-                functionality_summary=analysis.functionality_summary,
-                journey_name=input.journey_name or "",
-            ),
-            task_queue=LIVE_EXPLORATION_TASK_QUEUE,
-            start_to_close_timeout=timedelta(minutes=20),
-            heartbeat_timeout=timedelta(minutes=2),
-            # 2, not 1 — see LiveHealActivity's retry_policy comment below:
-            # a worker restart/crash currently surfaces as an unrecoverable
-            # heartbeat timeout otherwise. Journey creation's identity_key
-            # dedup (live_exploration_activities.py) already makes a retry
-            # safe — worst case a retry leaves one extra orphaned
-            # DiscoveryRun/Page from the dead first attempt, never a
-            # duplicate Journey.
-            retry_policy=RetryPolicy(maximum_attempts=2),
-            result_type=LiveExploreActivityResult,
-        )
+        max_turns = explore_turn_budget(len(analysis.actions))
+        try:
+            explore_result: LiveExploreActivityResult = await workflow.execute_activity(
+                LIVE_EXPLORE_ACTIVITY_NAME,
+                LiveExploreActivityInput(
+                    application_id=input.application_id,
+                    requirement=input.prompt,
+                    functionality_summary=analysis.functionality_summary,
+                    journey_name=input.journey_name or "",
+                    max_turns=max_turns,
+                ),
+                task_queue=LIVE_EXPLORATION_TASK_QUEUE,
+                start_to_close_timeout=max(
+                    timedelta(minutes=20), timedelta(seconds=40 * max_turns)
+                ),
+                heartbeat_timeout=timedelta(minutes=2),
+                # 2, not 1 — see LiveHealActivity's retry_policy comment below:
+                # a worker restart/crash currently surfaces as an unrecoverable
+                # heartbeat timeout otherwise. Journey creation's identity_key
+                # dedup (live_exploration_activities.py) already makes a retry
+                # safe — worst case a retry leaves one extra orphaned
+                # DiscoveryRun/Page from the dead first attempt, never a
+                # duplicate Journey.
+                retry_policy=RetryPolicy(maximum_attempts=2),
+                result_type=LiveExploreActivityResult,
+            )
+        except ActivityError as err:
+            cause = err.cause
+            if isinstance(cause, ApplicationError) and cause.type in _AUTHOR_FACING_ERROR_TYPES:
+                self._status = "failed"
+                return LiveExplorationResult(status="failed", error_message=cause.message)
+            raise
 
         self._status = "generating"
 
@@ -350,7 +406,11 @@ class LiveExplorationTestWorkflow:
             ScenarioGenerationActivityInput(
                 journey_id=explore_result.journey_id,
                 source="nl",
-                requested_scenario_counts=analysis.requested_scenario_counts,
+                requested_scenario_counts=_live_scenario_counts(
+                    analysis.requested_scenario_counts,
+                    skipped=len(explore_result.skipped_cases),
+                    completed=explore_result.completed_case_count,
+                ),
                 provided_test_data=analysis.provided_test_data,
             ),
             task_queue=GENERATION_TASK_QUEUE,
@@ -459,6 +519,7 @@ class LiveExplorationTestWorkflow:
             journey_id=journey_id,
             journey_name=journey_name,
             scenario_ids=scenario_ids,
+            skipped_cases=explore_result.skipped_cases,
         )
 
 
@@ -466,6 +527,8 @@ __all__ = [
     "LIVE_EXPLORATION_TASK_QUEUE",
     "LIVE_EXPLORE_ACTIVITY_NAME",
     "LIVE_HEAL_ACTIVITY_NAME",
+    "LOGIN_FAILED_ERROR_TYPE",
+    "EXPLORATION_BLOCKED_ERROR_TYPE",
     "MERGE_LIVE_JOURNEY_ACTIVITY_NAME",
     "LiveExploreActivityInput",
     "LiveExploreActivityResult",

@@ -99,6 +99,9 @@ class PrepareTestRunActivityInput:
 class ExecutableTest:
     test_result_id: str
     test_asset_id: str
+    # Logs in by itself with the shared account (see execution_worker's
+    # `_signs_in_itself`) — run after every shared-session test, one at a time.
+    signs_in_itself: bool = False
 
 
 @dataclass
@@ -219,9 +222,25 @@ class ApplicationTestExecutionWorkflow:
                     )
                     return result_id
 
-            await asyncio.gather(
-                *[run_one(item) for item in prep.executable], return_exceptions=True
-            )
+            if workflow.patched("self-signin-tests-last"):
+                # A test that logs in by itself would log out every test using
+                # the shared session (one session per account on many apps) —
+                # those run first, in parallel; self-signing-in ones after,
+                # one at a time.
+                shared = [item for item in prep.executable if not item.signs_in_itself]
+                self_signin = [item for item in prep.executable if item.signs_in_itself]
+                await asyncio.gather(*[run_one(item) for item in shared], return_exceptions=True)
+                for item in self_signin:
+                    try:
+                        await run_one(item)
+                    except Exception:  # noqa: BLE001 — same tolerance as gather above
+                        workflow.logger.warning(
+                            "self-signing-in test %s failed to run", item.test_result_id
+                        )
+            else:
+                await asyncio.gather(
+                    *[run_one(item) for item in prep.executable], return_exceptions=True
+                )
 
         # Before Finalize, which deletes the project dir the Allure results
         # live in. Best-effort: the activity itself never raises, and this

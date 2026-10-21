@@ -10,6 +10,8 @@ import pytest
 from discovery_worker.crawler import CapturedForm, CapturedFormField, CapturedPage
 from generation_worker import spec_linter
 from generation_worker.live_exploration import auth_bootstrap, login_capture
+from temporalio.exceptions import ApplicationError
+from workflows.live_exploration_workflow import LOGIN_FAILED_ERROR_TYPE
 
 
 def _app(**overrides):
@@ -117,7 +119,23 @@ def bootstrap(monkeypatch: pytest.MonkeyPatch):
         "persist_login_capture",
         lambda app_id, items: calls["persisted"].extend(items),
     )
+
+    async def logged_in(context, url):
+        return calls.get("still_on_login", False)
+
+    monkeypatch.setattr(auth_bootstrap, "_still_on_login_form", logged_in)
     return calls
+
+
+async def test_bootstrap_fails_fast_when_login_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, bootstrap: dict
+) -> None:
+    _stub_login_page_url(monkeypatch, "https://app.example/login")
+    bootstrap["still_on_login"] = True
+    with pytest.raises(ApplicationError) as excinfo:
+        await auth_bootstrap.bootstrap_storage_state(_app())  # type: ignore[arg-type]
+    assert excinfo.value.type == LOGIN_FAILED_ERROR_TYPE
+    assert excinfo.value.non_retryable
 
 
 async def test_bootstrap_captures_and_persists_for_no_discovery_app(
