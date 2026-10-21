@@ -102,6 +102,10 @@ class TestRun(SQLModel, table=True):
     timed_out_count: int = Field(default=0)
     errored_count: int = Field(default=0)
     blocked_count: int = Field(default=0)
+    # Object-store key of this run's single-file Allure HTML report, set by
+    # GenerateAllureReportActivity just before Finalize. Null when the run
+    # produced no report (blocked, nothing executed, or generation failed).
+    allure_report_key: str | None = Field(default=None)
     started_at: datetime | None = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )

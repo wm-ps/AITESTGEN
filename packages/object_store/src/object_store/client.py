@@ -54,6 +54,15 @@ class ObjectStore:
         )
         return key
 
+    def put_at_key(self, key: str, data: bytes, content_type: str) -> str:
+        """Writes to a caller-chosen key, overwriting whatever is there — for
+        one-per-entity objects like a TestRun's Allure report, so a retried
+        upload replaces rather than duplicates."""
+        self._s3_client.put_object(
+            Bucket=self._bucket, Key=key, Body=data, ContentType=content_type
+        )
+        return key
+
     def get(self, key: str) -> bytes:
         return self._s3_client.get_object(Bucket=self._bucket, Key=key)["Body"].read()
 

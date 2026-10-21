@@ -252,6 +252,7 @@ export type TestRunRead = {
   created_at: string
   started_at: string | null
   completed_at: string | null
+  allure_report_available: boolean
   results?: TestResultRead[] | null
 }
 export type TestRunCursorPageRead = {
@@ -609,6 +610,8 @@ export const api = {
     ),
   getTestRun: (applicationId: string, testRunId: string) =>
     request<TestRunRead>(`/applications/${applicationId}/test-runs/${testRunId}`),
+  getAllureReportUrl: (applicationId: string, testRunId: string) =>
+    request<{ url: string }>(`/applications/${applicationId}/test-runs/${testRunId}/allure-report`),
   listTestResultArtifacts: (testResultId: string) =>
     request<TestResultArtifactRead[]>(`/test-results/${testResultId}/artifacts`),
   healTestResult: (testResultId: string) =>

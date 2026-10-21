@@ -6,13 +6,19 @@ as `assemble_test_suite_project`'s zip, proving the "executed project ==
 downloadable project" guarantee this package exists for.
 """
 
+import json
 import uuid
 import zipfile
 from io import BytesIO
 
 from domain import Application, Journey, TestAsset, TestSuite
 from test_suite_assembler import assemble_test_suite_project, assemble_test_suite_project_to_dir
-from test_suite_assembler.assembler import _build_interactions_helper_script, _playwright_locator_call
+from test_suite_assembler.assembler import (
+    _build_interactions_helper_script,
+    _build_package_json,
+    _build_playwright_config,
+    _playwright_locator_call,
+)
 
 
 def _application(**overrides) -> Application:
@@ -117,3 +123,64 @@ def test_playwright_locator_call_scopes_selector_locators_to_first_match() -> No
         "page.locator('[name=\"j_username\"]').first()"
     )
     assert _playwright_locator_call("label", "Username") == "page.getByLabel('Username')"
+
+
+def test_package_json_adds_allure_dev_dependencies() -> None:
+    dev_deps = json.loads(_build_package_json())["devDependencies"]
+
+    assert "@playwright/test" in dev_deps
+    assert "allure" in dev_deps
+    assert "allure-playwright" in dev_deps
+
+
+def test_playwright_config_switches_to_per_attempt_allure_results_with_and_without_login() -> None:
+    """The execution worker sets AITESTGEN_ALLURE_RESULTS_DIR and leaves
+    `--reporter` off its command line (a CLI reporter drops these options),
+    so this branch must keep `json` as the stdout reporter. Unset, an
+    exported suite gets the usual list output plus allure-results/."""
+    for has_login in (False, True):
+        config = _build_playwright_config("https://acme.example.com", has_login=has_login)
+        assert (
+            "  reporter: process.env.AITESTGEN_ALLURE_RESULTS_DIR\n"
+            "    ? [['json'], ['allure-playwright', { resultsDir: process.env.AITESTGEN_ALLURE_RESULTS_DIR }]]\n"
+            "    : [['list'], ['allure-playwright']],\n"
+        ) in config
+
+
+def test_project_writes_allurerc_with_escaped_app_name(tmp_path) -> None:
+    args = _project_args()
+    args["application"] = _application(name='Acme "Bank" App')
+    dest_dir = tmp_path / "project"
+
+    assemble_test_suite_project_to_dir(dest_dir, **args)
+
+    allurerc = (dest_dir / "allurerc.mjs").read_text(encoding="utf-8")
+    assert (
+        "name: process.env.AITESTGEN_REPORT_TITLE || " + json.dumps('Acme "Bank" App tests') + ","
+    ) in allurerc
+    assert "output: './allure-report'," in allurerc
+    # Absolute path: Allure resolves `import` from its own install dir.
+    assert (
+        "import: fileURLToPath(new URL('./vantage-report/plugin.mjs', import.meta.url)),"
+    ) in allurerc
+    assert "awesome" not in allurerc
+
+
+def test_project_ships_the_vantage_report_plugin(tmp_path) -> None:
+    dest_dir = tmp_path / "project"
+
+    assemble_test_suite_project_to_dir(dest_dir, **_project_args())
+
+    report_dir = dest_dir / "vantage-report"
+    assert sorted(p.name for p in report_dir.iterdir()) == [
+        "logo.datauri.txt",
+        "model.mjs",
+        "plugin.mjs",
+        "template.html",
+    ]
+    assert (report_dir / "logo.datauri.txt").read_text(encoding="utf-8").startswith(
+        "data:image/png;base64,iVBORw0KGgo"
+    )
+    template = (report_dir / "template.html").read_text(encoding="utf-8")
+    for placeholder in ("__VANTAGE_PAGE_TITLE__", "__VANTAGE_LOGO__", "__VANTAGE_DATA__"):
+        assert placeholder in template
