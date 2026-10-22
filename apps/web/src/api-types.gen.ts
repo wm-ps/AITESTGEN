@@ -921,6 +921,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/{external_id}/test-runs/{test_run_external_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel Test Run
+         * @description Stops a pending/running run. The database decides, Temporal follows:
+         *     the run and every unfinished result are committed "cancelled" under the
+         *     run's row lock first (`domain.apply_test_run_cancel` — finished results
+         *     keep their outcome, and no later worker write can overwrite a cancel),
+         *     so the response already shows the run cancelled. Only then is its
+         *     workflow cancelled, best-effort like `pause_discovery_run`: the execution
+         *     worker also watches the run's row and kills its Playwright processes
+         *     within seconds, so a Temporal hiccup never leaves the cancel undone.
+         */
+        post: operations["cancel_test_run_applications__external_id__test_runs__test_run_external_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/cleanup/run": {
         parameters: {
             query?: never;
@@ -1790,6 +1817,8 @@ export interface components {
             rejection_reason?: string | null;
             /** Error Message */
             error_message?: string | null;
+            /** Skipped Cases */
+            skipped_cases?: string[];
             /** Journey Name */
             journey_name?: string | null;
             /** Pages */
@@ -4397,6 +4426,40 @@ export interface operations {
                     "application/json": {
                         [key: string]: boolean;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_test_run_applications__external_id__test_runs__test_run_external_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+                test_run_external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestRunRead"];
                 };
             };
             /** @description Validation Error */

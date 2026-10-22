@@ -10,6 +10,7 @@ actually needs Temporal reachable, since it starts a real workflow.
 
 import asyncio
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from api.db import engine, init_db
@@ -740,3 +741,150 @@ class TestGetOverview:
         # The bar and the tile must agree: both are `passed / total_count`
         # for the exact same run.
         assert body["trend"][0]["pass_rate"] == 54 / 108
+
+
+class TestCancelTestRun:
+    """`cancel_test_run` — the database decides first (run + unfinished
+    results "cancelled", finished results untouched), Temporal follows
+    best-effort."""
+
+    @staticmethod
+    def _running_run_with_results(application: dict) -> tuple[TestRun, dict[str, uuid.UUID]]:
+        application_pk, asset = _seed_test_asset(application)
+        test_run = _seed_test_run(
+            application_pk,
+            status="running",
+            workflow_id=f"execution-test-{uuid.uuid4()}",
+            total_count=3,
+            passed_count=1,
+            failed_count=0,
+        )
+        result_ids: dict[str, uuid.UUID] = {}
+        with Session(engine) as session:
+            for label, status in (("passed", "passed"), ("queued", "pending"), ("running", "pending")):
+                result = TestResult(
+                    test_run_id=test_run.id,
+                    test_asset_id=asset.id,
+                    scenario_id=asset.scenario_id,
+                    status=status,
+                )
+                if label == "running":
+                    result.heal_started_at = datetime.now(UTC)  # a heal in flight
+                session.add(result)
+                session.flush()
+                result_ids[label] = result.id
+            session.commit()
+        return test_run, result_ids
+
+    @staticmethod
+    def _fake_temporal(monkeypatch: pytest.MonkeyPatch, *, fail: bool = False) -> list[str]:
+        from api import main as api_main
+
+        cancelled: list[str] = []
+
+        class _Handle:
+            def __init__(self, workflow_id: str) -> None:
+                self.workflow_id = workflow_id
+
+            async def cancel(self) -> None:
+                if fail:
+                    raise RuntimeError("temporal unavailable")
+                cancelled.append(self.workflow_id)
+
+        class _FakeClient:
+            def get_workflow_handle(self, workflow_id: str) -> _Handle:
+                return _Handle(workflow_id)
+
+        async def _fake_client() -> _FakeClient:
+            return _FakeClient()
+
+        monkeypatch.setattr(api_main, "get_temporal_client", _fake_client)
+        return cancelled
+
+    def test_cancel_marks_run_and_unfinished_results_and_keeps_finished_ones(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        init_db()
+        client, _ = _signed_in_client("Org Cancel Run")
+        application = _create_application(client, "Cancel Run App")
+        test_run, result_ids = self._running_run_with_results(application)
+        cancelled = self._fake_temporal(monkeypatch)
+
+        response = client.post(
+            f"/applications/{application['id']}/test-runs/{test_run.external_id}/cancel"
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        # The response itself already shows the cancel — no poll needed.
+        assert body["status"] == "cancelled"
+        assert sorted(r["status"] for r in body["results"]) == ["cancelled", "cancelled", "passed"]
+        assert body["passed_count"] == 1
+        assert cancelled == [test_run.workflow_id]
+        with Session(engine) as session:
+            results = {
+                label: session.exec(select(TestResult).where(TestResult.id == pk)).one()
+                for label, pk in result_ids.items()
+            }
+            run = session.exec(select(TestRun).where(TestRun.id == test_run.id)).one()
+        assert {label: r.status for label, r in results.items()} == {
+            "passed": "passed",
+            "queued": "cancelled",
+            "running": "cancelled",
+        }
+        assert results["running"].heal_started_at is None
+        assert run.status == "cancelled"
+        assert run.completed_at is not None
+
+    def test_cancel_stands_even_when_temporal_cancel_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        init_db()
+        client, _ = _signed_in_client("Org Cancel Run Temporal Down")
+        application = _create_application(client, "Cancel Temporal Down App")
+        test_run, _ = self._running_run_with_results(application)
+        self._fake_temporal(monkeypatch, fail=True)
+
+        response = client.post(
+            f"/applications/{application['id']}/test-runs/{test_run.external_id}/cancel"
+        )
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "cancelled"
+
+    @pytest.mark.parametrize("status", ["completed", "cancelled"])
+    def test_cancel_refuses_a_run_that_is_not_in_progress(
+        self, monkeypatch: pytest.MonkeyPatch, status: str
+    ) -> None:
+        init_db()
+        client, _ = _signed_in_client(f"Org Cancel Finished {status}")
+        application = _create_application(client, f"Cancel Finished {status} App")
+        application_pk, _ = _seed_test_asset(application)
+        test_run = _seed_test_run(application_pk, status=status)
+        cancelled = self._fake_temporal(monkeypatch)
+
+        response = client.post(
+            f"/applications/{application['id']}/test-runs/{test_run.external_id}/cancel"
+        )
+
+        assert response.status_code == 409
+        assert cancelled == []
+        with Session(engine) as session:
+            assert session.exec(select(TestRun).where(TestRun.id == test_run.id)).one().status == status
+
+    def test_cancel_is_organization_scoped(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        init_db()
+        owner, _ = _signed_in_client("Org Cancel Owner")
+        application = _create_application(owner, "Cancel Owner App")
+        test_run, _ = self._running_run_with_results(application)
+        cancelled = self._fake_temporal(monkeypatch)
+        outsider, _ = _signed_in_client("Org Cancel Outsider")
+
+        response = outsider.post(
+            f"/applications/{application['id']}/test-runs/{test_run.external_id}/cancel"
+        )
+
+        assert response.status_code == 404
+        assert cancelled == []
+        with Session(engine) as session:
+            assert session.exec(select(TestRun).where(TestRun.id == test_run.id)).one().status == "running"

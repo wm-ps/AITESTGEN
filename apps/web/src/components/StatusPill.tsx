@@ -40,6 +40,9 @@ const STATUS_COLORS: Record<string, { background: string; foreground: string }> 
   timed_out: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },
   errored: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },
   not_run: { background: 'var(--hover)', foreground: 'var(--fg-4)' },
+  // A run the user stopped, and its tests that never finished — neutral, not
+  // a failure.
+  cancelled: { background: 'var(--hover)', foreground: 'var(--fg-4)' },
   // Post-execution pass-rate badge (Home card, Runs tab, Overview tab) —
   // shares `_health_tier`'s tier names (apps/api/src/api/main.py) so the
   // wording/color is one vocabulary everywhere it appears.
@@ -71,6 +74,7 @@ const LABELS: Record<string, string> = {
   timed_out: 'Timed Out',
   errored: 'Errored',
   not_run: 'Not Run',
+  cancelled: 'Cancelled',
   healthy: 'Healthy',
   needs_attention: 'Needs Attention',
   critical: 'Critical',

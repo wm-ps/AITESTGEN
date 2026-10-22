@@ -16,6 +16,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from domain import (
+    CANCELLABLE_TEST_RUN_STATUSES,
     Action,
     ApiEndpoint,
     Application,
@@ -44,6 +45,8 @@ from domain import (
     TestRun,
     TestSuite,
     aggregation_key,
+    apply_test_run_cancel,
+    lock_test_run,
 )
 import hvac.exceptions
 from fastapi import Depends, FastAPI, HTTPException, Response
@@ -3492,6 +3495,56 @@ async def trigger_test_run(
         task_queue=EXECUTION_TASK_QUEUE,
     )
     return {"started": True}
+
+
+@app.post(
+    "/applications/{external_id}/test-runs/{test_run_external_id}/cancel",
+    response_model=TestRunRead,
+)
+async def cancel_test_run(
+    external_id: uuid.UUID,
+    test_run_external_id: uuid.UUID,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+) -> TestRunRead:
+    """Stops a pending/running run. The database decides, Temporal follows:
+    the run and every unfinished result are committed "cancelled" under the
+    run's row lock first (`domain.apply_test_run_cancel` — finished results
+    keep their outcome, and no later worker write can overwrite a cancel),
+    so the response already shows the run cancelled. Only then is its
+    workflow cancelled, best-effort like `pause_discovery_run`: the execution
+    worker also watches the run's row and kills its Playwright processes
+    within seconds, so a Temporal hiccup never leaves the cancel undone."""
+    application = _get_org_application(session, organization_id, external_id)
+    test_run_pk = session.exec(
+        select(TestRun.id).where(
+            TestRun.external_id == test_run_external_id,
+            TestRun.application_id == application.id,
+        )
+    ).first()
+    if test_run_pk is None:
+        raise HTTPException(status_code=404, detail="test run not found")
+    test_run = lock_test_run(session, test_run_pk)
+    assert test_run is not None
+    if test_run.status not in CANCELLABLE_TEST_RUN_STATUSES:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="test run is not in progress")
+    apply_test_run_cancel(session, test_run)
+    session.commit()
+    workflow_id = test_run.workflow_id
+
+    if workflow_id is not None:
+        try:
+            client = await get_temporal_client()
+            await client.get_workflow_handle(workflow_id).cancel()
+        except Exception:  # noqa: BLE001 — the cancel already stands in the database
+            logger.warning(
+                "cancel_test_run: test_run_id=%s workflow %s could not be cancelled in Temporal",
+                test_run_external_id,
+                workflow_id,
+                exc_info=True,
+            )
+    return get_test_run(external_id, test_run_external_id, session, organization_id)
 
 
 @app.post("/admin/cleanup/run", status_code=202)

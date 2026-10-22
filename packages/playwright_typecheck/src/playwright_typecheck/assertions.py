@@ -8,11 +8,11 @@ The parsing is TypeScript's own (`../../typecheck/assertions.js`, run with
 the same `typescript` install and `node` launch as `typecheck.py`), not a
 regex, so formatting, comments and quote style never count as a change."""
 
-import asyncio
 import difflib
 import json
 import os
 
+from playwright_typecheck.process_tree import run_process
 from playwright_typecheck.typecheck import _TYPECHECK_DIR, TypecheckUnavailable
 
 _ASSERTIONS_JS = os.path.join(_TYPECHECK_DIR, "assertions.js")
@@ -33,20 +33,15 @@ async def assertion_fingerprints(old_code: str, new_code: str) -> tuple[list[str
         raise TypecheckUnavailable(
             f"{_TYPESCRIPT_DIR} not found — run `npm install` in {_TYPECHECK_DIR}"
         )
-    proc = await asyncio.create_subprocess_exec(
+    returncode, stdout, stderr = await run_process(
         "node",
         _ASSERTIONS_JS,
         cwd=_TYPECHECK_DIR,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
+        input=json.dumps({"old": old_code, "new": new_code}).encode("utf-8"),
     )
-    stdout, stderr = await proc.communicate(
-        json.dumps({"old": old_code, "new": new_code}).encode("utf-8")
-    )
-    if proc.returncode != 0:
+    if returncode != 0:
         raise AssertionGuardError(
-            f"assertions.js exited {proc.returncode}: {stderr.decode(errors='replace').strip()[:500]}"
+            f"assertions.js exited {returncode}: {stderr.decode(errors='replace').strip()[:500]}"
         )
     result = json.loads(stdout.decode("utf-8"))
     return result["old"], result["new"]

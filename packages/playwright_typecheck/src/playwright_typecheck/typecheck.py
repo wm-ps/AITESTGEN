@@ -9,10 +9,11 @@ different app, not generation-worker — can run the exact same gate on
 Codegen's own recorded output before persisting it, without depending on the
 whole generation worker for one function."""
 
-import asyncio
 import os
 import shutil
 import uuid
+
+from playwright_typecheck.process_tree import run_process
 
 _TYPECHECK_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "..", "typecheck")
@@ -70,7 +71,7 @@ async def typecheck_playwright_code(code: str) -> list[str]:
                 "export async function ensureVisible("
                 "locator: Locator, timeout?: number): Promise<Locator> { return locator }\n"
             )
-        proc = await asyncio.create_subprocess_exec(
+        returncode, stdout, stderr = await run_process(
             "node",
             _TSC_JS,
             "--noEmit",
@@ -84,13 +85,10 @@ async def typecheck_playwright_code(code: str) -> list[str]:
             "--esModuleInterop",
             spec_path,
             cwd=_TYPECHECK_DIR,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode == 0:
+        if returncode == 0:
             return []
         output = (stdout.decode(errors="replace") + stderr.decode(errors="replace")).strip()
-        return output.splitlines() if output else [f"tsc exited {proc.returncode} with no output"]
+        return output.splitlines() if output else [f"tsc exited {returncode} with no output"]
     finally:
         shutil.rmtree(run_root, ignore_errors=True)

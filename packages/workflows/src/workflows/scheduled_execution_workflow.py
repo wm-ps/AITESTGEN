@@ -45,6 +45,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ChildWorkflowError, is_cancelled_exception
 
 from workflows.execution_workflow import (
     ApplicationTestExecutionWorkflow,
@@ -107,17 +108,26 @@ class ScheduledExecutionWorkflow:
         # routed to the real EXECUTION_TASK_QUEUE, picked up by whatever real
         # execution worker happens to be running rather than the test's own
         # fake activities (confirmed the hard way — see test_schedule_firing.py).
-        return await workflow.execute_child_workflow(
-            ApplicationTestExecutionWorkflow.run,  # type: ignore[arg-type]
-            ExecutionWorkflowInput(
-                application_id=input.application_id,
-                triggered_by_name=input.schedule_name,
-                schedule_id=input.schedule_id,
-            ),
-            id=f"execution-{workflow.info().workflow_id}",
-            task_queue=workflow.info().task_queue,
-            result_type=str,
-        )
+        try:
+            return await workflow.execute_child_workflow(
+                ApplicationTestExecutionWorkflow.run,  # type: ignore[arg-type]
+                ExecutionWorkflowInput(
+                    application_id=input.application_id,
+                    triggered_by_name=input.schedule_name,
+                    schedule_id=input.schedule_id,
+                ),
+                id=f"execution-{workflow.info().workflow_id}",
+                task_queue=workflow.info().task_queue,
+                result_type=str,
+            )
+        except ChildWorkflowError as err:
+            # A user cancelled this occurrence's run — expected, not a
+            # failure, so return normally like a skip: raising would paint
+            # the schedule red and interact with `pause_on_failure`. Only the
+            # child is matched; a cancel of this workflow itself still raises.
+            if is_cancelled_exception(err):
+                return "cancelled"
+            raise
 
 
 __all__ = [

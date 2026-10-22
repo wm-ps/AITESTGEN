@@ -1281,6 +1281,7 @@ export function RunsTab({
   onDetailChange,
   initialRunId = null,
   onInitialRunConsumed,
+  cancelledRun = null,
 }: {
   applicationId: string
   // `triggerTestRun` starts a Temporal workflow fire-and-forget and only
@@ -1303,8 +1304,16 @@ export function RunsTab({
   // tab later shows the run list as usual.
   initialRunId?: string | null
   onInitialRunConsumed?: () => void
+  // The run the toolbar's Cancel run just cancelled, as the cancel endpoint
+  // returned it — shown straight away instead of on the next poll.
+  cancelledRun?: TestRunRead | null
 }) {
   const [selectedRunId, setSelectedRunId] = useState<string | null>(initialRunId)
+  // Runs this tab has seen finish (e.g. the cancel response). A run never
+  // goes from finished back to active, so a poll answering "running" for
+  // one of these is stale (it raced the cancel) and is dropped — the run
+  // never flickers back to active.
+  const finishedRunIdsRef = useRef(new Set<string>())
   useEffect(() => {
     if (initialRunId) onInitialRunConsumed?.()
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1312,6 +1321,14 @@ export function RunsTab({
   const [selectedRun, setSelectedRun] = useState<TestRunRead | null>(null)
   const [executionUnavailable, setExecutionUnavailable] = useState(false)
   const [runs, setRuns] = useState<TestRunRead[]>([])
+  useEffect(() => {
+    if (!cancelledRun) return
+    finishedRunIdsRef.current.add(cancelledRun.id)
+    setSelectedRun((prev) => (prev?.id === cancelledRun.id ? cancelledRun : prev))
+    setRuns((prev) =>
+      prev.map((r) => (r.id === cancelledRun.id ? { ...cancelledRun, results: r.results } : r)),
+    )
+  }, [cancelledRun])
   const [runsLoaded, setRunsLoaded] = useState(false)
   // Cursor-paginated: `cursors[i]` is the cursor to fetch page `i` with
   // (`cursors[0]` is always null, i.e. "start from the newest run"). Moving
@@ -1405,9 +1422,15 @@ export function RunsTab({
       try {
         const detail = await api.getTestRun(applicationId, selectedRunId!)
         if (cancelled) return
+        const active = detail.status === 'pending' || detail.status === 'running'
+        if (active && finishedRunIdsRef.current.has(detail.id)) return
+        if (!active) finishedRunIdsRef.current.add(detail.id)
         setSelectedRun(detail)
         status = detail.status
-        if ((detail.status === 'completed' || detail.status === 'blocked') && interval) {
+        if (
+          (detail.status === 'completed' || detail.status === 'blocked' || detail.status === 'cancelled') &&
+          interval
+        ) {
           clearInterval(interval)
         }
       } catch {

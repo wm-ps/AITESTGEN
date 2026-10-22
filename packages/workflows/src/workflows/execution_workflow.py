@@ -26,8 +26,17 @@ its own retries) so one test's tooling failure still can't block
 Every "Run All Tests" click starts a brand-new `TestRun` — there is no
 rerun-scoped/failed-only mode and no natural idempotency key the way
 `suite-{journey_id}-{attempt}` has, so the workflow id
-(`execution-{application_id}-{test_run_external_id}`) only needs to be
-unique, not deterministic/replayable.
+(`execution-{application_id}-{random uuid}` for a manual run,
+`execution-{parent id}` for a scheduled one) only needs to be unique, not
+deterministic/replayable. The TestRun row doesn't exist yet when the id is
+chosen, so PrepareTestRunActivity records it on `TestRun.workflow_id`.
+
+Cancelling a run: the cancel endpoint marks the TestRun and its unfinished
+results "cancelled" in the database first, then cancels this workflow.
+Prepare/Execute/Heal heartbeat and watch the TestRun row themselves, so they
+stop (and kill their Playwright process trees) within seconds; this
+workflow waits for them to acknowledge, runs CleanupCancelledTestRunActivity,
+and ends Cancelled — no report, no finalize, no email.
 """
 
 import asyncio
@@ -36,6 +45,8 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import is_cancelled_exception
+from temporalio.workflow import ActivityCancellationType
 
 EXECUTION_TASK_QUEUE = "execution-task-queue"
 PREPARE_TEST_RUN_ACTIVITY_NAME = "PrepareTestRunActivity"
@@ -45,8 +56,15 @@ FORCE_COMPLETE_TEST_RUN_ACTIVITY_NAME = "ForceCompleteTestRunActivity"
 HEAL_TEST_ACTIVITY_NAME = "HealTestActivity"
 GENERATE_ALLURE_REPORT_ACTIVITY_NAME = "GenerateAllureReportActivity"
 SEND_TEST_RUN_REPORT_EMAIL_ACTIVITY_NAME = "SendTestRunReportEmailActivity"
+CLEANUP_CANCELLED_TEST_RUN_ACTIVITY_NAME = "CleanupCancelledTestRunActivity"
 
 DEFAULT_MAX_CONCURRENCY = 5
+
+# Prepare/Execute/Heal heartbeat every couple of seconds (see execution
+# worker's `cancel_watch`); a cancel from Temporal reaches them within the
+# SDK's heartbeat throttle (80% of this), and a dead worker is noticed in 15s
+# instead of after the activity's full start_to_close_timeout.
+RUN_ACTIVITY_HEARTBEAT_TIMEOUT = timedelta(seconds=15)
 
 # Self-healing for failed generated Playwright test cases. "blocked" is
 # excluded — a safety-policy gate, not a code defect, never healable.
@@ -146,6 +164,13 @@ class SendTestRunReportEmailActivityInput:
 
 
 @dataclass
+class CleanupCancelledTestRunActivityInput:
+    # The TestRun is found by the workflow that ran it — a cancel can land
+    # before PrepareTestRunActivity returned the TestRun's own id.
+    workflow_id: str
+
+
+@dataclass
 class HealTestActivityInput:
     application_id: str
     test_run_id: str
@@ -158,10 +183,46 @@ class HealTestActivityInput:
     triggered_manually: bool = False
 
 
+def _stop_if_cancel_requested() -> None:
+    """A run cancel usually reaches an in-flight activity through the
+    worker's own database watch before Temporal's cancel does — the activity
+    then stops its work and *returns normally*, which consumes the workflow's
+    cancellation without raising (observed live: the run went on to Allure,
+    Finalize and email, and the workflow ended Completed). Checked after every
+    step so a requested cancel always ends the run here instead."""
+    if workflow.cancellation_reason() is not None and workflow.patched("cancel-run-cleanup"):
+        raise asyncio.CancelledError()
+
+
 @workflow.defn(name="ApplicationTestExecutionWorkflow")
 class ApplicationTestExecutionWorkflow:
     @workflow.run
     async def run(self, input: ExecutionWorkflowInput) -> str:
+        try:
+            return await self._run(input)
+        except BaseException as err:
+            # A cancel surfaces as asyncio.CancelledError, or as an
+            # ActivityError caused by CancelledError from whichever activity
+            # was in flight. Patched so runs in flight at deploy replay
+            # unchanged.
+            if not is_cancelled_exception(err) or not workflow.patched("cancel-run-cleanup"):
+                raise
+            # The cancel has been delivered and caught; shield cleanup so a
+            # repeated cancel request can't cancel it before it runs. Every
+            # step is idempotent, so retries are safe.
+            await asyncio.shield(
+                workflow.execute_activity(
+                    CLEANUP_CANCELLED_TEST_RUN_ACTIVITY_NAME,
+                    CleanupCancelledTestRunActivityInput(workflow_id=workflow.info().workflow_id),
+                    start_to_close_timeout=timedelta(minutes=2),
+                    retry_policy=RetryPolicy(maximum_attempts=5),
+                )
+            )
+            # Re-raising a cancellation ends the workflow Cancelled — which
+            # is also what lets a scheduled parent tell a cancel from a failure.
+            raise
+
+    async def _run(self, input: ExecutionWorkflowInput) -> str:
         prep: PrepareTestRunActivityResult = await workflow.execute_activity(
             PREPARE_TEST_RUN_ACTIVITY_NAME,
             PrepareTestRunActivityInput(
@@ -174,8 +235,13 @@ class ApplicationTestExecutionWorkflow:
             ),
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=RetryPolicy(maximum_attempts=3),
+            heartbeat_timeout=RUN_ACTIVITY_HEARTBEAT_TIMEOUT,
+            # On cancel, wait until the activity has actually stopped (its
+            # npm/login processes killed) before cleanup removes its project dir.
+            cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
             result_type=PrepareTestRunActivityResult,
         )
+        _stop_if_cancel_requested()
         if prep.blocked:
             # PrepareTestRunActivity already set TestRun.status="blocked"
             # with a blocked_reason — the browser/Playwright path is never
@@ -187,6 +253,7 @@ class ApplicationTestExecutionWorkflow:
 
             async def run_one(item: ExecutableTest) -> str:
                 async with semaphore:
+                    _stop_if_cancel_requested()
                     result_id = await workflow.execute_activity(
                         EXECUTE_TEST_ACTIVITY_NAME,
                         ExecuteTestActivityInput(
@@ -203,8 +270,11 @@ class ApplicationTestExecutionWorkflow:
                         # failed) — a test's own pass/fail/timeout never
                         # raises, so it never consumes a retry.
                         retry_policy=RetryPolicy(maximum_attempts=2),
+                        heartbeat_timeout=RUN_ACTIVITY_HEARTBEAT_TIMEOUT,
+                        cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
                         result_type=str,
                     )
+                    _stop_if_cancel_requested()
                     # Always called — HealTestActivity itself no-ops for
                     # passed/blocked/budget-exhausted results (see its own
                     # docstring), so no branching is needed here.
@@ -231,6 +301,8 @@ class ApplicationTestExecutionWorkflow:
                         # Infra-failure retries at the Temporal level only,
                         # same convention as ExecuteTestActivity above.
                         retry_policy=RetryPolicy(maximum_attempts=2),
+                        heartbeat_timeout=RUN_ACTIVITY_HEARTBEAT_TIMEOUT,
+                        cancellation_type=ActivityCancellationType.WAIT_CANCELLATION_COMPLETED,
                     )
                     return result_id
 
@@ -245,7 +317,9 @@ class ApplicationTestExecutionWorkflow:
                 for item in self_signin:
                     try:
                         await run_one(item)
-                    except Exception:  # noqa: BLE001 — same tolerance as gather above
+                    except Exception as err:  # noqa: BLE001 — same tolerance as gather above
+                        if is_cancelled_exception(err):
+                            raise
                         workflow.logger.warning(
                             "self-signing-in test %s failed to run", item.test_result_id
                         )
@@ -253,6 +327,8 @@ class ApplicationTestExecutionWorkflow:
                 await asyncio.gather(
                     *[run_one(item) for item in prep.executable], return_exceptions=True
                 )
+            # gather(return_exceptions=True) collects a child's stop instead of raising it.
+            _stop_if_cancel_requested()
 
         # Before Finalize, which deletes the project dir the Allure results
         # live in. Best-effort: the activity itself never raises, and this
@@ -263,6 +339,7 @@ class ApplicationTestExecutionWorkflow:
         # "errored", so those few tests are missing from the report while
         # still counted on the run. Finalizing first would need cleanup moved
         # out of Finalize into its own step after the report.
+        _stop_if_cancel_requested()
         if workflow.patched("allure-report"):
             try:
                 await workflow.execute_activity(
@@ -274,12 +351,15 @@ class ApplicationTestExecutionWorkflow:
                     start_to_close_timeout=timedelta(minutes=5),
                     retry_policy=RetryPolicy(maximum_attempts=1),
                 )
-            except Exception:
+            except Exception as err:
+                if is_cancelled_exception(err):
+                    raise
                 workflow.logger.warning(
                     "Allure report generation failed for test run %s; finalizing anyway",
                     prep.test_run_id,
                 )
 
+        _stop_if_cancel_requested()
         try:
             await workflow.execute_activity(
                 FINALIZE_TEST_RUN_ACTIVITY_NAME,
@@ -287,7 +367,9 @@ class ApplicationTestExecutionWorkflow:
                 start_to_close_timeout=timedelta(minutes=1),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
-        except Exception:
+        except Exception as err:
+            if is_cancelled_exception(err):
+                raise
             # FinalizeTestRunActivity exhausted its retries — every
             # TestResult may already be terminal, but TestRun.status would
             # otherwise stay "running" forever (no reconciliation job exists
@@ -311,6 +393,7 @@ class ApplicationTestExecutionWorkflow:
         # `prep.blocked` return, or after a later manual "Retry with
         # self-heal" — all rare or infrastructure-failure paths. Emailing
         # them would mean sending from those activities too.
+        _stop_if_cancel_requested()
         if workflow.patched("run-report-email"):
             try:
                 await workflow.execute_activity(
@@ -319,7 +402,9 @@ class ApplicationTestExecutionWorkflow:
                     start_to_close_timeout=timedelta(minutes=1),
                     retry_policy=RetryPolicy(maximum_attempts=3),
                 )
-            except Exception:
+            except Exception as err:
+                if is_cancelled_exception(err):
+                    raise
                 workflow.logger.warning(
                     "Run-completed email failed for test run %s", prep.test_run_id
                 )
@@ -368,6 +453,7 @@ class HealTestExecutionWorkflow:
 
 __all__ = [
     "AUTO_HEAL_ATTEMPT_CAP",
+    "CLEANUP_CANCELLED_TEST_RUN_ACTIVITY_NAME",
     "DEFAULT_MAX_CONCURRENCY",
     "EXECUTE_TEST_ACTIVITY_NAME",
     "EXECUTION_TASK_QUEUE",
@@ -379,6 +465,7 @@ __all__ = [
     "HEAL_TEST_ACTIVITY_NAME",
     "PREPARE_TEST_RUN_ACTIVITY_NAME",
     "ApplicationTestExecutionWorkflow",
+    "CleanupCancelledTestRunActivityInput",
     "ExecutableTest",
     "ExecuteTestActivityInput",
     "ExecutionWorkflowInput",

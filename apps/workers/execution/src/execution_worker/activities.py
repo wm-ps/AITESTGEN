@@ -20,6 +20,7 @@ logged, never present in the assembled project's source.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -28,12 +29,15 @@ import shutil
 import subprocess
 import time
 import uuid
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 from ai_provider.hosted import HostedAIProvider, invented_locator_names
 from domain import (
+    CANCELLABLE_TEST_RUN_STATUSES,
     Application,
     DiscoverySettings,
     Journey,
@@ -45,6 +49,9 @@ from domain import (
     TestResultArtifact,
     TestRun,
     TestSuite,
+    apply_test_run_cancel,
+    lock_test_run,
+    tally_result_counts,
 )
 from generation_worker import spec_linter
 from generation_worker.activities import (
@@ -56,6 +63,7 @@ from generation_worker.activities import (
 from generation_worker.typecheck import assertion_changes, typecheck_playwright_code
 from mailer import FRONTEND_BASE_URL, send_email, smtp_configured
 from object_store import ObjectStore
+from playwright_typecheck import RunCancelled, kill_scope, run_process, run_process_sync
 from secrets_client.vault_client import SecretRef, VaultSecretsClient
 from sqlalchemy import or_, update
 from sqlmodel import Session, select
@@ -74,6 +82,7 @@ from workflows import (
     HEAL_TYPECHECK_ERROR_PREFIX,
     HEALABLE_STATUSES,
     TEST_RUN_STALE_AFTER,
+    CleanupCancelledTestRunActivityInput,
     ExecutableTest,
     ExecuteTestActivityInput,
     FinalizeTestRunActivityInput,
@@ -137,6 +146,97 @@ def _resolve_bin(name: str) -> str:
     if resolved is None:
         raise RuntimeError(f"{name!r} was not found on PATH")
     return resolved
+
+
+# --- Cancelling a run --------------------------------------------------------
+#
+# The cancel endpoint commits "cancelled" (domain.apply_test_run_cancel)
+# before it ever calls Temporal, so the database is the fast, reliable
+# signal: every Prepare/Execute/Heal polls its TestRun this often (and
+# heartbeats, so a cancel sent through Temporal itself arrives too).
+CANCEL_POLL_SECONDS = 2.0
+
+
+def _test_run_cancelled_sync(
+    *, test_run_id: str | None = None, workflow_id: str | None = None
+) -> bool:
+    with Session(engine) as session:
+        query = select(TestRun.status)
+        if test_run_id is not None:
+            query = query.where(TestRun.external_id == uuid.UUID(test_run_id))
+        else:
+            query = query.where(TestRun.workflow_id == workflow_id)
+        status = session.exec(query).first()
+    return status == "cancelled"
+
+
+def _lock_run_of_result(session: Session, test_result_pk: uuid.UUID) -> TestRun:
+    """`lock_test_run` for the run a TestResult belongs to — taken before
+    reading or writing that result, keeping the run-then-result lock order."""
+    test_run_pk = session.exec(
+        select(TestResult.test_run_id).where(TestResult.id == test_result_pk)
+    ).one()
+    test_run = lock_test_run(session, test_run_pk)
+    assert test_run is not None  # a TestResult's run is never deleted
+    return test_run
+
+
+@dataclass
+class _CancelWatch:
+    run_cancelled: bool = False
+
+
+@asynccontextmanager
+async def cancel_watch(
+    is_cancelled: Callable[[], bool], *, interrupt: bool = True
+) -> AsyncIterator[_CancelWatch]:
+    """Stops the activity body promptly when its run is cancelled.
+
+    Every CANCEL_POLL_SECONDS: heartbeat, then read the run's status. On
+    "cancelled", kill every process tree started inside (playwright_typecheck
+    kill scope — the async ones and the sync ones run via to_thread alike)
+    and, with `interrupt`, cancel the body so an in-flight AI call or live
+    inspection stops too. Prepare passes `interrupt=False`: its body is one
+    thread that can't be interrupted, so killing its processes is what ends it.
+
+    A cancel Temporal requested (the workflow was cancelled) re-raises, so the
+    activity reports Cancelled. A cancel only this watcher saw is swallowed —
+    the caller returns its normal no-op result after the `async with` —
+    because an activity raising CancelledError that Temporal didn't request
+    is reported as a failure and retried."""
+    watch = _CancelWatch()
+    task = asyncio.current_task()
+    with kill_scope() as scope:
+
+        async def _poll() -> None:
+            while True:
+                await asyncio.sleep(CANCEL_POLL_SECONDS)
+                if activity.in_activity():
+                    activity.heartbeat()
+                try:
+                    cancelled = await asyncio.to_thread(is_cancelled)
+                except Exception:  # noqa: BLE001 — a DB blip must never stop a test
+                    logger.warning("cancel watch: run status check failed", exc_info=True)
+                    continue
+                if cancelled:
+                    watch.run_cancelled = True
+                    await asyncio.to_thread(scope.cancel)
+                    if interrupt and task is not None:
+                        task.cancel()
+                    return
+
+        poller = asyncio.create_task(_poll())
+        try:
+            yield watch
+        except (asyncio.CancelledError, RunCancelled):
+            if not scope.cancelled.is_set():
+                await asyncio.shield(asyncio.to_thread(scope.cancel))
+            if (activity.in_activity() and activity.is_cancelled()) or not watch.run_cancelled:
+                raise
+            if task is not None and task.cancelling():
+                task.uncancel()
+        finally:
+            poller.cancel()
 
 
 @dataclass
@@ -290,10 +390,19 @@ def _rebuild_project_dir_sync(test_run_id: uuid.UUID, application_id: uuid.UUID)
 async def prepare_test_run_activity(
     input: PrepareTestRunActivityInput,
 ) -> PrepareTestRunActivityResult:
-    return await asyncio.to_thread(_prepare_test_run_sync, input)
+    workflow_id = activity.info().workflow_id
+    async with cancel_watch(
+        functools.partial(_test_run_cancelled_sync, workflow_id=workflow_id), interrupt=False
+    ):
+        return await asyncio.to_thread(_prepare_test_run_sync, input, workflow_id)
+    # Unreachable in practice: with interrupt=False a cancel ends the thread's
+    # own subprocesses, which Prepare turns into a normal, guarded return.
+    raise RuntimeError("PrepareTestRunActivity stopped by a run cancel without a result")
 
 
-def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRunActivityResult:
+def _prepare_test_run_sync(
+    input: PrepareTestRunActivityInput, workflow_id: str | None = None
+) -> PrepareTestRunActivityResult:
     logger.info("PrepareTestRunActivity: starting for application_id=%s", input.application_id)
     # ponytail: no ExecutionPolicy/allowlist/destructive-action gating here
     # — deliberately removed per explicit request, to let "Run All Tests"
@@ -349,11 +458,15 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
                 uuid.UUID(input.triggered_by_user_id) if input.triggered_by_user_id else None
             ),
             suite_name=input.suite_name,
+            workflow_id=workflow_id,
             started_at=datetime.now(UTC),
         )
         session.add(test_run)
         session.commit()
         session.refresh(test_run)
+        empty_result = PrepareTestRunActivityResult(
+            test_run_id=str(test_run.external_id), blocked=False, executable=[]
+        )
 
         # Everything below can throw before a single TestResult exists (a
         # bad query in _load_assembly_inputs_sync) or mid-loop (partway
@@ -378,7 +491,13 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
             # any project assembly/install so a slow npm install never
             # delays the "why is my count already showing" moment for the
             # poller. Every TestAsset is executable unconditionally (see
-            # this function's own ponytail note above).
+            # this function's own ponytail note above). Under the run lock: a
+            # run cancelled since its row was committed gets no results at all,
+            # never "pending" ones nothing will ever finish.
+            locked_run = lock_test_run(session, test_run.id)
+            if locked_run is None or locked_run.status == "cancelled":
+                session.commit()
+                return empty_result
             for asset in test_assets:
                 test_result = TestResult(
                     test_run_id=test_run.id,
@@ -414,6 +533,18 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
             if inputs.login_evidence is not None:
                 _run_auth_setup_once(dest_dir, application)
         except Exception as exc:  # noqa: BLE001 — infra failure, not a test outcome
+            # Cancelled meanwhile (its npm/login processes were killed — the
+            # usual way a cancel ends Prepare): the run is already final.
+            with session.no_autoflush:
+                locked_run = lock_test_run(session, test_run.id)
+            if locked_run is None or locked_run.status == "cancelled":
+                session.rollback()
+                logger.info(
+                    "PrepareTestRunActivity: test_run_id=%s cancelled during prepare (%s)",
+                    test_run.external_id,
+                    exc,
+                )
+                return empty_result
             for test_result in test_results_by_asset_id.values():
                 test_result.status = "errored"
                 test_result.error_message = f"failed to prepare the test project: {exc}"
@@ -434,6 +565,8 @@ def _prepare_test_run_sync(input: PrepareTestRunActivityInput) -> PrepareTestRun
                 test_run_id=str(test_run.external_id), blocked=False, executable=[]
             )
 
+        if _test_run_cancelled_sync(test_run_id=str(test_run.external_id)):
+            return empty_result
         for asset in pending_assets:
             test_result = test_results_by_asset_id[asset.id]
             executable.append(
@@ -474,15 +607,13 @@ def _run_auth_setup_once(dest_dir: Path, application: Application) -> None:
     every `ExecuteTestActivity` invocation passes `--no-deps` to reuse the
     resulting file read-only instead of repeating the race."""
     try:
-        subprocess.run(
+        run_process_sync(
             # `--reporter=list` overrides the project config's reporters, so
             # this login step never lands in the run's Allure report as if
             # it were one of the run's test cases.
             [_resolve_bin("npx"), "playwright", "test", "--project=setup", "--reporter=list"],
-            cwd=dest_dir,
+            cwd=str(dest_dir),
             env=_build_subprocess_env(application),
-            check=True,
-            capture_output=True,
             timeout=_AUTH_SETUP_TIMEOUT_NO_DISCOVERY_S
             if application.discovery_required is False
             else 60,
@@ -569,15 +700,9 @@ def _install_project(dest_dir: Path) -> None:
     still runs per-project as a cheap cache-hit safety net in case the
     pinned `@playwright/test` version in `package.json` ever drifts from the
     image's pre-installed browser revision."""
-    subprocess.run(
-        [_resolve_bin("npm"), "install"], cwd=dest_dir, check=True, capture_output=True, timeout=300
-    )
-    subprocess.run(
-        [_resolve_bin("npx"), "playwright", "install", "chromium"],
-        cwd=dest_dir,
-        check=True,
-        capture_output=True,
-        timeout=300,
+    run_process_sync([_resolve_bin("npm"), "install"], cwd=str(dest_dir), timeout=300)
+    run_process_sync(
+        [_resolve_bin("npx"), "playwright", "install", "chromium"], cwd=str(dest_dir), timeout=300
     )
 
 
@@ -590,6 +715,19 @@ class _ExecutionContext:
 
 @activity.defn(name="ExecuteTestActivity")
 async def execute_test_activity(input: ExecuteTestActivityInput) -> str:
+    async with cancel_watch(
+        functools.partial(_test_run_cancelled_sync, test_run_id=input.test_run_id)
+    ):
+        return await _execute_test(input)
+    # The run was cancelled mid-test: its process tree is gone and the result
+    # already reads "cancelled" (nothing below may overwrite it).
+    logger.info(
+        "ExecuteTestActivity: test_result_id=%s stopped, run cancelled", input.test_result_id
+    )
+    return input.test_result_id
+
+
+async def _execute_test(input: ExecuteTestActivityInput) -> str:
     context = await asyncio.to_thread(_load_execution_context_sync, input)
     if context is None:
         # Already handled by a prior Temporal attempt for this TestResult
@@ -653,7 +791,9 @@ async def execute_test_activity(input: ExecuteTestActivityInput) -> str:
                 PLAYWRIGHT_RUN_TIMEOUT_SECONDS,
                 input.test_result_id,
             )
-    await asyncio.to_thread(_persist_test_result_sync, input.test_run_id, context, outcome)
+    await asyncio.to_thread(
+        _persist_test_result_sync, input.test_run_id, context, outcome, require_pending=True
+    )
     logger.info(
         "ExecuteTestActivity: test_result_id=%s finished status=%s",
         input.test_result_id,
@@ -794,31 +934,29 @@ async def _run_playwright_test(
         reporter_args: list[str] = []
     else:
         reporter_args = ["--reporter=json"]
-    proc = await asyncio.create_subprocess_exec(
-        _resolve_bin("npx"),
-        "playwright",
-        "test",
-        spec_path,
-        *reporter_args,
-        f"--output={output_dir}",
-        # `PrepareTestRunActivity` already ran the `setup` project's login
-        # once (see `_run_auth_setup_once`) — skip re-running it as a
-        # dependency here. Several of these invocations run concurrently
-        # against the same project dir; without `--no-deps` each would
-        # re-login and overwrite the shared `.auth/state.json`, racing
-        # exactly the scenario `_run_auth_setup_once` exists to avoid. A
-        # no-op when the target spec has no dependency project at all.
-        "--no-deps",
-        cwd=str(project_dir),
-        env=env,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
     try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
+        # run_process kills the whole tree (node + browsers, not just npx) on
+        # this timeout and when the run is cancelled (see `cancel_watch`).
+        _, stdout, stderr = await run_process(
+            _resolve_bin("npx"),
+            "playwright",
+            "test",
+            spec_path,
+            *reporter_args,
+            f"--output={output_dir}",
+            # `PrepareTestRunActivity` already ran the `setup` project's login
+            # once (see `_run_auth_setup_once`) — skip re-running it as a
+            # dependency here. Several of these invocations run concurrently
+            # against the same project dir; without `--no-deps` each would
+            # re-login and overwrite the shared `.auth/state.json`, racing
+            # exactly the scenario `_run_auth_setup_once` exists to avoid. A
+            # no-op when the target spec has no dependency project at all.
+            "--no-deps",
+            cwd=str(project_dir),
+            env=env,
+            timeout=timeout_seconds,
+        )
     except TimeoutError:
-        proc.kill()
-        await proc.wait()
         logger.warning(
             "ExecuteTestActivity: test_result_id=%s timed out after %ds",
             test_result_id,
@@ -951,25 +1089,43 @@ def _keep_artifact(artifact_type: str, status: str, screenshot_capture: str) -> 
     return screenshot_capture == "all" or (screenshot_capture == "passed") == passed
 
 
-def _tally_counts(results: list[TestResult]) -> dict[str, int]:
-    counts = {status: 0 for status in ("passed", "failed", "timed_out", "errored", "blocked")}
-    for result in results:
-        if result.status in counts:
-            counts[result.status] += 1
-    return counts
+_tally_counts = tally_result_counts
 
 
-def _persist_test_result_sync(test_run_id: str, context: _ExecutionContext, outcome: dict) -> None:
+def _persist_test_result_sync(
+    test_run_id: str,
+    context: _ExecutionContext,
+    outcome: dict,
+    *,
+    require_pending: bool = False,
+) -> None:
     """`test_run_id` is a plain str (the TestRun's external id, used only to
     scope ObjectStore artifact keys) rather than a whole
     `ExecuteTestActivityInput`, so `HealTestActivity` — which has its own
     `HealTestActivityInput`, not an `ExecuteTestActivityInput` — can reuse
     this same persist-and-retally logic for a heal attempt's rerun outcome
-    without a fake/duck-typed input object."""
+    without a fake/duck-typed input object.
+
+    Takes the run lock first and writes nothing once the run is cancelled.
+    `require_pending` (ExecuteTestActivity's first write) also refuses a
+    result that's no longer "pending"; a heal rerun overwrites a finished
+    result on purpose, so it doesn't pass it."""
     with Session(engine) as session:
+        test_run = _lock_run_of_result(session, context.test_result_pk)
         test_result = session.exec(
             select(TestResult).where(TestResult.id == context.test_result_pk)
         ).one()
+        if test_run.status == "cancelled" or (
+            require_pending and test_result.status != "pending"
+        ):
+            logger.info(
+                "test_result_id=%s outcome %s not recorded: run is %s, result is %s",
+                test_result.external_id,
+                outcome["status"],
+                test_run.status,
+                test_result.status,
+            )
+            return
         test_result.status = outcome["status"]
         test_result.duration_ms = outcome.get("duration_ms")
         test_result.error_message = outcome.get("error_message")
@@ -1027,9 +1183,6 @@ def _persist_test_result_sync(test_run_id: str, context: _ExecutionContext, outc
             select(TestResult).where(TestResult.test_run_id == test_result.test_run_id)
         ).all()
         counts = _tally_counts(run_results)
-        test_run = session.exec(
-            select(TestRun).where(TestRun.id == test_result.test_run_id)
-        ).one()
         test_run.passed_count = counts["passed"]
         test_run.failed_count = counts["failed"]
         test_run.timed_out_count = counts["timed_out"]
@@ -1156,6 +1309,13 @@ def _claim_heal_sync(test_result_external_id: str) -> bool:
     now = datetime.now(UTC)
     stale_before = now - HEAL_CLAIM_STALE_AFTER
     with Session(engine) as session:
+        test_result_pk = session.exec(
+            select(TestResult.id).where(
+                TestResult.external_id == uuid.UUID(test_result_external_id)
+            )
+        ).one()
+        if _lock_run_of_result(session, test_result_pk).status == "cancelled":
+            return False
         result = session.execute(
             update(TestResult)
             .where(
@@ -1173,6 +1333,12 @@ def _claim_heal_sync(test_result_external_id: str) -> bool:
 
 def _release_heal_claim_sync(test_result_external_id: str) -> None:
     with Session(engine) as session:
+        test_result_pk = session.exec(
+            select(TestResult.id).where(
+                TestResult.external_id == uuid.UUID(test_result_external_id)
+            )
+        ).one()
+        _lock_run_of_result(session, test_result_pk)
         session.execute(
             update(TestResult)
             .where(TestResult.external_id == uuid.UUID(test_result_external_id))  # type: ignore[arg-type]
@@ -1210,6 +1376,12 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
         test_result = session.exec(
             select(TestResult).where(TestResult.external_id == uuid.UUID(input.test_result_id))
         ).one()
+        test_run_status = session.exec(
+            select(TestRun.status).where(TestRun.id == test_result.test_run_id)
+        ).one()
+        if test_run_status == "cancelled":
+            # No AI call and no attempt spent on a cancelled run.
+            return None
         discovery_settings = session.exec(select(DiscoverySettings)).one()
         if input.triggered_manually:
             current_count = test_result.manual_heal_attempt_count
@@ -1359,8 +1531,11 @@ def _record_rejected_heal_attempt_sync(
     test_result_pk: uuid.UUID, prefix: str, problems: list[str], triggered_manually: bool
 ) -> None:
     """A heal candidate that was never promoted — it failed typecheck, or it
-    changed an assertion. The AI call still counts as an attempt."""
+    changed an assertion. The AI call still counts as an attempt — unless the
+    run was cancelled meanwhile, which writes nothing."""
     with Session(engine) as session:
+        if _lock_run_of_result(session, test_result_pk).status == "cancelled":
+            return
         test_result = session.exec(select(TestResult).where(TestResult.id == test_result_pk)).one()
         if triggered_manually:
             test_result.manual_heal_attempt_count += 1
@@ -1388,8 +1563,13 @@ def _record_heal_supersede_sync(
     `healed_test_asset_id`. Spec-linter warnings are deliberately not
     re-run against healed code — this feature only needs the fix to
     typecheck and actually pass; re-linting is the original generation
-    path's own concern, not asked for here."""
+    path's own concern, not asked for here.
+
+    Nothing is promoted once the run is cancelled — a cancelled heal never
+    swaps the test's code."""
     with Session(engine) as session:
+        if _lock_run_of_result(session, test_result_pk).status == "cancelled":
+            return
         prior = session.exec(select(TestAsset).where(TestAsset.id == prior_test_asset_id)).one()
         new_asset = supersede_test_asset(
             session,
@@ -1413,6 +1593,18 @@ def _record_heal_supersede_sync(
 
 @activity.defn(name="HealTestActivity")
 async def heal_test_activity(input: HealTestActivityInput) -> None:
+    async with cancel_watch(
+        functools.partial(_test_run_cancelled_sync, test_run_id=input.test_run_id)
+    ):
+        await _heal_test(input)
+        return
+    # The run was cancelled mid-heal: the AI call/live inspection were
+    # interrupted, every rerun's process tree killed, and every heal write
+    # above refuses a cancelled run.
+    logger.info("HealTestActivity: test_result_id=%s stopped, run cancelled", input.test_result_id)
+
+
+async def _heal_test(input: HealTestActivityInput) -> None:
     """Owns the entire bounded, iterative self-heal loop for one
     TestResult — called unconditionally after every ExecuteTestActivity in
     the automatic path, and once more (same activity, same logic) from
@@ -1499,6 +1691,8 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
         # repair is the separate "fix this specific broken draft" turn.
         repair: tuple[str, list[str]] | None = None
         while True:
+            if await asyncio.to_thread(_test_run_cancelled_sync, test_run_id=input.test_run_id):
+                break
             state = await asyncio.to_thread(
                 _load_heal_loop_state_sync, ctx.test_result_pk, ctx.scenario.id, input.triggered_manually
             )
@@ -1910,6 +2104,12 @@ def _generate_allure_report_sync(input: GenerateAllureReportActivityInput) -> st
     host's local project dir. With several replicas a run's tests could
     spread across hosts and this would see only part of them, or none."""
     try:
+        if _test_run_cancelled_sync(test_run_id=input.test_run_id):
+            logger.info(
+                "GenerateAllureReportActivity: test_run_id=%s was cancelled, no report",
+                input.test_run_id,
+            )
+            return None
         project_dir = project_dir_for(uuid.UUID(input.test_run_id))
         results_dir = project_dir / ALLURE_RESULTS_DIR
         if not results_dir.is_dir() or not any(results_dir.iterdir()):
@@ -2093,12 +2293,14 @@ def _load_run_email_sync(
 def _claim_report_email_sync(test_run_pk: uuid.UUID) -> bool:
     """One conditional UPDATE, so two concurrent or retried activities can
     never both send: only the call that flips `report_email_claimed_at` from
-    NULL proceeds."""
+    NULL proceeds — and only for a completed run, so a cancelled one never
+    gets the run-completed email."""
     with Session(engine) as session:
         result = session.execute(
             update(TestRun)
             .where(
                 TestRun.id == test_run_pk,  # type: ignore[arg-type]
+                TestRun.status == "completed",  # type: ignore[arg-type]
                 TestRun.report_email_claimed_at.is_(None),  # type: ignore[union-attr]
                 TestRun.report_emailed_at.is_(None),  # type: ignore[union-attr]
             )
@@ -2200,9 +2402,21 @@ async def finalize_test_run_activity(input: FinalizeTestRunActivityInput) -> Non
 
 def _finalize_test_run_sync(input: FinalizeTestRunActivityInput) -> None:
     with Session(engine) as session:
-        test_run = session.exec(
-            select(TestRun).where(TestRun.external_id == uuid.UUID(input.test_run_id))
+        test_run_pk = session.exec(
+            select(TestRun.id).where(TestRun.external_id == uuid.UUID(input.test_run_id))
         ).one()
+        test_run = lock_test_run(session, test_run_pk)
+        assert test_run is not None
+        if test_run.status == "cancelled":
+            # Final already — never completed over a cancel. Its project dir
+            # still goes.
+            session.commit()
+            logger.info(
+                "FinalizeTestRunActivity: test_run_id=%s was cancelled, not finalizing",
+                input.test_run_id,
+            )
+            cleanup_project_dir(test_run.external_id)
+            return
         if test_run.status == "completed":
             logger.info(
                 "FinalizeTestRunActivity: test_run_id=%s already finalized, skipping",
@@ -2283,10 +2497,11 @@ def _force_complete_test_run_sync(input: ForceCompleteTestRunActivityInput) -> N
 
     try:
         with Session(engine) as session:
-            test_run = session.exec(
-                select(TestRun).where(TestRun.external_id == uuid.UUID(input.test_run_id))
+            test_run_pk = session.exec(
+                select(TestRun.id).where(TestRun.external_id == uuid.UUID(input.test_run_id))
             ).one_or_none()
-            if test_run is not None and test_run.status != "completed":
+            test_run = lock_test_run(session, test_run_pk) if test_run_pk is not None else None
+            if test_run is not None and test_run.status not in ("completed", "cancelled"):
                 test_run.status = "completed"
                 test_run.completed_at = datetime.now(UTC)
                 session.add(test_run)
@@ -2296,6 +2511,43 @@ def _force_complete_test_run_sync(input: ForceCompleteTestRunActivityInput) -> N
             "ForceCompleteTestRunActivity: bare status flip also failed for test_run_id=%s",
             input.test_run_id,
         )
+
+
+@activity.defn(name="CleanupCancelledTestRunActivity")
+async def cleanup_cancelled_test_run_activity(input: CleanupCancelledTestRunActivityInput) -> None:
+    await asyncio.to_thread(_cleanup_cancelled_test_run_sync, input)
+
+
+def _cleanup_cancelled_test_run_sync(input: CleanupCancelledTestRunActivityInput) -> None:
+    """Runs once the cancelled workflow's Prepare/Execute/Heal have all
+    stopped. Idempotent: (re)applies the cancel under the run lock — a no-op
+    after the API's own, but it covers a cancel sent straight to Temporal and
+    any row a late writer touched — then removes the project dir. A run that
+    already completed before the cancel landed is left completed. No run yet
+    (cancelled before Prepare created it) is fine."""
+    with Session(engine) as session:
+        test_run_pk = session.exec(
+            select(TestRun.id).where(TestRun.workflow_id == input.workflow_id)
+        ).first()
+        if test_run_pk is None:
+            logger.info(
+                "CleanupCancelledTestRunActivity: workflow_id=%s has no test run, nothing to do",
+                input.workflow_id,
+            )
+            return
+        test_run = lock_test_run(session, test_run_pk)
+        assert test_run is not None
+        if test_run.status in (*CANCELLABLE_TEST_RUN_STATUSES, "cancelled"):
+            apply_test_run_cancel(session, test_run)
+        session.commit()
+        external_id = test_run.external_id
+        status = test_run.status
+    cleanup_project_dir(external_id)
+    logger.info(
+        "CleanupCancelledTestRunActivity: test_run_id=%s cleaned up (status=%s)",
+        external_id,
+        status,
+    )
 
 
 @activity.defn(name="ReconcileStaleTestRunsActivity")

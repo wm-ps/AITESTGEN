@@ -14,6 +14,7 @@ dependencies = [
     "ai-provider",
     "generation-worker",
     "locator-capture",
+    "playwright-typecheck",
     "sqlmodel>=0.0.24",
     "psycopg[binary]>=3.2",
     # Self-heal live inspection (live_inspection.py) is the first in-process
@@ -38,6 +39,8 @@ mailer = { workspace = true }
 test-suite-assembler = { workspace = true }
 ai-provider = { workspace = true }
 locator-capture = { workspace = true }
+# Kill-scoped subprocesses (process_tree) for cancelling a run.
+playwright-typecheck = { workspace = true }
 # Self-healing (HealTestActivity) reuses generation-worker's existing
 # supersede_test_asset persistence helper and its tsc-based
 # typecheck_playwright_code gate rather than duplicating a second

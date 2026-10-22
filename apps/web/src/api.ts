@@ -204,7 +204,14 @@ export type ExecutionPolicyRead = {
   version: number
 }
 export type ExecutionPolicyUpdate = Partial<ExecutionPolicyRead>
-export type TestResultStatus = 'pending' | 'passed' | 'failed' | 'timed_out' | 'errored' | 'blocked'
+export type TestResultStatus =
+  | 'pending'
+  | 'passed'
+  | 'failed'
+  | 'timed_out'
+  | 'errored'
+  | 'blocked'
+  | 'cancelled'
 export type TestResultRead = {
   id: string
   scenario_name: string
@@ -235,7 +242,7 @@ export type TestResultRead = {
   // raised inside an assertion; null when it may.
   heal_blocked_reason?: string | null
 }
-export type TestRunStatus = 'pending' | 'running' | 'completed' | 'blocked'
+export type TestRunStatus = 'pending' | 'running' | 'completed' | 'blocked' | 'cancelled'
 export type TestRunRead = {
   id: string
   run_number: number
@@ -614,6 +621,12 @@ export const api = {
     ),
   getTestRun: (applicationId: string, testRunId: string) =>
     request<TestRunRead>(`/applications/${applicationId}/test-runs/${testRunId}`),
+  // Returns the run already cancelled (DB first, workflow after) — apply it
+  // directly instead of waiting for the next poll. 409 when it had finished.
+  cancelTestRun: (applicationId: string, testRunId: string) =>
+    request<TestRunRead>(`/applications/${applicationId}/test-runs/${testRunId}/cancel`, {
+      method: 'POST',
+    }),
   getAllureReportUrl: (applicationId: string, testRunId: string) =>
     request<{ url: string }>(`/applications/${applicationId}/test-runs/${testRunId}/allure-report`),
   listTestResultArtifacts: (testResultId: string) =>

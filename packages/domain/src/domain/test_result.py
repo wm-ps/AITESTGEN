@@ -21,7 +21,9 @@ from sqlalchemy import Column, DateTime, ForeignKey, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
-TestResultStatus = Literal["pending", "passed", "failed", "timed_out", "errored", "blocked"]
+TestResultStatus = Literal[
+    "pending", "passed", "failed", "timed_out", "errored", "blocked", "cancelled"
+]
 
 
 class TestResult(SQLModel, table=True):

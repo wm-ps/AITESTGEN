@@ -47,6 +47,7 @@ from workflows import (
 )
 
 from execution_worker.activities import (
+    cleanup_cancelled_test_run_activity,
     execute_test_activity,
     finalize_test_run_activity,
     force_complete_test_run_activity,
@@ -97,6 +98,7 @@ async def main() -> None:
             send_test_run_report_email_activity,
             finalize_test_run_activity,
             force_complete_test_run_activity,
+            cleanup_cancelled_test_run_activity,
             find_purge_candidates_activity,
             purge_application_activity,
             check_schedule_gate_activity,

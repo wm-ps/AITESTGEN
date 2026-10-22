@@ -48,6 +48,7 @@ from workflows.discovery_workflow import (
 )
 from workflows.execution_workflow import (
     AUTO_HEAL_ATTEMPT_CAP,
+    CLEANUP_CANCELLED_TEST_RUN_ACTIVITY_NAME,
     DEFAULT_MAX_CONCURRENCY,
     EXECUTE_TEST_ACTIVITY_NAME,
     EXECUTION_TASK_QUEUE,
@@ -60,6 +61,7 @@ from workflows.execution_workflow import (
     HEALABLE_STATUSES,
     PREPARE_TEST_RUN_ACTIVITY_NAME,
     ApplicationTestExecutionWorkflow,
+    CleanupCancelledTestRunActivityInput,
     ExecutableTest,
     ExecuteTestActivityInput,
     ExecutionWorkflowInput,
@@ -153,6 +155,7 @@ __all__ = [
     "FINALIZE_TEST_RUN_ACTIVITY_NAME",
     "FIND_PURGE_CANDIDATES_ACTIVITY_NAME",
     "FORCE_COMPLETE_TEST_RUN_ACTIVITY_NAME",
+    "CLEANUP_CANCELLED_TEST_RUN_ACTIVITY_NAME",
     "GENERATE_ALLURE_REPORT_ACTIVITY_NAME",
     "SEND_TEST_RUN_REPORT_EMAIL_ACTIVITY_NAME",
     "GENERATION_TASK_QUEUE",
@@ -197,6 +200,7 @@ __all__ = [
     "FinalizeSuiteGenerationActivityInput",
     "FinalizeTestRunActivityInput",
     "ForceCompleteTestRunActivityInput",
+    "CleanupCancelledTestRunActivityInput",
     "GenerateAllureReportActivityInput",
     "GenerationWorkflow",
     "HealTestActivityInput",

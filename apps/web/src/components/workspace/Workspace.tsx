@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faClock, faDownload, faFlaskVial, faGauge, faPen, faTableList } from '@fortawesome/free-solid-svg-icons'
-import { ApiError, api } from '../../api'
+import { ApiError, api, type TestRunRead } from '../../api'
 import { AppIdentityLine } from '../AppIdentityLine'
 import { ServiceErrorNote } from '../ServiceError'
 import { Toast } from '../Toast'
+import { CancelRunButton } from './CancelRunDialog'
 import { DownloadTab } from './DownloadTab'
 import { NotesTab } from './NotesTab'
 import { OverviewTab } from './OverviewTab'
@@ -137,6 +138,14 @@ export function Workspace({
   // This holds the button disabled through that gap; the poll itself is the
   // only thing that ever turns it back off.
   const suppressReenableUntilRef = useRef(0)
+  // When the toolbar's Cancel run last cancelled the active run — a poll
+  // already in flight then can still answer "running" and is ignored.
+  const runFinishedAtRef = useRef(0)
+  // The run "Cancel run" acts on: the latest run while it's pending/running.
+  // Null in the gap between clicking Run and Prepare creating the row.
+  const [activeRun, setActiveRun] = useState<{ id: string; run_number: number } | null>(null)
+  // Handed to RunsTab so an open run detail shows Cancelled immediately.
+  const [cancelledRun, setCancelledRun] = useState<TestRunRead | null>(null)
 
   useEffect(() => {
     if (!runToast) return
@@ -151,17 +160,23 @@ export function Workspace({
   useEffect(() => {
     let cancelled = false
     async function poll() {
+      const requestedAt = Date.now()
       try {
         const page = await api.listTestRuns(applicationId, null, 1)
         if (cancelled) return
         const latest = page.items[0]
         const active = !!latest && RUN_IS_ACTIVE(latest.status)
+        if (active && requestedAt < runFinishedAtRef.current) return
         setRunning(active || Date.now() < suppressReenableUntilRef.current)
+        setActiveRun(active ? { id: latest.id, run_number: latest.run_number } : null)
         // Only a finished run (completed or blocked) unlocks the Overview
         // tab — a run still pending/running has nothing for it to show yet.
         if (latest && !active) setHasRunEver(true)
-      } catch {
-        // best-effort poll — a transient failure just skips this tick
+      } catch (err) {
+        // best-effort poll — a transient failure just skips this tick, but
+        // leaves a trace: a poll failing silently once left Cancel run
+        // without its run for a whole run.
+        console.warn('test-run status poll failed', err)
       }
       try {
         const suiteStatus = await api.getTestSuiteStatus(applicationId, 1, 1, '')
@@ -255,11 +270,32 @@ export function Workspace({
             )}
           </div>
           {activeTab === 'runs' && hasTestsGenerated && (
-            <RunSuiteButton
-              running={running}
-              onFullSuite={() => handleRunSuite()}
-              onOpenJourneysDialog={() => setJourneysDialogOpen(true)}
-            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>
+              <RunSuiteButton
+                running={running}
+                onFullSuite={() => handleRunSuite()}
+                onOpenJourneysDialog={() => setJourneysDialogOpen(true)}
+              />
+              {running && (
+                <CancelRunButton
+                  applicationId={applicationId}
+                  run={activeRun}
+                  onCancelled={(run) => {
+                    runFinishedAtRef.current = Date.now()
+                    suppressReenableUntilRef.current = 0
+                    setRunning(false)
+                    setActiveRun(null)
+                    setHasRunEver(true)
+                    setCancelledRun(run)
+                  }}
+                  onAlreadyFinished={() => {
+                    suppressReenableUntilRef.current = 0
+                    setRunning(false)
+                    setActiveRun(null)
+                  }}
+                />
+              )}
+            </div>
           )}
         </div>
         {triggerError && (
@@ -295,6 +331,7 @@ export function Workspace({
             onDetailChange={(onBack) => setRunsBack(() => onBack)}
             initialRunId={openRunId}
             onInitialRunConsumed={onOpenRunConsumed}
+            cancelledRun={cancelledRun}
           />
         )}
       </div>

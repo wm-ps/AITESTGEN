@@ -397,19 +397,13 @@ async def test_run_playwright_test_skips_setup_dependency(
     reuse the `.auth/state.json` that `PrepareTestRunActivity` already
     wrote instead of re-running the `setup` project dependency itself."""
 
-    class _FakeProcess:
-        async def communicate(self):
-            return b'{"suites": []}', b""
-
     captured_args = []
 
-    async def fake_create_subprocess_exec(*args, **kwargs):
+    async def fake_run_process(*args, **kwargs):
         captured_args.extend(args)
-        return _FakeProcess()
+        return 0, b'{"suites": []}', b""
 
-    monkeypatch.setattr(
-        activities_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec
-    )
+    monkeypatch.setattr(activities_module, "run_process", fake_run_process)
 
     await activities_module._run_playwright_test(
         tmp_path, "tests/example.spec.ts", {}, 30.0, "test-result-id"
@@ -843,19 +837,13 @@ async def test_run_playwright_test_gives_each_invocation_its_own_allure_folder(
     drop the config's `resultsDir` — and every invocation, including a
     rerun of the same TestResult, writes into a fresh folder."""
 
-    class _FakeProcess:
-        async def communicate(self):
-            return b'{"suites": []}', b""
-
     calls: list = []
 
-    async def fake_create_subprocess_exec(*args, **kwargs):
+    async def fake_run_process(*args, **kwargs):
         calls.append((args, kwargs["env"]))
-        return _FakeProcess()
+        return 0, b'{"suites": []}', b""
 
-    monkeypatch.setattr(
-        activities_module.asyncio, "create_subprocess_exec", fake_create_subprocess_exec
-    )
+    monkeypatch.setattr(activities_module, "run_process", fake_run_process)
     env_name = activities_module.ALLURE_RESULTS_DIR_ENV
 
     not_installed = await activities_module._run_playwright_test(
@@ -1190,7 +1178,7 @@ def test_auth_setup_run_stays_out_of_the_allure_report(
     monkeypatch.setattr(activities_module, "_build_subprocess_env", lambda _app: {})
     monkeypatch.setattr(activities_module, "_resolve_bin", lambda name: name)
     monkeypatch.setattr(
-        activities_module.subprocess, "run", lambda args, **kwargs: captured.append(args)
+        activities_module, "run_process_sync", lambda args, **kwargs: captured.append(args)
     )
 
     activities_module._run_auth_setup_once(tmp_path, Application(name="x"))

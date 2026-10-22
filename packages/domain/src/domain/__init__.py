@@ -61,6 +61,13 @@ from domain.test_data_entry import TestDataEntry
 from domain.test_result import TestResult, TestResultStatus
 from domain.test_result_artifact import ArtifactType, TestResultArtifact
 from domain.test_run import TestRun, TestRunStatus
+from domain.test_run_cancel import (
+    CANCELLABLE_TEST_RUN_STATUSES,
+    RUN_CANCELLED_MESSAGE,
+    apply_test_run_cancel,
+    lock_test_run,
+    tally_result_counts,
+)
 from domain.test_suite import TestSuite
 from domain.validation_rule import ValidationRule
 
@@ -115,6 +122,11 @@ __all__ = [
     "TestResultArtifact",
     "TestRun",
     "TestRunStatus",
+    "CANCELLABLE_TEST_RUN_STATUSES",
+    "RUN_CANCELLED_MESSAGE",
+    "apply_test_run_cancel",
+    "lock_test_run",
+    "tally_result_counts",
     "TestSuite",
     "ValidationRule",
     "aggregation_key",

@@ -38,7 +38,7 @@ from sqlalchemy import Column, DateTime, ForeignKey, Integer, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
-TestRunStatus = Literal["pending", "running", "completed", "blocked"]
+TestRunStatus = Literal["pending", "running", "completed", "blocked", "cancelled"]
 
 
 class TestRun(SQLModel, table=True):
@@ -104,6 +104,12 @@ class TestRun(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("schedule.id"), nullable=True, index=True),
     )
     blocked_reason: str | None = Field(default=None)
+    # The ApplicationTestExecutionWorkflow running this TestRun, recorded by
+    # PrepareTestRunActivity when it creates the row — the cancel endpoint
+    # needs it to reach the workflow (manual runs start under a random id,
+    # scheduled runs under `execution-{parent id}`). Null for runs from
+    # before this column.
+    workflow_id: str | None = Field(default=None)
     # Run Suite Flow: set for a "Run Journey(s)" run (the user-entered Suite
     # Name); null for a Full Suite run, which derives its "Full Suite Run"
     # label at read time instead (see `_to_test_run_read`).

@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { TestRunRead } from '../../api'
 import { RunsTab } from './RunsTab'
 
 afterEach(() => {
@@ -139,5 +140,61 @@ describe('RunsTab', () => {
 
     const retry = await screen.findByTitle('Retry this test with self-healing')
     expect(retry).toBeEnabled()
+  })
+
+  // The toolbar's Cancel run (Workspace) hands the cancelled run down — an
+  // open detail shows it at once, and a stale "running" poll can't revert it.
+  it('shows a run cancelled from the toolbar at once and never back as running', async () => {
+    const running = {
+      id: 'run-1',
+      run_number: 4,
+      name: '#4 - Full Suite Run',
+      status: 'running',
+      trigger: 'Manual run',
+      pass_rate: null,
+      health: { tier: 'healthy', headline: 'Healthy' },
+      total_count: 2,
+      passed_count: 1,
+      failed_count: 0,
+      timed_out_count: 0,
+      errored_count: 0,
+      blocked_count: 0,
+      blocked_reason: null,
+      environment_snapshot: 'staging',
+      target_base_url_snapshot: 'https://x.example.com',
+      created_at: '2026-09-01T00:00:00Z',
+      started_at: null,
+      completed_at: null,
+      allure_report_available: false,
+      results: [],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/test-runs/run-1')) return { ok: true, status: 200, json: async () => running }
+        if (url.includes('/test-runs')) {
+          return { ok: true, status: 200, json: async () => ({ items: [running], next_cursor: null }) }
+        }
+        return { ok: true, status: 200, json: async () => ({ available: true }) }
+      }),
+    )
+
+    const { rerender } = render(<RunsTab applicationId="app-1" initialRunId="run-1" />)
+    await screen.findByText('Run #4')
+    // The detail itself has no cancel control any more — it's in the toolbar.
+    expect(screen.queryByRole('button', { name: 'Cancel run' })).not.toBeInTheDocument()
+
+    rerender(
+      <RunsTab
+        applicationId="app-1"
+        initialRunId="run-1"
+        cancelledRun={{ ...running, status: 'cancelled' } as TestRunRead}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByText('Cancelled')).toBeInTheDocument())
+    // The detail poll still answers "running" — the cancelled state holds.
+    await new Promise((resolve) => setTimeout(resolve, 2500))
+    expect(screen.getByText('Cancelled')).toBeInTheDocument()
   })
 })
