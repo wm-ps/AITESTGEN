@@ -231,6 +231,9 @@ export type TestResultRead = {
   // result rather than a second admin-only GET /settings call — see
   // TestResultRead in apps/api/src/api/main.py.
   max_heal_attempts: number
+  // Why self-healing won't act on this failure — set only for a failure
+  // raised inside an assertion; null when it may.
+  heal_blocked_reason?: string | null
 }
 export type TestRunStatus = 'pending' | 'running' | 'completed' | 'blocked'
 export type TestRunRead = {

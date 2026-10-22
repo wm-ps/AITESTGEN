@@ -401,7 +401,13 @@ function TestResultRow({
         // This poll only ever runs while a *manual* heal we started is
         // in flight (see the effect above) — stop against the manual
         // budget specifically, not the independent automatic one.
-        if (updated.status === 'passed' || updated.manual_heal_attempt_count >= updated.max_heal_attempts) {
+        // A heal whose rerun now fails inside an assertion stops right
+        // there (self-healing never touches assertions), so that is final too.
+        if (
+          updated.status === 'passed' ||
+          updated.manual_heal_attempt_count >= updated.max_heal_attempts ||
+          updated.heal_blocked_reason
+        ) {
           setHealing(false)
         }
       } catch {
@@ -445,6 +451,10 @@ function TestResultRow({
   const canRetryHeal =
     NON_PASSED_STATUSES.has(liveResult.status) &&
     liveResult.manual_heal_attempt_count < liveResult.max_heal_attempts
+  // Self-healing never acts on a failure raised inside an assertion — the
+  // API says why, and the Retry chip stays visible but disabled with that
+  // reason, so the missing option isn't a mystery.
+  const healBlockedReason = canRetryHeal ? (liveResult.heal_blocked_reason ?? null) : null
   // "Exhausted, manual triage required" is keyed on the manual budget
   // alone. Automatic healing using up its 2 attempts is never, by itself,
   // an exhausted state — it's an ordinary failed result with a manual
@@ -514,7 +524,19 @@ function TestResultRow({
               Self-healed
             </span>
           )}
-          {!healing && canRetryHeal && (
+          {!healing && canRetryHeal && healBlockedReason && (
+            <button
+              type="button"
+              disabled
+              title={healBlockedReason}
+              aria-label={`Retry with self-healing unavailable: ${healBlockedReason}`}
+              style={{ ...healChipStyle('var(--fg-4)'), cursor: 'not-allowed', fontFamily: 'inherit', opacity: 0.6 }}
+            >
+              <SelfHealIcon />
+              Retry
+            </button>
+          )}
+          {!healing && canRetryHeal && !healBlockedReason && (
             <button
               type="button"
               onClick={(e) => {

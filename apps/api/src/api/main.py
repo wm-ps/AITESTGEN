@@ -75,6 +75,7 @@ from workflows import (
     HEAL_CLAIM_STALE_AFTER,
     HEALABLE_STATUSES,
     LIVE_EXPLORATION_TASK_QUEUE,
+    heal_eligibility,
     ApplicationTestExecutionWorkflow,
     AutofillScenarioTestDataActivityInput,
     AutofillScenarioTestDataWorkflow,
@@ -2927,6 +2928,19 @@ async def generate_suite(
             else set()
         )
         if all(s.id in covered_scenario_ids for s in current_scenarios):
+            # Every Scenario already has its TestAsset, but a suite can still
+            # read "generating" when SuiteGenerationWorkflow failed on its very
+            # last step (FinalizeSuiteGenerationActivity — seen live on a
+            # Postgres "too many clients" error) — the results screen then
+            # spins forever, and skipping here meant re-clicking Generate Suite
+            # could never recover it. Write the verdict finalize itself would
+            # have written: nothing pending means "complete".
+            stuck = [ts for ts in suites if ts.status == "generating"]
+            for ts in stuck:
+                ts.status = "complete"
+                session.add(ts)
+            if stuck:
+                session.commit()
             continue
         # Flip back to "generating" so the frontend's existing loader/
         # polling reappears for this retry instead of the screen staying on
@@ -3331,6 +3345,11 @@ class TestResultRead(BaseModel):
     # GET /settings — RunsTab (any authenticated org member) needs this to
     # render self-heal button/messaging state correctly.
     max_heal_attempts: int
+    # Why self-healing won't act on this failure — set only for a failure
+    # raised inside an assertion; None otherwise, and when the result isn't
+    # a healable status at all. RunsTab shows the Retry button disabled with
+    # this as its reason.
+    heal_blocked_reason: str | None = None
 
 
 class TestRunRead(BaseModel):
@@ -4437,6 +4456,11 @@ def get_test_run(
             healed_test_asset_id=r.healed_test_asset_id,
             auto_heal_attempt_cap=AUTO_HEAL_ATTEMPT_CAP,
             max_heal_attempts=max_heal_attempts,
+            heal_blocked_reason=(
+                heal_eligibility(r.status, r.error_message)
+                if r.status in HEALABLE_STATUSES
+                else None
+            ),
         )
         for r in results
     ]
@@ -4505,7 +4529,8 @@ async def heal_test_result(
     unaffected by how many automatic attempts (auto_heal_attempt_count)
     already ran against this same TestResult. The eligibility checks below
     mirror `heal_test_activity`'s own no-op condition and claim guard
-    exactly (same HEALABLE_STATUSES, same DiscoverySettings.max_heal_attempts
+    exactly (same HEALABLE_STATUSES, same `heal_eligibility` rule, same
+    DiscoverySettings.max_heal_attempts
     against manual_heal_attempt_count specifically, same
     HEAL_CLAIM_STALE_AFTER staleness window) so this endpoint's 409s and the
     activity's own behavior never disagree."""
@@ -4529,6 +4554,11 @@ async def heal_test_result(
     discovery_settings = session.exec(select(DiscoverySettings)).one()
     if test_result.status not in HEALABLE_STATUSES:
         raise HTTPException(status_code=409, detail="test result is not in a healable state")
+    # Same rule the heal activity applies: a failure raised inside an
+    # assertion is never healed.
+    blocked_reason = heal_eligibility(test_result.status, test_result.error_message)
+    if blocked_reason is not None:
+        raise HTTPException(status_code=409, detail=blocked_reason)
     if test_result.manual_heal_attempt_count >= discovery_settings.max_heal_attempts:
         raise HTTPException(status_code=409, detail="self-heal attempt budget already spent")
     if (

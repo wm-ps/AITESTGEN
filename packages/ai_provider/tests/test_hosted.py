@@ -683,6 +683,31 @@ async def test_generate_playwright_data_update_uses_existing_code_not_failure_fr
     assert "NEEDS_LIVE_INSPECTION" not in content
 
 
+async def test_generate_playwright_failure_context_forbids_changing_assertions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A heal may fix whatever failed, but never an assertion — the heal
+    prompt says so outright, with no "except where the failure requires it"
+    loophole, and doesn't restrict what else the fix may touch."""
+    captured = _monkeypatch_post(
+        monkeypatch,
+        "import { test, expect } from '@playwright/test'\n\n"
+        "test('guest checkout', async ({ page }) => {})\n",
+    )
+
+    await HostedAIProvider().generate_playwright(
+        _fake_scenario(),
+        previous_code="test('guest checkout', async ({ page }) => {})\n",
+        failure_error_message="TimeoutError: locator.click: Timeout 15000ms exceeded.",
+    )
+
+    content = "".join(m["content"] for m in captured["json"]["messages"])
+    assert "Never change, add\nor remove an `expect(...)` assertion" in content
+    assert "give the other code\nits own locator" in content
+    assert "except where the failure requires changing them" not in content
+    assert "Fix only the locators used by actions" not in content
+
+
 async def test_generate_playwright_strips_markdown_code_fences(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

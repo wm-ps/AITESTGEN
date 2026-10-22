@@ -1191,7 +1191,8 @@ export interface paths {
          *     unaffected by how many automatic attempts (auto_heal_attempt_count)
          *     already ran against this same TestResult. The eligibility checks below
          *     mirror `heal_test_activity`'s own no-op condition and claim guard
-         *     exactly (same HEALABLE_STATUSES, same DiscoverySettings.max_heal_attempts
+         *     exactly (same HEALABLE_STATUSES, same `heal_eligibility` rule, same
+         *     DiscoverySettings.max_heal_attempts
          *     against manual_heal_attempt_count specifically, same
          *     HEAL_CLAIM_STALE_AFTER staleness window) so this endpoint's 409s and the
          *     activity's own behavior never disagree.
@@ -2282,6 +2283,8 @@ export interface components {
             auto_heal_attempt_cap: number;
             /** Max Heal Attempts */
             max_heal_attempts: number;
+            /** Heal Blocked Reason */
+            heal_blocked_reason?: string | null;
         };
         /** TestRunCursorPageRead */
         TestRunCursorPageRead: {

@@ -340,8 +340,12 @@ _PLAYWRIGHT_FAILURE_CONTEXT = """
 
 Prior attempt failed and needs to be fixed. Make the SMALLEST change that
 addresses the specific problem below — do not rewrite unrelated parts of
-the test, and preserve its original intent, structure, and assertions
-except where the failure requires changing them.
+the test, and preserve its original intent and structure. Never change, add
+or remove an `expect(...)` assertion — copy each one exactly, including its
+locator, matcher, expected values and options. If a fix needs a locator that
+an assertion also uses (directly or through a variable), give the other code
+its own locator and leave the assertion's unchanged. A fix that changes any
+assertion is rejected.
 
 --- previous code ---
 {previous_code}

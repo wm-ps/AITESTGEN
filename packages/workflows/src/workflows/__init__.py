@@ -72,6 +72,14 @@ from workflows.execution_workflow import (
     SendTestRunReportEmailActivityInput,
     PrepareTestRunActivityResult,
 )
+from workflows.heal_policy import (
+    HEAL_ASSERTION_GUARD_ERROR_PREFIX,
+    HEAL_TYPECHECK_ERROR_PREFIX,
+    heal_eligibility,
+    is_assertion_failure,
+    is_infra_failure,
+    is_locator_failure,
+)
 from workflows.generation_workflow import (
     GENERATION_TASK_QUEUE,
     SCENARIO_GENERATION_ACTIVITY_NAME,
@@ -125,6 +133,10 @@ from workflows.suite_generation_workflow import (
 )
 
 __all__ = [
+    "heal_eligibility",
+    "is_assertion_failure",
+    "is_infra_failure",
+    "is_locator_failure",
     "ANALYZE_PROMPT_ACTIVITY_NAME",
     "APPLICATION_MODEL_BUILDER_ACTIVITY_NAME",
     "AUTOFILL_SCENARIO_TEST_DATA_ACTIVITY_NAME",
@@ -145,6 +157,8 @@ __all__ = [
     "SEND_TEST_RUN_REPORT_EMAIL_ACTIVITY_NAME",
     "GENERATION_TASK_QUEUE",
     "HEALABLE_STATUSES",
+    "HEAL_ASSERTION_GUARD_ERROR_PREFIX",
+    "HEAL_TYPECHECK_ERROR_PREFIX",
     "HEAL_CLAIM_STALE_AFTER",
     "HEAL_TEST_ACTIVITY_NAME",
     "INFERENCE_ACTIVITY_NAME",

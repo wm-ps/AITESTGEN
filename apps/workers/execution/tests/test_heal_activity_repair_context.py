@@ -157,8 +157,12 @@ def _seed_scenario_with_numeric_field(
             test_asset_id=test_asset.id,
             scenario_id=test_asset.scenario_id,
             status="failed",
+            # A broken locator in an action — the only kind of failure
+            # self-healing acts on (workflows.heal_policy); a value mismatch
+            # in an assertion would never reach the heal loop at all.
             error_message=(
-                "expect(received).toHaveText(expected) — received: '0', expected: '500000'"
+                "TimeoutError: locator.fill: Timeout 15000ms exceeded.\n"
+                "Call log:\n  - waiting for getByLabel('Loan amount')"
             ),
         )
         session.add(test_result)

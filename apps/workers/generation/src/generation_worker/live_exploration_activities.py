@@ -36,6 +36,7 @@ from workflows import (
     LiveHealActivityResult,
     MergeLiveJourneyActivityInput,
     MergeLiveJourneyActivityResult,
+    heal_eligibility,
 )
 
 from generation_worker import spec_linter
@@ -46,7 +47,7 @@ from generation_worker.live_exploration.auth_bootstrap import bootstrap_storage_
 from generation_worker.live_exploration.live_flow import LiveFlowModel
 from generation_worker.live_exploration.materialize import materialize_live_flow_sync
 from generation_worker.live_exploration.mcp_client import PlaywrightMCPClient
-from generation_worker.typecheck import typecheck_playwright_code
+from generation_worker.typecheck import assertion_changes, typecheck_playwright_code
 
 logger = logging.getLogger(__name__)
 
@@ -404,6 +405,16 @@ async def live_heal_activity(input: LiveHealActivityInput) -> LiveHealActivityRe
             max_heal_attempts,
         )
         return LiveHealActivityResult(healed=False, test_asset_id=str(test_asset.external_id))
+    blocked_reason = heal_eligibility(test_result.status, test_result.error_message)
+    if blocked_reason is not None:
+        # Same rule as HealTestActivity: a failure raised inside an
+        # assertion is never healed — no exploration, no AI call.
+        logger.info(
+            "LiveHealActivity: test_result_id=%s not healed: %s",
+            input.test_result_id,
+            blocked_reason,
+        )
+        return LiveHealActivityResult(healed=False, test_asset_id=str(test_asset.external_id))
 
     (
         scenario,
@@ -497,6 +508,14 @@ async def live_heal_activity(input: LiveHealActivityInput) -> LiveHealActivityRe
             "LiveHealActivity: test_result_id=%s — healed candidate failed typecheck: %s",
             input.test_result_id,
             "; ".join(typecheck_errors),
+        )
+        return LiveHealActivityResult(healed=False, test_asset_id=str(test_asset.external_id))
+    changed_assertions = await assertion_changes(test_asset.code, code.code)
+    if changed_assertions:
+        logger.warning(
+            "LiveHealActivity: test_result_id=%s — healed candidate changed assertions: %s",
+            input.test_result_id,
+            "; ".join(changed_assertions[:5]),
         )
         return LiveHealActivityResult(healed=False, test_asset_id=str(test_asset.external_id))
 

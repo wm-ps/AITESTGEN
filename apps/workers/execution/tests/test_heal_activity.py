@@ -124,7 +124,14 @@ def _seed_test_result(application: Application, test_asset: TestAsset, *, status
             test_asset_id=test_asset.id,
             scenario_id=test_asset.scenario_id,
             status=status,
-            error_message="Timed out 15000ms waiting for expect(locator).toBeVisible()" if status != "passed" else None,
+            # A broken locator in an action — the only kind of failure
+            # self-healing acts on (workflows.heal_policy).
+            error_message=(
+                "TimeoutError: locator.click: Timeout 15000ms exceeded.\n"
+                "Call log:\n  - waiting for getByRole('button', { name: 'Submit' })"
+            )
+            if status != "passed"
+            else None,
         )
         session.add(test_result)
         session.commit()

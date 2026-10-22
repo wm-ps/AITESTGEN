@@ -241,6 +241,32 @@ def test_generate_suite_is_idempotent_for_journeys_with_existing_test_suite() ->
     assert response.json() == {"suites_triggered": 0}
 
 
+def test_generate_suite_finalizes_a_fully_generated_suite_stuck_at_generating() -> None:
+    # SuiteGenerationWorkflow can fail on FinalizeSuiteGenerationActivity
+    # after every Scenario already got its TestAsset (seen live: Postgres
+    # "too many clients"), leaving the suite "generating" forever. Re-clicking
+    # Generate Suite must finish it rather than skip the Journey.
+    init_db()
+    client = _signed_in_client("Org Suite Generation Stuck Finalize")
+    application = _create_application(client, "Stuck Finalize Suite App")
+    journey = _add_candidate_journey(application)
+    scenario = _add_scenario(journey)
+    _add_test_suite_with_asset(journey, scenario)
+    with Session(engine) as session:
+        suite = session.exec(
+            select(TestSuite).where(TestSuite.journey_id == journey.id)
+        ).one()
+        suite.status = "generating"
+        session.add(suite)
+        session.commit()
+
+    response = client.post(f"/applications/{application['id']}/generate-suite")
+    assert response.json() == {"suites_triggered": 0}
+
+    suites = client.get(f"/applications/{application['id']}/test-suites").json()
+    assert suites[0]["status"] == "complete"
+
+
 def test_generate_suite_resumes_a_journey_with_a_scenario_missing_its_test_asset() -> None:
     # SuiteGenerationWorkflow's own fault isolation (Task 4) lets one
     # Scenario's PlaywrightGenerationActivity exhaust its retries without

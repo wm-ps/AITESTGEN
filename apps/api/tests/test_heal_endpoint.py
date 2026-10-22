@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
+from workflows.heal_policy import ASSERTION_FAILURE_REASON
 
 from api.main import app
 
@@ -83,6 +84,26 @@ def _create_application(client: TestClient, name: str) -> dict:
     return response.json()
 
 
+_ACTION_LOCATOR_FAILURE = (
+    "TimeoutError: locator.click: Timeout 15000ms exceeded.\n"
+    "Call log:\n  - waiting for getByRole('button', { name: 'Place order' })"
+)
+_ASSERTION_FAILURES = {
+    "toBeVisible": (
+        "Error: expect(locator).toBeVisible() failed\n\n"
+        "Locator: getByText('Order confirmed')\nExpected: visible\nError: element(s) not found\n\n"
+        "Call log:\n  - Expect \"toBeVisible\" getByText('Order confirmed') with timeout 15000ms\n"
+        "  - waiting for getByText('Order confirmed')\n"
+    ),
+    "toHaveText": (
+        "Error: expect(locator).toHaveText(expected) failed\n\n"
+        "Locator: getByTestId('order-status')\nExpected string: \"Confirmed\"\n"
+        "Error: element(s) not found\n"
+    ),
+    "older timeout wording": "Timed out 15000ms waiting for expect(locator).toBeVisible()",
+}
+
+
 def _seed_test_result(application: dict, **overrides) -> TestResult:
     with Session(engine) as session:
         discovery_run = session.exec(
@@ -131,7 +152,9 @@ def _seed_test_result(application: dict, **overrides) -> TestResult:
             test_asset_id=test_asset.id,
             scenario_id=scenario.id,
             status="failed",
-            error_message="Timed out 15000ms waiting for expect(locator).toBeVisible()",
+            # A broken locator in an action — the only kind of failure
+            # self-healing acts on (workflows.heal_policy).
+            error_message=_ACTION_LOCATOR_FAILURE,
         )
         defaults.update(overrides)
         test_result = TestResult(**defaults)
@@ -291,3 +314,38 @@ def test_heal_duplicate_click_is_not_an_error() -> None:
 
     assert first.status_code == 202
     assert second.status_code == 202
+
+
+@pytest.mark.parametrize("message", _ASSERTION_FAILURES.values(), ids=_ASSERTION_FAILURES)
+def test_heal_returns_409_with_the_reason_for_an_assertion_failure(message: str) -> None:
+    """Self-healing heals broken locators used by actions, never anything
+    inside an assertion — the manual retry follows the same rule, and says
+    why, before any workflow is started."""
+    init_db()
+    _set_max_heal_attempts(3)
+    client = _signed_in_client("Org Heal Assertion")
+    application = _create_application(client, "Assertion App")
+    result = _seed_test_result(application, status="failed", error_message=message)
+
+    response = client.post(f"/test-results/{result.external_id}/heal")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == ASSERTION_FAILURE_REASON
+
+
+def test_run_detail_reports_why_a_result_cannot_be_healed() -> None:
+    init_db()
+    client = _signed_in_client("Org Heal Blocked Reason")
+    application = _create_application(client, "Blocked Reason App")
+    blocked = _seed_test_result(
+        application, status="failed", error_message=_ASSERTION_FAILURES["toBeVisible"]
+    )
+    with Session(engine) as session:
+        test_run = session.get(TestRun, blocked.test_run_id)
+        run_external_id = test_run.external_id
+
+    response = client.get(f"/applications/{application['id']}/test-runs/{run_external_id}")
+
+    assert response.status_code == 200
+    [row] = response.json()["results"]
+    assert row["heal_blocked_reason"] == ASSERTION_FAILURE_REASON

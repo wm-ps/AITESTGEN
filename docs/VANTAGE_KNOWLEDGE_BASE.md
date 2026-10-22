@@ -1063,12 +1063,33 @@ down target application to one extra rerun per check rather than spinning
 this activity forever." Only a failure that survives that check is treated
 as a real code defect worth an AI-diagnosed fix.
 
+### Can self-healing change a test's assertions?
+
+**No.** `workflows.heal_policy.heal_eligibility` is the one gate, shared
+by automatic healing, the manual "Retry with self-healing" button and
+live-exploration healing:
+
+- **Never healed:** any failure raised by `expect(...)`, even when the
+  assertion's own element can't be found. No AI call is made and no heal
+  attempt is spent; the failure is reported as it happened, and the manual
+  Retry button shows disabled with the reason.
+- **Every other failure heals exactly as before** — the same eligibility,
+  infra rerun, live-inspection trigger, diagnosis, typecheck, rerun and
+  attempt budgets.
+- **Guarded:** every candidate fix is compared against the original spec
+  with TypeScript's own parser (`playwright_typecheck.assertion_changes`).
+  A fix that changes any assertion — its locator, matcher, `.not`/`.soft`,
+  expected values, options, `await`, or a variable the assertion's subject
+  is built from — or adds or removes one is rejected: counted as an
+  attempt, never promoted.
+
 ### Does healing use a live browser to double-check a fix's locators?
 
 **Yes, but narrowly and deterministically gated.** A separate classifier,
-`_is_locator_failure` (four fixed regex patterns — a locator Playwright
+`_is_locator_failure` (five fixed regex patterns — a locator Playwright
 waited for and never found, a locator now matching multiple elements, an
-element removed from the DOM, or unrendered dynamic content), decides
+element removed from the DOM, unrendered dynamic content, or the shared
+`ensureVisible` helper's own not-visible error), decides
 whether to launch a **targeted live Playwright inspection** of one specific
 page (the scenario's own last-known page, or the bare application URL as a
 fallback) before asking the AI for a fix — never a full re-crawl, and reusing

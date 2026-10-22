@@ -53,7 +53,7 @@ from generation_worker.activities import (
     resolve_known_application_model_sync,
     supersede_test_asset,
 )
-from generation_worker.typecheck import typecheck_playwright_code
+from generation_worker.typecheck import assertion_changes, typecheck_playwright_code
 from mailer import FRONTEND_BASE_URL, send_email, smtp_configured
 from object_store import ObjectStore
 from secrets_client.vault_client import SecretRef, VaultSecretsClient
@@ -69,7 +69,9 @@ from test_suite_assembler import (
 )
 from workflows import (
     AUTO_HEAL_ATTEMPT_CAP,
+    HEAL_ASSERTION_GUARD_ERROR_PREFIX,
     HEAL_CLAIM_STALE_AFTER,
+    HEAL_TYPECHECK_ERROR_PREFIX,
     HEALABLE_STATUSES,
     TEST_RUN_STALE_AFTER,
     ExecutableTest,
@@ -81,6 +83,10 @@ from workflows import (
     PrepareTestRunActivityInput,
     PrepareTestRunActivityResult,
     SendTestRunReportEmailActivityInput,
+    heal_eligibility,
+    heal_policy,
+    is_infra_failure,
+    is_locator_failure,
 )
 
 from execution_worker.db import engine
@@ -1099,62 +1105,14 @@ def _write_allure_final_marker(
 # increments either of TestResult's auto_/manual_heal_attempt_count.
 MAX_INFRA_RETRIES_PER_CALL = 1
 
-_INFRA_ERROR_SIGNATURES = (
-    "playwright produced no parseable json report",  # _parse_playwright_report — process/report itself broke
-    "its setup dependency likely failed",  # auth.setup.ts (login) failed, not this test's code
-    "playwright report contained no suite matching",  # assembly/config issue
-    "playwright test exceeded the execution timeout",  # _run_playwright_test — the WHOLE process was killed after
-    # PLAYWRIGHT_RUN_TIMEOUT_SECONDS; distinct from Playwright's own
-    # per-test `timedOut` result (a real, healable locator/assertion
-    # timeout with its own, different error_message) — only this exact
-    # fixed string means the whole browser/subprocess hung, an environment
-    # problem, not this test's own logic.
-)
-
-
-def _is_infra_failure(status: str, error_message: str | None) -> bool:
-    if status not in ("errored", "timed_out"):
-        return False
-    if not error_message:
-        return True
-    lowered = error_message.lower()
-    return any(sig in lowered for sig in _INFRA_ERROR_SIGNATURES)
-
-
-# Deterministic trigger for live inspection (heal_test_activity's loop,
-# below) — mirrors _is_infra_failure's style. Only ever checked AFTER
-# _is_infra_failure has already had first say (the loop's own infra break
-# runs before this), so an infra-classified failure never reaches this
-# classifier at all: infra failures must never consume a heal attempt OR
-# trigger a live-browser inspection over the same root cause. These five
-# patterns map to the five categories a stale/broken locator actually shows
-# up as: a locator Playwright waited for and never found, a locator that now
-# matches more than one element (UI changed shape), an element that's been
-# removed from the DOM since the test was written, a plain not-found/no-match
-# message for dynamic content that hasn't rendered (yet, or ever, if the app
-# changed), and the shared `ensureVisible` helper's own custom error (a
-# locator that resolved but never became visible even after an explicit
-# scroll-into-view — the same stale/wrong-locator or changed-UI root cause
-# as the other four, just worded by this project's own helper instead of by
-# Playwright itself).
-_LOCATOR_FAILURE_PATTERNS = (
-    re.compile(r"waiting for (?:locator|selector)", re.IGNORECASE),
-    re.compile(r"strict mode violation.*resolved to \d+ elements", re.IGNORECASE),
-    re.compile(r"element is not attached to (?:the )?dom", re.IGNORECASE),
-    re.compile(r"no elements? found for selector|element(?:s)? not found", re.IGNORECASE),
-    re.compile(r"is not visible even after scrolling", re.IGNORECASE),
-)
-
-
-def _is_locator_failure(status: str, error_message: str | None) -> bool:
-    """Deterministic — never left to AI judgment alone. True only for a
-    failure that looks like a stale/invalid locator, changed UI, a missing
-    element, or unrendered dynamic content; used to gate whether
-    heal_test_activity's loop launches a live Playwright inspection before
-    asking the AI for a fix."""
-    if not error_message:
-        return False
-    return any(pattern.search(error_message) for pattern in _LOCATOR_FAILURE_PATTERNS)
+# The infra and live-inspection classifiers now live, unchanged, in
+# `workflows.heal_policy`, next to the one healing exclusion shared with
+# LiveHealActivity and the API's manual-retry endpoint: a failure raised
+# inside an `expect(...)` assertion is never healed. The underscored names
+# are kept so this module's call sites (and tests) read as before.
+_INFRA_ERROR_SIGNATURES = heal_policy._INFRA_ERROR_SIGNATURES
+_is_infra_failure = is_infra_failure
+_is_locator_failure = is_locator_failure
 
 
 async def _run_playwright_with_infra_retry(
@@ -1264,6 +1222,17 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
             # budget is already spent. Safe no-op: this is what lets
             # HealTestActivity be called unconditionally after every
             # ExecuteTestActivity with no branching in workflow code.
+            return None
+        blocked_reason = heal_eligibility(test_result.status, test_result.error_message)
+        if blocked_reason is not None:
+            # A failure raised inside an assertion: no AI call, no attempt
+            # spent — the test reports what it actually found. Every other
+            # failure goes through the loop below exactly as before.
+            logger.info(
+                "HealTestActivity: test_result_id=%s not healed: %s",
+                input.test_result_id,
+                blocked_reason,
+            )
             return None
 
         application = session.exec(
@@ -1386,21 +1355,28 @@ def _fetch_latest_screenshot_sync(test_result_pk: uuid.UUID) -> bytes | None:
         return None
 
 
-HEAL_TYPECHECK_ERROR_PREFIX = "generated fix failed typecheck: "
-
-
-def _record_typecheck_failure_sync(
-    test_result_pk: uuid.UUID, tsc_errors: list[str], triggered_manually: bool
+def _record_rejected_heal_attempt_sync(
+    test_result_pk: uuid.UUID, prefix: str, problems: list[str], triggered_manually: bool
 ) -> None:
+    """A heal candidate that was never promoted — it failed typecheck, or it
+    changed an assertion. The AI call still counts as an attempt."""
     with Session(engine) as session:
         test_result = session.exec(select(TestResult).where(TestResult.id == test_result_pk)).one()
         if triggered_manually:
             test_result.manual_heal_attempt_count += 1
         else:
             test_result.auto_heal_attempt_count += 1
-        test_result.error_message = HEAL_TYPECHECK_ERROR_PREFIX + "; ".join(tsc_errors[:5])
+        test_result.error_message = prefix + "; ".join(problems[:5])
         session.add(test_result)
         session.commit()
+
+
+def _record_typecheck_failure_sync(
+    test_result_pk: uuid.UUID, tsc_errors: list[str], triggered_manually: bool
+) -> None:
+    _record_rejected_heal_attempt_sync(
+        test_result_pk, HEAL_TYPECHECK_ERROR_PREFIX, tsc_errors, triggered_manually
+    )
 
 
 def _record_heal_supersede_sync(
@@ -1528,6 +1504,17 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
             )
             if state.status not in HEALABLE_STATUSES or state.heal_attempt_count >= ctx.attempt_cap:
                 break
+            blocked_reason = heal_eligibility(state.status, state.error_message)
+            if blocked_reason is not None:
+                # A previous attempt fixed the original failure and the
+                # rerun now fails inside an assertion — that is a real
+                # result, never something to keep healing.
+                logger.info(
+                    "HealTestActivity: test_result_id=%s stopping heal loop: %s",
+                    input.test_result_id,
+                    blocked_reason,
+                )
+                break
             if _is_infra_failure(state.status, state.error_message):
                 # Already resolved by the step-2 pre-check above; landing
                 # here again is unexpected but safe to stop on rather than
@@ -1630,6 +1617,38 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
                     ", ".join(sorted(invented))[:300],
                 )
                 break
+
+            # The assertion guard: a heal may fix the locators actions use,
+            # never anything inside an `expect(...)` — subject, matcher,
+            # expected values, options, or the assertion's presence. Checked
+            # against the current asset, whose assertions are the original
+            # ones: anything promoted earlier in this loop passed this same
+            # check. A rejected candidate is handled like a typecheck
+            # failure — counted, never promoted, and carried forward as
+            # `repair` so the next attempt sees exactly what to restore.
+            changed_assertions = await assertion_changes(state.test_asset.code, code_result.code)
+            if changed_assertions:
+                logger.info(
+                    "HealTestActivity: test_result_id=%s rejected a fix that changed assertions: %s",
+                    input.test_result_id,
+                    "; ".join(changed_assertions[:5]),
+                )
+                await asyncio.to_thread(
+                    _record_rejected_heal_attempt_sync,
+                    ctx.test_result_pk,
+                    HEAL_ASSERTION_GUARD_ERROR_PREFIX,
+                    changed_assertions,
+                    input.triggered_manually,
+                )
+                repair = (
+                    code_result.code,
+                    [
+                        "This fix changed an assertion. Restore it exactly — never change, "
+                        "add or remove an expect(...) assertion: " + change
+                        for change in changed_assertions
+                    ],
+                )
+                continue
 
             # Typecheck passed — this candidate becomes the new baseline.
             # Clear any in-flight repair turn: a subsequent failure (if any)
@@ -1998,14 +2017,18 @@ def _resolve_report_recipient(
 def _test_failure_message(error_message: str | None) -> str | None:
     """The email shows final statuses only, never self-healing detail.
 
-    ponytail: a heal attempt whose generated fix fails typecheck overwrites
-    `TestResult.error_message` with that typecheck error, losing the test's
-    own failure message — so the email drops it (the row still shows the test,
-    and the report link has the run's own failure details). A fuller fix would
+    ponytail: a heal attempt whose generated fix is rejected (fails
+    typecheck, or changes an assertion) overwrites `TestResult.error_message`
+    with that rejection, losing the test's own failure message — so the email
+    drops it (the row still shows the test, and the report link has the run's
+    own failure details). `workflows.heal_policy.heal_eligibility` also has to
+    treat those prefixes as "a heal is already under way". A fuller fix would
     store heal errors in their own field and leave `error_message` as the
     test's last real failure.
     """
-    if error_message and error_message.startswith(HEAL_TYPECHECK_ERROR_PREFIX):
+    if error_message and error_message.startswith(
+        (HEAL_TYPECHECK_ERROR_PREFIX, HEAL_ASSERTION_GUARD_ERROR_PREFIX)
+    ):
         return None
     return error_message
 
