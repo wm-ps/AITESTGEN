@@ -5,6 +5,7 @@ import { EmptyState, RunsIllustration } from '../EmptyState'
 import { Skeleton } from '../Skeleton'
 import { formatDuration, parseTrigger } from './RunsTab'
 import { faIcon } from '../../faIcon'
+import { useCanEdit } from '../../PermissionsContext'
 
 const POLL_INTERVAL_MS = 5000
 
@@ -142,11 +143,14 @@ function QuickActionsGrid({
 }) {
   // Without discovery there are no Journeys/Scenarios tabs to jump to, and
   // Schedules only ever automates suite runs.
-  const actions = discoveryEnabled
-    ? QUICK_ACTIONS
-    : QUICK_ACTIONS.filter((a) => a.target !== 'journeys' && a.target !== 'scenarios').map((a) =>
-        a.target === 'schedules' ? { ...a, hint: 'Automate suite runs on a cadence.' } : a,
-      )
+  const canEdit = useCanEdit()
+  const actions = (
+    discoveryEnabled
+      ? QUICK_ACTIONS
+      : QUICK_ACTIONS.filter((a) => a.target !== 'journeys' && a.target !== 'scenarios').map((a) =>
+          a.target === 'schedules' ? { ...a, hint: 'Automate suite runs on a cadence.' } : a,
+        )
+  ).filter((a) => canEdit || (a.target !== 'record' && a.target !== 'export'))
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 14 }}>
       {actions.map((action) => {

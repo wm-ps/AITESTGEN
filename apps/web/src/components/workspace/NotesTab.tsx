@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faFloppyDisk, faPen } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api } from '../../api'
+import { useCanEdit } from '../../PermissionsContext'
 import { NotesFields, toNotesFormState, toNotesPayload, type NotesFormState } from '../NotesFields'
 import { LoadingDots } from '../LoadingDots'
 import { SkeletonRows } from '../Skeleton'
@@ -21,6 +22,8 @@ export function NotesTab({ applicationId }: { applicationId: string }) {
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  // A viewer reads the notes; the fields are disabled and there's no Save.
+  const canEdit = useCanEdit()
 
   useEffect(() => {
     let cancelled = false
@@ -76,7 +79,7 @@ export function NotesTab({ applicationId }: { applicationId: string }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <form onSubmit={handleSubmit} style={panelStyle}>
-        <fieldset disabled={saving} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
+        <fieldset disabled={saving || !canEdit} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
           <div
             style={{
               display: 'flex',
@@ -94,6 +97,7 @@ export function NotesTab({ applicationId }: { applicationId: string }) {
             <NotesFields form={form} onChange={setForm} />
           </div>
 
+          {canEdit && (
           <div
             style={{
               display: 'flex',
@@ -140,6 +144,7 @@ export function NotesTab({ applicationId }: { applicationId: string }) {
               )}
             </button>
           </div>
+          )}
         </fieldset>
       </form>
     </div>

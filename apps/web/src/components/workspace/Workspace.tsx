@@ -5,6 +5,7 @@ import { ApiError, api, type TestRunRead } from '../../api'
 import { AppIdentityLine } from '../AppIdentityLine'
 import { ServiceErrorNote } from '../ServiceError'
 import { Toast } from '../Toast'
+import { useCanEdit } from '../../PermissionsContext'
 import { CancelRunButton } from './CancelRunDialog'
 import { DownloadTab } from './DownloadTab'
 import { NotesTab } from './NotesTab'
@@ -116,6 +117,7 @@ export function Workspace({
   // project) and off the toolbar (Run Suite) until then, same reasoning as
   // hasRunEver above.
   const [hasTestsGenerated, setHasTestsGenerated] = useState(false)
+  const canEdit = useCanEdit()
   const [triggerError, setTriggerError] = useState<string | null>(null)
   const [triggerErrorUnavailable, setTriggerErrorUnavailable] = useState(false)
   const [running, setRunning] = useState(false)
@@ -219,7 +221,7 @@ export function Workspace({
   }
 
   useEffect(() => {
-    if (!autoTriggerRunOnMountRef.current) return
+    if (!autoTriggerRunOnMountRef.current || !canEdit) return
     // Cleared before firing, not after — StrictMode dev double-invokes this
     // effect (mount, cleanup, mount again) to catch exactly this kind of
     // non-idempotent effect; `handleRunSuite` has no dedupe of its own
@@ -269,7 +271,7 @@ export function Workspace({
               </>
             )}
           </div>
-          {activeTab === 'runs' && hasTestsGenerated && (
+          {activeTab === 'runs' && hasTestsGenerated && canEdit && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>
               <RunSuiteButton
                 running={running}

@@ -8,6 +8,7 @@ import { Pagination } from './Pagination'
 import { SkeletonRows } from './Skeleton'
 import { Toast } from './Toast'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
+import { useCanEdit } from '../PermissionsContext'
 
 const POLL_INTERVAL_MS = 15000
 const APPS_PER_PAGE = 8
@@ -491,6 +492,7 @@ export function Home({
   onResumeApplication: (application: ApplicationRead) => void
 }) {
   const isAdmin = user.role === 'admin'
+  const canEdit = useCanEdit()
   const [applications, setApplications] = useState<HomeApplicationRead[] | null>(null)
   const [snackbar, setSnackbar] = useState<{ message: string; kind: 'error' | 'info' } | null>(null)
   const [page, setPage] = useState(0)
@@ -653,6 +655,7 @@ export function Home({
           <div style={{ fontSize: 13, color: 'var(--fg-3)', marginTop: 9, maxWidth: 460, lineHeight: '21px' }}>
             Point Vantage at a deployed URL and optional login. Discovery maps the pages, models journeys and generates the Playwright suite — usually inside 40 minutes.
           </div>
+          {canEdit && (
           <button
             type="button"
             onClick={onConnectApp}
@@ -676,6 +679,7 @@ export function Home({
             <FontAwesomeIcon icon={faPlus} style={{ fontSize: 11 }} />
             Add application
           </button>
+          )}
         </div>
       )}
 

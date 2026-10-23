@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faEllipsisVertical } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type ScheduleRead } from '../../api'
+import { useCanEdit } from '../../PermissionsContext'
 import { ScheduleDialog } from './ScheduleDialog'
 import { SkeletonRows } from '../Skeleton'
 import { EmptyState, SchedulesIllustration } from '../EmptyState'
@@ -192,6 +193,9 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
   const [actionError, setActionError] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [openMenuId, setOpenMenuId] = useState<string | null>(null)
+  // A viewer sees every schedule and its next run, but no create/edit/
+  // enable/delete/run-now controls.
+  const canEdit = useCanEdit()
 
   const reload = useCallback(
     async (signal?: { cancelled: boolean }) => {
@@ -273,6 +277,7 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
   }
   return (
     <div>
+      {canEdit && (
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
         <button
           type="button"
@@ -295,6 +300,7 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
           New schedule
         </button>
       </div>
+      )}
 
       {actionError && (
         <p role="alert" style={{ color: 'var(--bad)', fontSize: 13, marginBottom: 14 }}>
@@ -309,7 +315,11 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
           illustration={<SchedulesIllustration />}
           variant="scene"
           title="No schedules yet"
-          subtitle="Create one to run this Application's tests automatically on a recurring cadence."
+          subtitle={
+            canEdit
+              ? "Create one to run this Application's tests automatically on a recurring cadence."
+              : "This Application has no recurring test runs scheduled."
+          }
         />
       ) : (
         <div
@@ -368,11 +378,16 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
               <div className="caption" style={{ fontSize: 12 }}>
                 {schedule.next_run_at ? formatDateTime(schedule.next_run_at) : '—'}
               </div>
-              <ToggleSwitch
-                checked={schedule.enabled}
-                disabled={pendingAction === schedule.id}
-                onChange={() => handleToggle(schedule)}
-              />
+              {canEdit ? (
+                <ToggleSwitch
+                  checked={schedule.enabled}
+                  disabled={pendingAction === schedule.id}
+                  onChange={() => handleToggle(schedule)}
+                />
+              ) : (
+                <span style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>{schedule.enabled ? 'On' : 'Off'}</span>
+              )}
+              {canEdit ? (
               <RowMenu
                 open={openMenuId === schedule.id}
                 onOpenChange={(open) => setOpenMenuId(open ? schedule.id : null)}
@@ -395,6 +410,9 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
                   },
                 ]}
               />
+              ) : (
+                <div />
+              )}
             </div>
           ))}
         </div>

@@ -1,27 +1,33 @@
 import { useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faEnvelope, faPaperPlane, faXmark } from '@fortawesome/free-solid-svg-icons'
-import { ApiError, api } from '../api'
+import { ApiError, api, type Role } from '../api'
 import { LoadingDots } from './LoadingDots'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
 
-const ROLES = [
+// Shared by this invite modal and Team members' "Change role" picker.
+export const ROLE_OPTIONS: { key: Role; label: string; hint: string }[] = [
   {
-    key: 'member' as const,
+    key: 'member',
     label: 'Member',
     hint: 'Can onboard applications, review scenarios and trigger runs.',
   },
   {
-    key: 'admin' as const,
+    key: 'admin',
     label: 'Admin',
     hint: 'Everything a member can do, plus saved credentials and discovery limits.',
+  },
+  {
+    key: 'viewer',
+    label: 'Viewer',
+    hint: 'Can view applications, test cases and run results — no changes.',
   },
 ]
 
 export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
   useEscapeToClose(onClose)
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState<'admin' | 'member'>('member')
+  const [role, setRole] = useState<Role>('member')
   const [error, setError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -170,7 +176,7 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
                   <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>Role</span>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {ROLES.map((r) => {
+                    {ROLE_OPTIONS.map((r) => {
                       const active = role === r.key
                       return (
                         <div

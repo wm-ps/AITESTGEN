@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faChartPie, faChevronRight, faGear, faLayerGroup, faPlus, faRightLeft, faUsers } from '@fortawesome/free-solid-svg-icons'
+import { faChartPie, faChevronRight, faEye, faGear, faLayerGroup, faPlus, faRightLeft, faUsers } from '@fortawesome/free-solid-svg-icons'
 // Bell import dropped alongside the commented-out notifications icon below —
 // restore both together once there's a real notification source.
 import { api, type UserRead } from '../../api'
+import { useIsViewer } from '../../PermissionsContext'
 import { VantageBrand } from '../Brand'
 
 // Vantage V2 redesign — left sidebar + top bar chrome, replacing the old
@@ -66,6 +67,7 @@ export function AppShell({
   children: React.ReactNode
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const isViewer = useIsViewer()
   // Sidebar "Applications" badge count — matches the prototype's nav badge
   // (navMonitor). A light one-shot fetch rather than threading the
   // Home/Overview screens' own application lists through every render of
@@ -158,10 +160,12 @@ export function AppShell({
               </span>
             )}
           </div>
-          <div style={navItemStyle(route === 'wizard')} onClick={onAddApplication}>
-            <FontAwesomeIcon icon={faPlus} style={{ width: 16, fontSize: 13, textAlign: 'center' }} />
-            <span style={{ flex: 1 }}>Add application</span>
-          </div>
+          {!isViewer && (
+            <div style={navItemStyle(route === 'wizard')} onClick={onAddApplication}>
+              <FontAwesomeIcon icon={faPlus} style={{ width: 16, fontSize: 13, textAlign: 'center' }} />
+              <span style={{ flex: 1 }}>Add application</span>
+            </div>
+          )}
 
           {app && (
             <>
@@ -212,7 +216,8 @@ export function AppShell({
               already fills the sidebar, and keeping Configuration too forces
               a scroll on small screens for no benefit (Team members/Settings
               are one click away via "Exit application" either way). */}
-          {!app && (
+          {/* A viewer has neither Team members (admin-only) nor Settings. */}
+          {!app && !isViewer && (
             <>
               <div style={{ ...sectionLabelStyle, padding: '16px 10px 5px' }}>Configuration</div>
               {user.role === 'admin' && onGoTeam && (
@@ -256,31 +261,54 @@ export function AppShell({
             )}
             <span style={{ color: 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{crumb}</span>
           </div>
-          <button
-            type="button"
-            onClick={onAddApplication}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              height: 34,
-              padding: '0 14px',
-              borderRadius: 8,
-              background: 'var(--accent)',
-              color: '#fff',
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: 'pointer',
-              boxShadow: 'var(--accent-glow)',
-              flex: 'none',
-              whiteSpace: 'nowrap',
-              border: 'none',
-              font: 'inherit',
-            }}
-          >
-            <FontAwesomeIcon icon={faPlus} style={{ fontSize: 11 }} />
-            Add application
-          </button>
+          {isViewer ? (
+            <span
+              title="You can view everything in this workspace but not change it."
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                height: 26,
+                padding: '0 10px',
+                borderRadius: 1000,
+                background: 'var(--hover)',
+                color: 'var(--fg-3)',
+                fontSize: 12,
+                fontWeight: 600,
+                flex: 'none',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <FontAwesomeIcon icon={faEye} style={{ fontSize: 11 }} />
+              View only
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={onAddApplication}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                height: 34,
+                padding: '0 14px',
+                borderRadius: 8,
+                background: 'var(--accent)',
+                color: '#fff',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+                boxShadow: 'var(--accent-glow)',
+                flex: 'none',
+                whiteSpace: 'nowrap',
+                border: 'none',
+                font: 'inherit',
+              }}
+            >
+              <FontAwesomeIcon icon={faPlus} style={{ fontSize: 11 }} />
+              Add application
+            </button>
+          )}
           <div style={{ width: 1, height: 24, background: 'var(--border-2)', flex: 'none' }} />
           {/* Notifications — no backing feature yet, commented out rather than
               shown as dead chrome on every page. Re-enable once there's a real

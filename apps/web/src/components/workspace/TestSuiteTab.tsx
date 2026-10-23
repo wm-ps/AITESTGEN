@@ -14,6 +14,7 @@ import { Spinner } from '../LoadingDots'
 import { SkeletonRows } from '../Skeleton'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { LiveExplorationPanel, requestIdStorageKey, TERMINAL_STATUSES } from './LiveExplorationPanel'
+import { useCanEdit } from '../../PermissionsContext'
 
 const ASSETS_PER_PAGE = 10
 
@@ -250,6 +251,8 @@ function TestDataEditor({
   const [saving, setSaving] = useState(false)
   const [regenerating, setRegenerating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // A viewer can read a test's data but not change it or regenerate the test.
+  const canEdit = useCanEdit()
 
   async function pollUntilTerminal(scenarioId: string): Promise<void> {
     // eslint-disable-next-line no-constant-condition
@@ -347,7 +350,7 @@ function TestDataEditor({
             <input
               value={draft[field.name] ?? ''}
               placeholder={`Enter ${field.name}`}
-              disabled={busy}
+              disabled={busy || !canEdit}
               onChange={(e) => setDraft((d) => ({ ...d, [field.name]: e.target.value }))}
               style={{
                 height: 34,
@@ -367,6 +370,7 @@ function TestDataEditor({
         ))}
       </div>
       {error && <p style={{ color: 'var(--danger-strong)', fontSize: 12, margin: 0 }}>{error}</p>}
+      {canEdit && (
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <button
           type="button"
@@ -393,6 +397,7 @@ function TestDataEditor({
           {regenerating ? 'Regenerating…' : saving ? 'Saving…' : 'Save'}
         </button>
       </div>
+      )}
     </div>
   )
 }
@@ -633,6 +638,8 @@ export function TestSuiteTab({
   // to closed — hiding an in-progress generation even though the backend
   // workflow kept running regardless.
   const [authoringOpen, setAuthoringOpen] = useState(false)
+  // Authoring creates test cases — not for a viewer.
+  const canAuthor = useCanEdit()
 
   // Reopen automatically, but only once we've actually confirmed the
   // persisted request is still in flight — `[FIXED]` regression: opening
@@ -889,6 +896,7 @@ export function TestSuiteTab({
           }}
           style={{ width: 240, maxWidth: '100%', boxSizing: 'border-box', height: 34, padding: '0 12px', border: '1px solid var(--border-2)', borderRadius: 8, fontSize: 13, fontFamily: 'inherit', color: 'var(--fg-1)', background: 'var(--panel)' }}
         />
+        {canAuthor && (
         <button
           type="button"
           onClick={() => setAuthoringOpen((open) => !open)}
@@ -912,8 +920,9 @@ export function TestSuiteTab({
           <FontAwesomeIcon icon={authoringOpen ? faXmark : faWandMagicSparkles} style={{ fontSize: 11 }} />
           Author a test case
         </button>
+        )}
       </div>
-      {authoringOpen && (
+      {authoringOpen && canAuthor && (
         <LiveExplorationPanel
           applicationId={applicationId}
           onClose={() => setAuthoringOpen(false)}
@@ -995,7 +1004,7 @@ export function TestSuiteTab({
             variant="scene"
             title="No test cases generated yet"
             subtitle={
-              discoveryEnabled
+              discoveryEnabled || !canAuthor
                 ? 'Test cases appear here once discovery finds journeys and the suite is generated.'
                 : 'Author a test case in plain language or record a flow to add your first test case.'
             }

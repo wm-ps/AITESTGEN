@@ -5,6 +5,7 @@ import { faImage } from '@fortawesome/free-regular-svg-icons'
 import { api, type JourneyRead, type JourneyStepRead } from '../api'
 import { useDiscoveryProgress } from '../hooks/useDiscoveryProgress'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
+import { useCanEdit } from '../PermissionsContext'
 import { AppIdentityLine } from './AppIdentityLine'
 import { ServiceErrorNote } from './ServiceError'
 import { ImportProgress } from './ImportProgress'
@@ -211,6 +212,10 @@ export function DiscoverJourneys({
   const [statusOverride, setStatusOverride] = useState<string | null>(null)
   const [pauseResumeBusy, setPauseResumeBusy] = useState(false)
   const [pauseResumeError, setPauseResumeError] = useState<string | null>(null)
+  // A viewer browses journeys but can't pause/resume discovery, generate
+  // scenarios ("Review scenarios" starts generation — the sidebar still
+  // opens Scenarios), or rename/delete a journey.
+  const canEdit = useCanEdit()
   // Distinguishes "discovery hasn't produced any Journeys yet" (show
   // Discovery Progress) from "every Journey was deleted" (show the bare
   // "All journeys have been removed." empty state, EXPERIENCE.md State
@@ -417,7 +422,7 @@ export function DiscoverJourneys({
                 color: 'var(--fg)',
               }}
             />
-            {(status === 'running' || status === 'paused') && (
+            {canEdit && (status === 'running' || status === 'paused') && (
               <button
                 type="button"
                 className="button-secondary"
@@ -427,7 +432,7 @@ export function DiscoverJourneys({
                 {status === 'running' ? 'Pause Discovery' : 'Resume Discovery'}
               </button>
             )}
-            {journeys.length > 0 && (
+            {canEdit && journeys.length > 0 && (
               <button
                 type="button"
                 onClick={handleContinueToScenarios}
@@ -527,7 +532,9 @@ export function DiscoverJourneys({
                       <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.014em' }}>{journey.name}</span>
                     )}
                     <span style={{ flex: 1 }} />
-                    <JourneyRowMenu onRename={() => setRenamingId(journey.id)} onDelete={() => handleDelete(journey.id)} />
+                    {canEdit && (
+                      <JourneyRowMenu onRename={() => setRenamingId(journey.id)} onDelete={() => handleDelete(journey.id)} />
+                    )}
                   </div>
                   {journey.description && (
                     <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: -8 }}>{journey.description}</div>

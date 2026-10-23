@@ -6,6 +6,7 @@ const FlaskConical = faIcon(faVial)
 import { api, type TestCaseRead, type TestSuiteRead } from '../api'
 import { LoadingDots, Spinner } from './LoadingDots'
 import { GenerationLoader } from './GenerationLoader'
+import { useCanEdit } from '../PermissionsContext'
 import { ServiceError } from './ServiceError'
 import { Pagination } from './Pagination'
 import { CodeModal } from './workspace/TestSuiteTab'
@@ -216,6 +217,9 @@ export function TestSuiteResults({
   const startedAtRef = useRef(Date.now())
   const [stuck, setStuck] = useState(false)
   const [regenerating, setRegenerating] = useState(false)
+  // A viewer watches generation and reads the results; no regenerate,
+  // download, run, retry or terminate.
+  const canEdit = useCanEdit()
 
   async function handleRegenerate() {
     setRegenerating(true)
@@ -396,7 +400,7 @@ export function TestSuiteResults({
               </p>
             }
             footer={
-              stuck && (
+              stuck && canEdit && (
                 <button
                   type="button"
                   disabled={regenerating}
@@ -503,6 +507,7 @@ export function TestSuiteResults({
               <h1 style={{ fontSize: 19, fontWeight: 700, color: '#FFFFFF', margin: '0 0 14px' }}>
                 Test Suites Generated
               </h1>
+              {canEdit && (
               <div style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>
                 <button
                   type="button"
@@ -545,6 +550,7 @@ export function TestSuiteResults({
                   Run Suite
                 </button>
               </div>
+              )}
 
               {hasIncomplete && (
                 <div
@@ -563,6 +569,7 @@ export function TestSuiteResults({
                   <span style={{ fontSize: 12.5, color: '#FFD24D', fontWeight: 600 }}>
                     {failedTestCaseCount} test case{failedTestCaseCount === 1 ? '' : 's'} failed to generate.
                   </span>
+                  {canEdit && (
                   <button
                     type="button"
                     disabled={retrying}
@@ -583,6 +590,7 @@ export function TestSuiteResults({
                   >
                     {retrying ? <LoadingDots label="Generating" /> : 'Retry Generation'}
                   </button>
+                  )}
                 </div>
               )}
             </div>
@@ -733,6 +741,7 @@ export function TestSuiteResults({
                         <p className="caption" style={{ margin: 0, fontSize: 12, color: 'var(--warn-strong)' }}>
                           Some scenarios in this Journey couldn't be generated after several retries.
                         </p>
+                        {canEdit && (
                         <button
                           type="button"
                           disabled={terminatingSuiteId === suite.id}
@@ -753,6 +762,7 @@ export function TestSuiteResults({
                         >
                           {terminatingSuiteId === suite.id ? 'Terminating…' : 'Terminate'}
                         </button>
+                        )}
                       </div>
                     )}
 

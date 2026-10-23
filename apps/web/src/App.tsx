@@ -22,6 +22,7 @@ import { TestSuiteResults } from './components/TestSuiteResults'
 import { Toast } from './components/Toast'
 import { Workspace, type WorkspaceTab, WORKSPACE_TABS } from './components/workspace/Workspace'
 import { AppShell, type AppShellTab, type ShellRoute } from './components/shell/AppShell'
+import { PermissionsProvider } from './PermissionsContext'
 
 // Vantage V2 redesign: AppShell (left sidebar + topbar) wraps every
 // signed-in view. Views that used to be separate Stepper-gated wizard
@@ -369,8 +370,12 @@ function App() {
   // list) once the user actually visits one of its own tabs, so waiting on
   // `workspaceTabs` for these would leave the sidebar missing Overview the
   // whole time a user sits on Journeys/Scenarios.
+  // A viewer has no Record and play (it creates test cases) and no Download
+  // project (the API refuses them the export).
+  const isViewer = user.role === 'viewer'
   const mergedAppTabs: AppShellTab[] = application
     ? [...WORKSPACE_TABS, ...(discoveryTabsVisible ? [JOURNEYS_TAB, SCENARIOS_TAB] : []), RECORD_TAB]
+        .filter((t) => !isViewer || (t.key !== 'record' && t.key !== 'export'))
         .sort((a, b) => TAB_ORDER.indexOf(a.key) - TAB_ORDER.indexOf(b.key))
         .map((t) => ({ key: t.key, label: t.label, icon: t.icon }))
     : []
@@ -474,7 +479,7 @@ function App() {
   )
 
   return (
-    <>
+    <PermissionsProvider value={user.role}>
       <AppShell
         user={user}
         route={shellRoute ?? 'apps'}
@@ -515,7 +520,7 @@ function App() {
       )}
 
       {globalLoading && <GlobalLoadingOverlay message={globalLoading} />}
-    </>
+    </PermissionsProvider>
   )
 }
 

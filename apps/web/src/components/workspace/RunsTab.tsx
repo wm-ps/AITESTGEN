@@ -17,6 +17,7 @@ import { EmptyState, RunsIllustration } from '../EmptyState'
 import { SkeletonRows } from '../Skeleton'
 import { Pagination } from '../Pagination'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
+import { useCanEdit, useIsViewer } from '../../PermissionsContext'
 import { ChevronIcon } from './TestSuiteTab'
 import { allureReportRoute } from '../../allureReportRoute'
 
@@ -381,6 +382,7 @@ function TestResultRow({
   const [liveResult, setLiveResult] = useState(result)
   const [healing, setHealing] = useState(false)
   const [healError, setHealError] = useState<string | null>(null)
+  const canEdit = useCanEdit()
 
   // A run-level poll (RunsTab) refreshing `result` should win — except
   // while our own tighter poll below is actively tracking an in-flight
@@ -452,7 +454,10 @@ function TestResultRow({
   // Manual eligibility is independent of automatic's own state — a test
   // whose automatic healing already used its fixed 2 attempts still offers
   // a manual retry, as long as manual's own separate budget isn't spent.
+  // A viewer never gets Retry (or its disabled "unavailable" variant) — the
+  // Healing…/Self-healed/Exhausted labels are status, so they still show.
   const canRetryHeal =
+    canEdit &&
     NON_PASSED_STATUSES.has(liveResult.status) &&
     liveResult.manual_heal_attempt_count < liveResult.max_heal_attempts
   // Self-healing never acts on a failure raised inside an assertion — the
@@ -982,6 +987,8 @@ function RunDetail({
   onBack: () => void
 }) {
   const isRunning = run.status === 'pending' || run.status === 'running'
+  // The API refuses a viewer the Allure report; screenshots/traces still show.
+  const canOpenReport = !useIsViewer()
   const [hoveredSegment, setHoveredSegment] = useState<ResultSegment | null>(null)
   const [resultsPage, setResultsPage] = useState(0)
   const [resultSortKey, setResultSortKey] = useState<ResultSortKey | null>(null)
@@ -1047,7 +1054,7 @@ function RunDetail({
         {/* A plain link to the app's own report route (which fetches a
             fresh presigned URL, then redirects) — opening the presigned URL
             after an `await` would lose the click and get popup-blocked. */}
-        {run.allure_report_available && (
+        {run.allure_report_available && canOpenReport && (
           <a
             href={allureReportRoute(applicationId, run.id)}
             target="_blank"

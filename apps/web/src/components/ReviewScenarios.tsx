@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBrain, faChevronDown, faChevronRight, faRoute, faTableList } from '@fortawesome/free-solid-svg-icons'
 import { api, formatTestCaseNumber, type JourneyRead, type ScenarioRead } from '../api'
+import { useCanEdit } from '../PermissionsContext'
 import { AppIdentityLine } from './AppIdentityLine'
 import { GenerationLoader } from './GenerationLoader'
 import { ServiceErrorNote } from './ServiceError'
@@ -191,6 +192,9 @@ export function ReviewScenarios({
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [autofillingId, setAutofillingId] = useState<string | null>(null)
   const [autofillError, setAutofillError] = useState<string | null>(null)
+  // A viewer reads scenarios and their test data; no generate, rename,
+  // delete, edit, auto-generate or clear.
+  const canEdit = useCanEdit()
   // A manual edit auto-saves on blur with no explicit Save button — without
   // this, there's no visible confirmation it actually persisted, which
   // reads as "did this do anything?" even though it genuinely saved.
@@ -416,6 +420,7 @@ export function ReviewScenarios({
             )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)', flexShrink: 0 }}>
+              {canEdit && (
               <button
                 type="button"
                 onClick={onContinueToGenerate}
@@ -440,6 +445,7 @@ export function ReviewScenarios({
                 <TableList size={14} />
                 Generate test cases
               </button>
+              )}
           </div>
         </div>
 
@@ -635,9 +641,11 @@ export function ReviewScenarios({
                                 <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--fg-4)', whiteSpace: 'nowrap' }}>
                                   {scenario.steps.length} steps
                                 </span>
-                                <div onClick={(e) => e.stopPropagation()}>
-                                  <ScenarioRowMenu onRename={() => setRenamingId(scenario.id)} onDelete={() => handleDelete(scenario.id)} />
-                                </div>
+                                {canEdit && (
+                                  <div onClick={(e) => e.stopPropagation()}>
+                                    <ScenarioRowMenu onRename={() => setRenamingId(scenario.id)} onDelete={() => handleDelete(scenario.id)} />
+                                  </div>
+                                )}
                               </div>
                             </div>
 
@@ -686,7 +694,10 @@ export function ReviewScenarios({
                                                   id={fieldId}
                                                   defaultValue={field.value ?? ''}
                                                   placeholder={`Enter ${field.name}`}
-                                                  onBlur={(e) => handleTestDataChange(scenario.id, field.name, e.target.value)}
+                                                  readOnly={!canEdit}
+                                                  onBlur={(e) => {
+                                                    if (canEdit) handleTestDataChange(scenario.id, field.name, e.target.value)
+                                                  }}
                                                   style={{ height: 34, padding: '0 10px', border: `1px solid ${missing ? 'var(--warn-2)' : 'var(--border-2)'}`, borderRadius: 8, fontSize: 12.5, color: 'var(--fg-1)', background: 'var(--panel)', outline: 'none' }}
                                                 />
                                                 <div style={{ fontSize: 10.5, color: 'var(--fg-4)' }}>
@@ -697,6 +708,7 @@ export function ReviewScenarios({
                                             )
                                           })}
                                         </div>
+                                        {canEdit && (
                                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
                                           <button
                                             type="button"
@@ -716,6 +728,7 @@ export function ReviewScenarios({
                                           <span style={{ flex: 1 }} />
                                           <span style={{ fontSize: 11, color: 'var(--fg-4)' }}>Blank fields are generated from the discovered form constraints</span>
                                         </div>
+                                        )}
                                         {autofillError && autofillingId === null && (
                                           <div style={{ fontSize: 11.5, color: 'var(--bad)', marginTop: 8 }}>{autofillError}</div>
                                         )}

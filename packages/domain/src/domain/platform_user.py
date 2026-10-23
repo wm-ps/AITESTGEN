@@ -11,8 +11,13 @@ if a future story needs to expose it, apply the UUIDv7-internal /
 UUIDv4-external split established by `Application` (Story 1.3) rather than
 leaking this table's PK.
 
-`role` gates who can send Invites (see `domain.invite`) — "admin" or
-"member", never a free-form string beyond those two.
+`role` is "admin", "member" or "viewer" (`api.auth.ROLES`), never a
+free-form string beyond those. Admins manage the team, invites and settings;
+a viewer can read everything in the Organization but change nothing
+(`api.auth.block_viewer_writes`).
+
+ponytail: roles are Organization-wide — no per-Application permissions. A
+fuller version would add an Application-scoped membership table.
 """
 
 import uuid

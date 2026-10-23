@@ -158,6 +158,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/team/{email}/role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change Team Member Role
+         * @description Admin-only, within the caller's own Organization. Takes effect on the
+         *     member's next request — `current_user` reloads the role every time.
+         *
+         *     The last admin can never be demoted, atomically: every admin row of this
+         *     Organization is locked (`FOR UPDATE`, in id order — the same order every
+         *     concurrent call takes them, so they can't deadlock) before counting. Two
+         *     admins demoting each other at once: the second waits on the first's
+         *     lock, then re-reads and finds only one admin left -> 409.
+         */
+        patch: operations["change_team_member_role_team__email__role_patch"];
+        trace?: never;
+    };
     "/auth/forgot-password": {
         parameters: {
             query?: never;
@@ -2140,6 +2167,11 @@ export interface components {
             /** Last Active At */
             last_active_at?: string | null;
         };
+        /** TeamRoleUpdate */
+        TeamRoleUpdate: {
+            /** Role */
+            role: string;
+        };
         /** TestAssetCodeRead */
         TestAssetCodeRead: {
             /** Code */
@@ -2724,6 +2756,43 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_team_member_role_team__email__role_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                email: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamRoleUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamMemberRead"];
+                };
             };
             /** @description Validation Error */
             422: {

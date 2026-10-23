@@ -16,6 +16,7 @@ import { api, type HomeApplicationRead, type OverviewStatsRead } from '../api'
 import { EmptyState, RunsIllustration } from './EmptyState'
 import { applicationStage, relativeTime } from './Home'
 import { formatDuration } from './workspace/RunsTab'
+import { useCanEdit } from '../PermissionsContext'
 import { Skeleton } from './Skeleton'
 
 const POLL_INTERVAL_MS = 15000
@@ -45,6 +46,7 @@ export function Overview({
   onOpenApplication: (application: HomeApplicationRead) => void
 }) {
   const [applications, setApplications] = useState<HomeApplicationRead[] | null>(null)
+  const canEdit = useCanEdit()
   const [stats, setStats] = useState<OverviewStatsRead | null>(null)
   const [pipeOpen, setPipeOpen] = useState(false)
 
@@ -306,14 +308,16 @@ export function Overview({
           <div style={{ fontSize: 13, color: 'var(--fg-3)', marginTop: 9, maxWidth: 470, lineHeight: '21px' }}>
             Pass rate over time, latest run outcome, and suite size for every application appear here once you onboard your first one.
           </div>
-          <button
-            type="button"
-            onClick={onConnectApp}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 38, padding: '0 20px', borderRadius: 8, background: 'var(--accent)', color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', boxShadow: 'var(--accent-glow)', marginTop: 24, border: 'none' }}
-          >
-            <FontAwesomeIcon icon={faPlus} style={{ fontSize: 11 }} />
-            Add application
-          </button>
+          {canEdit && (
+            <button
+              type="button"
+              onClick={onConnectApp}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 38, padding: '0 20px', borderRadius: 8, background: 'var(--accent)', color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', boxShadow: 'var(--accent-glow)', marginTop: 24, border: 'none' }}
+            >
+              <FontAwesomeIcon icon={faPlus} style={{ fontSize: 11 }} />
+              Add application
+            </button>
+          )}
         </div>
       ) : totalRuns === 0 ? (
         // No application has ever been run yet — the stat grid/trend/donut

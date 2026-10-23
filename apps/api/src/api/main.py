@@ -98,9 +98,12 @@ from workflows import (
 )
 
 from api.auth import (
+    ROLES,
     CurrentAdminDep,
     CurrentOrgIdDep,
     CurrentUserDep,
+    NotViewerDep,
+    block_viewer_writes,
     clear_session_cookie,
     issue_session_cookie,
     verify_password,
@@ -137,7 +140,13 @@ from api.test_suite_export import (
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Application Intelligence Platform API")
+# `block_viewer_writes` runs before every route: a "viewer" can make no
+# POST/PUT/PATCH/DELETE (logout aside), so any endpoint — present or future —
+# is read-only for them without opting in.
+app = FastAPI(
+    title="Application Intelligence Platform API",
+    dependencies=[Depends(block_viewer_writes)],
+)
 
 # Allowed browser origins for the SPA. Overridable via CORS_ALLOWED_ORIGINS
 # (comma-separated) so each environment (dev/staging/prod) can set its own
@@ -229,8 +238,8 @@ class InviteCreate(BaseModel):
 
     @model_validator(mode="after")
     def _valid_role(self) -> InviteCreate:
-        if self.role not in ("admin", "member"):
-            raise ValueError("role must be 'admin' or 'member'")
+        if self.role not in ROLES:
+            raise ValueError(f"role must be one of {', '.join(ROLES)}")
         return self
 
 
@@ -379,6 +388,70 @@ def remove_team_member(
         raise HTTPException(status_code=404, detail="member not found")
     session.delete(member)
     session.commit()
+
+
+class TeamRoleUpdate(BaseModel):
+    role: str
+
+    @model_validator(mode="after")
+    def _valid_role(self) -> TeamRoleUpdate:
+        if self.role not in ROLES:
+            raise ValueError(f"role must be one of {', '.join(ROLES)}")
+        return self
+
+
+@app.patch("/team/{email}/role", response_model=TeamMemberRead)
+def change_team_member_role(
+    email: str,
+    payload: TeamRoleUpdate,
+    session: SessionDep,
+    admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> TeamMemberRead:
+    """Admin-only, within the caller's own Organization. Takes effect on the
+    member's next request — `current_user` reloads the role every time.
+
+    The last admin can never be demoted, atomically: every admin row of this
+    Organization is locked (`FOR UPDATE`, in id order — the same order every
+    concurrent call takes them, so they can't deadlock) before counting. Two
+    admins demoting each other at once: the second waits on the first's
+    lock, then re-reads and finds only one admin left -> 409."""
+    if email == admin.email:
+        raise HTTPException(status_code=422, detail="you cannot change your own role")
+    admins = session.exec(
+        select(PlatformUser)
+        .where(
+            PlatformUser.organization_id == organization_id,
+            PlatformUser.role == "admin",
+        )
+        .order_by(PlatformUser.id)  # type: ignore[arg-type]
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
+    if admin.id not in {a.id for a in admins}:
+        # Demoted by another admin in the meantime.
+        raise HTTPException(status_code=403, detail="admin role required")
+    member = session.exec(
+        select(PlatformUser)
+        .where(PlatformUser.email == email, PlatformUser.organization_id == organization_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
+    if member is None:
+        raise HTTPException(status_code=404, detail="member not found")
+    if member.role == "admin" and payload.role != "admin" and len(admins) <= 1:
+        raise HTTPException(status_code=409, detail="an organization needs at least one admin")
+    member.role = payload.role
+    session.add(member)
+    session.commit()
+    session.refresh(member)
+    return TeamMemberRead(
+        name=member.name,
+        email=member.email,
+        role=member.role,
+        created_at=member.created_at,
+        last_active_at=member.last_active_at,
+    )
 
 
 # --- Forgot password ---
@@ -3139,6 +3212,7 @@ def download_test_suite_project(
     external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    _not_viewer: NotViewerDep,
 ) -> Response:
     # Same org-scoped lookup as every other Application endpoint (AD-12) —
     # never by external_id alone, or one Organization could download
@@ -4428,6 +4502,7 @@ def get_test_run_allure_report(
     test_run_external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    _not_viewer: NotViewerDep,
 ) -> AllureReportUrlRead:
     """A short-lived presigned URL for the run's single-file Allure report.
     Callers link to the app's own `/applications/:id/test-runs/:id/report`

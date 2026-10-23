@@ -3,10 +3,20 @@ import type { components } from './api-types.gen'
 // `role` isn't in api-types.gen.ts yet (that file is generated from a
 // running API's OpenAPI schema, regenerate via `npm run generate:api-types`)
 // — added by hand for now rather than blocking this on a live server.
-export type UserRead = components['schemas']['UserRead'] & { role: 'admin' | 'member' }
+// Mirrors `api.auth.ROLES`. A viewer can read everything but change nothing
+// (the server refuses every write) — see PermissionsContext.
+export type Role = 'admin' | 'member' | 'viewer'
+export type UserRead = components['schemas']['UserRead'] & { role: Role }
 export type LoginRequest = components['schemas']['LoginRequest']
-export type InviteCreate = { email: string; role: 'admin' | 'member' }
-export type InviteRead = { id: string; email: string; role: 'admin' | 'member'; expires_at: string }
+export type InviteCreate = { email: string; role: Role }
+export type InviteRead = { id: string; email: string; role: Role; expires_at: string }
+export type TeamMemberRead = {
+  name: string
+  email: string
+  role: Role
+  created_at: string
+  last_active_at: string | null
+}
 export type AcceptInviteRequest = { token: string; name: string; password: string }
 export type ForgotPasswordRequest = { email: string }
 export type ResetPasswordTarget = { name: string; email: string }
@@ -477,12 +487,15 @@ export const api = {
     }),
   deleteApplication: (applicationId: string) =>
     request<undefined>(`/applications/${applicationId}`, { method: 'DELETE' }),
-  listTeam: () =>
-    request<{ name: string; email: string; role: 'admin' | 'member'; created_at: string; last_active_at: string | null }[]>(
-      '/team',
-    ),
+  listTeam: () => request<TeamMemberRead[]>('/team'),
   removeTeamMember: (email: string) =>
     request<undefined>(`/team/${encodeURIComponent(email)}`, { method: 'DELETE' }),
+  // Admin-only. 409 when it would leave the organization without an admin.
+  changeTeamMemberRole: (email: string, role: Role) =>
+    request<TeamMemberRead>(`/team/${encodeURIComponent(email)}/role`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    }),
   listCredentials: () =>
     request<
       { application_id: string; application_name: string; environment: string; username: string; has_password: boolean }[]
