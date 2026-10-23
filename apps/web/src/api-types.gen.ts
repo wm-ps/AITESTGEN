@@ -2314,6 +2314,13 @@ export interface components {
             max_heal_attempts: number;
             /** Heal Blocked Reason */
             heal_blocked_reason?: string | null;
+            /**
+             * Heal In Progress
+             * @default false
+             */
+            heal_in_progress: boolean;
+            /** Heal Kind */
+            heal_kind?: string | null;
         };
         /** TestRunCursorPageRead */
         TestRunCursorPageRead: {

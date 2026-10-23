@@ -21,6 +21,10 @@ import { ChevronIcon } from './TestSuiteTab'
 import { allureReportRoute } from '../../allureReportRoute'
 
 const POLL_INTERVAL_MS = 1500
+// ~10s: how long a manual Retry's own poll waits for the heal to show as in
+// progress before treating it as already finished (a heal that claimed and
+// released the result between two polls).
+const MANUAL_HEAL_START_GRACE_POLLS = 7
 const RUNS_PER_PAGE = 10
 const RESULTS_PER_PAGE = 10
 
@@ -391,6 +395,13 @@ function TestResultRow({
   useEffect(() => {
     if (!healing) return
     let cancelled = false
+    // The server's heal claim is the end signal: stop once it reports the
+    // heal over (`heal_in_progress` false) after having reported it running.
+    // Right after the click the claim isn't taken yet, so an early "false"
+    // means "not started", not "done" — unless it never shows as running at
+    // all (a heal faster than one poll), then stop after a short grace.
+    let sawHealInProgress = false
+    let pollsWithoutClaim = 0
     const interval = setInterval(async () => {
       try {
         const detail = await api.getTestRun(applicationId, runId)
@@ -398,16 +409,9 @@ function TestResultRow({
         const updated = detail.results?.find((r) => r.id === result.id)
         if (!updated) return
         setLiveResult(updated)
-        // This poll only ever runs while a *manual* heal we started is
-        // in flight (see the effect above) — stop against the manual
-        // budget specifically, not the independent automatic one.
-        // A heal whose rerun now fails inside an assertion stops right
-        // there (self-healing never touches assertions), so that is final too.
-        if (
-          updated.status === 'passed' ||
-          updated.manual_heal_attempt_count >= updated.max_heal_attempts ||
-          updated.heal_blocked_reason
-        ) {
+        if (updated.heal_in_progress) {
+          sawHealInProgress = true
+        } else if (sawHealInProgress || ++pollsWithoutClaim >= MANUAL_HEAL_START_GRACE_POLLS) {
           setHealing(false)
         }
       } catch {
@@ -465,6 +469,14 @@ function TestResultRow({
     NON_PASSED_STATUSES.has(liveResult.status) &&
     liveResult.manual_heal_attempt_count >= liveResult.max_heal_attempts
   const wasAutoHealed = liveResult.healed_test_asset_id != null && liveResult.status === 'passed'
+  // Server-driven (the result's live heal claim), so it shows for automatic
+  // and manual heals alike, in every tab and after a reload; local `healing`
+  // only covers the moment between clicking Retry and the claim being taken.
+  const showHealing = healing || !!liveResult.heal_in_progress
+  const healIsManual = healing || liveResult.heal_kind === 'manual'
+  const healingTitle = healIsManual
+    ? `Self-healing in progress — manual remediation attempt ${liveResult.manual_heal_attempt_count + 1} of ${liveResult.max_heal_attempts}`
+    : `Self-healing in progress — automatic attempt ${Math.min(liveResult.auto_heal_attempt_count + 1, liveResult.auto_heal_attempt_cap)} of ${liveResult.auto_heal_attempt_cap}`
 
   async function handleHeal() {
     setHealError(null)
@@ -524,7 +536,7 @@ function TestResultRow({
               Self-healed
             </span>
           )}
-          {!healing && canRetryHeal && healBlockedReason && (
+          {!showHealing && canRetryHeal && healBlockedReason && (
             <button
               type="button"
               disabled
@@ -536,7 +548,7 @@ function TestResultRow({
               Retry
             </button>
           )}
-          {!healing && canRetryHeal && !healBlockedReason && (
+          {!showHealing && canRetryHeal && !healBlockedReason && (
             <button
               type="button"
               onClick={(e) => {
@@ -550,11 +562,8 @@ function TestResultRow({
               Retry
             </button>
           )}
-          {healing && (
-            <span
-              title={`Self-healing in progress — manual remediation attempt ${liveResult.manual_heal_attempt_count + 1} of ${liveResult.max_heal_attempts}`}
-              style={healChipStyle('var(--accent)')}
-            >
+          {showHealing && (
+            <span title={healingTitle} style={healChipStyle('var(--accent)')}>
               <span style={{ display: 'inline-flex', animation: 'aitg-spin 1s linear infinite' }}>
                 <SelfHealIcon />
               </span>
@@ -564,7 +573,7 @@ function TestResultRow({
           {/* Exhausted — its own chip + warn tint (not the retry chip
               faded), so "no more heal attempts, needs a human" doesn't
               read as a merely-disabled version of the retry chip above. */}
-          {!healing && healExhausted && (
+          {!showHealing && healExhausted && (
             <span
               title={`Self-healing remediation exhausted after ${liveResult.max_heal_attempts} manual attempts — manual triage required.`}
               style={healChipStyle('var(--warn-strong)')}
@@ -582,7 +591,12 @@ function TestResultRow({
             executing right now is inferred as the first still-pending row
             once finished ones are sorted to the top. */}
         <div style={{ justifySelf: 'start' }}>
-          <StatusPill status={liveResult.status} label={isCurrentlyRunning ? 'Running' : undefined} pulsing={isCurrentlyRunning} variant="flat" />
+          <StatusPill
+            status={liveResult.status}
+            label={showHealing ? 'Self-healing' : isCurrentlyRunning ? 'Running' : undefined}
+            pulsing={showHealing || isCurrentlyRunning}
+            variant="flat"
+          />
         </div>
       </div>
 

@@ -3353,6 +3353,16 @@ class TestResultRead(BaseModel):
     # a healable status at all. RunsTab shows the Retry button disabled with
     # this as its reason.
     heal_blocked_reason: str | None = None
+    # A self-heal holds this result right now: its `heal_started_at` claim is
+    # set and younger than HEAL_CLAIM_STALE_AFTER — the same rule the claim
+    # and the manual-retry endpoint use. Server-side, so RunsTab shows
+    # "Healing…" in every tab and after a reload, not just the tab that
+    # clicked Retry.
+    heal_in_progress: bool = False
+    # Which heal holds the claim, while heal_in_progress: "manual" when the
+    # "Retry with self-healing" workflow (`heal-{id}`) is running, otherwise
+    # "automatic" (the HealTestActivity right after the test ran).
+    heal_kind: str | None = None
 
 
 class TestRunRead(BaseModel):
@@ -3544,7 +3554,7 @@ async def cancel_test_run(
                 workflow_id,
                 exc_info=True,
             )
-    return get_test_run(external_id, test_run_external_id, session, organization_id)
+    return await get_test_run(external_id, test_run_external_id, session, organization_id)
 
 
 @app.post("/admin/cleanup/run", status_code=202)
@@ -4443,7 +4453,7 @@ def get_test_run_allure_report(
     "/applications/{external_id}/test-runs/{test_run_external_id}",
     response_model=TestRunRead,
 )
-def get_test_run(
+async def get_test_run(
     external_id: uuid.UUID,
     test_run_external_id: uuid.UUID,
     session: SessionDep,
@@ -4487,6 +4497,13 @@ def get_test_run(
         else {}
     )
     max_heal_attempts = session.exec(select(DiscoverySettings)).one().max_heal_attempts
+    # Same staleness rule as `heal_test_result` below and the worker's claim.
+    heal_live_after = datetime.now(UTC) - HEAL_CLAIM_STALE_AFTER
+    heal_kinds = {
+        r.id: await _heal_kind(r.external_id)
+        for r in results
+        if r.heal_started_at is not None and r.heal_started_at >= heal_live_after
+    }
     result_reads = [
         TestResultRead(
             id=r.external_id,
@@ -4514,10 +4531,29 @@ def get_test_run(
                 if r.status in HEALABLE_STATUSES
                 else None
             ),
+            heal_in_progress=r.id in heal_kinds,
+            heal_kind=heal_kinds.get(r.id),
         )
         for r in results
     ]
     return _to_test_run_read(test_run, results=result_reads)
+
+
+async def _heal_kind(test_result_external_id: uuid.UUID) -> str:
+    """"manual" while the "Retry with self-healing" workflow for this result
+    (`heal_test_result`'s fixed `heal-{id}` id) is running; otherwise the
+    claim belongs to the automatic heal. Asked only for results whose claim
+    is live, so a poll costs at most one lookup per heal in flight. Temporal
+    unreachable reads as "automatic" — the label still shows, only the
+    tooltip's wording falls back."""
+    try:
+        client = await get_temporal_client()
+        description = await client.get_workflow_handle(
+            f"heal-{test_result_external_id}"
+        ).describe()
+    except (RPCError, RuntimeError):
+        return "automatic"
+    return "manual" if description.status == WorkflowExecutionStatus.RUNNING else "automatic"
 
 
 @app.get(

@@ -10,7 +10,7 @@ actually needs Temporal reachable, since it starts a real workflow.
 
 import asyncio
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from api.db import engine, init_db
@@ -888,3 +888,127 @@ class TestCancelTestRun:
         assert cancelled == []
         with Session(engine) as session:
             assert session.exec(select(TestRun).where(TestRun.id == test_run.id)).one().status == "running"
+
+
+class TestHealInProgress:
+    """`heal_in_progress`/`heal_kind` on each result — read from the
+    `heal_started_at` claim with the 33-minute stale rule, so the "Healing…"
+    label survives reloads and shows in every tab; "manual" only while the
+    `heal-{id}` Retry workflow is running. Read-only: nothing here changes how
+    healing itself behaves."""
+
+    def test_flags_live_claims_only_and_tells_manual_from_automatic(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+
+        from api import main as api_main
+        from temporalio.client import WorkflowExecutionStatus
+        from workflows import HEAL_CLAIM_STALE_AFTER
+
+        init_db()
+        client, _ = _signed_in_client("Org Heal In Progress")
+        application = _create_application(client, "Heal In Progress App")
+        application_pk, asset = _seed_test_asset(application)
+        test_run = _seed_test_run(application_pk, status="running", total_count=4)
+        now = datetime.now(UTC)
+        claims = {
+            "automatic": now,
+            "manual": now,
+            "none": None,
+            "stale": now - HEAL_CLAIM_STALE_AFTER - timedelta(minutes=1),
+        }
+        external_ids: dict[str, str] = {}
+        with Session(engine) as session:
+            for label, started in claims.items():
+                result = TestResult(
+                    test_run_id=test_run.id,
+                    test_asset_id=asset.id,
+                    scenario_id=asset.scenario_id,
+                    status="failed",
+                    error_message="TimeoutError: locator.click: Timeout 15000ms exceeded.",
+                    heal_started_at=started,
+                )
+                session.add(result)
+                session.flush()
+                external_ids[label] = str(result.external_id)
+            session.commit()
+        manual_workflow_id = f"heal-{external_ids['manual']}"
+        described: list[str] = []
+
+        class _Handle:
+            def __init__(self, workflow_id: str) -> None:
+                self.workflow_id = workflow_id
+
+            async def describe(self) -> SimpleNamespace:
+                described.append(self.workflow_id)
+                running = self.workflow_id == manual_workflow_id
+                return SimpleNamespace(
+                    status=WorkflowExecutionStatus.RUNNING
+                    if running
+                    else WorkflowExecutionStatus.COMPLETED
+                )
+
+        class _FakeClient:
+            def get_workflow_handle(self, workflow_id: str) -> _Handle:
+                return _Handle(workflow_id)
+
+        async def _fake_client() -> _FakeClient:
+            return _FakeClient()
+
+        monkeypatch.setattr(api_main, "get_temporal_client", _fake_client)
+
+        body = client.get(
+            f"/applications/{application['id']}/test-runs/{test_run.external_id}"
+        ).json()
+
+        by_id = {r["id"]: r for r in body["results"]}
+        state = {
+            label: (by_id[eid]["heal_in_progress"], by_id[eid]["heal_kind"])
+            for label, eid in external_ids.items()
+        }
+        assert state == {
+            "automatic": (True, "automatic"),
+            "manual": (True, "manual"),
+            "none": (False, None),
+            "stale": (False, None),
+        }
+        # Temporal is asked only about the live claims, never the idle ones.
+        assert sorted(described) == sorted(
+            f"heal-{external_ids[label]}" for label in ("automatic", "manual")
+        )
+
+    def test_temporal_unreachable_still_shows_the_heal_as_automatic(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from api import main as api_main
+
+        init_db()
+        client, _ = _signed_in_client("Org Heal In Progress Temporal Down")
+        application = _create_application(client, "Heal Temporal Down App")
+        application_pk, asset = _seed_test_asset(application)
+        test_run = _seed_test_run(application_pk, status="running", total_count=1)
+        with Session(engine) as session:
+            session.add(
+                TestResult(
+                    test_run_id=test_run.id,
+                    test_asset_id=asset.id,
+                    scenario_id=asset.scenario_id,
+                    status="failed",
+                    heal_started_at=datetime.now(UTC),
+                )
+            )
+            session.commit()
+
+        async def _unreachable() -> None:
+            raise RuntimeError("temporal unavailable")
+
+        monkeypatch.setattr(api_main, "get_temporal_client", _unreachable)
+
+        body = client.get(
+            f"/applications/{application['id']}/test-runs/{test_run.external_id}"
+        ).json()
+
+        assert [(r["heal_in_progress"], r["heal_kind"]) for r in body["results"]] == [
+            (True, "automatic")
+        ]

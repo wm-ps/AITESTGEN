@@ -241,6 +241,11 @@ export type TestResultRead = {
   // Why self-healing won't act on this failure — set only for a failure
   // raised inside an assertion; null when it may.
   heal_blocked_reason?: string | null
+  // A self-heal holds this result right now (its live heal claim) — shown
+  // as "Healing…" in every tab and after a reload. `heal_kind` says which:
+  // the automatic heal after the test ran, or a manual "Retry".
+  heal_in_progress?: boolean
+  heal_kind?: 'automatic' | 'manual' | null
 }
 export type TestRunStatus = 'pending' | 'running' | 'completed' | 'blocked' | 'cancelled'
 export type TestRunRead = {
