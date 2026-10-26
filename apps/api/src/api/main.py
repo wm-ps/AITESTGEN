@@ -5,16 +5,19 @@ endpoints. Story 1.2 adds sign-in/sign-out and Organization scoping (AD-12).
 Story 1.3 adds Application onboarding.
 """
 
+import asyncio
 import json
 import logging
 import os
 import re
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
+from ai_provider.hosted import HostedAIProvider
 from domain import (
     CANCELLABLE_TEST_RUN_STATUSES,
     Action,
@@ -26,6 +29,7 @@ from domain import (
     DiscoveryRun,
     DiscoverySettings,
     ExecutionPolicy,
+    FailureExplanationRecord,
     Form,
     FormField,
     InteractionLevel,
@@ -49,12 +53,13 @@ from domain import (
     lock_test_run,
 )
 import hvac.exceptions
-from fastapi import Depends, FastAPI, HTTPException, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from object_store import ObjectStore
 from pydantic import BaseModel, Field, field_validator, model_validator
 from secrets_client import SecretRef, VaultSecretsClient
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio.api.enums.v1 import TaskQueueType
@@ -78,7 +83,14 @@ from workflows import (
     HEAL_CLAIM_STALE_AFTER,
     HEALABLE_STATUSES,
     LIVE_EXPLORATION_TASK_QUEUE,
+    UNKNOWN_FAILURE,
+    FailureExplanation,
+    clean_error,
+    error_fingerprint,
+    explain_failure,
     heal_eligibility,
+    redact_for_llm,
+    run_root_cause,
     ApplicationTestExecutionWorkflow,
     AutofillScenarioTestDataActivityInput,
     AutofillScenarioTestDataWorkflow,
@@ -96,6 +108,8 @@ from workflows import (
     ScheduledExecutionWorkflowInput,
     SuiteGenerationWorkflow,
 )
+from workflows.failure_explainer import UNDETERMINED_DETAIL as FAILURE_UNDETERMINED_DETAIL
+from workflows.failure_explainer import UNDETERMINED_TITLE as FAILURE_UNDETERMINED_TITLE
 
 from api.auth import (
     ROLES,
@@ -109,7 +123,7 @@ from api.auth import (
     verify_password,
 )
 from api.coverage_report import build_coverage_report
-from api.db import get_session
+from api.db import engine, get_session
 from api.discovery import pause_discovery_run, resume_discovery_run, start_discovery_run
 from api.invites import InviteAcceptError, accept_invite, create_invite, send_invite_email
 from api.password_reset import (
@@ -3437,6 +3451,23 @@ class TestResultRead(BaseModel):
     # "Retry with self-healing" workflow (`heal-{id}`) is running, otherwise
     # "automatic" (the HealTestActivity right after the test ran).
     heal_kind: str | None = None
+    # Plain-language version of `error_message` for people who don't read
+    # Playwright errors (`workflows.failure_explainer`) — `error_message`
+    # itself is returned unchanged alongside, as the "Raw error". Source:
+    # "rules" (a known failure), "ai" (an unknown one the LLM explained,
+    # labelled as such in the UI), or None (unknown, not explained yet — the
+    # title is then the error's cleaned first line).
+    failure_title: str | None = None
+    failure_detail: str | None = None
+    failure_source: str | None = None
+
+
+class RootCauseRead(BaseModel):
+    # e.g. "Vantage couldn't sign in to the app" — `affected` of the run's
+    # `total` failures share it.
+    title: str
+    affected: int
+    total: int
 
 
 class TestRunRead(BaseModel):
@@ -3465,6 +3496,9 @@ class TestRunRead(BaseModel):
     # True once GenerateAllureReportActivity stored this run's report — the
     # Runs tab shows "View Allure report" only then.
     allure_report_available: bool = False
+    # Set (detail endpoint only) when most of this run's failures share one
+    # environment-level cause — see `workflows.run_root_cause`.
+    root_cause: RootCauseRead | None = None
     results: list[TestResultRead] | None = None
 
 
@@ -3494,7 +3528,10 @@ def _trigger_label(test_run: TestRun) -> str:
 
 
 def _to_test_run_read(
-    test_run: TestRun, *, results: list[TestResultRead] | None
+    test_run: TestRun,
+    *,
+    results: list[TestResultRead] | None,
+    root_cause: RootCauseRead | None = None,
 ) -> TestRunRead:
     pass_rate = (
         test_run.passed_count / test_run.total_count if test_run.total_count else None
@@ -3520,6 +3557,7 @@ def _to_test_run_read(
         started_at=test_run.started_at,
         completed_at=test_run.completed_at,
         allure_report_available=test_run.allure_report_key is not None,
+        root_cause=root_cause,
         results=results,
     )
 
@@ -3590,6 +3628,7 @@ async def cancel_test_run(
     test_run_external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    background_tasks: BackgroundTasks,
 ) -> TestRunRead:
     """Stops a pending/running run. The database decides, Temporal follows:
     the run and every unfinished result are committed "cancelled" under the
@@ -3628,7 +3667,9 @@ async def cancel_test_run(
                 workflow_id,
                 exc_info=True,
             )
-    return await get_test_run(external_id, test_run_external_id, session, organization_id)
+    return await get_test_run(
+        external_id, test_run_external_id, session, organization_id, background_tasks
+    )
 
 
 @app.post("/admin/cleanup/run", status_code=202)
@@ -4533,9 +4574,12 @@ async def get_test_run(
     test_run_external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    background_tasks: BackgroundTasks,
 ) -> TestRunRead:
     """The endpoint the frontend polls while a run is in flight (mirrors
-    `list_test_suites`'s shape)."""
+    `list_test_suites`'s shape). Never waits on an LLM: an unknown failure
+    returns its cleaned first line now, and its AI explanation (claimed once
+    per distinct error, run after the response) shows on a later poll."""
     application = _get_org_application(session, organization_id, external_id)
     test_run = session.exec(
         select(TestRun).where(
@@ -4579,6 +4623,29 @@ async def get_test_run(
         for r in results
         if r.heal_started_at is not None and r.heal_started_at >= heal_live_after
     }
+    # Presentation only: reads error_message, never changes it.
+    explanations = {r.id: explain_failure(r.status, r.error_message) for r in results}
+    ai_explanations = _ai_failure_explanations(
+        session, application, results, explanations, background_tasks
+    )
+    root = run_root_cause(
+        e.category
+        for r in results
+        if r.status in ("failed", "timed_out", "errored")
+        and (e := explanations[r.id]) is not None
+    )
+
+    def _failure_fields(r: TestResult) -> dict[str, str | None]:
+        e = explanations[r.id]
+        if e is None:
+            return {}
+        if e.category != UNKNOWN_FAILURE:
+            return {"failure_title": e.title, "failure_detail": e.detail, "failure_source": "rules"}
+        if r.id in ai_explanations:
+            title, detail = ai_explanations[r.id]
+            return {"failure_title": title, "failure_detail": detail, "failure_source": "ai"}
+        return {"failure_title": e.title, "failure_detail": None, "failure_source": None}
+
     result_reads = [
         TestResultRead(
             id=r.external_id,
@@ -4608,10 +4675,139 @@ async def get_test_run(
             ),
             heal_in_progress=r.id in heal_kinds,
             heal_kind=heal_kinds.get(r.id),
+            **_failure_fields(r),
         )
         for r in results
     ]
-    return _to_test_run_read(test_run, results=result_reads)
+    return _to_test_run_read(
+        test_run,
+        results=result_reads,
+        root_cause=RootCauseRead(title=root.title, affected=root.affected, total=root.total)
+        if root
+        else None,
+    )
+
+
+# An LLM explanation still "pending" after this is treated as abandoned (the
+# API restarted mid-call) and may be claimed again; a "failed" one is retried
+# at most this often, so a broken LLM can't run up cost on every poll.
+FAILURE_EXPLANATION_PENDING_STALE_AFTER = timedelta(minutes=5)
+FAILURE_EXPLANATION_RETRY_FAILED_AFTER = timedelta(days=1)
+
+
+def _ai_failure_explanations(
+    session: Session,
+    application: Application,
+    results: Sequence[TestResult],
+    explanations: dict[uuid.UUID, FailureExplanation | None],
+    background_tasks: BackgroundTasks,
+) -> dict[uuid.UUID, tuple[str, str]]:
+    """Cached LLM explanations for this run's `unknown` failures, keyed by
+    TestResult id. Any distinct unknown error with no usable cache entry is
+    claimed — one atomic statement on the `failure_explanation` primary key,
+    so however many results share it and however many polls/tabs/API workers
+    ask at once, exactly one request wins and schedules the LLM call (after
+    the response is sent). The rest just read the cache on a later poll."""
+    redacted_by_result: dict[uuid.UUID, str] = {}
+    for r in results:
+        e = explanations[r.id]
+        if e is not None and e.category == UNKNOWN_FAILURE and r.error_message:
+            redacted_by_result[r.id] = redact_for_llm(clean_error(r.error_message))
+    if not redacted_by_result:
+        return {}
+    fingerprints = {rid: error_fingerprint(text) for rid, text in redacted_by_result.items()}
+    text_by_fingerprint = {fingerprints[rid]: text for rid, text in redacted_by_result.items()}
+    rows = {
+        row.error_fingerprint: row
+        for row in session.exec(
+            select(FailureExplanationRecord).where(
+                FailureExplanationRecord.error_fingerprint.in_(list(text_by_fingerprint))  # type: ignore[attr-defined]
+            )
+        ).all()
+    }
+
+    now = datetime.now(UTC)
+    won: list[str] = []
+    for fingerprint in text_by_fingerprint:
+        row = rows.get(fingerprint)
+        if row is not None and row.status == "done":
+            continue
+        if row is None:
+            claimed = session.execute(
+                pg_insert(FailureExplanationRecord)
+                .values(error_fingerprint=fingerprint, status="pending", requested_at=now)
+                .on_conflict_do_nothing(index_elements=["error_fingerprint"])
+                .returning(FailureExplanationRecord.error_fingerprint)
+            ).first()
+        else:
+            claimed = session.execute(
+                update(FailureExplanationRecord)
+                .where(
+                    FailureExplanationRecord.error_fingerprint == fingerprint,  # type: ignore[arg-type]
+                    or_(
+                        (FailureExplanationRecord.status == "pending")  # type: ignore[arg-type]
+                        & (FailureExplanationRecord.requested_at < now - FAILURE_EXPLANATION_PENDING_STALE_AFTER),
+                        (FailureExplanationRecord.status == "failed")  # type: ignore[arg-type]
+                        & (FailureExplanationRecord.requested_at < now - FAILURE_EXPLANATION_RETRY_FAILED_AFTER),
+                    ),
+                )
+                .values(status="pending", requested_at=now)
+                .returning(FailureExplanationRecord.error_fingerprint)
+            ).first()
+        if claimed is not None:
+            won.append(fingerprint)
+    session.commit()
+    for fingerprint in won:
+        background_tasks.add_task(
+            _explain_unknown_failure,
+            fingerprint,
+            text_by_fingerprint[fingerprint],
+            application.secret_ref,
+        )
+
+    return {
+        rid: (rows[fp].title or "", rows[fp].detail or "")
+        for rid, fp in fingerprints.items()
+        if fp in rows and rows[fp].status == "done"
+    }
+
+
+def _saved_login_values(secret_ref: str | None) -> list[str]:
+    """This application's own saved username/password — redacted from what's
+    sent to the LLM wherever they appear. Never logged."""
+    if not secret_ref:
+        return []
+    try:
+        creds = json.loads(VaultSecretsClient().resolve(SecretRef(path=secret_ref)))
+    except Exception:  # noqa: BLE001 — best-effort; generic redaction still applies
+        return []
+    if not isinstance(creds, dict):
+        return []
+    return [v for k, v in creds.items() if k in ("username", "password") and isinstance(v, str)]
+
+
+async def _explain_unknown_failure(fingerprint: str, redacted_text: str, secret_ref: str | None) -> None:
+    """Runs after the response. Asks the LLM once and caches the outcome:
+    "done" with its title/detail, the generic "couldn't identify" text when
+    the model can't tell (never a guess), or "failed" on a transport error."""
+    known = await asyncio.to_thread(_saved_login_values, secret_ref)
+    text = redact_for_llm(redacted_text, known_secrets=known)
+    try:
+        explained = await HostedAIProvider().explain_test_failure(text)
+    except Exception:  # noqa: BLE001 — recorded as failed; the cleaned line keeps showing
+        logger.warning("failure explanation %s: LLM call failed", fingerprint[:12], exc_info=True)
+        status, title, detail = "failed", None, None
+    else:
+        status = "done"
+        title = explained.title if explained else FAILURE_UNDETERMINED_TITLE
+        detail = explained.detail if explained else FAILURE_UNDETERMINED_DETAIL
+    with Session(engine) as session:
+        session.execute(
+            update(FailureExplanationRecord)
+            .where(FailureExplanationRecord.error_fingerprint == fingerprint)  # type: ignore[arg-type]
+            .values(status=status, title=title, detail=detail, completed_at=datetime.now(UTC))
+        )
+        session.commit()
 
 
 async def _heal_kind(test_result_external_id: uuid.UUID) -> str:

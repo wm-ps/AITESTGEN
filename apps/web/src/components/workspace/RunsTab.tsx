@@ -124,6 +124,99 @@ function SelfHealIcon() {
   )
 }
 
+const rawErrorStyle: React.CSSProperties = {
+  margin: 0,
+  padding: 10,
+  background: 'var(--bg-2)',
+  border: '1px solid var(--line)',
+  borderRadius: 'var(--radius)',
+  fontSize: 11.5,
+  lineHeight: 1.5,
+  color: 'var(--danger-strong)',
+  fontFamily: "'SFMono-Regular',Consolas,monospace",
+  whiteSpace: 'pre-wrap',
+  overflow: 'auto',
+  maxHeight: 200,
+}
+
+// A failure, two ways: "Summary" — plain language anyone can read (rules, or
+// an AI explanation labelled as such) — and "Raw error", Playwright's
+// original text exactly as stored. With no explanation (e.g. an older API),
+// just the raw error, as before.
+export function FailureDetails({ result }: { result: TestResultRead }) {
+  const [tab, setTab] = useState<'summary' | 'raw'>('summary')
+  const raw = result.error_message
+  if (!result.failure_title) {
+    return raw ? <pre style={{ ...rawErrorStyle, marginBottom: 10 }}>{raw}</pre> : null
+  }
+  const tabs: { key: 'summary' | 'raw'; label: string }[] = [
+    { key: 'summary', label: 'Summary' },
+    ...(raw ? [{ key: 'raw' as const, label: 'Raw error' }] : []),
+  ]
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div
+        role="tablist"
+        aria-label="Failure details"
+        onKeyDown={(e) => {
+          if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && tabs.length > 1) {
+            setTab((t) => (t === 'summary' ? 'raw' : 'summary'))
+          }
+        }}
+        style={{ display: 'flex', gap: 16, borderBottom: '1px solid var(--line)', marginBottom: 10 }}
+      >
+        {tabs.map((t) => {
+          const active = tab === t.key
+          return (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              tabIndex={active ? 0 : -1}
+              onClick={(e) => {
+                e.stopPropagation()
+                setTab(t.key)
+              }}
+              style={{
+                background: 'none',
+                border: 'none',
+                borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+                padding: '6px 0',
+                marginBottom: -1,
+                fontSize: 12.5,
+                fontWeight: 600,
+                color: active ? 'var(--fg-1)' : 'var(--fg-4)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              {t.label}
+            </button>
+          )
+        })}
+      </div>
+      <div role="tabpanel">
+        {tab === 'summary' ? (
+          <div>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--danger-strong)' }}>{result.failure_title}</div>
+            {result.failure_detail && (
+              <div style={{ fontSize: 13, color: 'var(--fg-2)', marginTop: 4, lineHeight: 1.5 }}>{result.failure_detail}</div>
+            )}
+            {result.failure_source === 'ai' && (
+              <div className="caption" style={{ fontSize: 11.5, marginTop: 6 }}>
+                Explained by AI — may not be exact
+              </div>
+            )}
+          </div>
+        ) : (
+          <pre style={rawErrorStyle}>{raw}</pre>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function ArtifactsModal({ testResult, onClose }: { testResult: TestResultRead; onClose: () => void }) {
   useEscapeToClose(onClose)
   const [artifacts, setArtifacts] = useState<TestResultArtifactRead[] | null>(null)
@@ -202,26 +295,7 @@ export function ArtifactsModal({ testResult, onClose }: { testResult: TestResult
           </button>
         </div>
         <div style={{ padding: 20, overflow: 'auto' }}>
-          {testResult.error_message && (
-            <pre
-              style={{
-                margin: '0 0 16px',
-                padding: 12,
-                background: 'var(--bg-2)',
-                border: '1px solid var(--line)',
-                borderRadius: 'var(--radius)',
-                fontSize: 12,
-                lineHeight: 1.6,
-                color: 'var(--danger-strong)',
-                fontFamily: "'SFMono-Regular',Consolas,monospace",
-                whiteSpace: 'pre-wrap',
-                overflow: 'auto',
-                maxHeight: 200,
-              }}
-            >
-              {testResult.error_message}
-            </pre>
-          )}
+          <FailureDetails result={testResult} />
           {loadError && <p style={{ color: 'var(--danger-strong)', fontSize: 13 }}>{loadError}</p>}
           {artifacts === null && !loadError && <p className="caption">Loading artifacts…</p>}
           {artifacts !== null && artifacts.length === 0 && (
@@ -623,25 +697,8 @@ function TestResultRow({
               {liveResult.blocked_reason}
             </p>
           )}
-          {canShowArtifacts && liveResult.error_message && (
-            <pre
-              style={{
-                margin: '0 0 10px',
-                padding: 10,
-                background: 'var(--bg-2)',
-                border: '1px solid var(--line)',
-                borderRadius: 'var(--radius)',
-                fontSize: 11.5,
-                lineHeight: 1.5,
-                color: 'var(--danger-strong)',
-                fontFamily: "'SFMono-Regular',Consolas,monospace",
-                whiteSpace: 'pre-wrap',
-                overflow: 'auto',
-                maxHeight: 160,
-              }}
-            >
-              {liveResult.error_message}
-            </pre>
+          {canShowArtifacts && (liveResult.error_message || liveResult.failure_title) && (
+            <FailureDetails result={liveResult} />
           )}
           {healError && <p style={{ color: 'var(--danger-strong)', fontSize: 12, margin: '0 0 10px' }}>{healError}</p>}
           {canLoadArtifacts && (
@@ -1144,6 +1201,21 @@ function RunDetail({
             Skipped
           </div>
           <div style={{ fontSize: 13, color: 'var(--fg-2)' }}>{run.blocked_reason}</div>
+        </div>
+      )}
+
+      {/* Most failures share one cause — say it once, up front. */}
+      {run.root_cause && (
+        <div role="note" style={{ ...mainPanelStyle, padding: '14px 20px', display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+          <FontAwesomeIcon icon={faTriangleExclamation} style={{ fontSize: 15, color: 'var(--warn-strong)', marginTop: 2 }} />
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--fg-1)' }}>
+              {run.root_cause.affected} of {run.root_cause.total} failed tests have the same cause
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--fg-2)', marginTop: 3 }}>
+              {run.root_cause.title} — fix this first.
+            </div>
+          </div>
         </div>
       )}
 

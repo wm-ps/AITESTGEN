@@ -40,6 +40,7 @@ from domain import (
     CANCELLABLE_TEST_RUN_STATUSES,
     Application,
     DiscoverySettings,
+    FailureExplanationRecord,
     Journey,
     PlatformUser,
     Scenario,
@@ -92,10 +93,16 @@ from workflows import (
     PrepareTestRunActivityInput,
     PrepareTestRunActivityResult,
     SendTestRunReportEmailActivityInput,
+    UNKNOWN_FAILURE,
+    clean_error,
+    error_fingerprint,
+    explain_failure,
     heal_eligibility,
     heal_policy,
     is_infra_failure,
     is_locator_failure,
+    redact_for_llm,
+    run_root_cause,
 )
 
 from execution_worker.db import engine
@@ -2233,6 +2240,60 @@ def _test_failure_message(error_message: str | None) -> str | None:
     return error_message
 
 
+def _email_failure_descriptions(
+    session: Session, results: list[TestResult]
+) -> tuple[dict[uuid.UUID, str], str | None]:
+    """Plain-language description per failed result — the same rule titles
+    the run page shows, or for an unrecognised error the API's cached AI
+    title when one already exists (`failure_explanation`). The email never
+    asks the LLM itself; with neither, the result is left out and the email
+    shows its existing shortened error. Heal-rejection messages stay
+    suppressed exactly as before (`_test_failure_message`). Plus the run's
+    shared root cause, when one clearly dominates."""
+    explanations = {
+        r.id: explain_failure(r.status, r.error_message)
+        for r in results
+        if _test_failure_message(r.error_message) is not None
+    }
+    descriptions: dict[uuid.UUID, str] = {}
+    unknown_fingerprints: dict[uuid.UUID, str] = {}
+    for result_id, explanation in explanations.items():
+        if explanation is None:
+            continue
+        if explanation.category != UNKNOWN_FAILURE:
+            descriptions[result_id] = explanation.title
+        else:
+            message = next(r.error_message for r in results if r.id == result_id) or ""
+            unknown_fingerprints[result_id] = error_fingerprint(redact_for_llm(clean_error(message)))
+    if unknown_fingerprints:
+        cached = {
+            row.error_fingerprint: row.title
+            for row in session.exec(
+                select(FailureExplanationRecord).where(
+                    FailureExplanationRecord.error_fingerprint.in_(  # type: ignore[attr-defined]
+                        list(set(unknown_fingerprints.values()))
+                    ),
+                    FailureExplanationRecord.status == "done",
+                )
+            ).all()
+            if row.title
+        }
+        for result_id, fingerprint in unknown_fingerprints.items():
+            if fingerprint in cached:
+                descriptions[result_id] = cached[fingerprint]
+    root = run_root_cause(
+        e.category
+        for r in results
+        if (e := explain_failure(r.status, r.error_message)) is not None
+    )
+    root_cause = (
+        f"{root.affected} of {root.total} failed tests have the same cause — {root.title}."
+        if root
+        else None
+    )
+    return descriptions, root_cause
+
+
 def _load_run_email_sync(
     test_run_id: str,
 ) -> tuple[TestRun, RunEmail, PlatformUser | None, str]:
@@ -2253,6 +2314,9 @@ def _load_run_email_sync(
                 TestResult.status.in_(("failed", "timed_out", "errored")),  # type: ignore[attr-defined]
             )
         ).all()
+        descriptions, root_cause = _email_failure_descriptions(
+            session, [result for result, _, _ in rows]
+        )
         email = RunEmail(
             application_id=str(application.external_id),
             test_run_id=str(test_run.external_id),
@@ -2280,9 +2344,11 @@ def _load_run_email_sync(
                     status=result.status,
                     error_message=_test_failure_message(result.error_message),
                     duration_ms=result.duration_ms,
+                    description=descriptions.get(result.id),
                 )
                 for result, scenario, journey in rows
             ],
+            root_cause=root_cause,
         )
         session.expunge(test_run)
         if recipient is not None:

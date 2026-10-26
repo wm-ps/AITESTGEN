@@ -256,7 +256,15 @@ export type TestResultRead = {
   // the automatic heal after the test ran, or a manual "Retry".
   heal_in_progress?: boolean
   heal_kind?: 'automatic' | 'manual' | null
+  // Plain-language failure for the "Summary" tab; `error_message` stays the
+  // untouched "Raw error". Source "ai" = an LLM explained an error no rule
+  // recognised (shown with an "Explained by AI" caption); null = not
+  // explained yet (the title is then the error's cleaned first line).
+  failure_title?: string | null
+  failure_detail?: string | null
+  failure_source?: 'rules' | 'ai' | null
 }
+export type RootCauseRead = { title: string; affected: number; total: number }
 export type TestRunStatus = 'pending' | 'running' | 'completed' | 'blocked' | 'cancelled'
 export type TestRunRead = {
   id: string
@@ -279,6 +287,8 @@ export type TestRunRead = {
   started_at: string | null
   completed_at: string | null
   allure_report_available: boolean
+  // Run detail only: most of this run's failures share one cause.
+  root_cause?: RootCauseRead | null
   results?: TestResultRead[] | null
 }
 export type TestRunCursorPageRead = {

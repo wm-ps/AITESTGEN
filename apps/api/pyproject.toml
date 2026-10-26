@@ -17,6 +17,9 @@ dependencies = [
     "mailer",
     "test-suite-assembler",
     "safety-classifier",
+    # Plain-English explanation of a test failure no rule recognises
+    # (`explain_test_failure`), cached per error — see failure_explainer.
+    "ai-provider",
     "bcrypt>=5.0.0",
     "itsdangerous>=2.2.0",
     "httpx>=0.28",
@@ -35,6 +38,7 @@ object-store = { workspace = true }
 mailer = { workspace = true }
 test-suite-assembler = { workspace = true }
 safety-classifier = { workspace = true }
+ai-provider = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

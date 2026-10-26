@@ -40,6 +40,7 @@ from domain.discovery_settings import (
     ScreenshotCapture,
 )
 from domain.execution_policy import ExecutionPolicy
+from domain.failure_explanation import FailureExplanationRecord, FailureExplanationStatus
 from domain.exploration_step import ExplorationStep
 from domain.form import Form
 from domain.form_field import FormField
@@ -93,6 +94,8 @@ __all__ = [
     "RetentionPeriod",
     "ScreenshotCapture",
     "ExecutionPolicy",
+    "FailureExplanationRecord",
+    "FailureExplanationStatus",
     "ExplorationStep",
     "Form",
     "FormField",

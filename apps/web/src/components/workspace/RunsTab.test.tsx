@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TestRunRead } from '../../api'
 import { RunsTab } from './RunsTab'
@@ -318,4 +318,115 @@ describe('RunsTab', () => {
     await waitFor(() => expect(screen.queryByText('Healing…')).toBeNull(), { timeout: 5000 })
     expect(await screen.findByTitle('Retry this test with self-healing')).toBeInTheDocument()
   }, 15000)
+
+  // Plain-language failures: a Summary tab (default) and the untouched Raw
+  // error tab, an "Explained by AI" caption only for AI explanations, and the
+  // run-level root-cause banner.
+  const RAW = "TimeoutError: locator.click: Timeout 15000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: 'Submit' })"
+
+  function stubExplainedRun(result: Record<string, unknown>, runExtras: Record<string, unknown> = {}) {
+    const run = {
+      id: 'run-1',
+      run_number: 3,
+      name: '#3 - Full Suite Run',
+      status: 'completed',
+      trigger: 'Manual run',
+      pass_rate: 0,
+      health: { tier: 'critical', headline: 'Failing' },
+      total_count: 1,
+      passed_count: 0,
+      failed_count: 1,
+      timed_out_count: 0,
+      errored_count: 0,
+      blocked_count: 0,
+      blocked_reason: null,
+      environment_snapshot: 'staging',
+      target_base_url_snapshot: 'https://x.example.com',
+      created_at: '2026-09-01T00:00:00Z',
+      started_at: null,
+      completed_at: null,
+      allure_report_available: false,
+      ...runExtras,
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/artifacts')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [
+              { id: 'a1', artifact_type: 'screenshot', content_type: 'image/png', size_bytes: 2048, url: 'https://x/s.png' },
+              { id: 'a2', artifact_type: 'trace', content_type: 'application/zip', size_bytes: 4096, url: 'https://x/t.zip' },
+            ],
+          }
+        }
+        if (url.includes('/test-runs/run-1')) {
+          return { ok: true, status: 200, json: async () => ({ ...run, results: [{ ...failedResult, id: 'result-1', error_message: RAW, heal_blocked_reason: null, ...result }] }) }
+        }
+        if (url.includes('/test-runs')) {
+          return { ok: true, status: 200, json: async () => ({ items: [run], next_cursor: null }) }
+        }
+        return { ok: true, status: 200, json: async () => ({ available: true }) }
+      }),
+    )
+  }
+
+  async function expandRow() {
+    fireEvent.click(await screen.findByText(/Submits a claim/))
+  }
+
+  it('shows the plain Summary by default and the raw error on the Raw error tab', async () => {
+    stubExplainedRun({
+      failure_title: 'Couldn\'t click the "Submit" button',
+      failure_detail: 'The test waited 15 seconds for the "Submit" button, but it never appeared.',
+      failure_source: 'rules',
+    })
+
+    render(<RunsTab applicationId="app-1" initialRunId="run-1" />)
+    await expandRow()
+
+    expect(await screen.findByRole('tab', { name: 'Summary' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Couldn\'t click the "Submit" button')).toBeInTheDocument()
+    expect(screen.queryByText(/TimeoutError: locator.click/)).toBeNull()
+    expect(screen.queryByText('Explained by AI — may not be exact')).toBeNull()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Raw error' }))
+    expect(screen.getByText(/TimeoutError: locator.click/)).toBeInTheDocument()
+    // Screenshot and trace are unchanged.
+    expect(await screen.findByText(/Screenshot/)).toBeInTheDocument()
+    expect(screen.getByText(/Playwright trace/)).toBeInTheDocument()
+  })
+
+  it('labels an AI explanation', async () => {
+    stubExplainedRun({ failure_title: 'A widget failed', failure_detail: 'It likely crashed on save.', failure_source: 'ai' })
+
+    render(<RunsTab applicationId="app-1" initialRunId="run-1" />)
+    await expandRow()
+
+    expect(await screen.findByText('A widget failed')).toBeInTheDocument()
+    expect(screen.getByText('Explained by AI — may not be exact')).toBeInTheDocument()
+  })
+
+  it('shows just the raw error when there is no explanation', async () => {
+    stubExplainedRun({})
+
+    render(<RunsTab applicationId="app-1" initialRunId="run-1" />)
+    await expandRow()
+
+    expect(await screen.findByText(/TimeoutError: locator.click/)).toBeInTheDocument()
+    expect(screen.queryByRole('tablist')).toBeNull()
+  })
+
+  it('shows the root-cause banner when most failures share one cause', async () => {
+    stubExplainedRun(
+      { failure_title: "Couldn't sign in to the app", failure_detail: '', failure_source: 'rules' },
+      { root_cause: { title: "Vantage couldn't sign in to the app", affected: 38, total: 40 } },
+    )
+
+    render(<RunsTab applicationId="app-1" initialRunId="run-1" />)
+
+    expect(await screen.findByText('38 of 40 failed tests have the same cause')).toBeInTheDocument()
+    expect(screen.getByText("Vantage couldn't sign in to the app — fix this first.")).toBeInTheDocument()
+  })
 })

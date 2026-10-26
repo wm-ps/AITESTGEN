@@ -9,6 +9,9 @@ actually needs Temporal reachable, since it starts a real workflow.
 """
 
 import asyncio
+import random
+import string
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -1012,3 +1015,180 @@ class TestHealInProgress:
         assert [(r["heal_in_progress"], r["heal_kind"]) for r in body["results"]] == [
             (True, "automatic")
         ]
+
+
+class TestFailureExplanations:
+    """Plain-language failures on `get_test_run`: rules for known errors,
+    one cached LLM explanation per distinct unknown error (claimed atomically,
+    run after the response), a conservative run-level root cause — and
+    `error_message` always returned exactly as stored."""
+
+    @staticmethod
+    def _run_with_results(application: dict, messages: list[tuple[str, str | None]]) -> TestRun:
+        application_pk, asset = _seed_test_asset(application)
+        test_run = _seed_test_run(application_pk, status="completed", total_count=len(messages))
+        with Session(engine) as session:
+            for status, message in messages:
+                session.add(
+                    TestResult(
+                        test_run_id=test_run.id,
+                        test_asset_id=asset.id,
+                        scenario_id=asset.scenario_id,
+                        status=status,
+                        error_message=message,
+                    )
+                )
+            session.commit()
+        return test_run
+
+    @staticmethod
+    def _unknown_error() -> str:
+        # Letters only: digits are normalised and long hex strings redacted
+        # before fingerprinting, so a uuid would collide across tests.
+        word = "".join(random.choice(string.ascii_lowercase) for _ in range(12))
+        return f"Error: the {word} widget exploded while the app was saving qa-test-account"
+
+    @staticmethod
+    def _fake_provider(
+        monkeypatch: pytest.MonkeyPatch, *, result: str = "ok", delay: float = 0.0
+    ) -> list[str]:
+        from ai_provider.hosted import ExplainedFailure
+        from api import main as api_main
+
+        sent: list[str] = []
+        lock = threading.Lock()
+
+        class _Provider:
+            async def explain_test_failure(self, text: str) -> ExplainedFailure | None:
+                with lock:
+                    sent.append(text)
+                if delay:
+                    await asyncio.sleep(delay)
+                if result == "error":
+                    raise RuntimeError("proxy down")
+                if result == "undetermined":
+                    return None
+                return ExplainedFailure(title="A widget failed", detail="It likely crashed on save.")
+
+        monkeypatch.setattr(api_main, "HostedAIProvider", _Provider)
+        return sent
+
+    @staticmethod
+    def _get(client: TestClient, application: dict, test_run: TestRun) -> dict:
+        response = client.get(f"/applications/{application['id']}/test-runs/{test_run.external_id}")
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def test_known_errors_get_rule_explanations_and_raw_error_is_unchanged(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        init_db()
+        sent = self._fake_provider(monkeypatch)
+        client, _ = _signed_in_client("Org Failure Rules")
+        application = _create_application(client, "Failure Rules App")
+        raw = (
+            "TimeoutError: locator.click: Timeout 15000ms exceeded.\nCall log:\n"
+            "  - waiting for getByRole('button', { name: 'Submit' })\n"
+        )
+        test_run = self._run_with_results(application, [("failed", raw), ("passed", None)])
+
+        body = self._get(client, application, test_run)
+
+        failed = next(r for r in body["results"] if r["status"] == "failed")
+        passed = next(r for r in body["results"] if r["status"] == "passed")
+        assert failed["failure_title"] == 'Couldn\'t click the "Submit" button'
+        assert failed["failure_source"] == "rules"
+        assert failed["error_message"] == raw
+        assert passed["failure_title"] is None
+        assert sent == []  # no LLM for a known error
+
+    def test_root_cause_only_when_a_shared_cause_dominates(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        init_db()
+        self._fake_provider(monkeypatch)
+        client, _ = _signed_in_client("Org Failure Root Cause")
+        application = _create_application(client, "Failure Root Cause App")
+        sign_in = "failed to prepare the test project: auth.setup.ts failed (exit 1):"
+        shared = self._run_with_results(
+            application, [("errored", sign_in)] * 3 + [("failed", "Error: locator not found")]
+        )
+        mixed = self._run_with_results(
+            application,
+            [
+                ("failed", "Error: expect(locator).toBeVisible() failed"),
+                ("failed", "Error: locator not found"),
+            ]
+            * 2,
+        )
+
+        assert self._get(client, application, shared)["root_cause"] == {
+            "title": "Vantage couldn't sign in to the app",
+            "affected": 3,
+            "total": 4,
+        }
+        assert self._get(client, application, mixed)["root_cause"] is None
+
+    def test_unknown_error_is_explained_once_after_the_response(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        init_db()
+        sent = self._fake_provider(monkeypatch)
+        client, _ = _signed_in_client("Org Failure AI")
+        application = _create_application(client, "Failure AI App")
+        message = self._unknown_error()
+        test_run = self._run_with_results(application, [("failed", message), ("failed", message)])
+
+        first = self._get(client, application, test_run)
+        # Built before the LLM answered: the cleaned line, no source yet.
+        assert {r["failure_source"] for r in first["results"]} == {None}
+        assert first["results"][0]["failure_title"].startswith("the ")
+        second = self._get(client, application, test_run)
+        third = self._get(client, application, test_run)
+
+        assert len(sent) == 1  # two results, three polls, one call
+        for body in (second, third):
+            for r in body["results"]:
+                assert (r["failure_title"], r["failure_source"]) == ("A widget failed", "ai")
+                assert r["error_message"] == message
+        # The app's own saved username never reaches the LLM.
+        assert "qa-test-account" not in sent[0]
+
+    def test_simultaneous_requests_make_one_llm_call(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        init_db()
+        sent = self._fake_provider(monkeypatch, delay=0.5)
+        client, _ = _signed_in_client("Org Failure AI Concurrency")
+        application = _create_application(client, "Failure AI Concurrency App")
+        test_run = self._run_with_results(application, [("failed", self._unknown_error())] * 3)
+        barrier = threading.Barrier(6)
+
+        def poll() -> None:
+            barrier.wait()
+            self._get(client, application, test_run)
+
+        threads = [threading.Thread(target=poll) for _ in range(6)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert len(sent) == 1
+
+    def test_llm_failure_and_undetermined_answers(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        init_db()
+        client, _ = _signed_in_client("Org Failure AI Fallbacks")
+        application = _create_application(client, "Failure AI Fallbacks App")
+
+        sent = self._fake_provider(monkeypatch, result="error")
+        broken = self._run_with_results(application, [("failed", self._unknown_error())])
+        self._get(client, application, broken)
+        after_error = self._get(client, application, broken)["results"][0]
+        assert after_error["failure_source"] is None  # the cleaned line keeps showing
+        assert len(sent) == 1  # a failed explanation isn't retried on every poll
+
+        self._fake_provider(monkeypatch, result="undetermined")
+        unclear = self._run_with_results(application, [("failed", self._unknown_error())])
+        self._get(client, application, unclear)
+        result = self._get(client, application, unclear)["results"][0]
+        assert result["failure_title"] == "The test failed for a reason Vantage couldn't identify"
+        assert result["failure_source"] == "ai"

@@ -1194,7 +1194,9 @@ export interface paths {
         /**
          * Get Test Run
          * @description The endpoint the frontend polls while a run is in flight (mirrors
-         *     `list_test_suites`'s shape).
+         *     `list_test_suites`'s shape). Never waits on an LLM: an unknown failure
+         *     returns its cleaned first line now, and its AI explanation (claimed once
+         *     per distinct error, run after the response) shows on a later poll.
          */
         get: operations["get_test_run_applications__external_id__test_runs__test_run_external_id__get"];
         put?: never;
@@ -1926,6 +1928,15 @@ export interface components {
             /** Email */
             email: string;
         };
+        /** RootCauseRead */
+        RootCauseRead: {
+            /** Title */
+            title: string;
+            /** Affected */
+            affected: number;
+            /** Total */
+            total: number;
+        };
         /** RunTrendPointRead */
         RunTrendPointRead: {
             /**
@@ -2353,6 +2364,12 @@ export interface components {
             heal_in_progress: boolean;
             /** Heal Kind */
             heal_kind?: string | null;
+            /** Failure Title */
+            failure_title?: string | null;
+            /** Failure Detail */
+            failure_detail?: string | null;
+            /** Failure Source */
+            failure_source?: string | null;
         };
         /** TestRunCursorPageRead */
         TestRunCursorPageRead: {
@@ -2411,6 +2428,7 @@ export interface components {
              * @default false
              */
             allure_report_available: boolean;
+            root_cause?: components["schemas"]["RootCauseRead"] | null;
             /** Results */
             results?: components["schemas"]["TestResultRead"][] | null;
         };

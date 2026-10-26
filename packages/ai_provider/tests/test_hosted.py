@@ -1916,3 +1916,39 @@ def test_invented_locator_names_flags_names_no_evidence_shows() -> None:
     candidate = "page.getByText('Test value 2'); page.getByRole('button', { name: 'Send' })"
     assert invented_locator_names(candidate, evidence=["button \"Send\""]) == {"Test value 2"}
     assert invented_locator_names(candidate, evidence=["Test value 2", "Send"]) == set()
+
+
+# --- explain_test_failure: plain-English explanation of an unknown failure ----
+
+
+async def test_explain_test_failure_returns_validated_plain_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _monkeypatch_post(
+        monkeypatch,
+        json.dumps({"determined": True, "title": "  The save button likely broke  ", "detail": "x" * 500}),
+    )
+
+    explained = await HostedAIProvider().explain_test_failure("Error: [redacted] widget exploded")
+
+    assert explained is not None
+    assert explained.title == "The save button likely broke"
+    assert len(explained.detail) == 300  # capped
+    assert captured["json"]["response_format"] == {"type": "json_object"}
+    assert "[redacted] widget exploded" in captured["json"]["messages"][-1]["content"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        json.dumps({"determined": False, "title": "No idea", "detail": "Can't tell"}),
+        json.dumps({"determined": True, "title": "", "detail": "x"}),
+        json.dumps({"determined": True, "title": 5, "detail": "x"}),
+        json.dumps({"title": "missing determined", "detail": "x"}),
+        "not json at all",
+    ],
+)
+async def test_explain_test_failure_returns_none_rather_than_a_guess(
+    monkeypatch: pytest.MonkeyPatch, body: str
+) -> None:
+    _monkeypatch_post(monkeypatch, body)
+
+    assert await HostedAIProvider().explain_test_failure("Error: something") is None

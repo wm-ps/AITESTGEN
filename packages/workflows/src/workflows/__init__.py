@@ -82,6 +82,16 @@ from workflows.heal_policy import (
     is_infra_failure,
     is_locator_failure,
 )
+from workflows.failure_explainer import (
+    UNKNOWN as UNKNOWN_FAILURE,
+    FailureExplanation,
+    RootCause,
+    clean_error,
+    error_fingerprint,
+    explain_failure,
+    redact_for_llm,
+    run_root_cause,
+)
 from workflows.generation_workflow import (
     GENERATION_TASK_QUEUE,
     SCENARIO_GENERATION_ACTIVITY_NAME,
@@ -136,6 +146,14 @@ from workflows.suite_generation_workflow import (
 
 __all__ = [
     "heal_eligibility",
+    "UNKNOWN_FAILURE",
+    "FailureExplanation",
+    "RootCause",
+    "clean_error",
+    "error_fingerprint",
+    "explain_failure",
+    "redact_for_llm",
+    "run_root_cause",
     "is_assertion_failure",
     "is_infra_failure",
     "is_locator_failure",

@@ -75,6 +75,9 @@ class FailedTest:
     status: str  # failed | timed_out | errored
     error_message: str | None
     duration_ms: int | None
+    # Plain-language failure (`workflows.failure_explainer` rule title, or a
+    # cached AI one); shown instead of `short_error(error_message)` when set.
+    description: str | None = None
 
 
 @dataclass
@@ -93,6 +96,9 @@ class RunEmail:
     report_available: bool
     base_url: str
     failed_tests: list[FailedTest] = field(default_factory=list)
+    # One sentence when most failures share one cause ("38 of 40 failed
+    # tests have the same cause — ..."), shown above the failed tests.
+    root_cause: str | None = None
 
 
 def outcome_of(counts: RunCounts) -> Outcome:
@@ -325,7 +331,9 @@ def _failed_table(email: RunEmail) -> str:
             else ""
         )
         error_html = (
-            f'<div style="margin-top:4px;font-size:12px;color:{_FG_4};font-family:Consolas,Menlo,monospace;word-break:break-word;">{_e(error)}</div>'
+            f'<div style="margin-top:4px;font-size:13px;color:{_FG_2};word-break:break-word;">{_e(test.description)}</div>'
+            if test.description
+            else f'<div style="margin-top:4px;font-size:12px;color:{_FG_4};font-family:Consolas,Menlo,monospace;word-break:break-word;">{_e(error)}</div>'
             if error
             else ""
         )
@@ -347,9 +355,15 @@ def _failed_table(email: RunEmail) -> str:
         if more > 0
         else ""
     )
+    root_cause_html = (
+        f'<p style="margin:0 0 8px;font-size:13px;color:{_FG_2};">{_e(email.root_cause)}</p>'
+        if email.root_cause
+        else ""
+    )
     return f"""\
         <tr><td style="padding:24px 32px 0;">
           <p style="margin:0 0 6px;font-size:15px;font-weight:700;color:{_FG};">Tests that didn't pass</p>
+          {root_cause_html}
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
 {"".join(rows)}
           </table>
@@ -452,13 +466,15 @@ def render_text(email: RunEmail) -> str:
     failures = _ordered_failures(email)
     if failures:
         lines += ["", "Tests that didn't pass:"]
+        if email.root_cause:
+            lines.append(email.root_cause)
         for test in failures[:MAX_LISTED_FAILURES]:
             where = f" ({test.journey})" if test.journey else ""
             lines.append(
                 f"- [{_STATUS_LABELS.get(test.status, 'Errored')}] {test.name}{where}"
                 f" · {format_duration(test.duration_ms)}"
             )
-            error = short_error(test.error_message)
+            error = test.description or short_error(test.error_message)
             if error:
                 lines.append(f"    {error}")
         more = len(failures) - MAX_LISTED_FAILURES

@@ -201,3 +201,25 @@ def test_small_helpers() -> None:
     assert format_duration(400) == "<1s"
     assert format_duration(272_000) == "4m 32s"
     assert format_duration(3_720_000) == "1h 2m"
+
+
+def test_failures_show_their_plain_description_and_the_root_cause() -> None:
+    email = _email(
+        RunCounts(total=3, failed=3),
+        failed_tests=[
+            FailedTest(
+                "Submits a claim", None, "failed", "TimeoutError: locator.click: Timeout 15000ms", 10,
+                description='Couldn\'t click the "Submit" button',
+            ),
+            FailedTest("Exports statements", None, "failed", "Error: something odd", 10),
+        ],
+        root_cause="3 of 3 failed tests have the same cause — Vantage couldn't sign in to the app.",
+    )
+
+    _, text, html = build_email(email)
+
+    for body in (text, html_lib.unescape(html)):
+        assert 'Couldn\'t click the "Submit" button' in body
+        assert "TimeoutError" not in body  # replaced by its description
+        assert "something odd" in body  # no description -> the existing short error
+        assert "have the same cause — Vantage couldn't sign in to the app." in body

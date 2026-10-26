@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import re
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -1357,6 +1358,39 @@ application"}}"""
 
 _TEST_CASE_PROMPT_USER = """User's request: "{prompt}\""""
 
+# A failed automated browser test whose error matched none of
+# workflows.failure_explainer's rules. The reader is a non-technical tester;
+# the error text has already been redacted (values shown as [redacted]).
+_EXPLAIN_FAILURE_SYSTEM = """You explain why an automated browser test failed, \
+to a non-technical tester who does not read code.
+
+You get the error text from the test run (some values are replaced with \
+[redacted]). Explain the LIKELY cause in simple, everyday English.
+
+Rules:
+- Use only what the error text supports. Never invent page names, buttons, \
+values or causes that aren't in it. Say "likely" when you're inferring.
+- No code, selectors, stack traces or technical jargon in your answer.
+- If the error text doesn't let you tell what went wrong, say so by setting \
+"determined" to false — never guess.
+
+Reply with JSON only:
+{"determined": true or false,
+"title": "at most 80 characters, plain English",
+"detail": "at most 2 short sentences, plain English"}"""
+
+_EXPLAIN_FAILURE_USER = """Error text from the failed test:
+{error}"""
+
+_EXPLAIN_TITLE_MAX = 80
+_EXPLAIN_DETAIL_MAX = 300
+
+
+@dataclass(frozen=True)
+class ExplainedFailure:
+    title: str
+    detail: str
+
 # Story 2.10 AC 3: a short, plain-language (not JSON) opinion — this is
 # supporting evidence recorded in diagnostics, never a structured decision
 # the caller branches on, so there's nothing here worth a schema for.
@@ -1942,6 +1976,34 @@ class HostedAIProvider:
             timeout=30,
         )
         return content.strip()
+
+    async def explain_test_failure(self, redacted_error: str) -> ExplainedFailure | None:
+        """Plain-English title/detail for a failure no rule recognised. Input
+        must already be redacted (`workflows.redact_for_llm`). None when the
+        model can't tell the cause or its output isn't usable — the caller
+        shows a generic fallback rather than a guess. Raises on transport
+        errors (the caller records those as failed)."""
+        content = await _chat_completion(
+            [
+                {"role": "system", "content": _EXPLAIN_FAILURE_SYSTEM},
+                {"role": "user", "content": _EXPLAIN_FAILURE_USER.format(error=redacted_error)},
+            ],
+            response_format={"type": "json_object"},
+            timeout=30,
+        )
+        try:
+            raw = json.loads(content)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(raw, dict) or raw.get("determined") is not True:
+            return None
+        title, detail = raw.get("title"), raw.get("detail")
+        if not isinstance(title, str) or not isinstance(detail, str):
+            return None
+        title, detail = title.strip(), detail.strip()
+        if not title or not detail:
+            return None
+        return ExplainedFailure(title=title[:_EXPLAIN_TITLE_MAX], detail=detail[:_EXPLAIN_DETAIL_MAX])
 
     async def classify_action_safety(self, label: str, page_context: str) -> str:
         content = await _chat_completion(
