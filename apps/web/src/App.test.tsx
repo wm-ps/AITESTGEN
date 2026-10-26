@@ -82,6 +82,13 @@ describe('App', () => {
       if (path.endsWith('/applications/test-connection')) {
         return { ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) }
       }
+      // "Start discovery" logs in with the entered credentials first (start + poll).
+      if (path.endsWith('/applications/verify-credentials')) {
+        return { ok: true, status: 202, json: async () => ({ check_id: 'check-1' }) }
+      }
+      if (path.endsWith('/applications/verify-credentials/check-1')) {
+        return { ok: true, status: 200, json: async () => ({ status: 'valid', detail: null }) }
+      }
       if (path.endsWith('/applications') && init?.method === 'POST') {
         return {
           ok: true,

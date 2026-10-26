@@ -95,6 +95,8 @@ from workflows import (
     ScheduledExecutionWorkflow,
     ScheduledExecutionWorkflowInput,
     SuiteGenerationWorkflow,
+    VerifyCredentialsActivityInput,
+    VerifyCredentialsWorkflow,
 )
 
 from api.auth import (
@@ -908,6 +910,106 @@ async def test_application_connection(
         except HTTPException as exc:
             return ConnectionTestResult(reachable=False, detail=str(exc.detail))
     return ConnectionTestResult(reachable=True)
+
+
+class CredentialCheckPayload(BaseModel):
+    url: str
+    login_url: str | None = None
+    username: str
+    password: str
+
+    @field_validator("url", mode="before")
+    @classmethod
+    def _normalize_url(cls, value: str) -> str:
+        return _normalize_application_url(value) if isinstance(value, str) else value
+
+
+class CredentialCheckStarted(BaseModel):
+    check_id: uuid.UUID
+
+
+class CredentialCheckStatusRead(BaseModel):
+    status: Literal["running", "valid", "invalid", "uncertain"]
+    detail: str | None = None
+
+
+def _verify_credentials_workflow_id(organization_id: uuid.UUID, check_id: uuid.UUID) -> str:
+    # Org id in the id itself: the status route rebuilds it from the caller's
+    # own org, so one org can never describe another's check.
+    return f"verify-credentials-{organization_id}-{check_id}"
+
+
+# "Start discovery" pre-flight: a real browser login with the entered
+# credentials, run by the discovery worker (the only process with Chromium).
+# Start + poll like the Scenarios tab's regenerate/auto-fill — the login can
+# take over a minute, too long for one blocking request. `create_application`
+# itself is deliberately unchanged, so direct API callers aren't gated.
+@app.post("/applications/verify-credentials", response_model=CredentialCheckStarted, status_code=202)
+async def start_credential_check(
+    payload: CredentialCheckPayload,
+    organization_id: CurrentOrgIdDep,
+) -> CredentialCheckStarted:
+    client = await get_temporal_client()
+    if not await has_pollers(client, DISCOVERY_TASK_QUEUE):
+        raise HTTPException(status_code=503, detail="DISCOVERY_UNAVAILABLE")
+
+    # Stored in Vault, never passed as workflow input — Temporal persists
+    # workflow history, so a plaintext password there would outlive the check.
+    # The activity deletes it when done.
+    vault = VaultSecretsClient()
+    secret_ref = vault.store(
+        organization_id,
+        json.dumps({"username": payload.username, "password": payload.password}).encode(),
+    )
+    check_id = uuid.uuid4()
+    try:
+        await client.start_workflow(
+            VerifyCredentialsWorkflow.run,
+            VerifyCredentialsActivityInput(
+                secret_ref=secret_ref.path,
+                url=payload.url,
+                login_url=payload.login_url or None,
+            ),
+            id=_verify_credentials_workflow_id(organization_id, check_id),
+            task_queue=DISCOVERY_TASK_QUEUE,
+        )
+    except Exception:
+        # ponytail: if the worker dies after the workflow starts but before
+        # the activity's own cleanup, the temp secret is orphaned — a fuller
+        # version would sweep stale `applications/<org>/` entries that no
+        # Application row references.
+        vault.delete(secret_ref)
+        raise
+    return CredentialCheckStarted(check_id=check_id)
+
+
+@app.get(
+    "/applications/verify-credentials/{check_id}",
+    response_model=CredentialCheckStatusRead,
+)
+async def get_credential_check_status(
+    check_id: uuid.UUID,
+    organization_id: CurrentOrgIdDep,
+) -> CredentialCheckStatusRead:
+    client = await get_temporal_client()
+    handle = client.get_workflow_handle_for(
+        VerifyCredentialsWorkflow.run, _verify_credentials_workflow_id(organization_id, check_id)
+    )
+    try:
+        desc = await handle.describe()
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail="CREDENTIAL_CHECK_NOT_FOUND") from exc
+
+    if desc.status == WorkflowExecutionStatus.RUNNING:
+        return CredentialCheckStatusRead(status="running")
+
+    if desc.status == WorkflowExecutionStatus.COMPLETED:
+        result = await handle.result()
+        return CredentialCheckStatusRead(status=result.status, detail=result.detail)
+
+    return CredentialCheckStatusRead(
+        status="uncertain", detail="The login check did not finish normally."
+    )
 
 
 def _latest_discovery_run(session: Session, application_id: uuid.UUID) -> DiscoveryRun | None:
