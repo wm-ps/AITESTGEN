@@ -343,6 +343,12 @@ export type RegenerateTestAssetStatusRead = {
   test_asset_id: string | null
   error_message: string | null
 }
+// Add-application "Start discovery" login pre-check — not in
+// api-types.gen.ts yet, added by hand per the same convention.
+export type CredentialCheckStatusRead = {
+  status: 'running' | 'valid' | 'invalid' | 'uncertain'
+  detail: string | null
+}
 // Scenarios tab "Auto-generate" (test data) — not in api-types.gen.ts yet,
 // added by hand per the same convention.
 export type AutofillScenarioTestDataStatusRead = {
@@ -465,6 +471,13 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ url }),
     }),
+  startCredentialCheck: (payload: { url: string; login_url?: string; username: string; password: string }) =>
+    request<{ check_id: string }>('/applications/verify-credentials', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getCredentialCheck: (checkId: string) =>
+    request<CredentialCheckStatusRead>(`/applications/verify-credentials/${checkId}`),
   listApplications: () => request<ApplicationRead[]>('/applications'),
   getHome: () => request<HomeApplicationRead[]>('/home'),
   getOverviewStats: () => request<OverviewStatsRead>('/overview-stats'),

@@ -14,13 +14,14 @@ import os
 
 from temporalio.client import Client
 from temporalio.worker import Worker
-from workflows import DISCOVERY_TASK_QUEUE, DiscoveryWorkflow
+from workflows import DISCOVERY_TASK_QUEUE, DiscoveryWorkflow, VerifyCredentialsWorkflow
 
 from discovery_worker.activities import (
     application_model_builder_activity,
     discovery_activity,
     inference_activity,
     mark_discovery_run_failed_activity,
+    verify_credentials_activity,
 )
 
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
@@ -37,12 +38,13 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=DISCOVERY_TASK_QUEUE,
-        workflows=[DiscoveryWorkflow],
+        workflows=[DiscoveryWorkflow, VerifyCredentialsWorkflow],
         activities=[
             discovery_activity,
             application_model_builder_activity,
             inference_activity,
             mark_discovery_run_failed_activity,
+            verify_credentials_activity,
         ],
         max_concurrent_activities=MAX_CONCURRENT_ACTIVITIES,
     )

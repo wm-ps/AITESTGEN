@@ -34,6 +34,39 @@ const fieldInputStyle: React.CSSProperties = {
   fontFamily: 'inherit',
 }
 
+// The login check runs in a real browser on the discovery worker and is
+// polled, like Regenerate/Auto-fill. The cap sits just above the worker's
+// own worst-case budget (credential_check.py) so a hung check ends as
+// "couldn't confirm" instead of spinning forever.
+const CREDENTIAL_POLL_MS = 1000
+const CREDENTIAL_POLL_MAX_ATTEMPTS = 150
+const INVALID_CREDENTIALS_MESSAGE =
+  'The username or password is incorrect. Enter valid credentials and click Start discovery again.'
+const UNCERTAIN_CREDENTIALS_MESSAGE =
+  "We couldn't confirm these credentials. Click Start discovery to validate again."
+
+// Anything that isn't a proved `valid` / `invalid` (request error, worker
+// unavailable, timeout) collapses to `uncertain` — discovery never starts on
+// an unproven login, and the user is just asked to try again.
+async function checkCredentials(payload: {
+  url: string
+  login_url?: string
+  username: string
+  password: string
+}): Promise<'valid' | 'invalid' | 'uncertain'> {
+  try {
+    const { check_id } = await api.startCredentialCheck(payload)
+    for (let attempt = 0; attempt < CREDENTIAL_POLL_MAX_ATTEMPTS; attempt++) {
+      const result = await api.getCredentialCheck(check_id)
+      if (result.status !== 'running') return result.status
+      await new Promise((resolve) => setTimeout(resolve, CREDENTIAL_POLL_MS))
+    }
+  } catch {
+    // fall through to uncertain
+  }
+  return 'uncertain'
+}
+
 export function ConnectAppForm({
   application,
   onConnected,
@@ -73,6 +106,10 @@ export function ConnectAppForm({
   const notesFilledCount = Object.values(notes).filter((v) => v.trim().length > 0).length
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  // Shown under the Username/Password fields — cleared on any edit to the
+  // fields the check was run against.
+  const [validatingCredentials, setValidatingCredentials] = useState(false)
+  const [credentialMessage, setCredentialMessage] = useState<string | null>(null)
   const [testingConnection, setTestingConnection] = useState(false)
   const [connectionResult, setConnectionResult] = useState<{ ok: boolean; detail: string | null } | null>(null)
   // `[FIXED]` Was previously shown as a dimmed/disabled-looking button plus
@@ -112,8 +149,24 @@ export function ConnectAppForm({
       return
     }
     setError(null)
+    setCredentialMessage(null)
     setSubmitting(true)
     try {
+      // Only when discovery will actually run — "Add application" (no
+      // discovery) skips the check entirely.
+      if (discoveryRequired) {
+        setValidatingCredentials(true)
+        const verdict = await checkCredentials({
+          url,
+          login_url: loginUrl || undefined,
+          username,
+          password,
+        })
+        if (verdict !== 'valid') {
+          setCredentialMessage(verdict === 'invalid' ? INVALID_CREDENTIALS_MESSAGE : UNCERTAIN_CREDENTIALS_MESSAGE)
+          return
+        }
+      }
       const application = await api.createApplication({
         name,
         url,
@@ -131,6 +184,7 @@ export function ConnectAppForm({
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to connect the application.')
     } finally {
+      setValidatingCredentials(false)
       setSubmitting(false)
     }
   }
@@ -228,6 +282,7 @@ export function ConnectAppForm({
                   onChange={(e) => {
                     setUrl(e.target.value)
                     setConnectionResult(null)
+                    setCredentialMessage(null)
                   }}
                   style={{ ...fieldInputStyle, fontFamily: 'var(--font-mono)', fontSize: 13 }}
                 />
@@ -296,7 +351,10 @@ export function ConnectAppForm({
                   readOnly={readOnly}
                   placeholder="Enter the login page URL"
                   value={loginUrl}
-                  onChange={(e) => setLoginUrl(e.target.value)}
+                  onChange={(e) => {
+                    setLoginUrl(e.target.value)
+                    setCredentialMessage(null)
+                  }}
                   style={{ ...fieldInputStyle, background: 'var(--panel)', fontFamily: 'var(--font-mono)', fontSize: 13 }}
                 />
               </Field>
@@ -308,7 +366,10 @@ export function ConnectAppForm({
                     autoComplete="off"
                     placeholder={readOnly ? 'Stored securely — not shown' : 'Service account email'}
                     value={username}
-                    onChange={(e) => setUsername(e.target.value)}
+                    onChange={(e) => {
+                      setUsername(e.target.value)
+                      setCredentialMessage(null)
+                    }}
                     style={{ ...fieldInputStyle, background: 'var(--panel)' }}
                   />
                 </Field>
@@ -320,11 +381,19 @@ export function ConnectAppForm({
                     autoComplete="off"
                     placeholder={readOnly ? 'Stored securely — not shown' : 'Password or token'}
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
+                    onChange={(e) => {
+                      setPassword(e.target.value)
+                      setCredentialMessage(null)
+                    }}
                     style={{ ...fieldInputStyle, background: 'var(--panel)' }}
                   />
                 </Field>
               </div>
+              {credentialMessage && (
+                <div style={{ color: 'var(--bad)', fontSize: 12.5 }} role="alert">
+                  {credentialMessage}
+                </div>
+              )}
             </div>
 
             {!readOnly && (
@@ -455,7 +524,7 @@ export function ConnectAppForm({
                       }}
                     >
                       {submitting ? (
-                        <LoadingDots label="Connecting" />
+                        <LoadingDots label={validatingCredentials ? 'Validating credentials...' : 'Connecting'} />
                       ) : (
                         <>
                           <FontAwesomeIcon icon={discoveryRequired ? faPlay : faPlus} style={{ fontSize: 11 }} />

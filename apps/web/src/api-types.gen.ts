@@ -255,6 +255,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/verify-credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Credential Check */
+        post: operations["start_credential_check_applications_verify_credentials_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/verify-credentials/{check_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Credential Check Status */
+        get: operations["get_credential_check_status_applications_verify_credentials__check_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/applications/{external_id}": {
         parameters: {
             query?: never;
@@ -1532,6 +1566,35 @@ export interface components {
         ConnectionTestResult: {
             /** Reachable */
             reachable: boolean;
+            /** Detail */
+            detail?: string | null;
+        };
+        /** CredentialCheckPayload */
+        CredentialCheckPayload: {
+            /** Url */
+            url: string;
+            /** Login Url */
+            login_url?: string | null;
+            /** Username */
+            username: string;
+            /** Password */
+            password: string;
+        };
+        /** CredentialCheckStarted */
+        CredentialCheckStarted: {
+            /**
+             * Check Id
+             * Format: uuid
+             */
+            check_id: string;
+        };
+        /** CredentialCheckStatusRead */
+        CredentialCheckStatusRead: {
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "valid" | "invalid" | "uncertain";
             /** Detail */
             detail?: string | null;
         };
@@ -3010,6 +3073,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConnectionTestResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_credential_check_applications_verify_credentials_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialCheckPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialCheckStarted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_credential_check_status_applications_verify_credentials__check_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                check_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CredentialCheckStatusRead"];
                 };
             };
             /** @description Validation Error */

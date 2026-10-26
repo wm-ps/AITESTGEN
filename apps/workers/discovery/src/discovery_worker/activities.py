@@ -58,8 +58,11 @@ from workflows import (
     ApplicationModelBuilderActivityOutput,
     DiscoveryActivityInput,
     DiscoveryActivityOutput,
+    VERIFY_CREDENTIALS_ACTIVITY_NAME,
     InferenceActivityInput,
     MarkDiscoveryRunFailedActivityInput,
+    VerifyCredentialsActivityInput,
+    VerifyCredentialsResult,
 )
 
 from discovery_worker import blocked_frontier
@@ -74,6 +77,7 @@ from discovery_worker.crawler import (
     CrawlResult,
     run_discovery_crawl,
 )
+from discovery_worker.credential_check import verify_login
 from discovery_worker.data_resolver import PoolEntry
 from discovery_worker.db import engine
 from discovery_worker.diagnostics import record_diagnostic
@@ -313,6 +317,44 @@ def _record_exploration_path(
             )
         )
     session.commit()
+
+
+@activity.defn(name=VERIFY_CREDENTIALS_ACTIVITY_NAME)
+async def verify_credentials_activity(
+    input: VerifyCredentialsActivityInput,
+) -> VerifyCredentialsResult:
+    """"Start discovery" pre-flight: really log in with the entered
+    credentials (see `credential_check.py`). `input.secret_ref` is a
+    *temporary* Vault entry the API wrote just for this check — always
+    deleted here, win or lose."""
+    vault_client = VaultSecretsClient()
+    ref = SecretRef(path=input.secret_ref)
+    try:
+        credential = await asyncio.to_thread(vault_client.resolve, ref)
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.launch(headless=True)
+            try:
+                result = await verify_login(
+                    browser,
+                    credential=credential,
+                    base_url=input.url,
+                    login_url=input.login_url,
+                    heartbeat=activity.heartbeat if activity.in_activity() else None,
+                )
+            finally:
+                await browser.close()
+        logger.info("VerifyCredentialsActivity: status=%s detail=%s", result.status, result.detail)
+        return result
+    except Exception:
+        logger.exception("VerifyCredentialsActivity: check crashed")
+        return VerifyCredentialsResult(
+            status="uncertain", detail="Could not complete the login check."
+        )
+    finally:
+        try:
+            await asyncio.to_thread(vault_client.delete, ref)
+        except Exception:
+            logger.exception("VerifyCredentialsActivity: could not delete temporary credential")
 
 
 @activity.defn(name="DiscoveryActivity")

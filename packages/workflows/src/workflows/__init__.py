@@ -143,6 +143,12 @@ from workflows.suite_generation_workflow import (
     PlaywrightGenerationActivityInput,
     SuiteGenerationWorkflow,
 )
+from workflows.verify_credentials_workflow import (
+    VERIFY_CREDENTIALS_ACTIVITY_NAME,
+    VerifyCredentialsActivityInput,
+    VerifyCredentialsResult,
+    VerifyCredentialsWorkflow,
+)
 
 __all__ = [
     "heal_eligibility",
@@ -197,6 +203,10 @@ __all__ = [
     "REGENERATE_TEST_ASSET_ACTIVITY_NAME",
     "SCENARIO_GENERATION_ACTIVITY_NAME",
     "TEST_RUN_STALE_AFTER",
+    "VERIFY_CREDENTIALS_ACTIVITY_NAME",
+    "VerifyCredentialsActivityInput",
+    "VerifyCredentialsResult",
+    "VerifyCredentialsWorkflow",
     "AnalyzePromptActivityInput",
     "AutofillScenarioTestDataActivityInput",
     "AutofillScenarioTestDataResult",
