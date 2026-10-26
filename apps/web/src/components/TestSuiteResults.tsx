@@ -4,7 +4,7 @@ import { faIcon } from '../faIcon'
 
 const FlaskConical = faIcon(faVial)
 import { api, type TestCaseRead, type TestSuiteRead } from '../api'
-import { LoadingDots, Spinner } from './LoadingDots'
+import { LoadingDots } from './LoadingDots'
 import { GenerationLoader } from './GenerationLoader'
 import { useCanEdit } from '../PermissionsContext'
 import { ServiceError } from './ServiceError'
@@ -198,9 +198,13 @@ export function StatTile({
 export function TestSuiteResults({
   applicationId,
   onRunTests,
+  onComplete,
 }: {
   applicationId: string
   onRunTests: () => void
+  // Fired once generation finishes, so App can swap this legacy screen for
+  // the Workspace Test cases tab instead of leaving it up until a tab click.
+  onComplete?: () => void
 }) {
   const [suites, setSuites] = useState<TestSuiteRead[]>([])
   const [expectedTestCaseCount, setExpectedTestCaseCount] = useState(0)
@@ -350,6 +354,11 @@ export function TestSuiteResults({
   }, [applicationId, isComplete])
 
   useEffect(() => {
+    if (isComplete) onComplete?.()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isComplete])
+
+  useEffect(() => {
     if (isComplete) {
       setStuck(false)
       return
@@ -422,8 +431,7 @@ export function TestSuiteResults({
                     opacity: regenerating ? 0.65 : 1,
                   }}
                 >
-                  {regenerating && <Spinner size={11} />}
-                  {regenerating ? 'Regenerating…' : 'Regenerate'}
+                  {regenerating ? <LoadingDots label="Regenerating" /> : 'Regenerate'}
                 </button>
               )
             }
@@ -505,7 +513,7 @@ export function TestSuiteResults({
                 </div>
               </div>
               <h1 style={{ fontSize: 19, fontWeight: 700, color: '#FFFFFF', margin: '0 0 14px' }}>
-                Test Suites Generated
+                Test Cases Generated
               </h1>
               {canEdit && (
               <div style={{ display: 'flex', justifyContent: 'center', gap: 10 }}>
@@ -530,7 +538,7 @@ export function TestSuiteResults({
                   }}
                 >
                   <DownloadIcon />
-                  {downloading ? <LoadingDots label="Downloading" /> : 'Download Test Suite'}
+                  {downloading ? <LoadingDots label="Downloading" /> : 'Download Test Cases'}
                 </button>
                 <button
                   type="button"
@@ -547,7 +555,7 @@ export function TestSuiteResults({
                     cursor: 'pointer',
                   }}
                 >
-                  Run Suite
+                  Run Test Cases
                 </button>
               </div>
               )}

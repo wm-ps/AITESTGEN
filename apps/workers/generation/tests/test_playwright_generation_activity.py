@@ -73,7 +73,6 @@ class _FakeAIProvider:
         # blow up on an unexpected keyword argument.
         previous_code: str | None = None,
         changed_test_data: list[dict] | None = None,
-        application_context: dict | None = None,
     ) -> TestAssetCode:
         self.calls.append(str(scenario.external_id))
         self.known_pages_calls.append(known_pages or [])

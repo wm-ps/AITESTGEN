@@ -496,6 +496,16 @@ def _build_readme(application_name: str, auth_method: str) -> str:
 
 
 def _build_auth_setup_script(auth_method: str, login_evidence: LoginPageEvidence | None) -> str:
+    if auth_method == "none":
+        return (
+            "import { test as setup } from '@playwright/test'\n"
+            "import { mkdirSync, writeFileSync } from 'fs'\n\n"
+            "// The application has no sign-in — every test starts from an empty session.\n"
+            "setup('no sign-in', async () => {\n"
+            "  mkdirSync('.auth', { recursive: true })\n"
+            "  writeFileSync('.auth/state.json', JSON.stringify({ cookies: [], origins: [] }))\n"
+            "})\n"
+        )
     if auth_method == "sso_session_reuse":
         return (
             "import { test as setup } from '@playwright/test'\n"

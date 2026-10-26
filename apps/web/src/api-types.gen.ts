@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Activity */
+        get: operations["list_activity_activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -397,35 +414,6 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
-        trace?: never;
-    };
-    "/applications/{external_id}/context": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Update Application Context
-         * @description Persistent, user-authored Application Context (shown in the UI as
-         *     "Notes": business goal, business domain, business rules, additional
-         *     context) — complements crawler/live-exploration knowledge with what the
-         *     AI can't reliably discover on its own. A full replace of the stored
-         *     context (see
-         *     `ApplicationContext`'s docstring) — every field optional, `None`/blank
-         *     fields simply aren't rendered into any prompt (`ai_provider.
-         *     application_context.build_application_context_block`). Never contains
-         *     credentials/secrets — this is business/domain prose, not connection
-         *     config, and nothing here is ever treated as a system-level instruction.
-         */
-        patch: operations["update_application_context_applications__external_id__context_patch"];
         trace?: never;
     };
     "/applications/{external_id}/credentials": {
@@ -1402,35 +1390,65 @@ export interface components {
             /** Password */
             password: string;
         };
+        /** ActivityItemRead */
+        ActivityItemRead: {
+            /** Id */
+            id: string;
+            /** Kind */
+            kind: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Category */
+            category: string;
+            /** Outcome */
+            outcome: string;
+            /** Summary */
+            summary: string;
+            /** Reason */
+            reason?: string | null;
+            /** Actor */
+            actor: string;
+            /** Application Id */
+            application_id?: string | null;
+            /** Application Name */
+            application_name?: string | null;
+            /**
+             * Application Deleted
+             * @default false
+             */
+            application_deleted: boolean;
+            /** Target Tab */
+            target_tab?: string | null;
+            /** Test Run Id */
+            test_run_id?: string | null;
+            /**
+             * Details
+             * @default {}
+             */
+            details: {
+                [key: string]: unknown;
+            };
+        };
+        /** ActivityPageRead */
+        ActivityPageRead: {
+            /** Items */
+            items: components["schemas"]["ActivityItemRead"][];
+            /** Next Cursor */
+            next_cursor: string | null;
+            /** Facets */
+            facets: {
+                [key: string]: {
+                    [key: string]: number;
+                };
+            };
+        };
         /** AllureReportUrlRead */
         AllureReportUrlRead: {
             /** Url */
             url: string;
-        };
-        /**
-         * ApplicationContext
-         * @description User-authored, persistent application knowledge (see
-         *     `domain.Application.application_context`), shown in the UI as "Notes" —
-         *     every field optional, so a user can fill in only what they know. Used
-         *     as the shape `ApplicationRead` returns, as the context-update endpoint's
-         *     payload (a full replace, not a per-field PATCH merge — the edit UI
-         *     always shows/saves the whole form at once), and optionally on
-         *     `ApplicationCreate` (Add-application onboarding) — that path exists so
-         *     the very first `InferenceActivity` run (chained automatically after the
-         *     initial crawl, before there's ever a chance to visit the Notes tab) can
-         *     already see it. Each field is capped at 2,000 characters — the
-         *     browser's own `maxLength` is the primary gate (matches the UI's live
-         *     counter); this is the server-side backstop for a direct API call.
-         */
-        ApplicationContext: {
-            /** Business Goal */
-            business_goal?: string | null;
-            /** Business Domain */
-            business_domain?: string | null;
-            /** Business Rules */
-            business_rules?: string[] | null;
-            /** Additional Context */
-            additional_context?: string | null;
         };
         /** ApplicationCreate */
         ApplicationCreate: {
@@ -1456,7 +1474,7 @@ export interface components {
              * @default standard_login
              * @enum {string}
              */
-            auth_method: "standard_login" | "sso_session_reuse";
+            auth_method: "standard_login" | "sso_session_reuse" | "none";
             /**
              * Username
              * @description Dedicated Test Account username — not a real end-user identity. Required when auth_method is 'standard_login'.
@@ -1472,7 +1490,6 @@ export interface components {
              * @description A previously-authenticated session the customer already produced (e.g. Playwright storageState.json contents), pasted as-is. Required when auth_method is 'sso_session_reuse'. The platform never performs the SSO/MFA handshake itself — it only reuses a session the customer supplies.
              */
             session_state?: string | null;
-            application_context?: components["schemas"]["ApplicationContext"] | null;
         };
         /** ApplicationCredentialsUpdatePayload */
         ApplicationCredentialsUpdatePayload: {
@@ -1507,7 +1524,7 @@ export interface components {
              * Auth Method
              * @enum {string}
              */
-            auth_method: "standard_login" | "sso_session_reuse";
+            auth_method: "standard_login" | "sso_session_reuse" | "none";
             /**
              * Created At
              * Format: date-time
@@ -1530,7 +1547,6 @@ export interface components {
             discovery_coverage_summary?: {
                 [key: string]: number;
             } | null;
-            application_context?: components["schemas"]["ApplicationContext"] | null;
         };
         /** ApplicationRenamePayload */
         ApplicationRenamePayload: {
@@ -1700,7 +1716,7 @@ export interface components {
              * Auth Method
              * @enum {string}
              */
-            auth_method: "standard_login" | "sso_session_reuse";
+            auth_method: "standard_login" | "sso_session_reuse" | "none";
             /**
              * Created At
              * Format: date-time
@@ -1723,7 +1739,6 @@ export interface components {
             discovery_coverage_summary?: {
                 [key: string]: number;
             } | null;
-            application_context?: components["schemas"]["ApplicationContext"] | null;
             /** Journey Count */
             journey_count: number;
             /** Scenario Count */
@@ -2549,6 +2564,46 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_activity_activity_get: {
+        parameters: {
+            query?: {
+                application_id?: string | null;
+                category?: string | null;
+                outcome?: string | null;
+                q?: string | null;
+                since_hours?: number;
+                cursor?: string | null;
+                sort?: "newest" | "oldest";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ActivityPageRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     health_health_get: {
         parameters: {
             query?: never;
@@ -3372,43 +3427,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: boolean | number;
                     };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_application_context_applications__external_id__context_patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                external_id: string;
-            };
-            cookie?: {
-                session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ApplicationContext"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ApplicationRead"];
                 };
             };
             /** @description Validation Error */

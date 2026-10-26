@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faChevronRight, faListCheck, faPlay } from '@fortawesome/free-solid-svg-icons'
-import { Spinner } from '../LoadingDots'
+import { LoadingDots } from '../LoadingDots'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 
 const RUN_MODES: { key: 'full' | 'selective'; icon: typeof faPlay; title: string; body: string }[] = [
-  { key: 'full', icon: faPlay, title: 'Full suite', body: 'Run every test case in this application.' },
+  { key: 'full', icon: faPlay, title: 'All test cases', body: 'Run every test case in this application.' },
   { key: 'selective', icon: faListCheck, title: 'Selective run', body: 'Choose specific journeys or test cases to run.' },
 ]
 
@@ -55,8 +55,7 @@ export function RunSuiteButton({
           cursor: running ? 'not-allowed' : 'pointer',
         }}
       >
-        {running ? <Spinner size={12} /> : <FontAwesomeIcon icon={faPlay} style={{ fontSize: 11 }} />}
-        {running ? 'Running…' : 'Run'}
+        {running ? <LoadingDots label="Running" /> : <><FontAwesomeIcon icon={faPlay} style={{ fontSize: 11 }} />Run</>}
       </button>
 
       {open && (

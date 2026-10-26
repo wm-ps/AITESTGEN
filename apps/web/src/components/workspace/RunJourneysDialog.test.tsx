@@ -69,7 +69,7 @@ describe('RunJourneysDialog', () => {
     const { onExecute } = await renderDialog()
     fireEvent.click(screen.getByText('Select all'))
 
-    const nameInput = screen.getByPlaceholderText('e.g., Regression Test')
+    const nameInput = screen.getByPlaceholderText('Enter a name for this run')
     fireEvent.blur(nameInput)
     expect(screen.getByText('Enter a run name to continue')).toBeInTheDocument()
 
@@ -87,7 +87,7 @@ describe('RunJourneysDialog', () => {
     fireEvent.click(screen.getByText('Select all'))
     fireEvent.click(screen.getAllByLabelText('Expand')[0])
     fireEvent.click(screen.getAllByRole('checkbox')[1]) // first Authentication case
-    fireEvent.change(screen.getByPlaceholderText('e.g., Regression Test'), { target: { value: ' Smoke ' } })
+    fireEvent.change(screen.getByPlaceholderText('Enter a name for this run'), { target: { value: ' Smoke ' } })
     fireEvent.click(screen.getByRole('button', { name: /Run 2 journeys/ }))
 
     await waitFor(() => expect(onExecute).toHaveBeenCalledTimes(1))
@@ -99,7 +99,7 @@ describe('RunJourneysDialog', () => {
 
   it('does not execute with a name but no selection', async () => {
     const { onExecute } = await renderDialog()
-    fireEvent.change(screen.getByPlaceholderText('e.g., Regression Test'), { target: { value: 'Smoke' } })
+    fireEvent.change(screen.getByPlaceholderText('Enter a name for this run'), { target: { value: 'Smoke' } })
     fireEvent.click(screen.getByRole('button', { name: /Run journeys/ }))
     expect(onExecute).not.toHaveBeenCalled()
   })

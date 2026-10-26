@@ -26,10 +26,6 @@ Protocol had drifted out of sync with `HostedAIProvider`'s real
 being updated — corrected here, together with `live_inspection_locators`
 (self-heal's targeted live-inspection evidence), so this stays the one
 place a caller's type-check actually reflects the real port.
-`[ADDED application-context]` `application_context` (raw
-`Application.application_context`) is now an optional parameter on every
-call site that can use it — see `ai_provider.application_context` for how
-each implementation renders only its own relevant sections of it.
 """
 
 from typing import Protocol
@@ -46,13 +42,6 @@ class AIProvider(Protocol):
     async def infer_journeys(
         self,
         pages: list[Page],
-        # `[ADDED application-context]` `Application.application_context`,
-        # verbatim — the AI-facing relevance filtering (which sections this
-        # call site actually sees) happens inside the implementation via
-        # `ai_provider.application_context.build_application_context_block`,
-        # never by the caller pre-filtering the dict itself. Optional;
-        # `None` behaves exactly as this call did before the field existed.
-        application_context: dict | None = None,
     ) -> list[JourneyCandidate]: ...
 
     async def generate_scenarios(
@@ -61,7 +50,6 @@ class AIProvider(Protocol):
         pages: list[Page],
         limit: int | None = None,
         requested_counts: dict[str, int] | None = None,
-        application_context: dict | None = None,
     ) -> list[ScenarioCandidate]: ...
 
     async def generate_playwright(
@@ -91,9 +79,6 @@ class AIProvider(Protocol):
         # aria_snapshot`) — supplementary structural evidence alongside
         # `live_inspection_locators`; optional, never required.
         live_inspection_aria_snapshot: str | None = None,
-        # `[ADDED application-context]` Same as `infer_journeys`'s — see that
-        # param's comment.
-        application_context: dict | None = None,
     ) -> TestAssetCode: ...
 
     # Story 2.10 AC 3: called only when the State Identity Engine's score
@@ -126,5 +111,4 @@ class AIProvider(Protocol):
         snapshot: dict,
         *,
         is_heal: bool = False,
-        application_context: dict | None = None,
     ) -> LiveExplorationDecision: ...

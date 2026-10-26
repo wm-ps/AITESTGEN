@@ -529,7 +529,7 @@ function TestResultRow({
   // whose automatic healing already used its fixed 2 attempts still offers
   // a manual retry, as long as manual's own separate budget isn't spent.
   // A viewer never gets Retry (or its disabled "unavailable" variant) — the
-  // Healing…/Self-healed/Exhausted labels are status, so they still show.
+  // Self-healing/Self-healed/Exhausted labels are status, so they still show.
   const canRetryHeal =
     canEdit &&
     NON_PASSED_STATUSES.has(liveResult.status) &&
@@ -641,14 +641,9 @@ function TestResultRow({
               Retry
             </button>
           )}
-          {showHealing && (
-            <span title={healingTitle} style={healChipStyle('var(--accent)')}>
-              <span style={{ display: 'inline-flex', animation: 'aitg-spin 1s linear infinite' }}>
-                <SelfHealIcon />
-              </span>
-              Healing…
-            </span>
-          )}
+          {/* No separate "Healing" chip while a heal runs — the status pill
+              on the right already reads "Self-healing" with trailing dots
+              and carries this attempt tooltip, so one label, not two. */}
           {/* Exhausted — its own chip + warn tint (not the retry chip
               faded), so "no more heal attempts, needs a human" doesn't
               read as a merely-disabled version of the retry chip above. */}
@@ -669,7 +664,7 @@ function TestResultRow({
             ever moves pending -> a terminal status) — the one test actually
             executing right now is inferred as the first still-pending row
             once finished ones are sorted to the top. */}
-        <div style={{ justifySelf: 'start' }}>
+        <div style={{ justifySelf: 'start' }} title={showHealing ? healingTitle : undefined}>
           <StatusPill
             status={liveResult.status}
             label={showHealing ? 'Self-healing' : isCurrentlyRunning ? 'Running' : undefined}
@@ -1001,7 +996,7 @@ function ResultsBySuite({ results }: { results: TestResultRead[] }) {
   }))
   return (
     <div style={tileCardStyle}>
-      <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Results by suite</div>
+      <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Results by journey</div>
       {/* Legend pinned to the top, clear of the chart body — the bottom
           margin already belongs to the rotated x-axis labels below, and a
           bottom-anchored legend used to sit right on top of them. */}
@@ -1606,7 +1601,7 @@ export function RunsTab({
           illustration={<RunsIllustration />}
           variant="scene"
           title="No test runs yet"
-          subtitle="Once discovery finishes and the suite is generated, every execution shows up here with results, traces and per-case re-runs."
+          subtitle="Once discovery finishes and test cases are generated, every execution shows up here with results, traces and per-case re-runs."
         />
       ) : (
         <div style={{ ...mainPanelStyle, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>

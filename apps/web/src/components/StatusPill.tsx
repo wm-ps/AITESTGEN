@@ -1,3 +1,5 @@
+import { BouncingDots } from './LoadingDots'
+
 // `Complete` (green), `Failed` (red, Story 2.4), and `Paused` (amber, Story
 // 2.17) have no documented pill variant in DESIGN.md — only `Running`
 // (signal, pulsing) is named. Filled in here per DESIGN.md's own
@@ -58,7 +60,7 @@ const LABELS: Record<string, string> = {
   scenarios_generated: 'Scenarios generated',
   generating_scenarios: 'Generating scenarios',
   generating_tests: 'Generating test cases',
-  suite_generated: 'Test suite generated',
+  suite_generated: 'Test cases generated',
   no_tests_yet: 'No test cases yet',
   ready_to_execute: 'Ready to run',
   test_run_running: 'Running',
@@ -131,23 +133,10 @@ export function StatusPill({
     >
       {/* A leading dot always shows, not only while pulsing — reads as a
           proper status indicator (like a build/CI chip) instead of plain
-          tinted text. While in motion it becomes a spinning ring instead of
-          a solid dot — reads as "actively working" rather than a blink. */}
-      {dot && !flat && (showPulse ? (
-        <span
-          aria-hidden="true"
-          style={{
-            width: 9,
-            height: 9,
-            borderRadius: 'var(--radius-full)',
-            border: '1.5px solid color-mix(in srgb, currentColor 25%, transparent)',
-            borderTopColor: 'currentColor',
-            color: colors.foreground,
-            flexShrink: 0,
-            animation: 'aitg-spin 0.7s linear infinite',
-          }}
-        />
-      ) : (
+          tinted text. While in motion the dot is replaced by bouncing dots
+          trailing the label — the one app-wide "operation in progress"
+          look. 'flat' has no static dot but still gets the trailing dots. */}
+      {dot && !showPulse && !flat && (
         <span
           aria-hidden="true"
           style={{
@@ -158,8 +147,9 @@ export function StatusPill({
             flexShrink: 0,
           }}
         />
-      ))}
+      )}
       {label}
+      {dot && showPulse && <BouncingDots size={flat ? 3.5 : 4} />}
     </span>
   )
 }

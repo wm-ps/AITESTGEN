@@ -1,33 +1,34 @@
-// Ring spinner for a busy button (Run/Regenerate/Save/Sign in/...) — same
-// currentColor + border-top-color trick and `aitg-spin` keyframe StatusPill's
-// own in-motion dot already uses, so every "this is working" indicator in
-// the app reads as one family.
-export function Spinner({ size = 12 }: { size?: number }) {
+// Busy state for a button (Run/Regenerate/Save/Sign in/...): the label
+// followed by the same BouncingDots every running operation's status uses
+// (StatusPill, Overview, Healing chip), so every "this is working" indicator
+// in the app reads as one family.
+export function LoadingDots({ label }: { label: string }) {
   return (
-    <span
-      aria-hidden="true"
-      style={{
-        display: 'inline-block',
-        width: size,
-        height: size,
-        borderRadius: 'var(--radius-full)',
-        border: '1.5px solid color-mix(in srgb, currentColor 25%, transparent)',
-        borderTopColor: 'currentColor',
-        animation: 'aitg-spin 0.7s linear infinite',
-        flexShrink: 0,
-      }}
-    />
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+      {label}
+      <BouncingDots size={3.5} />
+    </span>
   )
 }
 
-// LoadingDots keeps its old name/label prop for every existing call site,
-// but now renders the same Spinner as everything else instead of bouncing
-// dots, so button loading states read as one consistent experience app-wide.
-export function LoadingDots({ label }: { label: string }) {
+// Three bouncing dots for a running operation's status (Discovery,
+// Scenario/Test Generation, Test Execution, Self-healing) and every busy
+// button (via LoadingDots above).
+export function BouncingDots({ size = 4 }: { size?: number }) {
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-      <Spinner size={12} />
-      {label}
+    <span aria-hidden="true" style={{ display: 'inline-flex', alignItems: 'center', gap: size * 0.75, flexShrink: 0 }}>
+      {[0, 0.16, 0.32].map((delay) => (
+        <span
+          key={delay}
+          style={{
+            width: size,
+            height: size,
+            borderRadius: 'var(--radius-full)',
+            background: 'currentColor',
+            animation: `aitg-dot-bounce 1.1s ease-in-out ${delay}s infinite`,
+          }}
+        />
+      ))}
     </span>
   )
 }

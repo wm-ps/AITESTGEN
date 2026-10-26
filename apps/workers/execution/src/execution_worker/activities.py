@@ -858,7 +858,7 @@ def _build_subprocess_env(application: Application) -> dict:
     # `_persist_test_result_sync` drop the ones the setting excludes.
     if _load_screenshot_capture_sync() != "failed":
         env["AITESTGEN_SCREENSHOT"] = "on"
-    if application.auth_method == "sso_session_reuse":
+    if application.auth_method in ("sso_session_reuse", "none"):
         env["AITESTGEN_STORAGE_STATE"] = credential.decode()
     else:
         creds = json.loads(credential.decode())
@@ -1768,7 +1768,6 @@ async def _heal_test(input: HealTestActivityInput) -> None:
                     live_inspection_aria_snapshot=(
                         live_inspection_result.aria_snapshot if live_inspection_result else None
                     ),
-                    application_context=ctx.application.application_context,
                     live_action_sequence=ctx.live_action_sequence,
                 )
             except Exception:

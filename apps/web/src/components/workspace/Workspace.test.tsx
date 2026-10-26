@@ -52,7 +52,7 @@ describe('Workspace', () => {
 
     render(<Workspace applicationId="app-1" activeTab="schedules" onActiveTabChange={() => {}} />)
 
-    await waitFor(() => expect(screen.getByText('Schedules and CI', { selector: 'h1' })).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('Schedules', { selector: 'h1' })).toBeInTheDocument())
     await waitFor(() => expect(hitSchedules).toBe(true))
   })
 
@@ -76,7 +76,7 @@ describe('Workspace', () => {
 
     await screen.findByText('View journeys')
     expect(screen.getByText('Review scenarios')).toBeInTheDocument()
-    expect(screen.getByText('Automate discovery and suite runs on a cadence.')).toBeInTheDocument()
+    expect(screen.getByText('Automate discovery and test runs on a cadence.')).toBeInTheDocument()
   })
 
   it('hides the Journeys/Scenarios shortcuts on Overview when discovery is disabled', async () => {
@@ -88,10 +88,10 @@ describe('Workspace', () => {
     await screen.findByText('Record and play')
     expect(screen.queryByText('View journeys')).toBeNull()
     expect(screen.queryByText('Review scenarios')).toBeNull()
-    expect(screen.getByText('Automate suite runs on a cadence.')).toBeInTheDocument()
+    expect(screen.getByText('Automate test runs on a cadence.')).toBeInTheDocument()
   })
 
-  // Cancel run sits beside "Running…" in the Runs toolbar from the moment a
+  // Cancel run sits beside "Running" in the Runs toolbar from the moment a
   // run is going.
   function stubRunsToolbar(state: { latest: Record<string, unknown> | null }) {
     const run = (status: string) => ({
@@ -144,7 +144,7 @@ describe('Workspace', () => {
     return { fetchMock, run }
   }
 
-  it('shows Cancel run beside Running… and cancels the active run from there', async () => {
+  it('shows Cancel run beside Running and cancels the active run from there', async () => {
     const state: { latest: Record<string, unknown> | null } = { latest: null }
     const { fetchMock, run } = stubRunsToolbar(state)
     state.latest = run('running')
@@ -152,7 +152,7 @@ describe('Workspace', () => {
     render(<Workspace applicationId="app-1" activeTab="runs" onActiveTabChange={() => {}} />)
 
     const cancel = await screen.findByRole('button', { name: 'Cancel run' })
-    expect(screen.getByText('Running…')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Running' })).toBeInTheDocument()
     expect(cancel).toBeEnabled()
 
     fireEvent.click(cancel)
@@ -161,7 +161,7 @@ describe('Workspace', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel run' }))
 
     // Straight back to "Run" — no waiting for the next poll.
-    await waitFor(() => expect(screen.queryByText('Running…')).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Running' })).toBeNull())
     expect(screen.queryByRole('button', { name: 'Cancel run' })).toBeNull()
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/applications/app-1/test-runs/run-7/cancel'),
@@ -176,7 +176,7 @@ describe('Workspace', () => {
 
     render(<Workspace applicationId="app-1" activeTab="runs" onActiveTabChange={() => {}} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
-    fireEvent.click(await screen.findByText('Full suite'))
+    fireEvent.click(await screen.findByText('All test cases'))
     // Prepare creates the new run row a moment after the trigger.
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       expect.stringMatching(/\/test-runs$/),
@@ -208,7 +208,7 @@ describe('Workspace', () => {
     expect(within(dialog).getByText('Cancel run #7?')).toBeInTheDocument()
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel run' }))
 
-    await waitFor(() => expect(screen.queryByText('Running…')).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Running' })).toBeNull())
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/applications/app-1/test-runs/run-7/cancel'),
       expect.objectContaining({ method: 'POST' }),

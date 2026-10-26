@@ -114,9 +114,9 @@ const QUICK_ACTIONS: { target: QuickActionTarget; label: string; hint: string; i
   { target: 'journeys', label: 'View journeys', hint: 'See every discovered page flow.', icon: DiscoveryIcon },
   { target: 'scenarios', label: 'Review scenarios', hint: 'Approve or edit drafted test scenarios.', icon: LayersIcon },
   { target: 'record', label: 'Record and play', hint: 'Capture a flow by hand and replay it as a test.', icon: RecordIcon },
-  { target: 'suite', label: 'View test cases', hint: "See this application's generated Playwright suite.", icon: CheckCircleIcon },
+  { target: 'suite', label: 'View test cases', hint: "See this application's generated Playwright test cases.", icon: CheckCircleIcon },
   { target: 'runs', label: 'View test runs', hint: 'Browse past executions and results.', icon: RunHistoryIcon },
-  { target: 'schedules', label: 'Schedules and CI', hint: 'Automate discovery and suite runs on a cadence.', icon: ClockPauseIcon },
+  { target: 'schedules', label: 'Schedules', hint: 'Automate discovery and test runs on a cadence.', icon: ClockPauseIcon },
   { target: 'export', label: 'Download project', hint: 'Get the generated Playwright project as a .zip.', icon: DownloadProjectIcon },
 ]
 
@@ -148,7 +148,7 @@ function QuickActionsGrid({
     discoveryEnabled
       ? QUICK_ACTIONS
       : QUICK_ACTIONS.filter((a) => a.target !== 'journeys' && a.target !== 'scenarios').map((a) =>
-          a.target === 'schedules' ? { ...a, hint: 'Automate suite runs on a cadence.' } : a,
+          a.target === 'schedules' ? { ...a, hint: 'Automate test runs on a cadence.' } : a,
         )
   ).filter((a) => canEdit || (a.target !== 'record' && a.target !== 'export'))
   return (

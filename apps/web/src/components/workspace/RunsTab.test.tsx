@@ -208,13 +208,13 @@ describe('RunsTab', () => {
     heal_in_progress: true,
   }
 
-  it('shows Healing… and a pulsing Self-healing status for an automatic heal', async () => {
+  it('shows one pulsing Self-healing status (no separate Healing chip) for an automatic heal', async () => {
     stubRunDetail([{ ...healingResult, heal_kind: 'automatic', auto_heal_attempt_count: 1 }])
 
     render(<RunsTab applicationId="app-1" initialRunId="run-1" />)
 
-    const chip = await screen.findByText('Healing…')
-    expect(chip.closest('span[title]')).toHaveAttribute(
+    const chip = await screen.findByText('Self-healing')
+    expect(chip.closest('div[title]')).toHaveAttribute(
       'title',
       'Self-healing in progress — automatic attempt 2 of 2',
     )
@@ -229,8 +229,8 @@ describe('RunsTab', () => {
     // A fresh mount stands in for a reload / another tab: no local state.
     render(<RunsTab applicationId="app-1" initialRunId="run-1" />)
 
-    const chip = await screen.findByText('Healing…')
-    expect(chip.closest('span[title]')).toHaveAttribute(
+    const chip = await screen.findByText('Self-healing')
+    expect(chip.closest('div[title]')).toHaveAttribute(
       'title',
       'Self-healing in progress — manual remediation attempt 2 of 3',
     )
@@ -244,7 +244,7 @@ describe('RunsTab', () => {
 
     render(<RunsTab applicationId="app-1" initialRunId="run-1" />)
 
-    expect(await screen.findAllByText('Healing…')).toHaveLength(2)
+    expect(await screen.findAllByText('Self-healing')).toHaveLength(2)
     expect(screen.queryByRole('button', { name: /Retry with self-healing unavailable/ })).toBeNull()
     expect(screen.queryByText('Heal exhausted')).toBeNull()
   })
@@ -255,11 +255,11 @@ describe('RunsTab', () => {
     render(<RunsTab applicationId="app-1" initialRunId="run-1" />)
 
     expect(await screen.findByTitle('Retry this test with self-healing')).toBeEnabled()
-    expect(screen.queryByText('Healing…')).toBeNull()
+    expect(screen.queryByText('Self-healing')).toBeNull()
     expect(screen.queryByText('Self-healing')).toBeNull()
   })
 
-  it('keeps Healing… after Retry until the server says the heal has ended', async () => {
+  it('keeps Self-healing after Retry until the server says the heal has ended', async () => {
     const server = { healInProgress: false }
     const run = {
       id: 'run-1',
@@ -306,16 +306,16 @@ describe('RunsTab', () => {
 
     render(<RunsTab applicationId="app-1" initialRunId="run-1" />)
     ;(await screen.findByTitle('Retry this test with self-healing')).click()
-    await screen.findByText('Healing…')
+    await screen.findByText('Self-healing')
 
     // Claim taken, heal running for a few polls — the label holds.
     server.healInProgress = true
     await new Promise((resolve) => setTimeout(resolve, 3500))
-    expect(screen.getByText('Healing…')).toBeInTheDocument()
+    expect(screen.getByText('Self-healing')).toBeInTheDocument()
 
     // Server says it ended — the label clears.
     server.healInProgress = false
-    await waitFor(() => expect(screen.queryByText('Healing…')).toBeNull(), { timeout: 5000 })
+    await waitFor(() => expect(screen.queryByText('Self-healing')).toBeNull(), { timeout: 5000 })
     expect(await screen.findByTitle('Retry this test with self-healing')).toBeInTheDocument()
   }, 15000)
 

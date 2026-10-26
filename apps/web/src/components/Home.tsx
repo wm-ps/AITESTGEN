@@ -162,7 +162,7 @@ function ApplicationRow({
     : scenariosGenerating
       ? 'Test case generation is still running'
       : suiteGenerating
-        ? 'Test suite generation is still running'
+        ? 'Test case generation is still running'
         : testRunRunning
           ? 'A test run is still running'
           : undefined
@@ -653,7 +653,7 @@ export function Home({
           </div>
           <div style={{ fontSize: 19, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.015em' }}>Add your first application</div>
           <div style={{ fontSize: 13, color: 'var(--fg-3)', marginTop: 9, maxWidth: 460, lineHeight: '21px' }}>
-            Point Vantage at a deployed URL and optional login. Discovery maps the pages, models journeys and generates the Playwright suite — usually inside 40 minutes.
+            Point Vantage at a deployed URL and optional login. Discovery maps the pages, models journeys and generates Playwright test cases for each one — usually inside 40 minutes.
           </div>
           {canEdit && (
           <button

@@ -188,7 +188,7 @@ export function RunJourneysDialog({
                 ref={nameInputRef}
                 required
                 autoFocus
-                placeholder="e.g., Regression Test"
+                placeholder="Enter a name for this run"
                 value={suiteName}
                 aria-invalid={nameError}
                 style={nameError ? { borderColor: 'var(--danger)' } : undefined}

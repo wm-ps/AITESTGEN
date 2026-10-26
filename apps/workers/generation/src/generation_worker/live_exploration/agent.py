@@ -194,13 +194,6 @@ async def run_exploration(
     heartbeat: Callable[[], None] | None = None,
     settle_retries: int = 3,
     settle_delay_seconds: float = 0.4,
-    # `[ADDED application-context]` `Application.application_context`,
-    # verbatim — given to every turn's `decide()` call alongside the
-    # requirement and live snapshot, so the agent can reason with business
-    # rules/session behavior it can't discover from the DOM alone (e.g.
-    # "Engagement options depend on the selected tenant"). Optional; `None`
-    # behaves exactly as this call did before the parameter existed.
-    application_context: dict | None = None,
 ) -> LiveFlowModel:
     live_flow = LiveFlowModel(requirement=requirement)
     history: list[dict] = []
@@ -248,7 +241,6 @@ async def run_exploration(
             history,
             {"text": state["last_snapshot"]},
             is_heal=is_heal,
-            application_context=application_context,
         )
         state["decision_tool_name"] = decision.tool_name
         state["decision_tool_args"] = decision.tool_args

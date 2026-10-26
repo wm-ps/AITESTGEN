@@ -10,7 +10,7 @@ import { ApiError, api, formatTestCaseNumber, type ScenarioRead, type TestAssetS
 import { Pagination } from '../Pagination'
 import { EmptyState, TestCasesIllustration } from '../EmptyState'
 import { GenerationLoader } from '../GenerationLoader'
-import { Spinner } from '../LoadingDots'
+import { LoadingDots } from '../LoadingDots'
 import { SkeletonRows } from '../Skeleton'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { LiveExplorationPanel, requestIdStorageKey, TERMINAL_STATUSES } from './LiveExplorationPanel'
@@ -393,8 +393,7 @@ function TestDataEditor({
             cursor: busy ? 'not-allowed' : 'pointer',
           }}
         >
-          {busy && <Spinner size={11} />}
-          {regenerating ? 'Regenerating…' : saving ? 'Saving…' : 'Save'}
+          {busy ? <LoadingDots label={regenerating ? 'Regenerating' : 'Saving'} /> : 'Save'}
         </button>
       </div>
       )}
@@ -1005,7 +1004,7 @@ export function TestSuiteTab({
             title="No test cases generated yet"
             subtitle={
               discoveryEnabled || !canAuthor
-                ? 'Test cases appear here once discovery finds journeys and the suite is generated.'
+                ? 'Test cases appear here once discovery finds journeys and test cases are generated.'
                 : 'Author a test case in plain language or record a flow to add your first test case.'
             }
           />

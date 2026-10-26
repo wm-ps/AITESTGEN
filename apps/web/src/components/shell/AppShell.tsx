@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faChartPie, faChevronRight, faEye, faGear, faLayerGroup, faPlus, faRightLeft, faUsers } from '@fortawesome/free-solid-svg-icons'
+import { faChartPie, faChevronRight, faClockRotateLeft, faEye, faGear, faLayerGroup, faPlus, faRightLeft, faUsers } from '@fortawesome/free-solid-svg-icons'
 // Bell import dropped alongside the commented-out notifications icon below —
 // restore both together once there's a real notification source.
 import { api, type UserRead } from '../../api'
@@ -10,7 +10,7 @@ import { VantageBrand } from '../Brand'
 // Vantage V2 redesign — left sidebar + top bar chrome, replacing the old
 // TopBar-only nav (see _bmad-output/.../mockups/Vantage v2.html, sidebar
 // section ~line 244-303).
-export type ShellRoute = 'overview' | 'apps' | 'wizard' | 'settings' | 'team' | 'app'
+export type ShellRoute = 'overview' | 'apps' | 'wizard' | 'settings' | 'team' | 'activity' | 'app'
 
 // `icon` matches Workspace.tsx's existing nav-icon convention (a fixed-size,
 // zero-prop render function) rather than accepting a `size` prop — every
@@ -48,6 +48,7 @@ export function AppShell({
   onAddApplication,
   onOpenSettings,
   onGoTeam,
+  onGoActivity,
   onLogout,
   app,
   children,
@@ -61,6 +62,8 @@ export function AppShell({
   onAddApplication: () => void
   onOpenSettings?: () => void
   onGoTeam?: () => void
+  /** Admin-only Activity page — only rendered for an admin. */
+  onGoActivity?: () => void
   onLogout: () => void
   /** When set (route === 'app'), renders the sidebar's per-application tab section. */
   app?: AppShellAppContext
@@ -224,6 +227,12 @@ export function AppShell({
                 <div style={navItemStyle(route === 'team')} onClick={onGoTeam}>
                   <FontAwesomeIcon icon={faUsers} style={{ width: 16, fontSize: 13, textAlign: 'center' }} />
                   <span style={{ flex: 1 }}>Team members</span>
+                </div>
+              )}
+              {user.role === 'admin' && onGoActivity && (
+                <div style={navItemStyle(route === 'activity')} onClick={onGoActivity}>
+                  <FontAwesomeIcon icon={faClockRotateLeft} style={{ width: 16, fontSize: 13, textAlign: 'center' }} />
+                  <span style={{ flex: 1 }}>Activity</span>
                 </div>
               )}
               {onOpenSettings && (

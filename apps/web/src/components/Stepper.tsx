@@ -2,7 +2,7 @@ const STEPS = [
   { key: 'connect-app', label: 'Connect App' },
   { key: 'discover', label: 'Discover Journeys' },
   { key: 'review', label: 'Review Test Cases' },
-  { key: 'generate', label: 'Generate Suite' },
+  { key: 'generate', label: 'Generate Test Cases' },
 ] as const
 
 export type StepKey = (typeof STEPS)[number]['key']

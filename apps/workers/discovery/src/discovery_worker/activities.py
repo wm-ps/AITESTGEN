@@ -22,7 +22,6 @@ import os
 import uuid
 from dataclasses import dataclass, field
 
-from ai_provider.application_context import business_rules_require_dataset_wide_exploration
 from ai_provider.hosted import HostedAIProvider
 from domain import (
     Action,
@@ -1033,19 +1032,6 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                     # behaviour.
                     already_confirmed_urls=already_confirmed_urls or None,
                     resume_seed=resume_seed or None,
-                    # Exploration-scope feature: discovery is an unattended
-                    # batch crawl — there's no per-request user instruction
-                    # to weigh, so a relevant Application Context
-                    # business_rule is the only thing that can expand the
-                    # default "representative" collection sampling to
-                    # "dataset" (see scope precedence tiers 2/3).
-                    exploration_scope=(
-                        "dataset"
-                        if business_rules_require_dataset_wide_exploration(
-                            application.application_context
-                        )
-                        else "representative"
-                    ),
                 )
                 await context.close()
                 await browser.close()
@@ -1301,9 +1287,7 @@ async def inference_activity(input: InferenceActivityInput) -> list[str]:
         )
 
         for batch in batches:
-            candidates = await HostedAIProvider().infer_journeys(
-                batch, application_context=application.application_context
-            )
+            candidates = await HostedAIProvider().infer_journeys(batch)
 
             for candidate in candidates:
                 if candidates_processed >= max_journeys:

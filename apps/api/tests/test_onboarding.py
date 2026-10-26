@@ -269,6 +269,24 @@ def test_create_application_sso_session_reuse_requires_session_state() -> None:
     assert response.status_code == 422
 
 
+def test_create_application_without_sign_in_needs_no_credentials() -> None:
+    init_db()
+    client = _signed_in_client("Org No Sign In")
+
+    response = client.post(
+        "/applications",
+        json={
+            "name": "Public App",
+            "url": "https://public.example.com",
+            "environment": "staging",
+            "auth_method": "none",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["auth_method"] == "none"
+
+
 def test_cross_organization_isolation() -> None:
     init_db()
     client_a = _signed_in_client("Org A Isolation")

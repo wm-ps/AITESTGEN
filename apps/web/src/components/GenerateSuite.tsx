@@ -121,9 +121,9 @@ export function GenerateSuite({
               <FontAwesomeIcon icon={faWandMagicSparkles} style={{ fontSize: 15, color: '#FFFFFF' }} />
             </div>
             <div>
-              <h2 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>Generate Test Suite</h2>
+              <h2 style={{ fontSize: 19, fontWeight: 700, margin: 0, color: 'var(--ink)' }}>Generate Test Cases</h2>
               <div style={{ fontSize: 13, color: 'var(--ink-muted)', marginTop: 2 }}>
-                Configure this suite, then generate production-ready tests for every mapped journey.
+                Configure generation, then create production-ready test cases for every mapped journey.
               </div>
             </div>
           </div>
@@ -198,7 +198,7 @@ export function GenerateSuite({
                   boxShadow: canGenerate ? '0 8px 20px -6px var(--accent-wash)' : 'none',
                 }}
               >
-                {generating ? 'Generating…' : 'Generate Test Suite'}
+                {generating ? 'Generating…' : 'Generate Test Cases'}
               </button>
               {generateError && (
                 <div style={{ marginTop: 10 }}>

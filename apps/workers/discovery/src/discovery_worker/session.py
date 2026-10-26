@@ -109,7 +109,7 @@ async def establish_session(
     discovery_run_id: uuid.UUID | None = None,
     on_capture: Callable[[Any], None] | None = None,
 ) -> BrowserContext:
-    if auth_method == "sso_session_reuse":
+    if auth_method in ("sso_session_reuse", "none"):
         storage_state = json.loads(credential.decode())
         return await browser.new_context(storage_state=storage_state, viewport=_VIEWPORT)
 

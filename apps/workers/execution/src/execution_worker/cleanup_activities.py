@@ -37,6 +37,7 @@ from typing import Any, cast
 
 from domain import (
     Action,
+    ActivityEvent,
     ApiEndpoint,
     Application,
     Assertion,
@@ -78,6 +79,8 @@ from execution_worker.db import engine
 logger = logging.getLogger(__name__)
 
 _RETENTION_DAYS = {"1_day": 1, "1_week": 7, "1_month": 30}
+# Admin Activity page history — fixed, not tied to delete_project_after.
+ACTIVITY_RETENTION = timedelta(days=90)
 
 
 # SQLModel/pyright limitation (same one the codebase already suppresses
@@ -126,6 +129,13 @@ def find_purge_candidates_activity() -> list[str]:
             )
         ).all()
         candidate_ids = [str(a.external_id) for a in applications]
+        # Rides on this daily run rather than its own Activity/Schedule.
+        session.exec(  # type: ignore[call-overload]
+            delete(ActivityEvent).where(
+                cast("ColumnElement[bool]", ActivityEvent.created_at < datetime.now(UTC) - ACTIVITY_RETENTION)
+            )
+        )
+        session.commit()
 
     logger.info(
         "cleanup: %d application(s) past retention (%s): %s",

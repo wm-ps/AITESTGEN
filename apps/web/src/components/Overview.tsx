@@ -18,6 +18,7 @@ import { applicationStage, relativeTime } from './Home'
 import { formatDuration } from './workspace/RunsTab'
 import { useCanEdit } from '../PermissionsContext'
 import { Skeleton } from './Skeleton'
+import { BouncingDots } from './LoadingDots'
 
 const POLL_INTERVAL_MS = 15000
 
@@ -209,14 +210,14 @@ export function Overview({
               const coveragePct = app.journey_count > 0 ? (app.scenario_journeys_covered / app.journey_count) * 100 : 0
               const detail = isAuthoring
                 ? stageIndex === 2
-                  ? 'Generating test cases from prompt…'
-                  : 'Authoring from prompt…'
+                  ? 'Generating test cases from prompt'
+                  : 'Authoring from prompt'
                 : stageIndex === 1
                   ? `${app.scenario_journeys_covered}/${app.journey_count} journeys`
                   : stageIndex === 0
                     ? 'Discovery in progress'
                     : stageIndex === 2
-                      ? 'Generating suite…'
+                      ? 'Generating test cases'
                       : 'Run in progress'
               return (
                 <div
@@ -247,12 +248,15 @@ export function Overview({
                     <div style={{ flex: 1, height: 4, borderRadius: 1000, background: 'var(--chip)', overflow: 'hidden', minWidth: 60 }}>
                       <div style={{ width: `${coveragePct}%`, height: '100%', background: 'var(--accent-2)' }} />
                     </div>
-                  ) : (
-                    <span style={{ display: 'inline-flex', flex: '1 1 auto', maxWidth: 14, justifyContent: 'center', fontSize: 11, color: 'var(--accent-2)', animation: 'aitg-spin 1s linear infinite' }}>
-                      ⟳
-                    </span>
-                  )}
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-3)', flex: 'none', whiteSpace: 'nowrap' }}>{detail}</span>
+                  ) : null}
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-3)', flex: 'none', whiteSpace: 'nowrap' }}>
+                    {detail}
+                    {!(stageIndex === 1 && !isAuthoring) && (
+                      <span style={{ display: 'inline-flex', color: 'var(--accent-2)' }}>
+                        <BouncingDots />
+                      </span>
+                    )}
+                  </span>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, fontWeight: 500, color: 'var(--accent-2)', width: 32, textAlign: 'right', flex: 'none' }}>
                     {stageIndex === 1 && !isAuthoring ? `${Math.round(coveragePct)}%` : ''}
                   </span>
@@ -306,7 +310,7 @@ export function Overview({
           </div>
           <div style={{ fontSize: 19, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.015em' }}>No applications yet</div>
           <div style={{ fontSize: 13, color: 'var(--fg-3)', marginTop: 9, maxWidth: 470, lineHeight: '21px' }}>
-            Pass rate over time, latest run outcome, and suite size for every application appear here once you onboard your first one.
+            Pass rate over time, latest run outcome, and test case count for every application appear here once you onboard your first one.
           </div>
           {canEdit && (
             <button
@@ -327,7 +331,7 @@ export function Overview({
           illustration={<RunsIllustration />}
           variant="scene"
           title="No test runs yet"
-          subtitle="Pass rate, trend and suite size show up here once any application finishes its first run."
+          subtitle="Pass rate, trend and test case count show up here once any application finishes its first run."
         />
       ) : apps.length > 0 ? (
         <>
@@ -433,7 +437,7 @@ export function Overview({
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
                   <div>
                     <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Test cases per application</div>
-                    <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>Top {topByCases.length} by suite size · pass/fail split</div>
+                    <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>Top {topByCases.length} by test case count · pass/fail split</div>
                   </div>
                   <span onClick={onGoApps} style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--accent-hi)', cursor: 'pointer' }}>
                     View all {apps.length}

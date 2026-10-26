@@ -236,40 +236,6 @@ async def test_infer_journeys_live_call() -> None:
     assert all(isinstance(c.name, str) and c.name for c in candidates)
 
 
-async def test_infer_journeys_includes_relevant_application_context_sections(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured = _monkeypatch_post(
-        monkeypatch,
-        json.dumps({"journeys": []}),
-    )
-
-    await HostedAIProvider().infer_journeys(
-        [_fake_page("https://app.example.com/items")],
-        application_context={
-            "business_goal": "Manage clients, accounts and investments.",
-            "additional_context": "Prefer business-perspective workflows.",
-        },
-    )
-
-    content = captured["json"]["messages"][1]["content"]
-    assert "APPLICATION CONTEXT" in content
-    assert "Manage clients, accounts and investments." in content
-    # `additional_context` isn't in infer_journeys' relevant section list —
-    # present in the stored context but not this prompt.
-    assert "business-perspective workflows" not in content
-
-
-async def test_infer_journeys_omits_application_context_section_when_absent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured = _monkeypatch_post(monkeypatch, json.dumps({"journeys": []}))
-
-    await HostedAIProvider().infer_journeys([_fake_page("https://app.example.com/items")])
-
-    assert "APPLICATION CONTEXT" not in captured["json"]["messages"][1]["content"]
-
-
 def _fake_scenario(**overrides) -> Scenario:
     defaults = dict(
         journey_id=uuid.uuid4(),
@@ -603,25 +569,6 @@ async def test_generate_scenarios_omits_live_session_section_when_absent(
     )
 
     assert "Recorded live browser session" not in captured["json"]["messages"][1]["content"]
-
-
-async def test_generate_scenarios_includes_relevant_application_context_sections(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured = _monkeypatch_post(monkeypatch, _scenario_body("Happy scenario"))
-
-    await HostedAIProvider().generate_scenarios(
-        _fake_journey(),
-        [_fake_page("https://a.example.com")],
-        limit=1,
-        application_context={
-            "business_rules": ["Engagements shown depend on the selected tenant."],
-        },
-    )
-
-    content = captured["json"]["messages"][1]["content"]
-    assert "APPLICATION CONTEXT" in content
-    assert "Engagements shown depend on the selected tenant." in content
 
 
 async def test_generate_playwright_returns_code(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1069,27 +1016,6 @@ async def test_generate_playwright_omits_live_aria_snapshot_section_when_absent(
 
     content = "".join(m["content"] for m in captured["json"]["messages"])
     assert "accessibility tree below" not in content
-
-
-async def test_generate_playwright_includes_relevant_application_context_sections(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured = _monkeypatch_post(monkeypatch, "test('guest checkout', async ({ page }) => {})")
-    scenario = _fake_scenario()
-
-    await HostedAIProvider().generate_playwright(
-        scenario,
-        application_context={
-            "additional_context": "Prefer testing workflows from the business perspective.",
-            # Not in PLAYWRIGHT_GENERATION_SECTIONS — must not reach this prompt.
-            "business_domain": "Wealth management for retail investors.",
-        },
-    )
-
-    content = "".join(m["content"] for m in captured["json"]["messages"])
-    assert "APPLICATION CONTEXT" in content
-    assert "Prefer testing workflows from the business perspective." in content
-    assert "Wealth management for retail investors." not in content
 
 
 async def test_generate_playwright_prompt_requires_ensure_visible_for_sequence_steps_too(
@@ -1686,71 +1612,6 @@ async def test_decide_live_exploration_action_renders_semantic_target_from_histo
     assert 'click "Fruits"' in user_prompt
 
 
-async def test_decide_live_exploration_action_includes_relevant_application_context_sections(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured = _monkeypatch_post(
-        monkeypatch,
-        json.dumps(
-            {"tool_name": "browser_snapshot", "tool_args": {}, "rationale": "x", "goal_satisfied": False}
-        ),
-    )
-
-    await HostedAIProvider().decide_live_exploration_action(
-        requirement="Select the engagement for the first tenant.",
-        history=[],
-        snapshot={"role": "main"},
-        application_context={
-            "business_rules": ["Engagements shown depend on the selected tenant."],
-            # Not in LIVE_EXPLORATION_SECTIONS — must not reach this prompt.
-            "business_goal": "Manage clients, accounts and investments.",
-        },
-    )
-
-    user_prompt = captured["json"]["messages"][1]["content"]
-    assert "APPLICATION CONTEXT" in user_prompt
-    assert "Engagements shown depend on the selected tenant." in user_prompt
-    assert "Manage clients, accounts and investments." not in user_prompt
-
-
-async def test_decide_live_exploration_action_combines_semantic_target_and_application_context(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """§19 — Semantic Target and Application Context must coexist: a
-    "select the engagement for the first tenant" request still gets its own
-    per-turn semantic_target extraction AND sees the persisted business rule
-    explaining why Engagement depends on Tenant, in the same call."""
-    captured = _monkeypatch_post(
-        monkeypatch,
-        json.dumps(
-            {
-                "semantic_target": {
-                    "action": "select",
-                    "target": {"name": "Engagement"},
-                    "relationship": {"type": "value_belongs_to_target"},
-                },
-                "tool_name": "browser_click",
-                "tool_args": {"ref": "e9"},
-                "rationale": "open the Engagement control for the first tenant",
-                "goal_satisfied": False,
-            }
-        ),
-    )
-
-    result = await HostedAIProvider().decide_live_exploration_action(
-        requirement="Select the engagement for the first tenant.",
-        history=[],
-        snapshot={"role": "main"},
-        application_context={
-            "business_rules": ["Engagement options depend on the selected tenant."],
-        },
-    )
-
-    assert result.semantic_target["target"] == {"name": "Engagement"}
-    user_prompt = captured["json"]["messages"][1]["content"]
-    assert "Engagement options depend on the selected tenant." in user_prompt
-
-
 async def test_decide_live_exploration_action_parses_exploration_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1833,32 +1694,6 @@ async def test_decide_live_exploration_action_prompt_defaults_to_representative_
     assert 'Default to "representative"' in system_prompt
     assert '"specific_item"' in system_prompt
     assert '"dataset"' in system_prompt
-
-
-async def test_decide_live_exploration_action_prompt_forbids_generic_context_from_expanding_scope(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A business rule merely mentioning a collection ("Transactions are
-    important") must never expand scope — only a concrete, specific reason
-    does. Also confirms the requirement's own explicit wording always wins
-    over Application Context when they'd disagree (scope precedence)."""
-    captured = _monkeypatch_post(
-        monkeypatch,
-        json.dumps(
-            {"tool_name": "browser_snapshot", "tool_args": {}, "rationale": "x", "goal_satisfied": False}
-        ),
-    )
-
-    await HostedAIProvider().decide_live_exploration_action(
-        requirement="Open a transaction and inspect its details.",
-        history=[],
-        snapshot={"role": "main"},
-        application_context={"business_rules": ["The application contains thousands of transactions."]},
-    )
-
-    system_prompt = captured["json"]["messages"][0]["content"]
-    assert "not merely that the collection exists, or is large/important" in system_prompt
-    assert "requirement's own explicit wording always takes precedence" in system_prompt
 
 
 def test_enforce_live_evidence_swaps_guessed_locators_and_raises_short_timeouts() -> None:

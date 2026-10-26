@@ -103,3 +103,11 @@ def test_setup_reuses_saved_session_so_refresh_skips_relogin_when_still_valid() 
     config = _build_playwright_config("https://acme.example.com", has_login=True)
     assert "import { existsSync } from 'fs'" in config
     assert "use: existsSync('.auth/state.json') ? { storageState: '.auth/state.json' } : {}" in config
+
+
+def test_no_sign_in_setup_writes_an_empty_session_without_credentials() -> None:
+    script = _build_auth_setup_script("none", login_evidence=None)
+
+    assert "cookies: [], origins: []" in script
+    assert "AITESTGEN_LOGIN" not in script
+    assert "AITESTGEN_STORAGE_STATE" not in script

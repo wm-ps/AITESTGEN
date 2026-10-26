@@ -78,14 +78,14 @@ describe('GenerateSuite', () => {
     expect(screen.queryByLabelText(/suite name/i)).toBeNull()
   })
 
-  it('clicking Generate Test Suite triggers the endpoint and calls onGenerated', async () => {
+  it('clicking Generate Test Cases triggers the endpoint and calls onGenerated', async () => {
     const onGenerate = vi.fn()
     stubFetch({ onGenerate })
     const onGenerated = vi.fn()
     render(<GenerateSuite furthestCount={3}applicationId="app-1" onGenerated={onGenerated} />)
 
     await waitFor(() => screen.getByText('Journey Covered'))
-    fireEvent.click(screen.getByRole('button', { name: /Generate Test Suite/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Generate Test Cases/ }))
 
     await waitFor(() => {
       expect(onGenerate).toHaveBeenCalledOnce()

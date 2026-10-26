@@ -31,14 +31,6 @@ from typing import Any
 import httpx
 from domain import Journey, Page, Scenario
 
-from ai_provider.application_context import (
-    JOURNEY_INFERENCE_SECTIONS,
-    LIVE_EXPLORATION_SECTIONS,
-    PLAYWRIGHT_GENERATION_SECTIONS,
-    SCENARIO_GENERATION_SECTIONS,
-    build_application_context_block,
-    present_sections,
-)
 from ai_provider.journey_candidate import JourneyCandidate, JourneyCandidateStep
 from ai_provider.live_exploration_decision import LiveExplorationDecision
 from ai_provider.scenario_candidate import ScenarioCandidate, TestDataFieldCandidate
@@ -56,19 +48,6 @@ _AI_TEMPERATURE_RAW = os.environ.get("AI_TEMPERATURE", "0.2")
 AI_TEMPERATURE = float(_AI_TEMPERATURE_RAW) if _AI_TEMPERATURE_RAW else None
 
 logger = logging.getLogger(__name__)
-
-
-def _log_application_context_usage(call_site: str, application_context: dict | None) -> None:
-    """§21 debug visibility — whether Application Context was present and,
-    if so, which recognized sections actually had content. Never logs the
-    content itself (it may be sensitive user-authored text)."""
-    sections = present_sections(application_context)
-    logger.debug(
-        "%s: application_context present=%s relevant_sections=%s",
-        call_site,
-        bool(sections),
-        sections,
-    )
 
 
 # AC1 backstop: a Journey name must be business language, never a raw route/
@@ -103,8 +82,7 @@ Respond with ONLY a JSON object of this shape, no prose: \
 {{"page_index": 0, "stage_label": "..."}}, {{"page_index": 2, "stage_label": "..."}}]}}, ...]}}"""
 
 _PROMPT_USER = """Pages (indexed):
-{page_listing}
-{application_context_section}"""
+{page_listing}"""
 
 
 def _describe_form(form) -> dict:
@@ -270,8 +248,7 @@ _SCENARIO_PROMPT_USER = """Journey: "{journey_name}"
 Steps (in order — each is a business-language stage of this Journey, with the captured \
 page/form/API/component detail behind it):
 {step_listing}
-{live_session_section}
-{application_context_section}"""
+{live_session_section}"""
 
 _PLAYWRIGHT_PROMPT_USER = """Application base URL: {base_url}
 
@@ -334,8 +311,7 @@ substring of a longer one on the same page (e.g. "New password" vs. "Confirm new
 "Amount" vs. "Loan Amount") resolves to BOTH elements and fails with a strict-mode violation \
 instead of the one you meant. `page.getByLabel("New password", {{ exact: true }})` — never a \
 bare `page.getByLabel("New password")` — is what actually isolates the field you want.
-{known_locators_listing}{failure_context}{live_inspection_context}{live_action_sequence_context}\
-{application_context_section}"""
+{known_locators_listing}{failure_context}{live_inspection_context}{live_action_sequence_context}"""
 
 _PLAYWRIGHT_FAILURE_CONTEXT = """
 
@@ -1503,10 +1479,7 @@ the same collection, and do not click "next page"/paginate through more of it, m
 more exist. Use "specific_item" only when the requirement itself names or bounds a particular \
 item (e.g. "the third tenant", "these five users", an ordinal, a specific identifying value). \
 Use "dataset" only when the requirement explicitly requires broad/all-item coverage (e.g. \
-"every", "all", "each", "entire dataset", "all pages") — or Application Context states a \
-concrete, specific reason this workflow must cover every item (not merely that the collection \
-exists, or is large/important). The requirement's own explicit wording always takes precedence \
-over Application Context when they'd otherwise disagree. Leave "exploration_scope" null for a \
+"every", "all", "each", "entire dataset", "all pages"). Leave "exploration_scope" null for a \
 turn that isn't about a collection at all.
 
 Pick the interaction the element's actual current state calls for, not whatever the \
@@ -1570,7 +1543,6 @@ false, "blocked_reason": null, "skipped_case": null, "completed_case": null, "cu
 null}}"""
 
 _LIVE_EXPLORATION_PROMPT_USER = """Requirement: {requirement}
-{application_context_section}
 Turns so far (oldest first):
 {history}
 
@@ -1638,7 +1610,6 @@ Respond with ONLY a JSON object of this shape, no prose: {{"semantic_target": {{
 identification once goal_satisfied>", "goal_satisfied": false}}"""
 
 _LIVE_HEAL_PROMPT_USER = """Failed step: {requirement}
-{application_context_section}
 Turns so far (oldest first):
 {history}
 
@@ -1692,10 +1663,7 @@ async def _chat_completion(
 class HostedAIProvider:
     """`AIProvider` (Protocol) adapter backed by a LiteLLM proxy server."""
 
-    async def infer_journeys(
-        self, pages: list[Page], application_context: dict | None = None
-    ) -> list[JourneyCandidate]:
-        _log_application_context_usage("infer_journeys", application_context)
+    async def infer_journeys(self, pages: list[Page]) -> list[JourneyCandidate]:
         listing = "\n".join(f"{i}: {_describe_page(p)}" for i, p in enumerate(pages))
         content = await _chat_completion(
             [
@@ -1704,9 +1672,6 @@ class HostedAIProvider:
                     "role": "user",
                     "content": _PROMPT_USER.format(
                         page_listing=listing,
-                        application_context_section=build_application_context_block(
-                            application_context, JOURNEY_INFERENCE_SECTIONS
-                        ),
                     ),
                 },
             ],
@@ -1766,12 +1731,7 @@ class HostedAIProvider:
         pages: list[Page],
         limit: int | None = None,
         requested_counts: dict[str, int] | None = None,
-        application_context: dict | None = None,
     ) -> list[ScenarioCandidate]:
-        _log_application_context_usage("generate_scenarios", application_context)
-        application_context_section = build_application_context_block(
-            application_context, SCENARIO_GENERATION_SECTIONS
-        )
         # `pages` is already in step order, each carrying a transient
         # `.stage_label` (attached by ScenarioGenerationActivity the same way
         # InferenceActivity attaches `.forms`/`.components`/etc) — so the
@@ -1839,7 +1799,6 @@ class HostedAIProvider:
                                 journey_description_section=description_section,
                                 step_listing=listing,
                                 live_session_section=live_session_section,
-                                application_context_section=application_context_section,
                             ),
                         },
                     ],
@@ -2026,9 +1985,7 @@ class HostedAIProvider:
         snapshot: dict,
         *,
         is_heal: bool = False,
-        application_context: dict | None = None,
     ) -> LiveExplorationDecision:
-        _log_application_context_usage("decide_live_exploration_action", application_context)
         system_prompt = _LIVE_HEAL_PROMPT_SYSTEM if is_heal else _LIVE_EXPLORATION_PROMPT_SYSTEM
         user_template = _LIVE_HEAL_PROMPT_USER if is_heal else _LIVE_EXPLORATION_PROMPT_USER
         history_text = (
@@ -2050,9 +2007,6 @@ class HostedAIProvider:
                         requirement=requirement,
                         history=history_text,
                         snapshot=json.dumps(snapshot),
-                        application_context_section=build_application_context_block(
-                            application_context, LIVE_EXPLORATION_SECTIONS
-                        ),
                     ),
                 },
             ],
@@ -2140,9 +2094,7 @@ class HostedAIProvider:
         # `live_inspection_locators`; omitting it leaves this call
         # byte-for-byte what it was before this parameter existed.
         live_inspection_aria_snapshot: str | None = None,
-        application_context: dict | None = None,
     ) -> TestAssetCode:
-        _log_application_context_usage("generate_playwright", application_context)
         step_listing = "\n".join(f"{i + 1}. {s}" for i, s in enumerate(scenario.steps))
         base_url = getattr(scenario, "base_url", None) or ""
         # `[FIXED]` requires_auth used to tell the model to call
@@ -2246,9 +2198,6 @@ class HostedAIProvider:
             failure_context=failure_context,
             live_inspection_context=live_inspection_context,
             live_action_sequence_context=live_action_sequence_context,
-            application_context_section=build_application_context_block(
-                application_context, PLAYWRIGHT_GENERATION_SECTIONS
-            ),
         )
         messages: list[dict[str, Any]] = [
             system_message,

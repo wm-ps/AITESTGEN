@@ -23,6 +23,7 @@ Schedule) and `TestRun.schedule_id`.
 """
 
 from domain.action import Action
+from domain.activity_event import ActivityCategory, ActivityEvent, ActivityOutcome
 from domain.api_endpoint import ApiEndpoint
 from domain.application import Application, AuthMethod
 from domain.assertion import Assertion
@@ -74,6 +75,9 @@ from domain.validation_rule import ValidationRule
 
 __all__ = [
     "Action",
+    "ActivityCategory",
+    "ActivityEvent",
+    "ActivityOutcome",
     "ApiEndpoint",
     "Application",
     "Assertion",

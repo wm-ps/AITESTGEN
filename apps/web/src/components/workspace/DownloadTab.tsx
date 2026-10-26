@@ -127,7 +127,7 @@ export function DownloadTab({ applicationId, applicationName }: { applicationId:
           <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', flex: 1 }}>Project structure</span>
           {suites && (
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)' }}>
-              {specCount} test case{specCount === 1 ? '' : 's'} · {suites.length} journey suite{suites.length === 1 ? '' : 's'}
+              {specCount} test case{specCount === 1 ? '' : 's'} · {suites.length} journey{suites.length === 1 ? '' : 's'}
             </span>
           )}
         </div>

@@ -455,9 +455,17 @@ textarea::placeholder {
   }
 }
 
-@keyframes aitg-spin {
-  to {
-    transform: rotate(360deg);
+/* BouncingDots (components/LoadingDots.tsx) — in-progress operation status. */
+@keyframes aitg-dot-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
   }
 }
 

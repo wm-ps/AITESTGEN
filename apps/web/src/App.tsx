@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faCircleDot, faListCheck, faRoute } from '@fortawesome/free-solid-svg-icons'
-import { ApiError, api, hasDiscovery, type ApplicationRead, type UserRead } from './api'
+import { ApiError, api, hasDiscovery, type ActivityItemRead, type ApplicationRead, type UserRead } from './api'
 import { AcceptInvite } from './components/AcceptInvite'
+import { Activity } from './components/Activity'
 import { ConnectAppForm } from './components/ConnectAppForm'
 import { DiscoverJourneys } from './components/DiscoverJourneys'
 import { AppBootLoader, GlobalLoadingOverlay } from './components/GlobalLoadingOverlay'
@@ -30,7 +31,7 @@ import { PermissionsProvider } from './PermissionsContext'
 // screen) plus Workspace's own internal tab rail are now one persistent
 // per-application tab set living in AppShell's sidebar "Application"
 // section — matching the prototype's Overview/Journeys/Scenarios/Test
-// cases/Test runs/Record and play/Schedules and CI tabs. Credentials stays
+// cases/Test runs/Record and play/Schedules tabs. Credentials stays
 // as an extra tab beyond the prototype's 8 (no prototype-tab home for
 // existing per-app credential rotation) and Download project stays folded
 // into Test cases (TestSuiteTab already combines suite view + export).
@@ -41,6 +42,7 @@ const SHELL_ROUTE_FOR_VIEW: Partial<Record<View, ShellRoute>> = {
   app: 'app',
   settings: 'settings',
   team: 'team',
+  activity: 'activity',
 }
 const SHELL_CRUMB_FOR_VIEW: Partial<Record<View, string>> = {
   overview: 'Overview',
@@ -48,6 +50,7 @@ const SHELL_CRUMB_FOR_VIEW: Partial<Record<View, string>> = {
   'connect-app': 'Add application',
   settings: 'Settings',
   team: 'Team members',
+  activity: 'Activity',
 }
 
 function JourneysIcon() {
@@ -66,7 +69,7 @@ function RecordIcon() {
 const JOURNEYS_TAB = { key: 'journeys', label: 'Journeys', heading: 'Discover Journeys', icon: JourneysIcon }
 const SCENARIOS_TAB = { key: 'scenarios', label: 'Scenarios', heading: 'Review Scenarios', icon: ScenariosIcon }
 const RECORD_TAB = { key: 'record', label: 'Record and play', heading: 'Record and play', icon: RecordIcon }
-const TAB_ORDER = ['overview', 'journeys', 'scenarios', 'suite', 'runs', 'record', 'schedules', 'export', 'notes']
+const TAB_ORDER = ['overview', 'journeys', 'scenarios', 'suite', 'runs', 'record', 'schedules', 'export']
 
 // Invite links point at /accept-invite?token=... — handled before the
 // signed-in check below since accepting an invite never requires an
@@ -87,7 +90,7 @@ function getResetTokenFromUrl(): string | null {
 
 type AppTab = 'journeys' | 'scenarios' | 'record' | WorkspaceTab
 
-type View = 'overview' | 'home' | 'connect-app' | 'app' | 'settings' | 'team'
+type View = 'overview' | 'home' | 'connect-app' | 'app' | 'settings' | 'team' | 'activity'
 
 function App() {
   const [user, setUser] = useState<UserRead | null | undefined>(undefined)
@@ -349,6 +352,28 @@ function App() {
     setView('connect-app')
   }
 
+  // Activity row "Open": lands on the row's application tab, and on the run
+  // itself for a test run — same steps as the run-completed email link above.
+  async function openActivityItem(item: ActivityItemRead) {
+    if (!item.application_id || !item.target_tab || globalLoading) return
+    setGlobalLoading('Opening application')
+    try {
+      const app = await api.getApplication(item.application_id)
+      setApplication(app)
+      setJustGeneratedSuite(false)
+      setAutoTriggerRun(false)
+      setJustStartedScenarios(false)
+      if (item.test_run_id) setOpenRunId(item.test_run_id)
+      const tab = item.target_tab as AppTab
+      setAppTab(!hasDiscovery(app) && (tab === 'journeys' || tab === 'scenarios') ? 'suite' : tab)
+      setView('app')
+    } catch {
+      setErrorToast("That application couldn't be opened. It may have been deleted.")
+    } finally {
+      setGlobalLoading(null)
+    }
+  }
+
   function selectAppTab(tab: string) {
     // A deliberate sidebar click is never the one-shot "just generated /
     // just triggered a run" transition — only the programmatic transitions
@@ -420,13 +445,13 @@ function App() {
           onGoToJourneys={() => setAppTab('journeys')}
           onContinueToGenerate={async () => {
             if (globalLoading) return
-            setGlobalLoading('Generating test suite')
+            setGlobalLoading('Generating test cases')
             try {
               await api.generateSuite(application.id)
               setJustGeneratedSuite(true)
               setAppTab('suite')
             } catch {
-              setErrorToast('Failed to start test suite generation. Please try again.')
+              setErrorToast('Failed to start test case generation. Please try again.')
             } finally {
               setGlobalLoading(null)
             }
@@ -451,6 +476,7 @@ function App() {
         justGeneratedSuite && appTab === 'suite' ? (
           <TestSuiteResults
             applicationId={application.id}
+            onComplete={() => setJustGeneratedSuite(false)}
             onRunTests={() => {
               setJustGeneratedSuite(false)
               setAutoTriggerRun(true)
@@ -475,6 +501,7 @@ function App() {
       )}
       {view === 'settings' && user && <Settings user={user} onCancel={() => setView(previousView)} />}
       {view === 'team' && user && <TeamMembers user={user} />}
+      {view === 'activity' && user && <Activity user={user} onOpen={openActivityItem} onBack={() => setView('overview')} />}
     </>
   )
 
@@ -496,6 +523,7 @@ function App() {
           setView('settings')
         }}
         onGoTeam={() => setView('team')}
+        onGoActivity={() => setView('activity')}
         onLogout={handleLogout}
         app={
           application && view === 'app'

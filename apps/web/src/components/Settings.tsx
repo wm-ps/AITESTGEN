@@ -502,7 +502,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--fg-1)' }}>Auto-clean up removed projects</div>
               <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 2 }}>
-                Deletes discovery data, generated suites, screenshots and run history for a project once it is removed.
+                Deletes discovery data, generated test cases, screenshots and run history for a project once it is removed.
               </div>
             </div>
             <select

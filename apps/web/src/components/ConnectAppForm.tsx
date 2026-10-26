@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBolt, faChevronDown, faChevronRight, faPen, faPlay, faPlugCircleCheck, faPlus } from '@fortawesome/free-solid-svg-icons'
-import { ApiError, api, hasDiscovery, type ApplicationCreate, type ApplicationRead } from '../api'
+import { faPlay, faPlugCircleCheck, faPlus } from '@fortawesome/free-solid-svg-icons'
+import { ApiError, api, hasDiscovery, type ApplicationRead } from '../api'
 import { LoadingDots } from './LoadingDots'
-import { EMPTY_NOTES_FORM, NotesFields, toNotesPayload, type NotesFormState } from './NotesFields'
 
 const KNOWN_ENVIRONMENTS = ['staging', 'production', 'qa']
 
@@ -91,19 +90,14 @@ export function ConnectAppForm({
   )
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [notes, setNotes] = useState<NotesFormState>(EMPTY_NOTES_FORM)
+  // Off = the application has no sign-in: the credentials section is hidden
+  // and the application is created with auth_method 'none'.
+  const [requiresSignIn, setRequiresSignIn] = useState(application ? application.auth_method !== 'none' : true)
   // Checked (today's behavior) starts a crawl on submit; unchecked only saves
   // the application — the submit button's label follows it so the user can
   // tell which one they're about to do.
   const [discoveryRequired, setDiscoveryRequired] = useState(application ? hasDiscovery(application) : true)
   const submitLabel = discoveryRequired ? 'Start discovery' : 'Add application'
-  // Collapsed by default — Notes is optional and secondary to the required
-  // connection fields above it. `notes` itself stays lifted in this
-  // component regardless of collapse state, so toggling never loses what
-  // was typed.
-  const [notesExpanded, setNotesExpanded] = useState(false)
-  const notesSectionCount = Object.keys(EMPTY_NOTES_FORM).length
-  const notesFilledCount = Object.values(notes).filter((v) => v.trim().length > 0).length
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   // Shown under the Username/Password fields — cleared on any edit to the
@@ -152,9 +146,9 @@ export function ConnectAppForm({
     setCredentialMessage(null)
     setSubmitting(true)
     try {
-      // Only when discovery will actually run — "Add application" (no
-      // discovery) skips the check entirely.
-      if (discoveryRequired) {
+      // Only when discovery will actually run with a login — "Add
+      // application" (no discovery) or a no-sign-in app skips the check.
+      if (discoveryRequired && requiresSignIn) {
         setValidatingCredentials(true)
         const verdict = await checkCredentials({
           url,
@@ -170,15 +164,11 @@ export function ConnectAppForm({
       const application = await api.createApplication({
         name,
         url,
-        login_url: loginUrl || undefined,
         environment: environment === 'other' ? customEnvironment : environment,
         discovery_required: discoveryRequired,
-        auth_method: 'standard_login' as ApplicationCreate['auth_method'],
-        username,
-        password,
-        // Backend collapses an all-blank object to `null` — safe to always
-        // include, no need to check whether anything was actually typed.
-        application_context: toNotesPayload(notes),
+        ...(requiresSignIn
+          ? { auth_method: 'standard_login' as const, login_url: loginUrl || undefined, username, password }
+          : { auth_method: 'none' as const }),
       })
       onConnected(application)
     } catch (err) {
@@ -328,102 +318,101 @@ export function ConnectAppForm({
             <div style={{ height: 1, background: 'var(--line)' }} />
 
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-              <div
-                title="Sign-in is required for every application"
-                style={{ width: 36, height: 20, flex: 'none', borderRadius: 1000, padding: 2, display: 'flex', background: 'var(--ok)' }}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={requiresSignIn}
+                aria-labelledby="connect-app-signin-label"
+                disabled={readOnly}
+                onClick={() => setRequiresSignIn((v) => !v)}
+                style={{
+                  width: 36,
+                  height: 20,
+                  flex: 'none',
+                  border: 'none',
+                  borderRadius: 1000,
+                  padding: 2,
+                  display: 'flex',
+                  background: requiresSignIn ? 'var(--ok)' : 'var(--border-2)',
+                  cursor: readOnly ? 'default' : 'pointer',
+                  transition: 'background 0.15s ease',
+                }}
               >
-                <div style={{ width: 16, height: 16, borderRadius: 1000, background: 'var(--on-ok)', transform: 'translateX(16px)' }} />
-              </div>
-              <div>
-                <div style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--fg-1)' }}>This application requires sign-in</div>
-                <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
-                  {discoveryRequired
-                    ? 'Credentials are stored encrypted and injected at discovery and run time only.'
-                    : 'Credentials are stored encrypted and injected at run time only.'}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, padding: 14, background: 'var(--panel)', display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <Field label="Login URL (optional)">
-                <input
-                  type="url"
-                  readOnly={readOnly}
-                  placeholder="Enter the login page URL"
-                  value={loginUrl}
-                  onChange={(e) => {
-                    setLoginUrl(e.target.value)
-                    setCredentialMessage(null)
+                <span
+                  style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 1000,
+                    background: 'var(--on-ok)',
+                    transform: requiresSignIn ? 'translateX(16px)' : 'none',
+                    transition: 'transform 0.15s ease',
                   }}
-                  style={{ ...fieldInputStyle, background: 'var(--panel)', fontFamily: 'var(--font-mono)', fontSize: 13 }}
                 />
-              </Field>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                <Field label="Username">
-                  <input
-                    required={!readOnly}
-                    readOnly={readOnly}
-                    autoComplete="off"
-                    placeholder={readOnly ? 'Stored securely — not shown' : 'Service account email'}
-                    value={username}
-                    onChange={(e) => {
-                      setUsername(e.target.value)
-                      setCredentialMessage(null)
-                    }}
-                    style={{ ...fieldInputStyle, background: 'var(--panel)' }}
-                  />
-                </Field>
-                <Field label="Password">
-                  <input
-                    type="password"
-                    readOnly={readOnly}
-                    required={!readOnly}
-                    autoComplete="off"
-                    placeholder={readOnly ? 'Stored securely — not shown' : 'Password or token'}
-                    value={password}
-                    onChange={(e) => {
-                      setPassword(e.target.value)
-                      setCredentialMessage(null)
-                    }}
-                    style={{ ...fieldInputStyle, background: 'var(--panel)' }}
-                  />
-                </Field>
-              </div>
-              {credentialMessage && (
-                <div style={{ color: 'var(--bad)', fontSize: 12.5 }} role="alert">
-                  {credentialMessage}
+              </button>
+              <div>
+                <div id="connect-app-signin-label" style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--fg-1)' }}>
+                  This application requires sign-in
                 </div>
-              )}
+                <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
+                  {!requiresSignIn
+                    ? 'Turn on if the application asks for a username and password.'
+                    : discoveryRequired
+                      ? 'Credentials are stored encrypted and injected at discovery and run time only.'
+                      : 'Credentials are stored encrypted and injected at run time only.'}
+                </div>
+              </div>
             </div>
 
-            {!readOnly && (
-              <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, padding: 14, background: 'var(--panel)', display: 'flex', flexDirection: 'column', gap: notesExpanded ? 14 : 0 }}>
-                <button
-                  type="button"
-                  onClick={() => setNotesExpanded((v) => !v)}
-                  aria-expanded={notesExpanded}
-                  style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', padding: 0, cursor: 'pointer', font: 'inherit', textAlign: 'left' }}
-                >
-                  <FontAwesomeIcon icon={faPen} style={{ fontSize: 12, color: 'var(--accent)' }} />
-                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-1)' }}>Notes (optional)</span>
-                  {!notesExpanded && notesFilledCount > 0 && (
-                    <span style={{ fontSize: 11.5, color: 'var(--fg-4)' }}>
-                      — {notesFilledCount} of {notesSectionCount} filled in
-                    </span>
-                  )}
-                  <FontAwesomeIcon
-                    icon={notesExpanded ? faChevronDown : faChevronRight}
-                    style={{ fontSize: 11, color: 'var(--fg-4)', marginLeft: 'auto' }}
+            {requiresSignIn && (
+              <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, padding: 14, background: 'var(--panel)', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <Field label="Login URL (optional)">
+                  <input
+                    type="url"
+                    readOnly={readOnly}
+                    placeholder="Enter the login page URL"
+                    value={loginUrl}
+                    onChange={(e) => {
+                      setLoginUrl(e.target.value)
+                      setCredentialMessage(null)
+                    }}
+                    style={{ ...fieldInputStyle, background: 'var(--panel)', fontFamily: 'var(--font-mono)', fontSize: 13 }}
                   />
-                </button>
-                {notesExpanded && (
-                  <>
-                    <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: -8 }}>
-                      Business knowledge the AI can't discover on its own — available to the very first discovery run,
-                      before you'd otherwise get a chance to add it. You can always add or edit this later too.
-                    </div>
-                    <NotesFields form={notes} onChange={setNotes} />
-                  </>
+                </Field>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                  <Field label="Username">
+                    <input
+                      required={!readOnly}
+                      readOnly={readOnly}
+                      autoComplete="off"
+                      placeholder={readOnly ? 'Stored securely — not shown' : 'Service account email'}
+                      value={username}
+                      onChange={(e) => {
+                        setUsername(e.target.value)
+                        setCredentialMessage(null)
+                      }}
+                      style={{ ...fieldInputStyle, background: 'var(--panel)' }}
+                    />
+                  </Field>
+                  <Field label="Password">
+                    <input
+                      type="password"
+                      readOnly={readOnly}
+                      required={!readOnly}
+                      autoComplete="off"
+                      placeholder={readOnly ? 'Stored securely — not shown' : 'Password or token'}
+                      value={password}
+                      onChange={(e) => {
+                        setPassword(e.target.value)
+                        setCredentialMessage(null)
+                      }}
+                      style={{ ...fieldInputStyle, background: 'var(--panel)' }}
+                    />
+                  </Field>
+                </div>
+                {credentialMessage && (
+                  <div style={{ color: 'var(--bad)', fontSize: 12.5 }} role="alert">
+                    {credentialMessage}
+                  </div>
                 )}
               </div>
             )}
@@ -447,15 +436,6 @@ export function ConnectAppForm({
                 </div>
               </div>
             </div>
-
-            {!readOnly && discoveryRequired && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', border: '1px solid var(--border-2)', borderRadius: 10, background: 'var(--panel)' }}>
-                <FontAwesomeIcon icon={faBolt} style={{ fontSize: 13, color: 'var(--fg-3)', flexShrink: 0 }} />
-                <div style={{ flex: 1, fontSize: 12.5, color: 'var(--fg-3)' }}>
-                  Discovery uses the workspace defaults for runtime, page count and journey limits. Change them in Configuration → Settings.
-                </div>
-              </div>
-            )}
 
             {error && (
               <div style={{ color: 'var(--bad)', fontSize: 13 }} role="alert">
@@ -524,7 +504,7 @@ export function ConnectAppForm({
                       }}
                     >
                       {submitting ? (
-                        <LoadingDots label={validatingCredentials ? 'Validating credentials...' : 'Connecting'} />
+                        <LoadingDots label={validatingCredentials ? 'Validating credentials' : 'Connecting'} />
                       ) : (
                         <>
                           <FontAwesomeIcon icon={discoveryRequired ? faPlay : faPlus} style={{ fontSize: 11 }} />

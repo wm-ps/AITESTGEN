@@ -121,7 +121,7 @@ export function CancelRunButton({
           cursor: finding ? 'default' : 'pointer',
         }}
       >
-        {finding ? <LoadingDots label="Finding run…" /> : 'Cancel run'}
+        {finding ? <LoadingDots label="Finding run" /> : 'Cancel run'}
       </button>
       {notice && (
         <span role="status" style={{ fontSize: 12.5, color: 'var(--fg-3)', whiteSpace: 'nowrap' }}>
@@ -236,7 +236,7 @@ function CancelRunDialog({
               opacity: cancelling ? 0.7 : 1,
             }}
           >
-            {cancelling ? <LoadingDots label="Cancelling…" /> : 'Cancel run'}
+            {cancelling ? <LoadingDots label="Cancelling" /> : 'Cancel run'}
           </button>
         </div>
       </div>

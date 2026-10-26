@@ -103,7 +103,7 @@ export function RecordAndPlay({
   // and goes straight back to idle, ready to record again immediately.
   useEffect(() => {
     if (stage !== 'success' || !saved) return
-    onSaved(`Test case TC-${String(saved.testCaseNumber).padStart(3, '0')} was added to the test suite.`, saved)
+    onSaved(`Test case TC-${String(saved.testCaseNumber).padStart(3, '0')} was added to the test cases.`, saved)
     resetToIdle()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stage, saved])
@@ -128,7 +128,7 @@ export function RecordAndPlay({
         <AppIdentityLine name={applicationName} url={applicationUrl} />
         <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 4, maxWidth: 620 }}>
           Walk through a flow in a real browser once. Vantage turns the session into a maintained Playwright test that
-          lives alongside the generated suite — same locators, same fixtures, same self-healing.
+          lives alongside the generated test cases — same locators, same fixtures, same self-healing.
         </div>
       </div>
 

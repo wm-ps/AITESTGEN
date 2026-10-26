@@ -270,7 +270,7 @@ export function RecordingSessionWindow({ vncWsUrl, controlWsUrl, authMode, appli
                     Discard this recording?
                   </div>
                   <p style={{ margin: 0, lineHeight: 1.5, fontSize: 13, color: 'var(--fg-3, #666)' }}>
-                    Everything recorded so far will be thrown away. Nothing is saved to the test suite.
+                    Everything recorded so far will be thrown away. Nothing is saved to your test cases.
                   </p>
                   {(cancelError ?? cancelTimeoutError) && (
                     <p style={{ margin: '8px 0 0', lineHeight: 1.5, fontSize: 12.5, color: 'var(--bad, #d33)' }}>
@@ -377,7 +377,7 @@ export function RecordingSessionWindow({ vncWsUrl, controlWsUrl, authMode, appli
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, textAlign: 'center' }}>
           <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg, #1b1f24)' }}>Recording saved</div>
           <div style={{ fontSize: 13, color: 'var(--fg-3, #666)' }}>
-            Test case TC-{String(saved.testCaseNumber).padStart(3, '0')} was added to the test suite.
+            Test case TC-{String(saved.testCaseNumber).padStart(3, '0')} was added to your test cases.
           </div>
           <div style={{ fontSize: 12, color: 'var(--fg-4, #888)' }}>This tab will close automatically.</div>
         </div>
@@ -386,7 +386,7 @@ export function RecordingSessionWindow({ vncWsUrl, controlWsUrl, authMode, appli
       {stage === 'cancelled' && (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, textAlign: 'center' }}>
           <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg, #1b1f24)' }}>Recording cancelled</div>
-          <div style={{ fontSize: 13, color: 'var(--fg-3, #666)' }}>Nothing was saved to the test suite.</div>
+          <div style={{ fontSize: 13, color: 'var(--fg-3, #666)' }}>Nothing was saved to your test cases.</div>
           <div style={{ fontSize: 12, color: 'var(--fg-4, #888)' }}>This tab will close automatically.</div>
         </div>
       )}

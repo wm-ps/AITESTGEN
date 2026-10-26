@@ -113,6 +113,13 @@ from workflows import (
 from workflows.failure_explainer import UNDETERMINED_DETAIL as FAILURE_UNDETERMINED_DETAIL
 from workflows.failure_explainer import UNDETERMINED_TITLE as FAILURE_UNDETERMINED_TITLE
 
+from api.activity import (
+    INTERNAL_VERIFICATION_TRIGGER_NAME,
+    changes_summary,
+    field_changes,
+    record_activity,
+)
+from api.activity import router as activity_router
 from api.auth import (
     ROLES,
     CurrentAdminDep,
@@ -199,6 +206,8 @@ app.add_middleware(
 
 SessionDep = Annotated[Session, Depends(get_session)]
 
+app.include_router(activity_router)
+
 
 @app.get("/health")
 def health() -> dict[str, str]:
@@ -280,6 +289,8 @@ def send_invite(
         raise HTTPException(status_code=409, detail="a user with this email already exists")
 
     invite, token = create_invite(session, organization_id, admin.id, payload.email, payload.role)
+    record_activity(session, admin, "settings", f"Invited {payload.email} as {payload.role}")
+    session.commit()
     send_invite_email(payload.email, token)
     return InviteRead(
         id=invite.external_id, email=invite.email, role=invite.role, expires_at=invite.expires_at
@@ -319,6 +330,7 @@ def revoke_invite(
     if invite is None:
         raise HTTPException(status_code=404, detail="invite not found")
     session.delete(invite)
+    record_activity(session, admin, "settings", f"Revoked the invite for {invite.email}")
     session.commit()
 
 
@@ -336,6 +348,8 @@ def accept_invite_route(
         user = accept_invite(session, payload.token, payload.name, payload.password)
     except InviteAcceptError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    record_activity(session, user, "settings", f"{user.name} ({user.email}) joined as {user.role}")
+    session.commit()
     issue_session_cookie(response, user.id)
     return _to_user_read(user)
 
@@ -403,6 +417,7 @@ def remove_team_member(
     if member is None:
         raise HTTPException(status_code=404, detail="member not found")
     session.delete(member)
+    record_activity(session, admin, "settings", f"Removed {member.name} ({member.email}) from the team")
     session.commit()
 
 
@@ -457,6 +472,10 @@ def change_team_member_role(
         raise HTTPException(status_code=404, detail="member not found")
     if member.role == "admin" and payload.role != "admin" and len(admins) <= 1:
         raise HTTPException(status_code=409, detail="an organization needs at least one admin")
+    if member.role != payload.role:
+        record_activity(
+            session, admin, "settings", f"Changed {member.name}'s role from {member.role} to {payload.role}"
+        )
     member.role = payload.role
     session.add(member)
     session.commit()
@@ -515,43 +534,6 @@ def reset_password_route(payload: ResetPasswordRequest, session: SessionDep) -> 
     return _to_user_read(user)
 
 
-_APPLICATION_CONTEXT_FIELD_MAX_LENGTH = 2000
-
-
-class ApplicationContext(BaseModel):
-    """User-authored, persistent application knowledge (see
-    `domain.Application.application_context`), shown in the UI as "Notes" —
-    every field optional, so a user can fill in only what they know. Used
-    as the shape `ApplicationRead` returns, as the context-update endpoint's
-    payload (a full replace, not a per-field PATCH merge — the edit UI
-    always shows/saves the whole form at once), and optionally on
-    `ApplicationCreate` (Add-application onboarding) — that path exists so
-    the very first `InferenceActivity` run (chained automatically after the
-    initial crawl, before there's ever a chance to visit the Notes tab) can
-    already see it. Each field is capped at 2,000 characters — the
-    browser's own `maxLength` is the primary gate (matches the UI's live
-    counter); this is the server-side backstop for a direct API call."""
-
-    business_goal: str | None = Field(default=None, max_length=_APPLICATION_CONTEXT_FIELD_MAX_LENGTH)
-    business_domain: str | None = Field(default=None, max_length=_APPLICATION_CONTEXT_FIELD_MAX_LENGTH)
-    business_rules: list[str] | None = None
-    additional_context: str | None = Field(
-        default=None, max_length=_APPLICATION_CONTEXT_FIELD_MAX_LENGTH
-    )
-
-    @field_validator("business_rules")
-    @classmethod
-    def _business_rules_within_field_length(cls, value: list[str] | None) -> list[str] | None:
-        # `business_rules` arrives as already-split lines (one rule per line
-        # in the UI's own textarea) — the 2,000-character budget applies to
-        # that original joined text, same as every other field's raw input.
-        if value and len("\n".join(value)) > _APPLICATION_CONTEXT_FIELD_MAX_LENGTH:
-            raise ValueError(
-                f"business_rules must be at most {_APPLICATION_CONTEXT_FIELD_MAX_LENGTH} characters"
-            )
-        return value
-
-
 class ApplicationCreate(BaseModel):
     name: str
     url: str
@@ -586,10 +568,6 @@ class ApplicationCreate(BaseModel):
         "auth_method is 'sso_session_reuse'. The platform never performs the SSO/MFA "
         "handshake itself — it only reuses a session the customer supplies.",
     )
-    # Optional — lets onboarding provide Notes before the very first
-    # discovery run's InferenceActivity fires (see `ApplicationContext`'s
-    # docstring). Omitting it behaves exactly as before this field existed.
-    application_context: ApplicationContext | None = None
 
     @field_validator("username", "password", mode="before")
     @classmethod
@@ -667,9 +645,6 @@ class ApplicationRead(BaseModel):
     # (AD-15 is deliberate, non-exhaustive sampling). `None` for every other
     # status, where the full report is more useful than a partial count.
     discovery_coverage_summary: dict[str, int] | None = None
-    # `None` for every application that has never had context saved (the
-    # column's own default) — backward compatible, no migration backfill.
-    application_context: ApplicationContext | None = None
 
 
 class HealthRead(BaseModel):
@@ -787,11 +762,6 @@ def _to_application_read(
             if discovery_run and discovery_run.status == "complete"
             else None
         ),
-        application_context=(
-            ApplicationContext(**application.application_context)
-            if application.application_context
-            else None
-        ),
     )
 
 
@@ -841,6 +811,7 @@ async def create_application(
     payload: ApplicationCreate,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> ApplicationRead:
     # FR-31 (CR-3): fail fast before any write if the Base URL isn't reachable.
     async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
@@ -853,6 +824,8 @@ async def create_application(
     if payload.auth_method == "standard_login":
         creds = {"username": payload.username, "password": payload.password}
         credential = json.dumps(creds).encode()
+    elif payload.auth_method == "none":
+        credential = b'{"cookies": [], "origins": []}'
     else:
         credential = payload.session_state.encode()  # type: ignore[union-attr]
     secret_ref = VaultSecretsClient().store(organization_id, credential)
@@ -866,17 +839,12 @@ async def create_application(
         auth_method=payload.auth_method,
         discovery_required=payload.discovery_required,
         secret_ref=secret_ref.path,
-        # Set before `start_discovery_run` below so the very first
-        # `InferenceActivity` run (chained automatically after the initial
-        # crawl) already has it — see `ApplicationContext`'s docstring.
-        application_context=(
-            payload.application_context.model_dump(exclude_none=True) or None
-            if payload.application_context
-            else None
-        ),
     )
     session.add(application)
     session.flush()
+    record_activity(
+        session, user, "settings", f"Added application {application.name}", application=application
+    )
 
     # Absorbed from removed Story 1.5: start a DiscoveryRun immediately, in
     # the same request — no separate "start discovery" action (AC 4). The
@@ -1425,38 +1393,19 @@ def rename_application(
     external_id: uuid.UUID,
     payload: ApplicationRenamePayload,
     session: SessionDep,
-    _admin: CurrentAdminDep,
+    admin: CurrentAdminDep,
     organization_id: CurrentOrgIdDep,
 ) -> ApplicationRead:
     application = _get_org_application(session, organization_id, external_id)
+    if application.name != payload.name:
+        record_activity(
+            session,
+            admin,
+            "settings",
+            f"Renamed application {application.name} to {payload.name}",
+            application=application,
+        )
     application.name = payload.name
-    session.add(application)
-    session.commit()
-    discovery_run = _latest_discovery_run(session, application.id)
-    assert discovery_run is not None or not application.discovery_required
-    return _to_application_read(session, application, discovery_run)
-
-
-@app.patch("/applications/{external_id}/context", response_model=ApplicationRead)
-def update_application_context(
-    external_id: uuid.UUID,
-    payload: ApplicationContext,
-    session: SessionDep,
-    _admin: CurrentAdminDep,
-    organization_id: CurrentOrgIdDep,
-) -> ApplicationRead:
-    """Persistent, user-authored Application Context (shown in the UI as
-    "Notes": business goal, business domain, business rules, additional
-    context) — complements crawler/live-exploration knowledge with what the
-    AI can't reliably discover on its own. A full replace of the stored
-    context (see
-    `ApplicationContext`'s docstring) — every field optional, `None`/blank
-    fields simply aren't rendered into any prompt (`ai_provider.
-    application_context.build_application_context_block`). Never contains
-    credentials/secrets — this is business/domain prose, not connection
-    config, and nothing here is ever treated as a system-level instruction."""
-    application = _get_org_application(session, organization_id, external_id)
-    application.application_context = payload.model_dump(exclude_none=True) or None
     session.add(application)
     session.commit()
     discovery_run = _latest_discovery_run(session, application.id)
@@ -1469,7 +1418,7 @@ def update_application_credentials(
     external_id: uuid.UUID,
     payload: ApplicationCredentialsUpdatePayload,
     session: SessionDep,
-    _admin: CurrentAdminDep,
+    admin: CurrentAdminDep,
     organization_id: CurrentOrgIdDep,
 ) -> ApplicationRead:
     """Rotates a standard_login Application's stored credential in place —
@@ -1487,6 +1436,11 @@ def update_application_credentials(
         creds["mfa_enabled"] = True
         creds["totp_seed"] = payload.totp_seed
     VaultSecretsClient().update(SecretRef(path=application.secret_ref), json.dumps(creds).encode())
+    # Never the values — only that they changed.
+    record_activity(
+        session, admin, "settings", f"Updated login credentials for {application.name}", application=application
+    )
+    session.commit()
     discovery_run = _latest_discovery_run(session, application.id)
     assert discovery_run is not None or not application.discovery_required
     return _to_application_read(session, application, discovery_run)
@@ -1551,13 +1505,17 @@ class CredentialReveal(BaseModel):
 def reveal_credential(
     external_id: uuid.UUID,
     session: SessionDep,
-    _admin: CurrentAdminDep,
+    admin: CurrentAdminDep,
     organization_id: CurrentOrgIdDep,
 ) -> CredentialReveal:
     application = _get_org_application(session, organization_id, external_id)
     if application.auth_method != "standard_login":
         raise HTTPException(status_code=422, detail="credential reveal is only supported for standard_login")
     creds = json.loads(VaultSecretsClient().resolve(SecretRef(path=application.secret_ref)))
+    record_activity(
+        session, admin, "settings", f"Viewed the saved password for {application.name}", application=application
+    )
+    session.commit()
     return CredentialReveal(password=creds.get("password", ""))
 
 
@@ -1590,7 +1548,7 @@ async def verify_credential(
 async def delete_application(
     external_id: uuid.UUID,
     session: SessionDep,
-    _admin: CurrentAdminDep,
+    admin: CurrentAdminDep,
     organization_id: CurrentOrgIdDep,
 ) -> None:
     """Soft delete only (AD-15 disclosed scope) — child rows (discovery_run,
@@ -1612,6 +1570,9 @@ async def delete_application(
         raise HTTPException(status_code=409, detail="discovery run is still in progress")
     application.deleted_at = datetime.now(UTC)
     session.add(application)
+    record_activity(
+        session, admin, "settings", f"Deleted application {application.name}", application=application
+    )
 
     schedules = session.exec(
         select(Schedule).where(
@@ -2366,6 +2327,7 @@ async def generate_scenarios(
     external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> dict[str, int]:
     application = _get_org_application(session, organization_id, external_id)
     _require_discovery(application)
@@ -2383,7 +2345,7 @@ async def generate_scenarios(
     # from "still generating".
     if not await has_pollers(client, GENERATION_TASK_QUEUE):
         raise HTTPException(status_code=503, detail="GENERATION_UNAVAILABLE")
-    triggered = 0
+    triggered: list[Journey] = []
     for journey in journeys:
         # Idempotent: skip a Journey that already has Scenarios for its
         # current attempt — Temporal's WorkflowAlreadyStartedError below is
@@ -2414,11 +2376,39 @@ async def generate_scenarios(
                 # works because `journey.attempt` increments into a new id.
                 id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             )
-            triggered += 1
+            triggered.append(journey)
         except WorkflowAlreadyStartedError:
             pass
 
-    return {"journeys_triggered": triggered}
+    _record_generation_started(session, user, application, "scenarios", "Scenario", triggered)
+    return {"journeys_triggered": len(triggered)}
+
+
+def _record_generation_started(
+    session: Session,
+    user: PlatformUser,
+    application: Application,
+    category: str,
+    what: str,
+    journeys: list[Journey],
+) -> None:
+    """The Activity page derives this row's outcome from these Journeys'
+    current state (`api.activity._generation_outcomes`)."""
+    if not journeys:
+        return
+    noun = "journey" if len(journeys) == 1 else "journeys"
+    record_activity(
+        session,
+        user,
+        category,
+        f"{what} generation started on {application.name} for {len(journeys)} {noun}",
+        application=application,
+        outcome="running",
+        details={
+            "journeys": [{"id": str(j.id), "attempt": j.attempt, "name": j.name} for j in journeys]
+        },
+    )
+    session.commit()
 
 
 @app.get("/applications/{external_id}/scenarios", response_model=list[ScenarioRead])
@@ -2464,8 +2454,17 @@ def rename_scenario(
     payload: ScenarioRenamePayload,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> ScenarioRead:
     scenario, journey = _get_org_scenario(session, organization_id, external_id)
+    if scenario.name != payload.name:
+        record_activity(
+            session,
+            user,
+            "scenarios",
+            f"Renamed scenario {scenario.name} to {payload.name}",
+            application=session.get(Application, journey.application_id),
+        )
     scenario.name = payload.name
     session.add(scenario)
     session.commit()
@@ -2478,8 +2477,16 @@ def delete_scenario(
     external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> None:
-    scenario, _journey = _get_org_scenario(session, organization_id, external_id)
+    scenario, journey = _get_org_scenario(session, organization_id, external_id)
+    record_activity(
+        session,
+        user,
+        "scenarios",
+        f"Deleted scenario {scenario.name}",
+        application=session.get(Application, journey.application_id),
+    )
     session.delete(scenario)
     session.commit()
 
@@ -3040,6 +3047,7 @@ async def generate_suite(
     external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> dict[str, int]:
     application = _get_org_application(session, organization_id, external_id)
     journeys = session.exec(
@@ -3052,7 +3060,7 @@ async def generate_suite(
     client = await get_temporal_client()
     if not await has_pollers(client, GENERATION_TASK_QUEUE):
         raise HTTPException(status_code=503, detail="GENERATION_UNAVAILABLE")
-    triggered = 0
+    triggered: list[Journey] = []
     for journey in journeys:
         current_scenarios = session.exec(
             select(Scenario).where(
@@ -3150,11 +3158,12 @@ async def generate_suite(
                 id=f"suite-{journey.external_id}-{journey.attempt}",
                 task_queue=GENERATION_TASK_QUEUE,
             )
-            triggered += 1
+            triggered.append(journey)
         except WorkflowAlreadyStartedError:
             pass
 
-    return {"suites_triggered": triggered}
+    _record_generation_started(session, user, application, "test_cases", "Test case", triggered)
+    return {"suites_triggered": len(triggered)}
 
 
 # `has_pollers` at submit time can't catch a worker that crashes right after
@@ -3470,7 +3479,7 @@ def update_execution_policy(
     external_id: uuid.UUID,
     payload: ExecutionPolicyUpdate,
     session: SessionDep,
-    _admin: CurrentAdminDep,
+    admin: CurrentAdminDep,
     organization_id: CurrentOrgIdDep,
 ) -> ExecutionPolicyRead:
     """Upsert — without this, "Run All Tests" has nothing to validate a run
@@ -3487,6 +3496,8 @@ def update_execution_policy(
         policy = ExecutionPolicy(application_id=application.id)
 
     changed = False
+    before: dict[str, object] = {}
+    after: dict[str, object] = {}
     for field_name in (
         "execution_enabled",
         "allowed_base_urls",
@@ -3495,9 +3506,21 @@ def update_execution_policy(
     ):
         value = getattr(payload, field_name)
         if value is not None and value != getattr(policy, field_name):
+            before[field_name] = getattr(policy, field_name)
+            after[field_name] = value
             setattr(policy, field_name, value)
             changed = True
 
+    if changed:
+        changes = field_changes(before, after)
+        record_activity(
+            session,
+            admin,
+            "settings",
+            changes_summary(f"{application.name} execution policy: ", changes),
+            application=application,
+            details={"changes": changes},
+        )
     if changed and not is_new:
         policy.version += 1
     policy.updated_at = datetime.now(UTC)
@@ -3641,7 +3664,7 @@ def _to_test_run_read(
     return TestRunRead(
         id=test_run.external_id,
         run_number=test_run.run_number,
-        name=f"#{test_run.run_number} - {test_run.suite_name or 'Full Suite Run'}",
+        name=f"#{test_run.run_number} - {test_run.suite_name or 'All test cases'}",
         status=test_run.status,
         trigger=_trigger_label(test_run),
         pass_rate=pass_rate,
@@ -3730,6 +3753,7 @@ async def cancel_test_run(
     test_run_external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
     background_tasks: BackgroundTasks,
 ) -> TestRunRead:
     """Stops a pending/running run. The database decides, Temporal follows:
@@ -3755,6 +3779,14 @@ async def cancel_test_run(
         session.rollback()
         raise HTTPException(status_code=409, detail="test run is not in progress")
     apply_test_run_cancel(session, test_run)
+    record_activity(
+        session,
+        user,
+        "test_runs",
+        f"Cancelled test run #{test_run.run_number} on {application.name}",
+        application=application,
+        outcome="stopped",
+    )
     session.commit()
     workflow_id = test_run.workflow_id
 
@@ -4240,6 +4272,18 @@ async def _seed_default_schedules(session: Session, application: Application) ->
             )
 
 
+def _record_schedule_activity(session: Session, user: PlatformUser, schedule: Schedule, verb: str) -> None:
+    application = session.get(Application, schedule.application_id)
+    assert application is not None
+    record_activity(
+        session,
+        user,
+        "test_runs",
+        f"{verb} schedule {schedule.name} on {application.name}",
+        application=application,
+    )
+
+
 @app.post(
     "/applications/{external_id}/schedules", response_model=ScheduleRead, status_code=201
 )
@@ -4280,6 +4324,8 @@ async def create_schedule(
         ) from None
     except (RPCError, RuntimeError) as exc:
         raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
+    _record_schedule_activity(session, user, schedule, "Created")
+    session.commit()
 
     client = await get_temporal_client()
     enabled, next_run_at = await _describe_schedule_state(client, schedule)
@@ -4292,6 +4338,7 @@ async def update_schedule(
     payload: ScheduleUpdate,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> ScheduleRead:
     schedule = _get_org_schedule(session, organization_id, external_id)
     application = session.get(Application, schedule.application_id)
@@ -4346,6 +4393,7 @@ async def update_schedule(
 
     schedule.updated_at = datetime.now(UTC)
     session.add(schedule)
+    _record_schedule_activity(session, user, schedule, "Edited")
     try:
         session.flush()
     except IntegrityError:
@@ -4428,6 +4476,7 @@ async def delete_schedule(
     external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> None:
     """Idempotent: a second DELETE against an already-deleted (or
     already-auto-healed) schedule still returns 204 — `RPCError` NOT_FOUND
@@ -4453,6 +4502,7 @@ async def delete_schedule(
 
     schedule.deleted_at = datetime.now(UTC)
     session.add(schedule)
+    _record_schedule_activity(session, user, schedule, "Deleted")
     session.commit()
 
 
@@ -4461,6 +4511,7 @@ async def enable_schedule(
     external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> ScheduleRead:
     schedule = _get_org_schedule(session, organization_id, external_id)
     client = await get_temporal_client()
@@ -4478,6 +4529,7 @@ async def enable_schedule(
 
     schedule.enabled = True
     session.add(schedule)
+    _record_schedule_activity(session, user, schedule, "Turned on")
     # If this commit fails, the next GET's list_schedules() reconciliation
     # self-heals the cached column back to the true (now unpaused) state.
     session.commit()
@@ -4491,6 +4543,7 @@ async def disable_schedule(
     external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> ScheduleRead:
     schedule = _get_org_schedule(session, organization_id, external_id)
     client = await get_temporal_client()
@@ -4508,6 +4561,7 @@ async def disable_schedule(
 
     schedule.enabled = False
     session.add(schedule)
+    _record_schedule_activity(session, user, schedule, "Turned off")
     session.commit()
     session.refresh(schedule)
     enabled, next_run_at = await _describe_schedule_state(client, schedule)
@@ -5120,7 +5174,7 @@ def _current_test_assets_for_application(
 # a plain manual run's `triggered_by_name` is NULL (Postgres's `NULL !=
 # 'Add Test Case'` is NULL, not true, so `!=` silently drops every such row
 # instead of keeping it).
-_INTERNAL_VERIFICATION_TRIGGER_NAME = "Add Test Case"
+_INTERNAL_VERIFICATION_TRIGGER_NAME = INTERNAL_VERIFICATION_TRIGGER_NAME
 
 
 def _latest_result_by_scenario(
@@ -5545,9 +5599,10 @@ def get_settings(session: SessionDep, _admin: CurrentAdminDep) -> SettingsRead:
 def update_settings(
     payload: SettingsUpdate,
     session: SessionDep,
-    _admin: CurrentAdminDep,
+    admin: CurrentAdminDep,
 ) -> SettingsRead:
     settings = session.exec(select(DiscoverySettings)).one()
+    before = _to_settings_read(settings).model_dump()
     if payload.max_pages is not None:
         settings.max_pages = payload.max_pages
     if payload.max_discovery_duration_minutes != "__unset__":
@@ -5568,6 +5623,11 @@ def update_settings(
         settings.max_heal_attempts = payload.max_heal_attempts
     if payload.screenshot_capture is not None:
         settings.screenshot_capture = payload.screenshot_capture
+    changes = field_changes(before, _to_settings_read(settings).model_dump())
+    if changes:
+        record_activity(
+            session, admin, "settings", changes_summary("", changes), details={"changes": changes}
+        )
     session.add(settings)
     session.commit()
     session.refresh(settings)

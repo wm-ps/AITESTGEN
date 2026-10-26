@@ -179,12 +179,12 @@ describe('TestSuiteResults', () => {
     expect(screen.queryByText('Checkout')).toBeNull()
   })
 
-  it('calls onRunTests when the Run Suite button is clicked', async () => {
+  it('calls onRunTests when the Run Test Cases button is clicked', async () => {
     stubFetch()
     const onRunTests = vi.fn()
     render(<TestSuiteResults applicationId="app-1" onRunTests={onRunTests} />)
 
-    const button = await screen.findByRole('button', { name: 'Run Suite' })
+    const button = await screen.findByRole('button', { name: 'Run Test Cases' })
     fireEvent.click(button)
 
     expect(onRunTests).toHaveBeenCalledOnce()
@@ -207,7 +207,7 @@ describe('TestSuiteResults', () => {
     expect(screen.getByText(/test_expired_card/)).toBeTruthy()
   })
 
-  it('downloads the test suite project when Download Test Suite is clicked', async () => {
+  it('downloads the test cases project when Download Test Cases is clicked', async () => {
     stubFetch()
     vi.stubGlobal('URL', {
       ...URL,
@@ -217,14 +217,14 @@ describe('TestSuiteResults', () => {
     render(<TestSuiteResults applicationId="app-1" onRunTests={() => {}} />)
 
     const button = (await screen.findByRole('button', {
-      name: /Download Test Suite/,
+      name: /Download Test Cases/,
     })) as HTMLButtonElement
     expect(button.disabled).toBe(false)
 
     fireEvent.click(button)
     await waitFor(() => expect(screen.getByRole('button', { name: /Downloading/ })).toBeTruthy())
     await waitFor(() => {
-      const settled = screen.getByRole('button', { name: /Download Test Suite/ }) as HTMLButtonElement
+      const settled = screen.getByRole('button', { name: /Download Test Cases/ }) as HTMLButtonElement
       expect(settled.disabled).toBe(false)
     })
     expect(URL.createObjectURL).toHaveBeenCalledOnce()
@@ -235,11 +235,11 @@ describe('TestSuiteResults', () => {
     stubFetch({ download: { ok: false, status: 500 } })
     render(<TestSuiteResults applicationId="app-1" onRunTests={() => {}} />)
 
-    const button = await screen.findByRole('button', { name: /Download Test Suite/ })
+    const button = await screen.findByRole('button', { name: /Download Test Cases/ })
     fireEvent.click(button)
 
     await waitFor(() => {
-      const settled = screen.getByRole('button', { name: /Download Test Suite/ }) as HTMLButtonElement
+      const settled = screen.getByRole('button', { name: /Download Test Cases/ }) as HTMLButtonElement
       expect(settled.disabled).toBe(false)
     })
   })

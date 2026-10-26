@@ -28,14 +28,17 @@ discovery-worker one especially (see the
 `discovery-worker-test-safety` skill: it spins up many real Chromium
 instances and can hang for 20-30+ minutes).
 
-## Button loading state — always the ring spinner, never bouncing dots
+## Busy / in-progress indicators — always trailing bouncing dots, never a spinner
 
-Any button's busy/submitting state uses the ring `Spinner` from
-`components/LoadingDots.tsx` (same `currentColor` + `aitg-spin` look
-StatusPill's dot already uses), never a bespoke bouncing-dots or other
-spinner. `LoadingDots({ label })` already renders `<Spinner size={12} />` +
-label internally, so existing call sites don't need to change — just don't
-reintroduce dot-bounce-style loading indicators for new buttons.
+Every "this is working" indicator uses `BouncingDots` from
+`components/LoadingDots.tsx`, placed *after* the label, never a ring
+spinner or a static "…" alone:
+
+- Busy buttons: `<LoadingDots label="Saving" />` (label + trailing dots;
+  no "…" in the label).
+- A running operation's status (Discovery, Scenario/Test Generation, Test
+  Execution/Running, Self-healing): `StatusPill` with `pulsing` already
+  renders the trailing dots; elsewhere append `<BouncingDots />`.
 
 ## Input placeholder copy — instructional, never a fake example
 

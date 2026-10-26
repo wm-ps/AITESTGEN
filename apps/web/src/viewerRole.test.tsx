@@ -110,7 +110,7 @@ describe('viewer role', () => {
     await screen.findAllByText('Run #3', { exact: false })
     await new Promise((resolve) => setTimeout(resolve, 100))
     expect(screen.queryByRole('button', { name: 'Run' })).toBeNull()
-    expect(screen.queryByText('Running…')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Running' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Cancel run' })).toBeNull()
   })
 

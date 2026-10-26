@@ -21,31 +21,11 @@ export type AcceptInviteRequest = { token: string; name: string; password: strin
 export type ForgotPasswordRequest = { email: string }
 export type ResetPasswordTarget = { name: string; email: string }
 export type ResetPasswordRequest = { token: string; password: string }
-// `application_context` isn't in api-types.gen.ts yet — added by hand
-// (regenerate via `npm run generate:api-types` once the API is running).
-// Optional: lets onboarding provide Notes before the very first
-// InferenceActivity run, which fires automatically right after the initial
-// crawl — before there's ever a chance to visit the Notes tab.
 export type ApplicationCreate = components['schemas']['ApplicationCreate'] & {
-  application_context?: ApplicationContext | null
   // `discovery_required` isn't in api-types.gen.ts yet either. false = the
   // backend never starts a crawl for this Application.
   discovery_required?: boolean
 }
-// Every field optional — the user fills in only what they know
-// (`apps/api/src/api/main.py`'s `ApplicationContext`). Business/domain
-// knowledge the AI can't reliably discover from the DOM/crawler alone —
-// complements crawler + live-exploration knowledge, never replaces either.
-// Shown in the UI as "Notes" (NotesTab.tsx).
-export type ApplicationContext = {
-  business_goal: string | null
-  business_domain: string | null
-  business_rules: string[] | null
-  additional_context: string | null
-}
-// `application_context` isn't in api-types.gen.ts yet (backend schema is
-// new, regenerate via `npm run generate:api-types` once the API is
-// running) — added by hand, same convention as HomeApplicationRead below.
 // `discovery_run_id` / `discovery_status` are overridden to nullable and
 // `discovery_required` added by hand for the same reason: both are null/absent
 // only for an Application created with discovery turned off.
@@ -53,7 +33,6 @@ export type ApplicationRead = Omit<
   components['schemas']['ApplicationRead'],
   'discovery_run_id' | 'discovery_status'
 > & {
-  application_context: ApplicationContext | null
   discovery_required?: boolean
   discovery_run_id: string | null
   discovery_status: string | null
@@ -291,6 +270,58 @@ export type TestRunRead = {
   root_cause?: RootCauseRead | null
   results?: TestResultRead[] | null
 }
+// Admin Activity page (`apps/api/src/api/activity.py`) — added by hand, same
+// convention as the types above.
+export type ActivityCategory = 'discovery' | 'scenarios' | 'test_cases' | 'test_runs' | 'settings'
+export type ActivityOutcome = 'running' | 'done' | 'failed' | 'changed' | 'stopped'
+export type ActivityChange = { field: string; before: string; after: string }
+export type ActivityJourneyStatus = { name: string; status: ActivityOutcome; error: string | null }
+export type ActivityItemRead = {
+  id: string
+  kind: 'event' | 'discovery' | 'test_run'
+  created_at: string
+  category: ActivityCategory
+  outcome: ActivityOutcome
+  summary: string
+  reason: string | null
+  actor: string
+  application_id: string | null
+  application_name: string | null
+  application_deleted: boolean
+  target_tab: string | null
+  test_run_id: string | null
+  // Shape depends on kind/category — see the backend's ActivityItemRead.
+  details: {
+    changes?: ActivityChange[]
+    journeys?: ActivityJourneyStatus[]
+    pages?: number
+    journeys_found?: number
+    stop_reason?: string | null
+    failure_reason?: string | null
+    errors?: { code: string; message: string }[]
+    [key: string]: unknown
+  }
+}
+export type ActivityPageRead = {
+  items: ActivityItemRead[]
+  next_cursor: string | null
+  // Per-option counts over the whole time range, for the filter menus.
+  facets: {
+    category: Partial<Record<ActivityCategory, number>>
+    outcome: Partial<Record<ActivityOutcome, number>>
+    application: Record<string, number>
+    total: { all: number }
+  }
+}
+export type ActivityQuery = {
+  application_id?: string
+  category?: ActivityCategory
+  outcome?: ActivityOutcome
+  q?: string
+  since_hours?: number
+  cursor?: string
+  sort?: 'newest' | 'oldest'
+}
 export type TestRunCursorPageRead = {
   items: TestRunRead[]
   next_cursor: string | null
@@ -488,11 +519,6 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify({ name }),
     }),
-  updateApplicationContext: (applicationId: string, context: ApplicationContext) =>
-    request<ApplicationRead>(`/applications/${applicationId}/context`, {
-      method: 'PATCH',
-      body: JSON.stringify(context),
-    }),
   updateApplicationCredentials: (
     applicationId: string,
     username: string,
@@ -636,6 +662,12 @@ export const api = {
     request<ScheduleRead>(`/schedules/${scheduleId}/disable`, { method: 'POST' }),
   runScheduleNow: (scheduleId: string) =>
     request<{ started: boolean }>(`/schedules/${scheduleId}/run-now`, { method: 'POST' }),
+  // Admin-only (403 otherwise).
+  listActivity: (query: ActivityQuery) => {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(query)) if (value) params.set(key, String(value))
+    return request<ActivityPageRead>(`/activity?${params}`)
+  },
   getSettings: () => request<SettingsRead>('/settings'),
   updateSettings: (payload: SettingsUpdate) =>
     request<SettingsRead>('/settings', { method: 'PATCH', body: JSON.stringify(payload) }),

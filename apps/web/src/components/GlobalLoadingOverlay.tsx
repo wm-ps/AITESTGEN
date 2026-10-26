@@ -1,5 +1,4 @@
-import { faCircleNotch } from '@fortawesome/free-solid-svg-icons'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { BouncingDots } from './LoadingDots'
 import { VantageBrand } from './Brand'
 
 // The very first render, before `api.me()` resolves — used to just return
@@ -74,7 +73,7 @@ export function GlobalLoadingOverlay({ message }: { message: string }) {
               color: 'var(--accent-2)',
             }}
           >
-            <FontAwesomeIcon icon={faCircleNotch} style={{ fontSize: 13, animation: 'aitg-spin 0.8s linear infinite' }} />
+            <BouncingDots size={3.5} />
           </div>
         </div>
         <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>{message}…</span>

@@ -32,7 +32,7 @@ afterEach(() => {
 })
 
 describe('ConnectAppForm', () => {
-  it('always shows Username/Password — sign-in is required for every application today', () => {
+  it('shows Username/Password by default — sign-in starts on', () => {
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     expect(screen.getByLabelText('Username')).toBeTruthy()
@@ -124,77 +124,37 @@ describe('ConnectAppForm', () => {
     expect(onConnected).not.toHaveBeenCalled()
   })
 
-  it('submits notes typed during onboarding so they reach create_application', async () => {
+  it('hides the credentials and submits auth_method none when sign-in is toggled off', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
-      .mockResolvedValueOnce(CHECK_STARTED)
-      .mockResolvedValueOnce(CHECK_VALID)
       .mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: '1', name: 'My App' }) })
     vi.stubGlobal('fetch', fetchMock)
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
-    fillCommonFields()
-    await passConnectionTest()
-    fireEvent.click(screen.getByRole('button', { name: /Notes \(optional\)/ }))
-    fireEvent.change(
-      screen.getByPlaceholderText('Describe the primary purpose of the application and the outcomes it should deliver'),
-      { target: { value: 'Manage clients, accounts and investments.' } },
-    )
-    fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
-
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
-    const body = JSON.parse(fetchMock.mock.calls[3][1].body)
-    expect(body.application_context).toMatchObject({
-      business_goal: 'Manage clients, accounts and investments.',
-    })
-  })
-
-  it('keeps Notes collapsed by default and preserves typed text across collapse/expand', () => {
-    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
-
-    expect(
-      screen.queryByPlaceholderText('Describe the primary purpose of the application and the outcomes it should deliver'),
-    ).toBeNull()
-
-    const toggle = screen.getByRole('button', { name: /Notes \(optional\)/ })
+    const toggle = screen.getByRole('switch', { name: 'This application requires sign-in' })
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
     fireEvent.click(toggle)
-    fireEvent.change(
-      screen.getByPlaceholderText('Describe the primary purpose of the application and the outcomes it should deliver'),
-      { target: { value: 'Manage clients, accounts and investments.' } },
-    )
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    expect(screen.queryByLabelText('Username')).toBeNull()
+    expect(screen.queryByLabelText('Password')).toBeNull()
+    expect(screen.queryByLabelText('Login URL (optional)')).toBeNull()
 
-    fireEvent.click(toggle)
-    expect(
-      screen.queryByPlaceholderText('Describe the primary purpose of the application and the outcomes it should deliver'),
-    ).toBeNull()
-
-    fireEvent.click(toggle)
-    expect(
-      screen.getByPlaceholderText('Describe the primary purpose of the application and the outcomes it should deliver'),
-    ).toHaveValue('Manage clients, accounts and investments.')
-  })
-
-  it('submits application_context as all-null when no notes were typed', async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
-      .mockResolvedValueOnce(CHECK_STARTED)
-      .mockResolvedValueOnce(CHECK_VALID)
-      .mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: '1', name: 'My App' }) })
-    vi.stubGlobal('fetch', fetchMock)
-    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
-
-    fillCommonFields()
+    fireEvent.change(screen.getByLabelText('Application name'), { target: { value: 'My App' } })
+    fireEvent.change(screen.getByLabelText('Deployed URL'), { target: { value: 'https://staging.example.com' } })
     await passConnectionTest()
     fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
 
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
-    const body = JSON.parse(fetchMock.mock.calls[3][1].body)
-    expect(body.application_context).toEqual({
-      business_goal: null,
-      business_domain: null,
-      business_rules: null,
-      additional_context: null,
-    })
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body)
+    expect(body.auth_method).toBe('none')
+    expect(body.username).toBeUndefined()
+    expect(body.password).toBeUndefined()
+  })
+
+  it('does not show the workspace-defaults note under Autonomous discovery', () => {
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    expect(screen.queryByText(/workspace defaults/)).toBeNull()
   })
 
   it('keeps the form on Connect App and shows the backend-provided inline error when the reachability check fails (FR-31)', async () => {
@@ -284,7 +244,7 @@ describe('ConnectAppForm', () => {
     )
   })
 
-  it('shows "Validating credentials..." on the button while the login check runs', async () => {
+  it('shows "Validating credentials" on the button while the login check runs', async () => {
     let resolveStatus: (value: unknown) => void = () => {}
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
@@ -297,7 +257,7 @@ describe('ConnectAppForm', () => {
     await passConnectionTest()
     fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
 
-    await screen.findByText('Validating credentials...')
+    await screen.findByText('Validating credentials')
     resolveStatus({ ok: true, status: 200, json: async () => ({ status: 'invalid', detail: null }) })
     await screen.findByText(/username or password is incorrect/i)
   })

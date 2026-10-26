@@ -256,7 +256,7 @@ export function LiveExplorationPanel({
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 4 }}>
             Describe what should be tested. Vantage explores the live application, writes the test case and
-            adds it to this suite.
+            adds it to this application's test cases.
           </div>
         </div>
         <button
@@ -390,9 +390,9 @@ export function LiveExplorationPanel({
           )}
           <p style={{ fontSize: 13.5, color: 'var(--fg)', margin: 0 }}>
             {testCaseCount > 0
-              ? `${testCaseCount} test case${testCaseCount === 1 ? '' : 's'} added to the suite.`
-              : 'Test case added to the suite.'}{' '}
-            Run them from the Test Suite tab to see results.
+              ? `${testCaseCount} test case${testCaseCount === 1 ? '' : 's'} added.`
+              : 'Test case added.'}{' '}
+            Run them from the Test cases tab to see results.
           </p>
           {!!statusRow?.skipped_cases?.length && (
             <div style={{ marginTop: 10 }}>
