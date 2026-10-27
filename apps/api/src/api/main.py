@@ -1357,6 +1357,19 @@ def get_overview_stats(
     )
 
 
+def _require_crawler_discovery(session: Session, application: Application) -> None:
+    """Pause/Resume Discovery drive the classic crawler. An app Explorer
+    discovers (every app started since Explorer replaced discovery) is paused
+    and resumed from Explorer itself — resuming here would start the crawler."""
+    if session.exec(
+        select(ExplorerRun.id).where(ExplorerRun.application_id == application.id)
+    ).first() is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="Explorer discovers this application: pause or resume it from the Explorer tab.",
+        )
+
+
 @app.post("/applications/{external_id}/pause-discovery", response_model=ApplicationRead)
 async def pause_discovery(
     external_id: uuid.UUID,
@@ -1366,6 +1379,7 @@ async def pause_discovery(
     """Story 2.17 Task 1 (AC 1)."""
     application = _get_org_application(session, organization_id, external_id)
     _require_discovery(application)
+    _require_crawler_discovery(session, application)
     discovery_run = _latest_discovery_run(session, application.id)
     if discovery_run is None or discovery_run.status != "running":
         raise HTTPException(status_code=409, detail="discovery run is not running")
@@ -1683,6 +1697,7 @@ async def resume_discovery(
     whole mechanism."""
     application = _get_org_application(session, organization_id, external_id)
     _require_discovery(application)
+    _require_crawler_discovery(session, application)
     discovery_run = _latest_discovery_run(session, application.id)
     if discovery_run is None or discovery_run.status != "paused":
         raise HTTPException(status_code=409, detail="discovery run is not paused")
