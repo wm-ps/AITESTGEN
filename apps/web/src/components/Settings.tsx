@@ -57,6 +57,7 @@ type CredentialEntry = {
   environment: string
   username: string
   has_password: boolean
+  requires_login: boolean
 }
 
 function CredentialsPanel() {
@@ -72,6 +73,21 @@ function CredentialsPanel() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saveSuccess, setSaveSuccess] = useState(false)
+  const [switching, setSwitching] = useState<Record<string, boolean>>({})
+  const [switchError, setSwitchError] = useState<string | null>(null)
+
+  async function toggleRequiresLogin(entry: CredentialEntry) {
+    setSwitchError(null)
+    setSwitching((prev) => ({ ...prev, [entry.application_id]: true }))
+    try {
+      await api.setRequiresLogin(entry.application_id, !entry.requires_login)
+      await refreshCredentials()
+    } catch (err) {
+      setSwitchError(err instanceof ApiError ? err.message : 'Could not change sign-in for this application.')
+    } finally {
+      setSwitching((prev) => ({ ...prev, [entry.application_id]: false }))
+    }
+  }
 
   function refreshCredentials() {
     return api
@@ -137,7 +153,8 @@ function CredentialsPanel() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Saved credentials</div>
           <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
-            Stored encrypted at project level and reused for discovery, generation and every run.
+            Stored encrypted at project level and reused for discovery, generation and every run. Turn Sign-in
+            off for an app that has no login — discovery and tests then open it directly.
           </div>
         </div>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 30, padding: '0 12px', borderRadius: 8, border: '1px solid var(--border-2)', background: 'var(--panel-2)', fontSize: 12, fontWeight: 500, color: 'var(--fg-2)', flex: 'none' }}>
@@ -152,28 +169,35 @@ function CredentialsPanel() {
         </div>
       )}
 
+      {switchError && (
+        <div style={{ color: 'var(--bad)', fontSize: 13 }} role="alert">
+          {switchError}
+        </div>
+      )}
+
       {entries === null ? (
         !loadError && <SkeletonRows count={3} height={40} gap={10} />
       ) : entries.length === 0 ? (
         <div style={{ fontSize: 12.5, color: 'var(--fg-4)' }}>No applications with stored sign-in credentials yet.</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr)', gap: 12, padding: '0 4px 8px', borderBottom: '1px solid var(--line)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) 72px', gap: 12, padding: '0 4px 8px', borderBottom: '1px solid var(--line)' }}>
             <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-5)' }}>Application</div>
             <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-5)' }}>Username</div>
             <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-5)' }}>Secret</div>
+            <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-5)' }}>Sign-in</div>
           </div>
           {entries.map((entry) => {
             return (
               <div
                 key={entry.application_id}
-                style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr)', gap: 12, alignItems: 'center', padding: '12px 4px', borderBottom: '1px solid var(--row-line)' }}
+                style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) 72px', gap: 12, alignItems: 'center', padding: '12px 4px', borderBottom: '1px solid var(--row-line)' }}
               >
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.application_name}</div>
                   <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--fg-4)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.environment}</div>
                 </div>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.username}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.username || (entry.requires_login ? '' : 'No login')}</div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--fg-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {revealed[entry.application_id] ?? '••••••••'}
@@ -188,6 +212,18 @@ function CredentialsPanel() {
                     {revealed[entry.application_id] !== undefined ? <FontAwesomeIcon icon={faEyeSlash} style={{ fontSize: 12 }} /> : <FontAwesomeIcon icon={faEye} style={{ fontSize: 12 }} />}
                   </button>
                 </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={entry.requires_login}
+                  aria-label={`${entry.application_name} requires sign-in`}
+                  title={entry.requires_login ? 'Signs in with these credentials. Turn off if the app has no login.' : 'No login: opened directly. Turn on to sign in with these credentials.'}
+                  disabled={switching[entry.application_id]}
+                  onClick={() => toggleRequiresLogin(entry)}
+                  style={{ width: 36, height: 20, borderRadius: 1000, padding: 2, display: 'flex', border: 'none', cursor: 'pointer', background: entry.requires_login ? 'var(--ok)' : 'var(--border-2)', transition: 'background 0.15s' }}
+                >
+                  <span style={{ width: 16, height: 16, borderRadius: 1000, background: entry.requires_login ? 'var(--on-ok)' : '#fff', transform: entry.requires_login ? 'translateX(16px)' : 'none', transition: 'transform 0.15s' }} />
+                </button>
               </div>
             )
           })}

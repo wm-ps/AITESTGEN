@@ -94,7 +94,7 @@ export function SummaryView({
       <div style={{ ...glassCard, padding: '22px 24px', display: 'flex', gap: 20, alignItems: 'flex-start', flexWrap: 'wrap', background: 'linear-gradient(135deg, rgba(255,255,255,0.95), color-mix(in srgb, var(--accent-wash) 70%, white))' }}>
         <div style={{ flex: '1 1 360px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div>
-            {run.brief_confirmed_at ? <Pill tone="ok" icon={faCircleCheck}>Confirmed by you</Pill> : <Pill tone="warn">Waiting for your review</Pill>}
+            {run.brief_confirmed_at ? <Pill tone="ok" icon={faCircleCheck}>Confirmed by you</Pill> : run.status === 'expired' ? <Pill tone="neutral">Expired: not confirmed in time</Pill> : <Pill tone="warn">Waiting for your review</Pill>}
           </div>
           {editing ? (
             <>
@@ -164,39 +164,9 @@ export function SummaryView({
           >
             Questions for you
           </SectionTitle>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {questions.map((q) => (
-              <div key={q.i} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>{q.question}</div>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {(editable ? q.options : [q.answer!]).map((option) => {
-                    const chosen = q.answer === option
-                    return (
-                      <button
-                        key={option}
-                        type="button"
-                        disabled={!editable}
-                        onClick={() => answer(q.i, option)}
-                        style={{
-                          padding: '7px 13px',
-                          borderRadius: 1000,
-                          fontSize: 12.5,
-                          fontFamily: 'inherit',
-                          fontWeight: chosen ? 600 : 500,
-                          cursor: editable ? 'pointer' : 'default',
-                          color: chosen ? 'white' : 'var(--fg-2)',
-                          background: chosen ? 'var(--accent-2)' : 'white',
-                          border: `1px solid ${chosen ? 'var(--accent-2)' : 'var(--border-2)'}`,
-                          transition: 'all 150ms ease',
-                        }}
-                      >
-                        {chosen && <FontAwesomeIcon icon={faCircleCheck} style={{ marginRight: 6, fontSize: 11 }} />}
-                        {option}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {questions.map((q, n) => (
+              <SummaryQuestion key={q.i} number={n + 1} question={q.question} options={q.options} answer={q.answer} editable={editable} onAnswer={(a) => answer(q.i, a)} />
             ))}
           </div>
         </div>
@@ -283,6 +253,93 @@ export function SummaryView({
                 </label>
               )
             })}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// One summary question, easy to scan: numbered, the question on its own
+// line, then the choices. "Other" is always there for an answer the choices
+// don't cover.
+function SummaryQuestion({
+  number,
+  question,
+  options,
+  answer,
+  editable,
+  onAnswer,
+}: {
+  number: number
+  question: string
+  options: string[]
+  answer?: string
+  editable: boolean
+  onAnswer: (answer: string) => void
+}) {
+  const custom = !!answer && !options.includes(answer)
+  const [typing, setTyping] = useState(false)
+  const [text, setText] = useState(custom ? answer : '')
+  const pill = (label: string, chosen: boolean, onClick: () => void) => (
+    <button
+      key={label}
+      type="button"
+      disabled={!editable}
+      onClick={onClick}
+      style={{
+        padding: '7px 13px',
+        borderRadius: 1000,
+        fontSize: 12.5,
+        fontFamily: 'inherit',
+        fontWeight: chosen ? 600 : 500,
+        cursor: editable ? 'pointer' : 'default',
+        color: chosen ? 'white' : 'var(--fg-2)',
+        background: chosen ? 'var(--accent-2)' : 'white',
+        border: `1px solid ${chosen ? 'var(--accent-2)' : 'var(--border-2)'}`,
+        transition: 'all 150ms ease',
+      }}
+    >
+      {chosen && <FontAwesomeIcon icon={faCircleCheck} style={{ marginRight: 6, fontSize: 11 }} />}
+      {label}
+    </button>
+  )
+  const send = () => text.trim() && onAnswer(text.trim())
+  return (
+    <div style={{ display: 'flex', gap: 12, padding: '12px 0', borderTop: number > 1 ? '1px solid var(--line)' : 'none' }}>
+      <span style={{ flex: 'none', width: 22, height: 22, borderRadius: 1000, background: 'var(--accent-wash)', color: 'var(--accent-2)', fontSize: 12, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{number}</span>
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)', lineHeight: '20px' }}>{question}</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {editable ? (
+            <>
+              {options.map((option) => pill(option, answer === option, () => { setTyping(false); onAnswer(option) }))}
+              {pill(custom ? `Other: ${answer}` : 'Other', custom || typing, () => setTyping(true))}
+            </>
+          ) : (
+            answer && pill(answer, true, () => {})
+          )}
+        </div>
+        {editable && typing && (
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              className="field"
+              aria-label={`Your answer to: ${question}`}
+              placeholder="Type your answer, then press Enter"
+              autoFocus
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  send()
+                  setTyping(false)
+                }
+              }}
+              style={{ flex: 1, fontFamily: 'inherit', fontSize: 13, padding: '8px 10px' }}
+            />
+            <button type="button" className="button-primary" disabled={!text.trim()} onClick={() => { send(); setTyping(false) }}>
+              Save
+            </button>
           </div>
         )}
       </div>

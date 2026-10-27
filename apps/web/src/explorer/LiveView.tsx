@@ -33,7 +33,7 @@ export type ExplorerView = 'live' | 'questions' | 'screens' | 'scenarios' | 'sum
 // Four stages a person can follow — the worker's finer statuses fold into them.
 const STAGES: { label: string; statuses: string[] }[] = [
   { label: 'Learning the app', statuses: ['queued', 'signing_in', 'understanding', 'summarizing'] },
-  { label: 'Your check', statuses: ['awaiting_confirmation'] },
+  { label: 'Your check', statuses: ['awaiting_confirmation', 'expired'] },
   { label: 'Trying every path', statuses: ['confirmed', 'planning', 'exploring', 'explored', 'hunting'] },
   { label: 'Writing scenarios', statuses: ['testing'] },
 ]
@@ -107,7 +107,7 @@ export function LiveView({
 
   // Only questions Explorer is actually waiting on; "is this a bug?" ones sit with the bugs.
   const open = (questions ?? []).filter((q) => q.status === 'open' && q.kind !== 'rule')
-  const failed = run.status === 'failed' || run.status === 'stopped' || run.status === 'paused'
+  const failed = run.status === 'failed' || run.status === 'stopped' || run.status === 'paused' || run.status === 'expired'
   const finished = run.status === 'tested'
   const stage = STAGES.findIndex((s) => s.statuses.includes(run.status))
   const at = (title: string) => events.find((e) => e.title.startsWith(title))?.created_at
@@ -306,7 +306,7 @@ export function LiveView({
             finished={finished}
             working={working}
             title={STAGES[1].label}
-            detail={confirmedAt ? `You approved the summary ${timeAgo(confirmedAt, now)}` : summaryReady ? 'Waiting for you to confirm the summary' : 'Comes after learning the app'}
+            detail={run.status === 'expired' ? 'Expired: the summary was not confirmed within 14 days' : confirmedAt ? `You approved the summary ${timeAgo(confirmedAt, now)}` : summaryReady ? 'Waiting for you to confirm the summary' : 'Comes after learning the app'}
           >
             {confirmedAt && (
               <button type="button" onClick={() => onGoTo('summary')} style={linkButton}>

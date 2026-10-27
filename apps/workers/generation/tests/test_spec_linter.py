@@ -146,6 +146,19 @@ def test_apply_auth_tag_inserts_tag_into_test_call() -> None:
     assert "test('login', { tag: '@auth' }, async" in tagged
 
 
+def test_apply_auth_tag_skips_test_method_calls_in_helpers() -> None:
+    # Explorer's proven code carries helper strings with regex `.test('')` calls
+    # before the real test: the tag must land on the test call, not inside them.
+    code = (
+        "const CALENDAR = \"(e) => !off.test('' + String(e.className || '') + ' ') "
+        "&& t.replace('.', '')\";\n"
+        "test(\"Send a claim\", async ({ page }) => {})\n"
+    )
+    tagged = apply_auth_tag(code, True)
+    assert "replace('.', '')" in tagged  # the helper is untouched
+    assert 'test("Send a claim", { tag: \'@auth\' }, async' in tagged
+
+
 def test_apply_auth_tag_uses_public_tag_when_not_required() -> None:
     tagged = apply_auth_tag("test('x', async ({ page }) => {})\n", False)
     assert "{ tag: '@public' }" in tagged

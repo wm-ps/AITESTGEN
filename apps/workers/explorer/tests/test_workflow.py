@@ -121,3 +121,36 @@ async def test_cancelling_the_run_stops_it_instead_of_skipping_ahead():
             except Exception:  # the cancellation itself
                 pass
     assert later == []
+
+
+async def test_an_unconfirmed_summary_expires_instead_of_waiting_forever():
+    from explorer_worker.activities import EXPIRE_RUN_ACTIVITY, UNDERSTAND_ACTIVITY
+    from explorer_worker.workflow import CONFIRM_WAIT_DAYS
+
+    expired: list[tuple[str, int]] = []
+
+    @activity.defn(name=UNDERSTAND_ACTIVITY)
+    async def fake_understand(run_id: str) -> str:
+        return "awaiting_confirmation"
+
+    @activity.defn(name=EXPIRE_RUN_ACTIVITY)
+    async def fake_expire(run_id: str, days: int) -> str:
+        expired.append((run_id, days))
+        return "expired"
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue="test-explorer",
+            workflows=[ExplorerRunWorkflow],
+            activities=[fake_understand, fake_expire],
+        ):
+            # Time skips ahead: the 14-day wait passes with nobody confirming.
+            result = await env.client.execute_workflow(
+                ExplorerRunWorkflow.run,
+                args=["run-1", "full"],
+                id=f"wf-{uuid.uuid4()}",
+                task_queue="test-explorer",
+            )
+    assert result == "expired"
+    assert expired == [("run-1", CONFIRM_WAIT_DAYS)]

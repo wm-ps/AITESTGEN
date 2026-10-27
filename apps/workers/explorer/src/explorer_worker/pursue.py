@@ -11,8 +11,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from explorer_core import ExplorerScreen
+from sqlmodel import Session, col, select
+
 from explorer_worker import brain
 from explorer_worker.browser import Eyes
+from explorer_worker.db import engine
 from explorer_worker.journal import Journal
 from explorer_worker.mind import Mind
 from explorer_worker.samples import sample_file
@@ -24,6 +28,7 @@ from explorer_worker.sense import (
     may_commit,
     needs_human_ok,
     page_link,
+    route_starts_at_entry,
     same_place,
 )
 
@@ -32,20 +37,52 @@ MAX_RETRIES_ON_SAME_STEP = 2
 _ICON_TEXT = re.compile(r"\b\w+ Icon\b\s*", re.I)
 _ASKS_FOR_FILE = re.compile(r"\b(files?|images?|photos?|pictures?|uploads?|attachments?)\b", re.I)
 
-# The shortest recorded way from the app's home to each screen of a run,
+# The shortest recorded way from an entry point to each screen of a run,
 # replayed (no model) to fast-forward a mission or scenario to where it
-# starts. ponytail: in-memory per worker process — after a restart the first
-# visits walk in again and repopulate it; persist per screen if restarts
-# mid-run become common.
-PATHS: dict[tuple[uuid.UUID, str], list[dict[str, str]]] = {}
+# starts. Kept on the screen's own row — keyed by the stored screen, never by
+# the name a model gave it on one visit, and surviving worker restarts.
 
 
 def path_to(run_id: uuid.UUID, screen: str | None) -> list[dict[str, str]] | None:
-    return (
-        [dict(step) for step in PATHS[(run_id, screen)]]
-        if screen and (run_id, screen) in PATHS
-        else None
-    )
+    """The shortest saved route to the screen called `screen`, if any."""
+    if not screen:
+        return None
+    with Session(engine) as session:
+        routes = session.exec(
+            select(ExplorerScreen.route).where(
+                ExplorerScreen.run_id == run_id,
+                ExplorerScreen.name == screen,
+                col(ExplorerScreen.route).is_not(None),
+            )
+        ).all()
+    routes = [r for r in routes if r]
+    return [dict(step) for step in min(routes, key=len)] if routes else None
+
+
+def is_shorter(path: list[dict[str, Any]], known: list[dict[str, Any]] | None) -> bool:
+    return known is None or len(path) < len(known)
+
+
+def remember_route(screen_id: uuid.UUID, path: list[dict[str, Any]]) -> None:
+    with Session(engine) as session:
+        screen = session.get(ExplorerScreen, screen_id)
+        if screen is not None and is_shorter(path, screen.route):
+            screen.route = [dict(step) for step in path]
+            session.add(screen)
+            session.commit()
+
+
+def forget_route(run_id: uuid.UUID, screen: str) -> None:
+    """A saved route that no longer replays: the next walk in records a new one."""
+    with Session(engine) as session:
+        for row in session.exec(
+            select(ExplorerScreen).where(
+                ExplorerScreen.run_id == run_id, ExplorerScreen.name == screen
+            )
+        ).all():
+            row.route = None
+            session.add(row)
+        session.commit()
 
 
 # (kind, question, why, options, screenshot) -> the person's answer, or None.
@@ -107,15 +144,18 @@ async def pursue(
     first_name: dict[object, str] = {}
 
     def arrived(name: str) -> str:
-        name = first_name.setdefault(mind.last_screen_id or name, name)
-        if not sent:
+        screen_id = mind.last_screen_id
+        name = first_name.setdefault(screen_id or name, name)
+        if not sent and screen_id is not None:
             # How to get here from home, replayable without the model — only
             # before anything was sent for real (replaying a send would
             # create duplicate records).
             path = [*lead_in, *result.actions[1:]] if lead_in else list(result.actions)
-            known_path = PATHS.get((journal.run_id, name))
-            if known_path is None or len(path) < len(known_path):
-                PATHS[(journal.run_id, name)] = [dict(step) for step in path]
+            # Only a route from an entry point, by the user's own actions,
+            # works in a clean browser; one that opened a page by its address
+            # is never kept to fast-forward later tests through.
+            if route_starts_at_entry(path, eyes.entry_urls):
+                remember_route(screen_id, path)
         return name
 
     landed: list[str] = [arrived(step_name)]
@@ -125,6 +165,14 @@ async def pursue(
         if stop_requested():
             result.ended = "stopped"
             break
+        if eyes.starts_fresh and await eyes.start_fresh_if_asked():
+            # A "resume your saved progress?" prompt left by an earlier run:
+            # answered with start over and not recorded (every replay and the
+            # exported test answer it the same way whenever it shows).
+            visit = await eyes.look(eyes.page.url, None, 0)
+            step_name = await mind.take_in(visit, "Started over")
+            landed.append(arrived(step_name))
+            continue
         if not stay_signed_out and await eyes.on_sign_in_screen():
             # Signed out mid-walk. Never let the model type credentials (a
             # login page may show demo ones); sign back in with the saved
@@ -232,6 +280,8 @@ async def pursue(
                         f"{fill['field']} = {fill['value']}" + (f" (picked “{picked}”)" if picked else "")
                     )
                     action = {"do": "fill", "field": str(fill["field"]), "value": str(fill["value"])}
+                    if eyes.last_locator:
+                        action["locator"] = dict(eyes.last_locator)  # exactly what worked
                     if picked:
                         action["suggest"] = picked  # the exported test picks it too
                     result.actions.append(action)
@@ -239,13 +289,14 @@ async def pursue(
             if isinstance(choice, dict) and choice.get("option"):
                 if await eyes.choose(str(choice.get("field") or ""), str(choice["option"])):
                     entered.append(f"{choice.get('field') or 'Choice'}: {choice['option']}")
-                    result.actions.append(
-                        {
-                            "do": "choose",
-                            "field": str(choice.get("field") or ""),
-                            "option": str(choice["option"]),
-                        }
-                    )
+                    chose = {
+                        "do": "choose",
+                        "field": str(choice.get("field") or ""),
+                        "option": str(choice["option"]),
+                    }
+                    if eyes.last_locator:
+                        chose["locator"] = dict(eyes.last_locator)
+                    result.actions.append(chose)
         for upload in plan["uploads"][:3]:
             if isinstance(upload, dict):
                 field, kind = str(upload.get("field") or ""), str(upload.get("kind") or "image")
@@ -340,7 +391,10 @@ async def pursue(
             sent.add(str(advance))
         moved = clicked and await eyes.wait_for_change(before)
         if clicked:
-            result.actions.append({"do": "click", "label": str(advance)})
+            pressed = {"do": "click", "label": str(advance)}
+            if eyes.last_locator:
+                pressed["locator"] = dict(eyes.last_locator)
+            result.actions.append(pressed)
         visit = await eyes.look(eyes.page.url, None, 0)
         if not moved:
             stuck += 1

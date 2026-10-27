@@ -25,7 +25,11 @@ from typing import Any
 
 from domain import (
     Application,
+    Component,
+    ComponentLocator,
     DiscoveryRun,
+    Form,
+    FormField,
     Journey,
     JourneyStep,
     Page,
@@ -52,6 +56,7 @@ _SCENARIO_TYPE = {
     "validation": "negative",
     "error_state": "negative",
     "page_quality": "negative",
+    "journey": "happy",
 }
 
 
@@ -108,7 +113,9 @@ def _promote(run_id: uuid.UUID) -> dict[str, int]:
             ).all()
             if not (s.condition or "").startswith("Simulated")
         ]
-        requires_auth = needs_sign_in(application.auth_method, application.secret_ref)
+        requires_auth = needs_sign_in(
+            application.auth_method, application.secret_ref, application.requires_login
+        )
         # Same per-login-state check Explorer uses for its own missions; the
         # test runner reads it to run these tests one at a time.
         shared_state = one_at_a_time(session, run_id)
@@ -130,7 +137,9 @@ def _promote(run_id: uuid.UUID) -> dict[str, int]:
         # stays with the screen it tests.
         groups: dict[str, list[ExplorerTestCase]] = {}
         for test in tests:
-            groups.setdefault(test.start_screen or "General", []).append(test)
+            # A whole-flow scenario is a Journey of its own, named after the task.
+            key = test.title if test.kind == "journey" else test.start_screen or "General"
+            groups.setdefault(key, []).append(test)
         purposes = {s.name.lower(): s.purpose or "" for s in screens}
 
         store: ObjectStore | None
@@ -197,6 +206,7 @@ def _promote(run_id: uuid.UUID) -> dict[str, int]:
                     session.add(page)
                     session.flush()
                     page_id = page_for_screen[screen.id] = page.id
+                    _persist_screen_model(session, application.id, discovery_run.id, page, screen)
                 session.add(
                     JourneyStep(
                         journey_id=journey.id,
@@ -211,7 +221,7 @@ def _promote(run_id: uuid.UUID) -> dict[str, int]:
                     journey_id=journey.id,
                     type=_SCENARIO_TYPE.get(test.kind, "happy"),
                     name=test.title,
-                    steps=list(test.steps),
+                    steps=route_steps(test.script) or list(test.steps),
                     expected_result=test.expected + _proof_sentence(test.check),
                     test_data=_test_data(test.script),
                     generation_run_id=journey.attempt,
@@ -287,6 +297,63 @@ def _retire(session: Session, journey_id: uuid.UUID) -> None:
             session.add(older_asset)
 
 
+def route_steps(script: list[dict[str, Any]] | None) -> list[str]:
+    """The test's steps as a person reads them: every action its proven code
+    takes, in order, from opening the app to the last press — so a test deep
+    in a wizard shows the whole route to its screen, not only its last
+    screen's purpose. Saved logins stay placeholders, never the secret."""
+    steps: list[str] = []
+    for step in script or []:
+        action = step.get("do")
+        if action == "goto":
+            text = f"Open {step.get('url')}"
+        elif action == "fill":
+            value = str(step.get("value") or "")
+            shown = {"{{username}}": "the saved username", "{{password}}": "the saved password"}
+            value = shown.get(value.strip().lower(), f"“{value}”") if value.strip() else "nothing"
+            text = f"Enter {value} in “{step.get('field')}”"
+        elif action == "choose":
+            field = step.get("field")
+            text = f"Choose “{step.get('option')}”" + (f" for “{field}”" if field else "")
+        elif action == "click":
+            text = f"Press “{step.get('label')}”"
+        elif action == "upload":
+            field = step.get("field")
+            text = f"Attach a sample {step.get('kind') or 'image'} file" + (
+                f" to “{field}”" if field else ""
+            )
+        elif action in ("back", "reload"):
+            text = f"Press the browser's {'Back' if action == 'back' else 'Refresh'} button"
+        else:
+            continue
+        # Screens that only show sometimes (a saved-draft prompt) are optional.
+        if step.get("optional"):
+            text = f"If it's shown: {text[0].lower()}{text[1:]}"
+        steps.append(text)
+    return steps
+
+
+def _py_locator(step: dict[str, Any]) -> str | None:
+    """The locator Explorer actually used on this step (browser.locate), in
+    the generator's own `get_by_*` form — so a fallback generation finds the
+    same element too, never a re-guess from the step's words."""
+    spec = step.get("locator")
+    if not spec:
+        return None
+    by, q, exact = spec.get("by"), json.dumps, bool(spec.get("exact"))
+    if by == "role":
+        return f"get_by_role({q(spec['role'])}, name={q(spec['name'])}, exact={exact})"
+    if by in ("label", "select_label"):
+        return f"get_by_label({q(spec['text'])}, exact={exact})"
+    if by == "placeholder":
+        return f"get_by_placeholder({q(spec['text'])})"
+    if by == "text":
+        return f"get_by_text({q(spec['text'])}, exact={exact})"
+    if by == "css":
+        return f"locator({q(spec['selector'])})"
+    return None
+
+
 def captured_flow(script: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Explorer's recorded actions in the shape Vantage's generator already
     reads from live exploration (`live_action_sequence`: tool_name, value as
@@ -310,7 +377,7 @@ def captured_flow(script: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 {
                     "tool_name": "browser_type",
                     "element_tag": "textbox",
-                    "value": f"get_by_label({json.dumps(field)})",
+                    "value": _py_locator(step) or f"get_by_label({json.dumps(field)})",
                     "element_description": f"The “{field}” field",
                     "semantic_target": {
                         "action": "fill",
@@ -325,7 +392,7 @@ def captured_flow(script: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 {
                     "tool_name": "browser_click",
                     "element_tag": "option",
-                    "value": f"get_by_text({json.dumps(option)}, exact=True)",
+                    "value": _py_locator(step) or f"get_by_text({json.dumps(option)}, exact=True)",
                     "element_description": f"The “{option}” answer"
                     + (f" to “{field}”" if field else ""),
                     "semantic_target": {"action": "choose", "target": {"name": option}},
@@ -337,7 +404,8 @@ def captured_flow(script: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 {
                     "tool_name": "browser_click",
                     "element_tag": "button",
-                    "value": f'get_by_role("button", name={json.dumps(label)})',
+                    "value": _py_locator(step)
+                    or f'get_by_role("button", name={json.dumps(label)})',
                     "element_description": f"The “{label}” button or link",
                     "semantic_target": {"action": "click", "target": {"name": label}},
                 }
@@ -373,6 +441,109 @@ def captured_flow(script: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 }
             )
     return flow
+
+
+# Field type (Explorer's reading) -> the ARIA role Playwright finds it by.
+_FIELD_ROLE = {
+    "select": "combobox",
+    "checkbox": "checkbox",
+    "radio": "radio",
+    "number": "spinbutton",
+}
+
+
+def _persist_screen_model(
+    session: Session,
+    application_id: uuid.UUID,
+    discovery_run_id: uuid.UUID,
+    page: Page,
+    screen: ExplorerScreen,
+) -> None:
+    """What self-healing reads about a page, in the shape the classic
+    crawler writes it: each button/link as a Component with a role locator
+    (plus a text fallback), and the fields as one Form whose FormFields carry
+    their input type and required flag. Persist only: nothing in Explorer
+    reads these back."""
+    fields = [f for f in screen.fields or [] if isinstance(f, dict) and f.get("label")]
+    if fields:
+        form = Form(
+            application_id=application_id,
+            discovery_run_id=discovery_run_id,
+            page_id=page.id,
+            action_url=screen.url,
+            method="POST",
+        )
+        session.add(form)
+        session.flush()
+        for field in fields:
+            label, kind = str(field["label"])[:200], str(field.get("type") or "text")
+            selector = f'get_by_role("{_FIELD_ROLE.get(kind, "textbox")}", name="{_q(label)}")'
+            component = _component(session, application_id, page.id, label, kind, "fill", selector)
+            component.form_id = form.id
+            session.add(
+                FormField(
+                    form_id=form.id,
+                    name=label,
+                    input_type=kind,
+                    required=bool(field.get("required")),
+                    captured_selector=selector,
+                    component_id=component.id,
+                )
+            )
+    seen: set[str] = set()
+    for action in screen.actions or []:
+        label = str(action.get("label") or "").strip() if isinstance(action, dict) else ""
+        # A bare "Icon" names nothing a locator can find.
+        if not label or label.lower() == "icon" or label in seen:
+            continue
+        seen.add(label)
+        role = "link" if action.get("kind") == "navigate" else "button"
+        component = _component(
+            session, application_id, page.id, label[:200], role, "click",
+            f'get_by_role("{role}", name="{_q(label)}")',
+        )
+        session.add(
+            ComponentLocator(
+                component_id=component.id,
+                kind="fallback",
+                strategy="text",
+                value=f'text="{_q(label)}"',
+                priority=1,
+                durability_score=2,
+            )
+        )
+
+
+def _q(label: str) -> str:
+    """A label quoted inside a locator string."""
+    return label.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _component(
+    session: Session,
+    application_id: uuid.UUID,
+    page_id: uuid.UUID,
+    name: str,
+    type_: str,
+    action: str,
+    selector: str,
+) -> Component:
+    component = Component(
+        application_id=application_id, page_id=page_id, name=name, type=type_, action=action
+    )
+    session.add(component)
+    session.flush()
+    session.add(
+        ComponentLocator(
+            component_id=component.id,
+            kind="preferred",
+            strategy="role",
+            value=selector,
+            priority=0,
+            durability_score=1,
+        )
+    )
+    return component
 
 
 def _proof_sentence(check: dict[str, Any] | None) -> str:

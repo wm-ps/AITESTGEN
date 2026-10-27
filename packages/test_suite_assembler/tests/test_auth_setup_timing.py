@@ -97,3 +97,13 @@ if __name__ == "__main__":
     test_auth_setup_throws_clearly_when_login_never_becomes_ready()
     test_auth_setup_detects_already_authenticated_state()
     print("ok")
+
+
+def test_auth_setup_waits_for_the_page_to_settle_before_deciding() -> None:
+    # FNOL: the home page needs no login, and right after goto() the address is
+    # still the bare login address — its `#/ReportClaim` route lands ~1 s later.
+    script = _build_auth_setup_script("standard_login", login_evidence=EVIDENCE)
+    settle = script.index("await Promise.race([")
+    assert "passwordField.waitFor({ state: 'visible'" in script[settle:]
+    assert "page.waitForURL(" in script[settle:]
+    assert settle < script.index("if (await isAuthenticated(page, loginUrl))")

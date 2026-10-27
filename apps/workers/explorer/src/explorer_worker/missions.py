@@ -27,7 +27,7 @@ from explorer_worker.db import engine
 from explorer_worker.journal import Journal
 from explorer_worker.memory import ask, remember_record
 from explorer_worker.mind import Mind
-from explorer_worker.pursue import Pursuit, path_to, pursue
+from explorer_worker.pursue import Pursuit, forget_route, path_to, pursue
 from explorer_worker.sense import keeps_state
 from explorer_worker.session import load_target, open_signed_in
 from explorer_worker.testkit import replay
@@ -70,6 +70,8 @@ async def fast_forward(
     journal.event(
         "thought", f"Couldn't fast-forward to {screen}", "Walking in from the start instead."
     )
+    assert screen is not None
+    forget_route(run_id, screen)  # the walk in records one that works today
     if start:
         await eyes.goto(str(start))
     return None
@@ -120,6 +122,13 @@ async def plan_missions(run_id: uuid.UUID) -> int:
             )
         session.commit()
     count = len(planned)
+    if count == 0:
+        # The workflow ends here: never leave the run showing "exploring" (an
+        # active status that would block every new run for the app).
+        reason = "Couldn't plan any missions from the App Summary"
+        journal.event("error", reason, "Press Resume to try planning again.")
+        journal.update_run(status="failed", headline=reason, error=reason)
+        return 0
     journal.update_run(status="exploring", headline=f"Exploring: {count} missions planned")
     journal.event(
         "phase",
@@ -357,6 +366,8 @@ async def run_mission(
                 f"Mission {'finished' if status == 'done' else 'got stuck'}: {title}",
                 summary,
             )
+            last = next((p[-1] for p in reversed(paths) if p), None)
+            _queue_follow_ups(journal, title, result, last)
             return status
         finally:
             video = await eyes.close()
@@ -372,6 +383,110 @@ async def run_mission(
                         )
                     )
                     session.commit()
+
+
+def follow_ups(
+    parent: str,
+    result: Pursuit,
+    last_screen: str | None,
+    last_kind: str | None,
+    planned_from: set[str],
+    taken: set[str],
+) -> list[dict[str, str]]:
+    """Ways forward a mission saw but didn't take, on screens the Mission
+    Board was planned without (first reached by a mission): each other option
+    of a choice there, and carrying on from a form/wizard step the mission
+    ended on because its own goal was met. Screens the plan already knew had
+    their branch points planned for, so they're skipped. `taken` holds the
+    run's mission titles (no repeats) and is updated."""
+
+    def route_to(screen: str) -> str:
+        # How the parent got there, for a walk in when fast-forward can't.
+        steps: list[str] = []
+        for line in result.history:
+            if line.startswith(f"{screen}:"):
+                break
+            steps.append(line)
+        return f"Get to {screen} the way “{parent}” did: " + "; ".join(steps)[:800]
+
+    out: list[dict[str, str]] = []
+    for branch in result.branches:
+        step, question = str(branch.get("step") or ""), str(branch.get("question") or "")
+        if not step or step in planned_from:
+            continue
+        for option in (branch.get("options_worth_trying_later") or [])[:4]:
+            option = str(option).strip()
+            title = f"Try “{option}” on {step}"[:200]
+            if option and title not in taken:
+                taken.add(title)
+                out.append(
+                    {
+                        "title": title,
+                        "kind": "branch",
+                        "goal": f"On {step}, choose “{option}” for “{question}”, then carry on "
+                        "as far as that path goes.",
+                        "condition": f"“{question}” is “{option}”",
+                        "start_screen": step,
+                        "instructions": route_to(step),
+                    }
+                )
+    title = f"Carry on from {last_screen}"
+    if (
+        result.ended == "done"
+        and last_screen
+        and last_screen not in planned_from
+        and last_kind in ("form", "wizard")
+        and title not in taken
+    ):
+        taken.add(title)
+        out.append(
+            {
+                "title": title,
+                "kind": "task",
+                "goal": f"Start on {last_screen} and carry on through the steps that follow it, "
+                "as far as the flow goes.",
+                "start_screen": last_screen,
+                "instructions": route_to(last_screen),
+            }
+        )
+    return out
+
+
+def _queue_follow_ups(
+    journal: Journal, parent: str, result: Pursuit, last_screen: str | None
+) -> None:
+    """Queue `follow_ups` as missions; the workflow's pool picks them up."""
+    with Session(engine) as session:
+        missions = session.exec(
+            select(ExplorerMission).where(ExplorerMission.run_id == journal.run_id)
+        ).all()
+        planned_at = min(m.created_at for m in missions)
+        screens = journal.screen_rows()
+        planned_from = {s.name for s in screens if s.created_at < planned_at}
+        kinds = {s.name: s.view_kind for s in screens}
+        new = follow_ups(
+            parent,
+            result,
+            last_screen,
+            kinds.get(last_screen or ""),
+            planned_from,
+            {m.title for m in missions},
+        )
+        # ponytail: two missions finishing at the same moment may both add the
+        # same follow-up; a unique (run_id, title) constraint if that shows up.
+        room = max(0, MAX_MISSIONS - len(missions))
+        for m in new[:room]:
+            session.add(ExplorerMission(run_id=journal.run_id, priority=2, **m))
+        session.commit()
+    for m in new[:room]:
+        journal.event("phase", f"Follow-up mission added: {m['title']}", m["goal"])
+    if new[room:]:
+        journal.event(
+            "thought",
+            f"Not explored: {len(new) - room} more way(s) forward",
+            f"The run has its {MAX_MISSIONS} missions: "
+            + "; ".join(m["title"] for m in new[room:])[:800],
+        )
 
 
 def _compare_paths(journal: Journal, title: str, paths: list[list[str]], ends: list[str]) -> str:

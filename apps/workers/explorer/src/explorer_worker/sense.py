@@ -340,3 +340,36 @@ def going_in_circles(screens: list[str]) -> str | None:
         if counts[name] > MAX_VISITS_PER_SCREEN:
             return f"came back to {name} {counts[name]} times without finishing"
     return None
+
+
+def _route_url(url: str) -> str:
+    # "/app/", "/app/#" and "/app/#/" are the same entry; "#/Inner" is not.
+    return url.rstrip("/").removesuffix("#/").removesuffix("#").rstrip("/")
+
+
+def route_starts_at_entry(script: list[dict[str, str]], entry_urls: set[str]) -> bool:
+    """A test's route is replayable in any clean browser, for any app, only if
+    it begins by opening an entry point (the app's start address or where
+    sign-in lands) and then gets everywhere else by the user's own actions.
+    Opening an inner page by its address worked live only because that
+    browser still held the earlier steps' state (a wizard's answers, a
+    selected record); a fresh browser lands somewhere else."""
+    if not script or script[0].get("do") != "goto":
+        return False
+    entries = {_route_url(u) for u in entry_urls}
+    if _route_url(str(script[0].get("url") or "")) not in entries:
+        return False
+    return not any(step.get("do") == "goto" for step in script[1:])
+
+
+# Scenarios that are themselves about resuming saved progress; every other
+# scenario starts fresh, so a draft left by an earlier run never steers it.
+_ABOUT_RESUMING = re.compile(
+    r"\b(resum\w*|pick(s|ed|ing)? up where|unfinished|saved (claim|draft|report|"
+    r"progress|application|form|order|cart)|continue later|save and (exit|return)|draft)\b",
+    re.I,
+)
+
+
+def about_resuming(text: str) -> bool:
+    return bool(_ABOUT_RESUMING.search(text or ""))

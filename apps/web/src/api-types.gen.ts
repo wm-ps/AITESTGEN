@@ -106,6 +106,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/explorer/health/{issue_id}/false-alarm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark False Alarm
+         * @description You looked and the app is fine: the finding leaves "Things that look
+         *     wrong", its open "is this a bug?" question closes, and the app's
+         *     behaviour is remembered as correct for this and future runs.
+         */
+        post: operations["mark_false_alarm_explorer_health__issue_id__false_alarm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/explorer/shots/{shot_id}": {
         parameters: {
             query?: never;
@@ -349,6 +371,28 @@ export interface paths {
         put?: never;
         /** Regenerate Tests */
         post: operations["regenerate_tests_explorer_runs__run_id__tests_regenerate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/explorer/tests/{test_id}/verdict": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Judge Possible Bug
+         * @description Your answer to a possible bug. "Not a bug": the app is right, so the
+         *     scenario becomes a normal test of what it does and goes to Test cases.
+         *     "Ignore": it is left out. Test cases never hold bugs.
+         */
+        post: operations["judge_possible_bug_explorer_tests__test_id__verdict_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -937,6 +981,28 @@ export interface paths {
          *     password, isn't what this form collects).
          */
         patch: operations["update_application_credentials_applications__external_id__credentials_patch"];
+        trace?: never;
+    };
+    "/applications/{external_id}/requires-login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Requires Login
+         * @description Settings' "Requires sign-in" switch. Off: the app has no login, so
+         *     Explorer opens it directly (saved credentials are kept, just unused).
+         *     On: only once a username and password are saved for it.
+         */
+        patch: operations["update_requires_login_applications__external_id__requires_login_patch"];
         trace?: never;
     };
     "/credentials": {
@@ -1934,13 +2000,19 @@ export interface components {
              */
             auth_method: "standard_login" | "sso_session_reuse";
             /**
+             * Requires Login
+             * @description False when the application has no login at all: no username or password is needed, and Explorer opens it directly.
+             * @default true
+             */
+            requires_login: boolean;
+            /**
              * Username
-             * @description Dedicated Test Account username — not a real end-user identity. Required when auth_method is 'standard_login'.
+             * @description Dedicated Test Account username — not a real end-user identity. Required when auth_method is 'standard_login' and requires_login is true.
              */
             username?: string | null;
             /**
              * Password
-             * @description Dedicated Test Account password — not a real end-user identity. Required when auth_method is 'standard_login'.
+             * @description Dedicated Test Account password — not a real end-user identity. Required when auth_method is 'standard_login' and requires_login is true.
              */
             password?: string | null;
             /**
@@ -1994,6 +2066,11 @@ export interface components {
              * @default true
              */
             discovery_required: boolean;
+            /**
+             * Requires Login
+             * @default true
+             */
+            requires_login: boolean;
             /** Discovery Run Id */
             discovery_run_id: string | null;
             /** Discovery Status */
@@ -2070,6 +2147,11 @@ export interface components {
             username: string;
             /** Has Password */
             has_password: boolean;
+            /**
+             * Requires Login
+             * @default true
+             */
+            requires_login: boolean;
         };
         /** CredentialReveal */
         CredentialReveal: {
@@ -2210,6 +2292,11 @@ export interface components {
              * @default true
              */
             discovery_required: boolean;
+            /**
+             * Requires Login
+             * @default true
+             */
+            requires_login: boolean;
             /** Discovery Run Id */
             discovery_run_id: string | null;
             /** Discovery Status */
@@ -2624,6 +2711,11 @@ export interface components {
             };
             /** Has Reel */
             has_reel: boolean;
+        };
+        /** RequiresLoginPayload */
+        RequiresLoginPayload: {
+            /** Requires Login */
+            requires_login: boolean;
         };
         /** ResetPasswordRequest */
         ResetPasswordRequest: {
@@ -3290,6 +3382,11 @@ export interface components {
             /** Context */
             ctx?: Record<string, never>;
         };
+        /** VerdictRequest */
+        VerdictRequest: {
+            /** Verdict */
+            verdict: string;
+        };
         /** TestCaseRead */
         api__explorer__TestCaseRead: {
             /**
@@ -3337,6 +3434,10 @@ export interface components {
             code: string | null;
             /** Has Proof Video */
             has_proof_video: boolean;
+            /** Coverage */
+            coverage?: string | null;
+            /** Linked To */
+            linked_to?: string | null;
         };
         /** TestCaseRead */
         api__main__TestCaseRead: {
@@ -3562,6 +3663,37 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HealthIssueRead"][];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mark_false_alarm_explorer_health__issue_id__false_alarm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                issue_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -4058,6 +4190,43 @@ export interface operations {
             };
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    judge_possible_bug_explorer_tests__test_id__verdict_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                test_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VerdictRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -5302,6 +5471,43 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["ApplicationCredentialsUpdatePayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_requires_login_applications__external_id__requires_login_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RequiresLoginPayload"];
             };
         };
         responses: {

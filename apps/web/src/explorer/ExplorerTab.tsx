@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faArrowsRotate,
-  faCircleQuestion,
+  faBell,
   faCompass,
   faEyeLowVision,
   faFileLines,
+  faHourglassEnd,
   faHeartPulse,
   faLayerGroup,
   faListCheck,
@@ -35,7 +36,7 @@ import { LiveView, type ExplorerView as View } from './LiveView'
 import { ScenariosView } from './ScenariosView'
 import { ScreensView } from './ScreensView'
 import { SummaryView } from './SummaryView'
-import { KnowledgePanel, QuestionsView } from './QuestionsView'
+import { KnowledgePanel, QuestionsDialog } from './QuestionsView'
 import { RolesPanel } from './RolesPanel'
 import { glassCard, IconTile, Lightbox } from './ui'
 
@@ -61,6 +62,7 @@ export function ExplorerTab({
   const [tests, setTests] = useState<ExplorerTestCase[]>([])
   const [questions, setQuestions] = useState<ExplorerQuestion[] | null>(null)
   const [view, setView] = useState<View>('live')
+  const [questionsOpen, setQuestionsOpen] = useState(false)
   const [lightbox, setLightbox] = useState<{ shotId: string; caption: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [starting, setStarting] = useState(false)
@@ -240,6 +242,25 @@ export function ExplorerTab({
         </div>
         {run && (
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {(() => {
+              const open = (questions ?? []).filter((q) => q.status === 'open').length
+              const waiting = needsYou && run.status !== 'awaiting_confirmation'
+              return (
+                <button
+                  type="button"
+                  className="button-secondary"
+                  onClick={() => setQuestionsOpen(true)}
+                  aria-label={open ? `Questions, ${open} open` : 'Questions'}
+                  title={waiting ? 'Explorer is waiting on your answer' : 'Questions Explorer asked you'}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 7, position: 'relative', animation: waiting ? 'explorer-attention 1.6s ease-out infinite' : undefined }}
+                >
+                  <FontAwesomeIcon icon={faBell} style={{ fontSize: 11, color: waiting ? 'var(--warn-2)' : undefined }} /> Questions
+                  {open > 0 && (
+                    <span style={{ fontSize: 11, fontWeight: 700, lineHeight: '17px', minWidth: 18, textAlign: 'center', padding: '0 6px', borderRadius: 1000, color: 'white', background: waiting ? 'var(--warn-2)' : 'var(--accent-2)' }}>{open}</span>
+                  )}
+                </button>
+              )
+            })()}
             {working && (
               <button type="button" className="button-secondary" onClick={() => pauseOrResume('pause')} disabled={pausing !== null || stopping} title="Halt now and carry on later from this point" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
                 {pausing === 'pause' ? <LoadingDots label="Pausing" /> : (<><FontAwesomeIcon icon={faPause} style={{ fontSize: 11 }} /> Pause</>)}
@@ -277,6 +298,18 @@ export function ExplorerTab({
         <StartCard applicationId={applicationId} applicationName={applicationName} busy={starting} onStart={start} onCancel={run ? () => setStartingFresh(false) : undefined} />
       ) : (
         <>
+          {run.status === 'expired' && (
+            // Over for good: no Resume, no Confirm. A new run starts from what this one learned.
+            <div role="status" style={{ ...glassCard, padding: '14px 18px', marginBottom: 16, display: 'flex', gap: 14, alignItems: 'center', flexWrap: 'wrap', borderColor: 'color-mix(in srgb, var(--warn-2) 35%, transparent)' }}>
+              <FontAwesomeIcon icon={faHourglassEnd} style={{ fontSize: 16, color: 'var(--warn-2)' }} />
+              <div style={{ flex: '1 1 320px', fontSize: 13, color: 'var(--fg-2)', lineHeight: '19px' }}>
+                <strong style={{ color: 'var(--fg)' }}>This App Summary expired.</strong> Nobody confirmed it within 14 days, so this run has ended and can't be resumed. Start a new run: it begins from the screens this one already learned, and your answers are kept.
+              </div>
+              <button type="button" className="button-primary" onClick={() => setStartingFresh(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                <FontAwesomeIcon icon={faArrowsRotate} style={{ fontSize: 11 }} /> Start a new run
+              </button>
+            </div>
+          )}
           {resumable && (
             <div style={{ ...glassCard, padding: '12px 16px', marginBottom: 16, fontSize: 13, color: 'var(--fg-2)', borderColor: run.status === 'failed' ? 'color-mix(in srgb, var(--bad) 30%, transparent)' : undefined }}>
               <strong style={{ color: run.status === 'failed' ? 'var(--bad)' : 'var(--fg)' }}>
@@ -290,16 +323,9 @@ export function ExplorerTab({
             onChange={setView}
             items={[
               { key: 'live', label: 'Live', icon: faSignal, badge: working ? 'live' : undefined },
-              {
-                key: 'questions',
-                label: 'Questions',
-                icon: faCircleQuestion,
-                count: (questions ?? []).filter((q) => q.status === 'open').length || undefined,
-                badge: needsYou && run.status !== 'awaiting_confirmation' ? 'review' : undefined,
-              },
+              { key: 'summary', label: 'What it learned', icon: faFileLines, badge: run.status === 'awaiting_confirmation' ? 'review' : undefined },
               { key: 'screens', label: 'Screens', icon: faLayerGroup, count: run.counts.screens },
               { key: 'scenarios', label: 'Scenarios', icon: faListCheck, count: run.counts.tests_proven + run.counts.tests_known_bugs },
-              { key: 'summary', label: 'What it learned', icon: faFileLines, badge: run.status === 'awaiting_confirmation' ? 'review' : undefined },
             ]}
           />
           <div key={view} style={{ animation: 'aitg-fade-up 240ms ease' }}>
@@ -313,7 +339,7 @@ export function ExplorerTab({
                 screens={appMap?.screens ?? []}
                 applicationUrl={applicationUrl}
                 onOpenShot={openShot}
-                onGoTo={setView}
+                onGoTo={(v) => (v === 'questions' ? setQuestionsOpen(true) : setView(v))}
                 onSkipMission={async (missionId) => {
                   await explorerApi.skipMission(missionId)
                   setMissions(await explorerApi.missions(run.id))
@@ -321,8 +347,7 @@ export function ExplorerTab({
                 }}
               />
             )}
-            {view === 'questions' && <QuestionsView questions={questions} onAnswered={refreshAfterAnswer} onOpenShot={openShot} />}
-            {view === 'screens' && <ScreensView map={appMap} issues={issues} onOpenShot={openShot} />}
+            {view === 'screens' && <ScreensView map={appMap} onOpenShot={openShot} />}
             {view === 'scenarios' && <ScenariosView run={run} tests={tests} screens={appMap?.screens ?? []} onOpenShot={openShot} onGenerateTests={onGenerateTests} onVerdict={async (testId, verdict) => {
               setRun(await explorerApi.verdict(testId, verdict))
               setTests(await explorerApi.tests(run.id))
@@ -346,66 +371,69 @@ export function ExplorerTab({
           </div>
         </>
       )}
+      {questionsOpen && <QuestionsDialog questions={questions} onAnswered={refreshAfterAnswer} onOpenShot={openShot} onClose={() => setQuestionsOpen(false)} />}
       {lightbox && <Lightbox shotId={lightbox.shotId} caption={lightbox.caption} onClose={() => setLightbox(null)} />}
     </div>
   )
 }
 
-// Classic underline tabs: one full-width row on a hairline, the active tab
-// carrying the accent underline. Counts stay quiet; only a tab that needs
-// you (or is live) gets a dot.
+// A segmented control: every tab the same width and weight, so the bar
+// never jumps when you switch or a count changes. Arrow keys move between
+// tabs. Only a tab that needs you (or is live) gets a dot.
 function Tabs({ view, onChange, items }: { view: View; onChange: (v: View) => void; items: { key: View; label: string; icon: typeof faSignal; count?: number; badge?: 'live' | 'review' }[] }) {
+  const move = (from: number, step: number) => {
+    const next = items[(from + step + items.length) % items.length]
+    onChange(next.key)
+    document.getElementById(`explorer-tab-${next.key}`)?.focus()
+  }
   return (
-    <div role="tablist" aria-label="Explorer" style={{ display: 'flex', gap: 2, boxShadow: 'inset 0 -1px 0 var(--line)', marginBottom: 20, overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'none' }}>
-      <style>{'.explorer-tab:hover{color:var(--fg)!important}.explorer-tab:focus-visible{outline:2px solid var(--accent-2);outline-offset:-2px;border-radius:6px}'}</style>
-      {items.map((item) => {
+    <div role="tablist" aria-label="Explorer" style={{ display: 'flex', gap: 4, padding: 4, marginBottom: 20, borderRadius: 12, background: 'var(--chip)', border: '1px solid var(--line)' }}>
+      <style>{'.explorer-tab:hover{color:var(--fg)!important}.explorer-tab:focus-visible{outline:2px solid var(--accent-2);outline-offset:1px}'}</style>
+      {items.map((item, i) => {
         const active = item.key === view
         return (
           <button
             key={item.key}
+            id={`explorer-tab-${item.key}`}
             role="tab"
             aria-selected={active}
+            tabIndex={active ? 0 : -1}
             type="button"
             className="explorer-tab"
             onClick={() => onChange(item.key)}
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowRight') move(i, 1)
+              if (e.key === 'ArrowLeft') move(i, -1)
+            }}
             style={{
+              flex: '1 1 0',
+              minWidth: 0,
               display: 'inline-flex',
               alignItems: 'center',
+              justifyContent: 'center',
               gap: 8,
-              padding: '10px 14px 11px',
+              height: 36,
+              padding: '0 12px',
               border: 'none',
-              borderBottom: `2px solid ${active ? 'var(--accent-2)' : 'transparent'}`,
-              background: 'transparent',
+              borderRadius: 9,
+              background: active ? 'white' : 'transparent',
+              boxShadow: active ? '0 1px 3px rgba(15,23,42,0.12)' : 'none',
               fontFamily: 'inherit',
               fontSize: 13.5,
-              fontWeight: active ? 600 : 500,
+              fontWeight: 600,
               color: active ? 'var(--fg)' : 'var(--fg-4)',
               cursor: 'pointer',
               whiteSpace: 'nowrap',
-              transition: 'color 150ms ease, border-color 150ms ease',
+              transition: 'background 150ms ease, color 150ms ease',
             }}
           >
             <FontAwesomeIcon icon={item.icon} style={{ fontSize: 12, color: active ? 'var(--accent-2)' : 'var(--fg-5)' }} />
-            {item.label}
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.label}</span>
             {item.count !== undefined && (
-              <span
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  lineHeight: '17px',
-                  minWidth: 18,
-                  textAlign: 'center',
-                  padding: '0 6px',
-                  borderRadius: 1000,
-                  color: active ? 'var(--accent-2)' : 'var(--fg-4)',
-                  background: active ? 'var(--accent-wash)' : 'var(--chip)',
-                }}
-              >
-                {item.count}
-              </span>
+              <span style={{ fontSize: 11, fontWeight: 600, lineHeight: '17px', minWidth: 18, textAlign: 'center', padding: '0 6px', borderRadius: 1000, color: active ? 'var(--accent-2)' : 'var(--fg-4)', background: active ? 'var(--accent-wash)' : 'white' }}>{item.count}</span>
             )}
-            {item.badge === 'live' && <span aria-label="Live" style={{ width: 7, height: 7, borderRadius: 1000, background: 'var(--bad)', animation: 'v2-pulse 1.4s ease-in-out infinite' }} />}
-            {item.badge === 'review' && <span aria-label="Needs you" style={{ width: 8, height: 8, borderRadius: 1000, background: 'var(--warn-2)', animation: 'explorer-attention 1.6s ease-out infinite' }} />}
+            {item.badge === 'live' && <span aria-label="Live" style={{ width: 7, height: 7, flex: 'none', borderRadius: 1000, background: 'var(--bad)', animation: 'v2-pulse 1.4s ease-in-out infinite' }} />}
+            {item.badge === 'review' && <span aria-label="Needs you" style={{ width: 8, height: 8, flex: 'none', borderRadius: 1000, background: 'var(--warn-2)', animation: 'explorer-attention 1.6s ease-out infinite' }} />}
           </button>
         )
       })}

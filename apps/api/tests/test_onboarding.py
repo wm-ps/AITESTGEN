@@ -875,3 +875,39 @@ def test_verify_credential_reports_unreachable(monkeypatch: pytest.MonkeyPatch) 
     body = response.json()
     assert body["reachable"] is False
     assert "did not respond" in body["detail"]
+
+
+# --- "This application requires sign-in" switch (requires_login) ---
+
+
+def test_an_app_without_login_needs_no_credentials_and_can_add_them_later() -> None:
+    init_db()
+    client = _signed_in_client("Org No Login App")
+    created = client.post(
+        "/applications",
+        json={
+            "name": "Public App",
+            "url": "https://app.example.com",
+            "environment": "staging",
+            "discovery_required": False,
+            "requires_login": False,
+        },
+    )
+    assert created.status_code == 201, created.text
+    application_id = created.json()["id"]
+    assert created.json()["requires_login"] is False
+    row = next(e for e in client.get("/credentials").json() if e["application_id"] == application_id)
+    assert row["requires_login"] is False and row["username"] == ""
+
+    # Turning sign-in on needs a saved login first.
+    switched = client.patch(f"/applications/{application_id}/requires-login", json={"requires_login": True})
+    assert switched.status_code == 422
+    # Saving a login turns it on.
+    saved = client.patch(
+        f"/applications/{application_id}/credentials",
+        json={"username": "qa-test-account", "password": "pw"},
+    )
+    assert saved.json()["requires_login"] is True
+    # And it can be switched off again (the login is kept, just unused).
+    off = client.patch(f"/applications/{application_id}/requires-login", json={"requires_login": False})
+    assert off.status_code == 200 and off.json()["requires_login"] is False

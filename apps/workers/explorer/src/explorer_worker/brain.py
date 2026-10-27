@@ -16,7 +16,11 @@ application for the first time. Core principle: the application is EVIDENCE, not
 truth. It may be buggy. Never assume that what the app does is correct — judge it \
 against common sense, industry norms and what the user told you, and point out \
 anything that looks wrong. Write every human-facing sentence in plain, friendly \
-business language (no technical jargon like DOM, API, selector, endpoint, JSON)."""
+business language (no technical jargon like DOM, API, selector, endpoint, JSON). \
+When you tell a person about a button or link, name it by what it is for ("the \
+Contact details button", "Edit the claim"), never by how it looks or by its icon \
+("icon", "pencil", "Press icon to contact details"). Fields that must match the \
+screen (exact visible text, labels to click) still use the exact on-screen text."""
 
 _PERCEIVE_SYSTEM = (
     STANCE
@@ -442,8 +446,9 @@ Beyond the checklist, add what only Explorer knows, each linked to the closest c
 item with 'linked_to': the user's answers and confirmed rules, choices that lead to \
 hidden screens, and the possible bugs already noticed. Their 'coverage' is "X-" plus a \
 short name (e.g. "X-Urgent injury guidance").
-Other screens (dashboards, details, wizard steps): the page loads with its main content, \
-its links and tabs lead to the right screen, Back and Refresh keep the user in place.
+Other screens (dashboards, details, wizard steps): the page loads with its main content \
+(coverage "P-01 Page loads"), its links and tabs lead to the right screen, Back and \
+Refresh keep the user in place.
 Sign-in (only when you are asked to plan sign-in tests and the app has a sign-in \
 screen): signing in with the saved login works; a wrong username or password is refused \
 with a clear message; required sign-in fields; a protected screen opened while signed \
@@ -549,6 +554,55 @@ async def plan_tests(
     return [t for t in tests if isinstance(t, dict)] if isinstance(tests, list) else []
 
 
+_REVIEW_PLAN_SYSTEM = (
+    STANCE
+    + """
+
+Before any scenario is tried in the app (each try costs minutes), review the planned \
+scenarios against what exploring actually saw. Reply with ONLY:
+{"leave_out": [{"index": 0, "why": "duplicate", "of": 3, "reason": "one plain sentence"}]}
+why is "duplicate" or "never_seen". Leave a scenario out ONLY when you are certain:
+- duplicate: it checks the SAME thing on the same screen as an earlier scenario (`of` is \
+that earlier index) — the same rule with the same kind of input, only worded differently. \
+Different values, rules, fields or outcomes are NOT duplicates (a 9-digit and an 11-digit \
+phone number are two scenarios).
+- never_seen: carrying it out needs a screen, step, button or option that the screens, the \
+ways between them and the missions never showed (e.g. it expects a form to open after a \
+step where the map shows a different screen). An expected RESULT that may differ from what \
+the app does is NOT a reason — finding that difference is the point of testing.
+When in doubt, keep it. Most plans have few or none to leave out."""
+)
+
+
+async def review_plan(
+    tests: list[dict[str, Any]],
+    screens: list[dict[str, Any]],
+    links: list[str],
+    missions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Planned scenarios to leave out before trying them: duplicates, and
+    ones that need a flow exploring never saw. Index into `tests`."""
+    plan = [
+        {
+            "index": i,
+            "screen": t.get("start_screen"),
+            "title": t.get("title"),
+            "how": t.get("how_to_run"),
+            "expected": t.get("expected"),
+        }
+        for i, t in enumerate(tests)
+    ]
+    user = (
+        f"Known screens: {json.dumps(screens, ensure_ascii=False)[:40000]}\n"
+        f"Ways between screens: {json.dumps(links, ensure_ascii=False)[:8000]}\n"
+        f"Missions and what happened: {json.dumps(missions, ensure_ascii=False)[:12000]}\n"
+        f"Planned scenarios: {json.dumps(plan, ensure_ascii=False)[:60000]}"
+    )
+    reply = await ask_json(_REVIEW_PLAN_SYSTEM, user, model=THINKING_MODEL)
+    out = reply.get("leave_out")
+    return [d for d in out if isinstance(d, dict)] if isinstance(out, list) else []
+
+
 _CHECK_SYSTEM = (
     STANCE
     + """
@@ -598,8 +652,9 @@ async def decide_check(
         (f"Data calls the page made during the test: {seen}\n" if seen else "")
         + 
         (
-            "These proofs were rejected because they were ALREADY on the screen before the "
-            f"test did anything — pick text that only appears as a RESULT: {rejected}\n"
+            "These proofs were rejected because they were ALREADY true before the test did "
+            "anything, or are a data call the app makes on many steps (e.g. saving progress "
+            f"on every Continue) — pick something only THIS test's outcome causes: {rejected}\n"
             if rejected
             else ""
         )

@@ -2,31 +2,34 @@ import { useEffect, useMemo, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faArrowRight, faLayerGroup, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { EmptyState, ScreensIllustration } from '../components/EmptyState'
-import { shotUrl, type AppMap, type ExplorerHealthIssue, type ExplorerScreen } from './explorerApi'
-import { possibleBugs } from './HealthView'
+import { shotUrl, type AppMap, type ExplorerScreen } from './explorerApi'
 import { glassCard } from './ui'
 
 // Big apps have hundreds of screens: a page of cards at a time, lazy images.
 const PAGE = 48
 
-export function ScreensView({ map, issues, onOpenShot }: { map: AppMap | null; issues: ExplorerHealthIssue[]; onOpenShot: (shotId: string, caption: string) => void }) {
-  const screens = useMemo(() => map?.screens ?? [], [map])
-  const [onlyBugs, setOnlyBugs] = useState(false)
+// Icon alt text read out with a label ("Logout Icon Logout", "Icon") means
+// nothing to a reader: keep the words, drop the icon, name a bare icon plainly.
+export function plainAction(action: string | null | undefined): string {
+  const text = (action || 'Continue').replace(/\b\w+ Icon\b\s*/gi, '').replace(/\bicon\b/gi, '').replace(/\s+/g, ' ').trim()
+  return text || 'an unlabelled button'
+}
+
+// The order Explorer found them in (the API's order). Sign-in comes first:
+// Explorer signs in before it starts reading screens, so its login page is
+// often stored last even though it is where every visit begins.
+export function inFoundOrder(screens: ExplorerScreen[]): ExplorerScreen[] {
+  return [...screens].sort((a, b) => Number(b.view_kind === 'login') - Number(a.view_kind === 'login'))
+}
+
+export function ScreensView({ map, onOpenShot }: { map: AppMap | null; onOpenShot: (shotId: string, caption: string) => void }) {
+  const screens = useMemo(() => inFoundOrder(map?.screens ?? []), [map])
   const [query, setQuery] = useState('')
   const [limit, setLimit] = useState(PAGE)
   const [selected, setSelected] = useState<ExplorerScreen | null>(null)
 
-  const bugsByUrl = useMemo(() => {
-    const counts = new Map<string, number>()
-    for (const i of possibleBugs(issues)) counts.set(i.url.split('?')[0], (counts.get(i.url.split('?')[0]) ?? 0) + 1)
-    return counts
-  }, [issues])
-  const bugsOn = (s: ExplorerScreen) => bugsByUrl.get(s.url.split('?')[0]) ?? 0
-  const hasBug = (s: ExplorerScreen) => bugsOn(s) > 0
-
   const q = query.trim().toLowerCase()
-  const shown = screens.filter((s) => (!onlyBugs || hasBug(s)) && (!q || s.name.toLowerCase().includes(q)))
-  const bugCount = screens.filter(hasBug).length
+  const shown = screens.filter((s) => !q || s.name.toLowerCase().includes(q))
 
   if (screens.length === 0) {
     return (
@@ -39,36 +42,18 @@ export function ScreensView({ map, issues, onOpenShot }: { map: AppMap | null; i
     )
   }
 
-  const chip = (active: boolean) =>
-    ({
-      fontFamily: 'inherit',
-      fontSize: 12.5,
-      padding: '6px 12px',
-      borderRadius: 1000,
-      cursor: 'pointer',
-      border: `1px solid ${active ? 'var(--accent-2)' : 'var(--border-2)'}`,
-      background: active ? 'var(--accent-wash)' : 'white',
-      color: active ? 'var(--accent-2)' : 'var(--fg-2)',
-      fontWeight: active ? 600 : 500,
-    }) as const
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" style={chip(!onlyBugs)} onClick={() => setOnlyBugs(false)}>
-          All · {screens.length}
-        </button>
-        <button type="button" style={chip(onlyBugs)} onClick={() => setOnlyBugs(true)}>
-          Something looks wrong · {bugCount}
-        </button>
+        <span style={{ fontSize: 13, color: 'var(--fg-3)' }}>{screens.length} screens</span>
+        {/* Same look as every other Explorer field (no browser search styling). */}
         <input
-          type="search"
           className="field"
           aria-label="Search screens"
-          placeholder="Search screens"
+          placeholder="Search screens by name"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          style={{ marginLeft: 'auto', width: 220, fontSize: 13, padding: '7px 12px' }}
+          style={{ marginLeft: 'auto', width: 240, fontFamily: 'inherit', fontSize: 13, padding: '8px 10px' }}
         />
       </div>
 
@@ -90,15 +75,8 @@ export function ScreensView({ map, issues, onOpenShot }: { map: AppMap | null; i
                   <FontAwesomeIcon icon={faLayerGroup} style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)', color: 'var(--fg-5)' }} />
                 )}
               </span>
-              {/* The screenshot stays clean; findings are a quiet count beside the name. */}
               <span style={{ padding: '10px 12px 12px', display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                 <span style={{ flex: 1, minWidth: 0, fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
-                {hasBug(s) && (
-                  <span title="Things that look wrong on this screen" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flex: 'none', fontSize: 11.5, fontWeight: 600, color: 'var(--warn-2)' }}>
-                    <span style={{ width: 6, height: 6, borderRadius: 1000, background: 'var(--warn-2)' }} />
-                    {bugsOn(s)}
-                  </span>
-                )}
               </span>
             </button>
           ))}
@@ -178,7 +156,7 @@ function ScreenPanel({
                 style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px', border: '1px solid var(--line)', borderRadius: 10, background: 'white', cursor: 'pointer', fontFamily: 'inherit', textAlign: 'left' }}
               >
                 <span style={{ flex: 1, minWidth: 0, fontSize: 13, color: 'var(--fg-2)' }}>
-                  Press <strong style={{ color: 'var(--fg)' }}>{e.action || 'Continue'}</strong>
+                  Press <strong style={{ color: 'var(--fg)' }}>{plainAction(e.action)}</strong>
                 </span>
                 <FontAwesomeIcon icon={faArrowRight} style={{ fontSize: 11, color: 'var(--fg-5)' }} />
                 <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, maxWidth: '50%' }}>

@@ -85,14 +85,22 @@ class _FakeEyes:
 
     async def start_fresh_on_resume_prompts(self) -> None: ...
 
+    # A "resume your saved progress?" prompt the previous attempt left behind.
+    resume_prompt = False
+
+    async def start_fresh_if_asked(self) -> None:
+        if self.resume_prompt:
+            self.resume_prompt = False
+            self.clicked.append("Start over instead")
+
     async def fingerprint(self) -> str:
         return "x"
 
     async def wait_for_change(self, before: str, timeout_ms: int = 0) -> bool:
         return True
 
-    async def click_text(self, label: str, role: str | None = None) -> bool:
-        if label in self.screen:
+    async def click_text(self, label: str, role: str | None = None, spec=None) -> bool:
+        if label in self.screen and not self.resume_prompt:
             self.clicked.append(label)
             return True
         return False
@@ -106,6 +114,19 @@ class _FakeEyes:
             self.screen = self.screen | {"Next"}
             return label
         return None
+
+
+def test_replay_answers_a_resume_prompt_left_by_the_previous_attempt():
+    import asyncio
+
+    from explorer_worker.testkit import replay
+
+    # Recorded with no saved draft; this replay meets FNOL's "Welcome back".
+    script = [{"do": "click", "label": "Auto collision"}, {"do": "click", "label": "Next"}]
+    eyes = _FakeEyes({"Auto collision", "Next"})
+    eyes.resume_prompt = True
+    assert asyncio.run(replay(eyes, script))
+    assert eyes.clicked == ["Start over instead", "Auto collision", "Next"]
 
 
 def test_replay_marks_a_skipped_screen_optional():

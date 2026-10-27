@@ -12,6 +12,7 @@ import {
   faListCheck,
   faPaperPlane,
   faPlay,
+  faRoute,
   faTriangleExclamation,
   faUserCheck,
 } from '@fortawesome/free-solid-svg-icons'
@@ -34,6 +35,7 @@ const KIND: Record<string, { label: string; icon: IconDefinition }> = {
   data_load: { label: 'Data shown', icon: faDatabase },
   form_submission: { label: 'Saving a form', icon: faPaperPlane },
   page_quality: { label: 'Page quality', icon: faListCheck },
+  journey: { label: 'Whole journey', icon: faRoute },
 }
 
 const label = { fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', color: 'var(--fg-5)', marginBottom: 6, textTransform: 'uppercase' } as const
@@ -68,12 +70,16 @@ export function ScenariosView({
   const trying = count(all, 'building', 'planned')
   const asked = all.filter((t) => t.trust === 'confirmed').length
   const kinds = [...new Set(all.map((t) => t.kind))]
-  // One group per screen (the Journey it lands in).
+  // Whole journeys first, in one group; then one group per screen (the Journey it lands in).
+  const WHOLE = 'Whole journeys'
   const byScreen = new Map<string, ExplorerTestCase[]>()
-  for (const t of shown) byScreen.set(t.start_screen || 'Other', [...(byScreen.get(t.start_screen || 'Other') ?? []), t])
-  // Journeys with a bug first, then the busiest.
+  for (const t of shown) {
+    const key = t.kind === 'journey' ? WHOLE : t.start_screen || 'Other'
+    byScreen.set(key, [...(byScreen.get(key) ?? []), t])
+  }
+  // Screens with a bug first, then the busiest.
   const groups = [...byScreen.entries()].sort(
-    ([, a], [, b]) => count(b, 'known_bug') - count(a, 'known_bug') || b.length - a.length,
+    ([ka, a], [kb, b]) => Number(kb === WHOLE) - Number(ka === WHOLE) || count(b, 'known_bug') - count(a, 'known_bug') || b.length - a.length,
   )
   const shotOf = new Map(screens.filter((s) => s.shot_id).map((s) => [s.name, s.shot_id!]))
 

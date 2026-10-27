@@ -459,6 +459,11 @@ export const api = {
         totp_seed: mfa?.totpSeed,
       }),
     }),
+  setRequiresLogin: (applicationId: string, requiresLogin: boolean) =>
+    request<ApplicationRead>(`/applications/${applicationId}/requires-login`, {
+      method: 'PATCH',
+      body: JSON.stringify({ requires_login: requiresLogin }),
+    }),
   deleteApplication: (applicationId: string) =>
     request<undefined>(`/applications/${applicationId}`, { method: 'DELETE' }),
   listTeam: () =>
@@ -469,7 +474,14 @@ export const api = {
     request<undefined>(`/team/${encodeURIComponent(email)}`, { method: 'DELETE' }),
   listCredentials: () =>
     request<
-      { application_id: string; application_name: string; environment: string; username: string; has_password: boolean }[]
+      {
+        application_id: string
+        application_name: string
+        environment: string
+        username: string
+        has_password: boolean
+        requires_login: boolean
+      }[]
     >('/credentials'),
   revealCredential: (applicationId: string) =>
     request<{ password: string }>(`/credentials/${applicationId}/reveal`, { method: 'POST' }),

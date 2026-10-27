@@ -1308,6 +1308,13 @@ def _record_heal_supersede_sync(
         session.commit()
 
 
+# Automatic healing after a failed run (up to AUTO_HEAL_ATTEMPT_CAP tries).
+# A heal rewrites the test, so the failure then shown is the rewrite's, not
+# the original's: set AUTO_HEAL_ENABLED=0 while investigating real causes.
+# The manual "Retry with self-healing" button heals either way.
+AUTO_HEAL_ENABLED = os.environ.get("AUTO_HEAL_ENABLED", "1") == "1"
+
+
 @activity.defn(name="HealTestActivity")
 async def heal_test_activity(input: HealTestActivityInput) -> None:
     """Owns the entire bounded, iterative self-heal loop for one
@@ -1332,6 +1339,13 @@ async def heal_test_activity(input: HealTestActivityInput) -> None:
       failure evidence -> (pass | no-progress stop | loop again), bounded by
       this invocation's own attempt_cap.
     """
+    if not input.triggered_manually and not AUTO_HEAL_ENABLED:
+        logger.info(
+            "HealTestActivity: test_result_id=%s automatic healing is off (AUTO_HEAL_ENABLED=0), "
+            "skipping",
+            input.test_result_id,
+        )
+        return
     claimed = await asyncio.to_thread(_claim_heal_sync, input.test_result_id)
     if not claimed:
         logger.info(

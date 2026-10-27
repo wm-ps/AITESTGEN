@@ -31,6 +31,51 @@ from explorer_worker.sense import (
 )
 
 VIEWPORT = ViewportSize(width=1440, height=900)
+
+# The app's own files that don't change between windows (scripts, styles,
+# fonts, images), kept once per worker and served to every new window. Each
+# window is still brand new — no cookies, storage or saved progress carried
+# over, like an exported test's — it just doesn't download the same bundles
+# again (measured: 12-15s per window cold, 1.5s warm). Pages and data calls
+# always go to the app. ponytail: in-memory, capped; a deploy mid-run is
+# picked up when an entry expires.
+STATIC_KINDS = {"script", "stylesheet", "font", "image"}
+STATIC_CACHE_SECONDS = 30 * 60
+STATIC_CACHE_BYTES = 300 * 1024 * 1024
+_STATIC: dict[str, tuple[float, int, dict[str, str], bytes]] = {}
+# Describe the body as it was received; ours is already decoded.
+_DROP_HEADERS = {"content-encoding", "content-length", "transfer-encoding"}
+
+
+def cacheable(method: str, kind: str, status: int, headers: dict[str, str]) -> bool:
+    return (
+        method == "GET"
+        and kind in STATIC_KINDS
+        and status == 200
+        and "no-store" not in headers.get("cache-control", "").lower()
+    )
+
+
+async def _serve_static(route: Any) -> None:
+    request = route.request
+    if request.method != "GET" or request.resource_type not in STATIC_KINDS:
+        await route.continue_()
+        return
+    hit = _STATIC.get(request.url)
+    if hit is not None and time.monotonic() - hit[0] < STATIC_CACHE_SECONDS:
+        await route.fulfill(status=hit[1], headers=hit[2], body=hit[3])
+        return
+    try:
+        response = await route.fetch()
+        body = await response.body()
+    except PlaywrightError:
+        await route.continue_()  # let the browser load it (and fail) as usual
+        return
+    headers = {k: v for k, v in response.headers.items() if k.lower() not in _DROP_HEADERS}
+    if cacheable(request.method, request.resource_type, response.status, response.headers):
+        if sum(len(entry[3]) for entry in _STATIC.values()) + len(body) <= STATIC_CACHE_BYTES:
+            _STATIC[request.url] = (time.monotonic(), response.status, headers, body)
+    await route.fulfill(status=response.status, headers=headers, body=body)
 SLOW_LOAD_MS = 6000
 
 # Reads the screen in one round trip. Elements a user could navigate with
@@ -222,6 +267,34 @@ class Visit:
     signals: list[HealthSignal] = field(default_factory=list)
 
 
+# A locator Explorer actually used, as data: recorded on each step and used
+# as-is by the replay and the exported test (testkit.ts_locator), so a test
+# never re-guesses how to find an element it already found once.
+#   {"by": "role", "role": "checkbox", "name": "Rear", "exact": True}
+#   {"by": "label" | "text", "text": ..., "exact": bool}
+#   {"by": "placeholder", "text": ...}   {"by": "css", "selector": ...}
+#   {"by": "select_label", "text": field} {"by": "select_with", "option": option}
+def locate(page: Any, spec: dict[str, Any]) -> Any:
+    by = spec.get("by")
+    if by == "role":
+        return page.get_by_role(spec["role"], name=spec["name"], exact=bool(spec.get("exact")))
+    if by in ("label", "select_label"):
+        return page.get_by_label(spec["text"], exact=bool(spec.get("exact")))
+    if by == "placeholder":
+        return page.get_by_placeholder(spec["text"])
+    if by == "text":
+        return page.get_by_text(spec["text"], exact=bool(spec.get("exact")))
+    if by == "css":
+        return page.locator(spec["selector"])
+    if by == "select_with":
+        return page.locator("select").filter(has=page.locator("option", has_text=spec["option"]))
+    raise ValueError(f"unknown locator {spec!r}")
+
+
+def _role(role: str, name: str, exact: bool = True) -> dict[str, Any]:
+    return {"by": "role", "role": role, "name": name, "exact": exact}
+
+
 def field_after_caption(caption: str) -> str:
     """The first field after text reading exactly `caption`: forms that put
     a caption above a field without linking them (no `<label for>`). The
@@ -242,6 +315,9 @@ class Eyes:
         # An existing page can be borrowed (e.g. a second tab with a
         # different clock); it then has no listeners or recording of its own.
         self.page: Page | None = page
+        # Where a test's route may begin: the app's start address and where
+        # sign-in landed (see sense.route_starts_at_entry).
+        self.entry_urls: set[str] = {base_url}
         self._pending: list[HealthSignal] = []
         # The page's data calls (method, address, status), for API proofs.
         self.calls: list[tuple[str, str, int]] = []
@@ -250,6 +326,8 @@ class Eyes:
         self._login: tuple[str, str, str] | None = None
         self._typed_name = ""  # last non-password value typed (lockout guard)
         self.last_suggestion: str | None = None  # picked by the last fill_field
+        # The locator the last fill/choose/click actually used (see `locate`).
+        self.last_locator: dict[str, Any] | None = None
 
     async def open(
         self, storage_state: dict[str, Any] | None = None, record_dir: str | None = None
@@ -265,6 +343,7 @@ class Eyes:
             record_video_dir=record_dir,
             record_video_size=VIEWPORT if record_dir else None,
         )
+        await self._context.route("**/*", _serve_static)
         self.page = await self._context.new_page()
         self.page.on("console", self._on_console)
         self.page.on("pageerror", self._on_page_error)
@@ -404,26 +483,34 @@ class Eyes:
         await self.settle()
         return True
 
-    async def click_text(self, label: str, role: str | None = None) -> bool:
-        """Click something by what a person reads on it. Returns False when
-        nothing matching is on screen."""
+    async def click_text(
+        self, label: str, role: str | None = None, spec: dict[str, Any] | None = None
+    ) -> bool:
+        """Click something by what a person reads on it — or, replaying,
+        exactly by the locator that worked before (`spec`). Returns False
+        when nothing matching is on screen."""
         assert self.page is not None
-        candidates = []
-        if role in ("link", "button", "menuitem", "tab", "treeitem"):
-            candidates.append(self.page.get_by_role(role, name=label, exact=True))  # pyright: ignore[reportArgumentType]
-        candidates += [
-            self.page.get_by_role("link", name=label, exact=True),
-            self.page.get_by_text(label, exact=True),
-            # Icons and arrows around the words ("🔒 Generate Card PIN ›").
-            self.page.get_by_role("link", name=label),
-            self.page.get_by_role("button", name=label),
-        ]
-        for locator in candidates:
+        self.last_locator = None
+        specs: list[dict[str, Any]] = []
+        if spec:
+            specs = [spec]
+        else:
+            if role in ("link", "button", "menuitem", "tab", "treeitem"):
+                specs.append(_role(role, label))
+            specs += [
+                _role("link", label),
+                {"by": "text", "text": label, "exact": True},
+                # Icons and arrows around the words ("🔒 Generate Card PIN ›").
+                _role("link", label, exact=False),
+                _role("button", label, exact=False),
+            ]
+        for candidate in specs:
             try:
-                target = locator.filter(visible=True).first
+                target = locate(self.page, candidate).filter(visible=True).first
                 if await target.count():
                     await target.click(timeout=5000)
                     await self.settle()
+                    self.last_locator = candidate
                     return True
             except PlaywrightError:
                 continue
@@ -621,6 +708,42 @@ class Eyes:
         self._fresh_locator = fresh.first
         await page.add_locator_handler(self._fresh_locator, answer, no_wait_after=True)
 
+    def remember_entry(self) -> None:
+        """The page the browser is on now is an entry point (sign-in landed here)."""
+        if self.page is not None:
+            self.entry_urls.add(self.page.url)
+
+    @property
+    def starts_fresh(self) -> bool:
+        return self._starts_fresh
+
+    async def start_fresh_if_asked(self) -> bool:
+        """Answer a showing "resume your saved progress?" prompt with 'start
+        over' now. The locator handler above only fires before Playwright's
+        click/fill actions; choosing an option first just looks for it, so on
+        a resume prompt left by the previous attempt (FNOL: "Welcome back,
+        James") it failed without the handler ever running. The exported
+        test does the same check before every step (`startFreshIfAsked`)."""
+        assert self.page is not None
+        page = self.page
+        fresh = (
+            page.get_by_role("button", name=START_FRESH)
+            .or_(page.get_by_role("link", name=START_FRESH))
+            .filter(visible=True)
+            .first
+        )
+        try:
+            if not await fresh.count() or not await page.get_by_role(
+                "button", name=RESUME_LABEL
+            ).count():
+                return False
+            await fresh.click(timeout=3000)
+            await fresh.wait_for(state="hidden", timeout=10000)
+            await page.evaluate(_DOM_QUIET_JS)
+            return True
+        except PlaywrightError:
+            return False  # the handler pressed it already, or the prompt went away
+
     async def stop_starting_fresh(self) -> None:
         """Hand resume prompts back to whoever drives the browser next (a
         mission about resuming a saved report must see the prompt)."""
@@ -631,30 +754,34 @@ class Eyes:
                 pass
         self._starts_fresh = False
 
-    async def fill_field(self, label: str, value: str) -> bool:
-        """Type into a field found by what a person reads next to it."""
+    async def fill_field(self, label: str, value: str, spec: dict[str, Any] | None = None) -> bool:
+        """Type into a field found by what a person reads next to it — or,
+        replaying, exactly by the locator that worked before (`spec`)."""
         assert self.page is not None
         value = resolve_relative(self._login_value(value))
-        for locator in (
-            self.page.get_by_role("textbox", name=label, exact=True),
-            self.page.get_by_role("spinbutton", name=label, exact=True),
-            self.page.get_by_role("combobox", name=label, exact=True),
-            self.page.get_by_role("textbox", name=label),
-            self.page.get_by_placeholder(label),
-            self.page.get_by_label(label, exact=True),
-            *([self.page.locator(field_after_caption(label))] if '"' not in label else []),
-        ):
+        self.last_locator = None
+        specs = [spec] if spec else [
+            _role("textbox", label),
+            _role("spinbutton", label),
+            _role("combobox", label),
+            _role("textbox", label, exact=False),
+            {"by": "placeholder", "text": label},
+            {"by": "label", "text": label, "exact": True},
+            *([{"by": "css", "selector": field_after_caption(label)}] if '"' not in label else []),
+        ]
+        for candidate in specs:
             try:
-                target = locator.filter(visible=True).first
+                target = locate(self.page, candidate).filter(visible=True).first
                 if not await target.count():
                     continue
+                self.last_locator = candidate
                 if not value.strip():
                     # Clearing only counts if the box really ends up empty —
                     # a picker that keeps its default ("Just now") must not
                     # read as "left blank", or the test reports a false bug.
                     if await target.evaluate("e => e.readOnly === true"):
                         await target.click(timeout=3000)
-                        await self.page.keyboard.press("Control+A")
+                        await self.page.keyboard.press("ControlOrMeta+A")
                         await self.page.keyboard.press("Delete")
                         await self.page.keyboard.press("Escape")
                     else:
@@ -769,6 +896,28 @@ class Eyes:
                 continue
         return None
 
+    async def _choose_by(self, candidate: dict[str, Any], option: str) -> bool:
+        """Select `option` through one locator. Choosing means "make sure
+        it's selected": a box a saved draft already ticked is left ticked."""
+        assert self.page is not None
+        try:
+            target = locate(self.page, candidate).filter(visible=True).first
+            if not await target.count():
+                return False
+            if candidate.get("by") in ("select_label", "select_with"):
+                await target.select_option(label=option, timeout=5000)
+            else:
+                checkable = await target.evaluate(
+                    "e => e.matches('input[type=checkbox],input[type=radio],[role=checkbox],"
+                    "[role=radio]')"
+                )
+                if not (checkable and await target.is_checked(timeout=2000)):
+                    await target.click(timeout=5000)
+            self.last_locator = candidate
+            return True
+        except PlaywrightError:
+            return False
+
     async def upload_file(self, label: str, path: str) -> bool:
         """Attach a file the way the page expects it. Upload areas usually
         hide the real <input type=file> behind a drop zone, so set it
@@ -809,7 +958,7 @@ class Eyes:
         for candidate in date_variants(value):
             await target.evaluate("e => e.removeAttribute('readonly')")
             await target.click(timeout=3000)
-            await self.page.keyboard.press("Control+A")
+            await self.page.keyboard.press("ControlOrMeta+A")
             await self.page.keyboard.type(candidate)
             await self.page.keyboard.press("Tab")
             await self.page.wait_for_timeout(300)
@@ -868,63 +1017,56 @@ class Eyes:
             return False
         return False
 
-    async def choose(self, field_label: str, option: str) -> bool:
+    async def choose(
+        self, field_label: str, option: str, spec: dict[str, Any] | None = None
+    ) -> bool:
         """Pick an option: a radio/checkbox/button-like option by its text,
-        or an option inside a dropdown labelled `field_label`."""
+        or an option inside a dropdown labelled `field_label` — or,
+        replaying, exactly by the locator that worked before (`spec`)."""
         assert self.page is not None
-        try:
-            if not field_label:
-                raise PlaywrightError("no field label")
-            select = self.page.get_by_label(field_label).first
-            if await select.count() and await select.evaluate("e => e.tagName") == "SELECT":
-                await select.select_option(label=option, timeout=5000)
-                return True
-        except PlaywrightError:
-            pass
+        self.last_locator = None
+        if spec:
+            return await self._choose_by(spec, option)
+        selects: list[dict[str, Any]] = []
+        if field_label:
+            selects.append({"by": "select_label", "text": field_label})
         # A dropdown with no linked label: the one that offers this option.
-        try:
-            select = (
-                self.page.locator("select")
-                .filter(visible=True)
-                .filter(has=self.page.locator("option", has_text=option))
-                .first
-            )
-            if await select.count():
-                await select.select_option(label=option, timeout=5000)
-                return True
-        except PlaywrightError:
-            pass
-        try:
-            # Already selected (a saved draft)? Clicking a ticked box unticks it.
-            picked = (
-                self.page.get_by_role("checkbox", name=option)
-                .or_(self.page.get_by_role("radio", name=option))
-                .first
-            )
-            if await picked.count() and await picked.is_checked(timeout=2000):
-                return True
-        except PlaywrightError:
-            pass
-        for locator in (
-            self.page.get_by_role("radio", name=option, exact=True),
-            self.page.get_by_label(option, exact=True),
-            self.page.get_by_role("checkbox", name=option, exact=True),
-            self.page.get_by_role("option", name=option, exact=True),
-            self.page.get_by_role("button", name=option, exact=True),
-            self.page.get_by_text(option, exact=True),
-            # Last resort: the model's wording is often a shortened label
-            # ("Fence" for "Fence or gate").
-            self.page.get_by_role("checkbox", name=option),
-            self.page.get_by_role("radio", name=option),
-            self.page.get_by_label(option),
-        ):
+        selects.append({"by": "select_with", "option": option})
+        for candidate in selects:
             try:
-                target = locator.filter(visible=True).first
-                if await target.count():
-                    await target.click(timeout=5000)
+                select = locate(self.page, candidate).filter(visible=True).first
+                if await select.count() and await select.evaluate("e => e.tagName") == "SELECT":
+                    await select.select_option(label=option, timeout=5000)
+                    self.last_locator = candidate
                     return True
             except PlaywrightError:
-                continue
+                pass
+        # Already selected (a saved draft)? Leave it: clicking its text would
+        # untick it. Recorded as that very box, so a replay checks the same.
+        for role in ("checkbox", "radio"):
+            already = _role(role, option, exact=False)
+            try:
+                box = locate(self.page, already).filter(visible=True).first
+                if await box.count() and await box.is_checked(timeout=2000):
+                    self.last_locator = already
+                    return True
+            except PlaywrightError:
+                pass
+        for candidate in (
+            _role("radio", option),
+            {"by": "label", "text": option, "exact": True},
+            _role("checkbox", option),
+            _role("option", option),
+            _role("button", option),
+            {"by": "text", "text": option, "exact": True},
+            # Last resort: the model's wording is often a shortened label
+            # ("Fence" for "Fence or gate").
+            _role("checkbox", option, exact=False),
+            _role("radio", option, exact=False),
+            {"by": "label", "text": option, "exact": False},
+        ):
+            if await self._choose_by(candidate, option):
+                return True
         # Custom dropdowns: open the field, then click the option text. The
         # field is found by its label, or as the first dropdown-like box
         # after its caption (many apps put the caption beside it unlinked).

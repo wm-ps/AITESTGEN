@@ -26,11 +26,38 @@ afterEach(() => {
 })
 
 describe('ConnectAppForm', () => {
-  it('always shows Username/Password — sign-in is required for every application today', () => {
+  it('shows Username/Password by default — sign-in is on unless the app has no login', () => {
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     expect(screen.getByLabelText('Username')).toBeTruthy()
     expect(screen.getByLabelText('Password')).toBeTruthy()
+  })
+
+  it('an app with no login: switching sign-in off hides the credentials and sends none', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
+      .mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: '1', name: 'My App' }) })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    const toggle = screen.getByRole('switch', { name: 'This application requires sign-in' })
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    expect(screen.queryByLabelText('Username')).toBeNull()
+    expect(screen.queryByLabelText('Password')).toBeNull()
+    expect(screen.getByText(/the app has no login/)).toBeTruthy()
+
+    fireEvent.change(screen.getByLabelText('Application name'), { target: { value: 'My App' } })
+    fireEvent.change(screen.getByLabelText('Deployed URL'), { target: { value: 'https://staging.example.com' } })
+    await passConnectionTest()
+    fireEvent.click(screen.getByRole('button', { name: /Start discovery/ }))
+
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    const body = JSON.parse(fetchMock.mock.calls[1][1].body)
+    expect(body.requires_login).toBe(false)
+    expect(body.username).toBeUndefined()
+    expect(body.password).toBeUndefined()
   })
 
   it('offers Staging/Production/QA plus a free-text Other environment', () => {

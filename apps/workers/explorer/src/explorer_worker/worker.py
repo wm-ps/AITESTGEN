@@ -14,6 +14,7 @@ from temporalio.worker import Worker
 from explorer_worker.activities import (
     breadth_activity,
     build_test_activity,
+    expire_run_activity,
     fail_run_activity,
     finish_exploring_activity,
     finish_testing_activity,
@@ -47,6 +48,7 @@ async def main() -> None:
         activities=[
             promote_activity,
             fail_run_activity,
+            expire_run_activity,
             understand_app_activity,
             hunt_activity,
             breadth_activity,

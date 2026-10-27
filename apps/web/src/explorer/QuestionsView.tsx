@@ -13,9 +13,11 @@ import {
   faPause,
   faPlus,
   faTrashCan,
+  faXmark,
 } from '@fortawesome/free-solid-svg-icons'
 import { AllAnsweredIllustration, EmptyState, QuestionsIllustration } from '../components/EmptyState'
 import { LoadingDots } from '../components/LoadingDots'
+import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { explorerApi, shotUrl, type ExplorerKnowledge, type ExplorerQuestion } from './explorerApi'
 import { glassCard, Pill, timeAgo, type Tone } from './ui'
 
@@ -114,10 +116,48 @@ export function QuestionsView({
   )
 }
 
+// Questions open in a dialog from the header button, over whatever tab you're on.
+export function QuestionsDialog({
+  questions,
+  onAnswered,
+  onOpenShot,
+  onClose,
+}: {
+  questions: ExplorerQuestion[] | null
+  onAnswered: () => Promise<void>
+  onOpenShot: (shotId: string, caption: string) => void
+  onClose: () => void
+}) {
+  useEscapeToClose(onClose)
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(15,23,42,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <div
+        role="dialog"
+        aria-label="Questions for you"
+        onClick={(e) => e.stopPropagation()}
+        style={{ background: 'var(--panel)', border: '1px solid var(--border-2)', borderRadius: 16, boxShadow: '0 30px 80px rgba(8,12,20,0.34), var(--panel-shadow)', width: '100%', maxWidth: 820, maxHeight: '86vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'aitg-fade-up 220ms ease' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: '1px solid var(--line)' }}>
+          <FontAwesomeIcon icon={faCircleQuestion} style={{ fontSize: 14, color: 'var(--accent-2)' }} />
+          <h3 style={{ margin: 0, flex: 1, fontSize: 16, fontWeight: 650, color: 'var(--fg)' }}>Questions for you</h3>
+          <button type="button" aria-label="Close" onClick={onClose} style={{ width: 32, height: 32, border: '1px solid var(--line)', borderRadius: 8, background: 'white', cursor: 'pointer', color: 'var(--fg-3)' }}>
+            <FontAwesomeIcon icon={faXmark} />
+          </button>
+        </div>
+        <div style={{ padding: 20, overflowY: 'auto' }}>
+          <QuestionsView questions={questions} onAnswered={onAnswered} onOpenShot={onOpenShot} />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function QuestionCard({ question: q, onAnswered, onOpenShot }: { question: ExplorerQuestion; onAnswered: () => Promise<void>; onOpenShot: (shotId: string, caption: string) => void }) {
   const kind = KIND[q.kind] ?? KIND.clarify
   const waiting = q.kind !== 'rule'
   const [text, setText] = useState('')
+  // With choices offered, the text box opens from "Other"; without, it's the answer.
+  const [typing, setTyping] = useState(q.options.length === 0)
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const send = async (answer: string) => {
@@ -159,8 +199,8 @@ export function QuestionCard({ question: q, onAnswered, onOpenShot }: { question
           <span style={{ fontSize: 11.5, color: 'var(--fg-5)', marginLeft: 'auto' }}>{timeAgo(q.created_at, Date.now())}</span>
         </div>
         <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)', lineHeight: '21px' }}>{q.question.replace(/^I need this to continue: /, '').replace(/ — is that correct, or a bug\?$/, ' Is that how it should work?')}</div>
-        {q.why && <div style={{ fontSize: 12.5, color: 'var(--fg-3)', lineHeight: '18px', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }} title={q.why}>{q.why}</div>}
-        <div style={{ fontSize: 12.5, color: 'var(--fg-4)', lineHeight: '18px' }}>{kind.effect}</div>
+        {/* One short muted line under the question: why it asks, else what your answer does. */}
+        <div style={{ fontSize: 12.5, color: 'var(--fg-4)', lineHeight: '18px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }} title={q.why ? `${q.why} ${kind.effect}` : kind.effect}>{q.why || kind.effect}</div>
         {q.options.length > 0 && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {q.options.map((option, i) => (
@@ -175,13 +215,18 @@ export function QuestionCard({ question: q, onAnswered, onOpenShot }: { question
                 {busy === option ? <LoadingDots label="Sending" /> : option}
               </button>
             ))}
+            <button type="button" className="button-secondary" disabled={busy !== null} aria-expanded={typing} onClick={() => setTyping(true)} style={{ padding: '7px 14px', fontSize: 13 }}>
+              Other
+            </button>
           </div>
         )}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {typing && (<>
           <input
             className="field"
             aria-label="Your answer"
-            placeholder={q.options.length ? 'Or type a different answer' : 'Type your answer'}
+            autoFocus={q.options.length > 0}
+            placeholder="Type your answer"
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && text.trim() && void send(text.trim())}
@@ -190,6 +235,7 @@ export function QuestionCard({ question: q, onAnswered, onOpenShot }: { question
           <button type="button" className={q.options.length ? 'button-secondary' : 'button-primary'} disabled={!text.trim() || busy !== null} onClick={() => void send(text.trim())}>
             {busy === text.trim() && busy ? <LoadingDots label="Sending" /> : 'Send'}
           </button>
+          </>)}
           <button
             type="button"
             className="button-secondary"
@@ -272,9 +318,10 @@ export function KnowledgePanel({ applicationId }: { applicationId: string }) {
   )
 
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'flex-start' }}>
+    // Side by side, same width and same height, whatever each one holds.
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, alignItems: 'stretch' }}>
       {/* What you have told Explorer */}
-      <section style={{ ...glassCard, padding: '18px 20px', flex: '3 1 420px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <section style={{ ...glassCard, padding: '18px 20px', flex: '1 1 380px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div>
           <div style={{ fontSize: 15, fontWeight: 650, color: 'var(--fg)' }}>What you told Explorer</div>
           <div style={{ fontSize: 12.5, color: 'var(--fg-4)', marginTop: 2 }}>Your answers to its questions. It trusts these over anything the app shows.</div>
@@ -303,7 +350,7 @@ export function KnowledgePanel({ applicationId }: { applicationId: string }) {
       </section>
 
       {/* Teach it more */}
-      <section style={{ ...glassCard, padding: '18px 20px', flex: '2 1 320px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <section style={{ ...glassCard, padding: '18px 20px', flex: '1 1 380px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div>
           <div style={{ fontSize: 15, fontWeight: 650, color: 'var(--fg)' }}>Teach Explorer</div>
           <div style={{ fontSize: 12.5, color: 'var(--fg-4)', marginTop: 2 }}>Requirements and test data it should use in every run.</div>
@@ -389,6 +436,7 @@ export function KnowledgePanel({ applicationId }: { applicationId: string }) {
             {busy === 'fact' ? <LoadingDots label="Adding" /> : <FontAwesomeIcon icon={faPlus} />}
           </button>
         </div>
+        {items !== null && facts.length === 0 && <div style={{ fontSize: 13, color: 'var(--fg-5)', padding: '6px 0' }}>No facts yet.</div>}
         {facts.map((k) => {
           const f = readFact(k.text)
           return (

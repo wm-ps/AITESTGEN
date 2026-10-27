@@ -11,6 +11,7 @@ import base64
 import json
 import logging
 import os
+import time
 from typing import Any
 
 import httpx
@@ -48,6 +49,15 @@ async def ask_json(
         "response_format": {"type": "json_object"},
     }
     last: Exception | None = None
+    # Debug trail in the worker log: what each call asks for, and the gist of
+    # what came back, so a run can be followed without the database.
+    logger.info(
+        "model call -> %s%s: %s",
+        model,
+        f" (+{len(images)} image{'s' if len(images) > 1 else ''})" if images else "",
+        _gist(user, 240),
+    )
+    started = time.monotonic()
     async with httpx.AsyncClient(timeout=240) as client:
         for attempt in range(attempts):
             try:
@@ -58,12 +68,25 @@ async def ask_json(
                 )
                 response.raise_for_status()
                 text = response.json()["choices"][0]["message"]["content"] or ""
-                return _parse_json(text)
+                parsed = _parse_json(text)
+                logger.info(
+                    "model reply <- %s in %.1fs: %s",
+                    model,
+                    time.monotonic() - started,
+                    _gist(json.dumps(parsed, ensure_ascii=False), 300),
+                )
+                return parsed
             except (httpx.HTTPError, KeyError, ValueError) as exc:
                 last = exc
                 logger.warning("explorer llm call failed (attempt %d): %s", attempt + 1, exc)
                 await asyncio.sleep(2 * (attempt + 1))
     raise LLMError(f"model call failed after {attempts} attempts: {last}")
+
+
+def _gist(text: str, limit: int) -> str:
+    """One line, cut short: enough to follow a run in the log."""
+    line = " ".join(text.split())
+    return line if len(line) <= limit else line[: limit - 1] + "…"
 
 
 def _parse_json(text: str) -> dict[str, Any]:

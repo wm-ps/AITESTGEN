@@ -197,6 +197,28 @@ def _owned_run(
     return row[0], row[1]
 
 
+def _mirror_discovery(
+    session: Session, application: Application, status: str, reason: str | None = None
+) -> None:
+    """Explorer is this app's discovery (Stage 8): its classic discovery
+    record follows the run, so the app never shows "discovery running" after
+    the run ended. "complete" is set by the hand-off (worker promote.py);
+    failed/expired runs ended by the worker are mirrored there (journal.py)."""
+    discovery_run = session.exec(
+        select(DiscoveryRun)
+        .where(DiscoveryRun.application_id == application.id, DiscoveryRun.source == "crawler")
+        .order_by(col(DiscoveryRun.created_at).desc())
+    ).first()
+    if discovery_run is None:
+        discovery_run = DiscoveryRun(application_id=application.id)
+    discovery_run.status, discovery_run.stage, discovery_run.failure_reason = (
+        status,
+        "explorer",
+        reason,
+    )
+    session.add(discovery_run)
+
+
 def _to_read(session: Session, run: ExplorerRun, application: Application) -> RunRead:
     screens = session.exec(
         select(ExplorerScreen.hidden_hints, ExplorerScreen.condition).where(
@@ -320,19 +342,7 @@ async def begin_run(
                 source="Run notes",
             )
         )
-    discovery_run = session.exec(
-        select(DiscoveryRun)
-        .where(DiscoveryRun.application_id == application.id, DiscoveryRun.source == "crawler")
-        .order_by(col(DiscoveryRun.created_at).desc())
-    ).first()
-    if discovery_run is None:
-        discovery_run = DiscoveryRun(application_id=application.id)
-    discovery_run.status, discovery_run.stage, discovery_run.failure_reason = (
-        "running",
-        "explorer",
-        None,
-    )
-    session.add(discovery_run)
+    _mirror_discovery(session, application, "running")
     session.commit()
     session.refresh(run)
     await client.start_workflow(
@@ -417,6 +427,45 @@ def list_health(
     return [HealthIssueRead(**row.model_dump()) for row in rows]
 
 
+@router.post("/health/{issue_id}/false-alarm", status_code=204)
+def mark_false_alarm(issue_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep) -> None:
+    """You looked and the app is fine: the finding leaves "Things that look
+    wrong", its open "is this a bug?" question closes, and the app's
+    behaviour is remembered as correct for this and future runs."""
+    row = session.exec(
+        select(ExplorerHealthIssue, ExplorerRun)
+        .join(ExplorerRun, col(ExplorerRun.id) == col(ExplorerHealthIssue.run_id))
+        .join(Application, col(Application.id) == col(ExplorerRun.application_id))
+        .where(ExplorerHealthIssue.id == issue_id, Application.organization_id == org_id)
+    ).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="finding not found")
+    issue, run = row
+    if issue.kind == "false_alarm":
+        return
+    issue.kind = "false_alarm"
+    session.add(issue)
+    for question in session.exec(
+        select(ExplorerQuestion).where(
+            ExplorerQuestion.issue_id == issue.id, ExplorerQuestion.status == "open"
+        )
+    ).all():
+        question.status = "dismissed"
+        session.add(question)
+    fact = f"Correct behaviour (confirmed by the user): {issue.detail or issue.title}"
+    session.add(
+        ExplorerKnowledge(
+            application_id=run.application_id, kind="answer", text=fact[:4000], source="your answer"
+        )
+    )
+    session.add(
+        ExplorerEvent(
+            run_id=run.id, kind="phase", title="You marked a false alarm", detail=issue.title[:600]
+        )
+    )
+    session.commit()
+
+
 @router.get("/shots/{shot_id}")
 def get_shot(shot_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep) -> Response:
     row = session.exec(
@@ -450,9 +499,18 @@ def update_brief(
     return _to_read(session, run, application)
 
 
+# An expired run (its App Summary waited too long for Confirm) is over: it
+# can't be confirmed or resumed, only replaced by a new run.
+_EXPIRED = (
+    "this run expired because its App Summary wasn't confirmed in time; start a new run"
+)
+
+
 @router.post("/runs/{run_id}/confirm", response_model=RunRead)
 async def confirm_brief(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep) -> RunRead:
     run, application = _owned_run(session, run_id, org_id)
+    if run.status == "expired":
+        raise HTTPException(status_code=409, detail=_EXPIRED)
     if run.status != "awaiting_confirmation":
         raise HTTPException(status_code=409, detail="nothing to confirm right now")
     client = await get_temporal_client()
@@ -498,6 +556,7 @@ async def stop_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdD
         raise HTTPException(status_code=409, detail="this run is not running")
     run.status, run.headline, run.updated_at = "stopped", "Stopped", datetime.now(UTC)
     session.add(run)
+    _mirror_discovery(session, application, "failed", "Explorer was stopped before it finished")
     session.add(
         ExplorerEvent(
             run_id=run.id, kind="phase", title="Stopped", detail="Exploration was stopped."
@@ -535,6 +594,7 @@ async def pause_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgId
         raise HTTPException(status_code=409, detail="this run is not running")
     run.status, run.headline, run.updated_at = "paused", "Paused", datetime.now(UTC)
     session.add(run)
+    _mirror_discovery(session, application, "paused")
     session.add(
         ExplorerEvent(
             run_id=run.id,
@@ -558,6 +618,8 @@ async def resume_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgI
     """Carry on a paused, stopped or failed run (a server or worker problem
     included) from the step it reached; finished work is kept."""
     run, application = _owned_run(session, run_id, org_id)
+    if run.status == "expired":
+        raise HTTPException(status_code=409, detail=_EXPIRED)
     if run.status not in ("paused", "stopped", "failed"):
         raise HTTPException(
             status_code=409, detail="only a paused, stopped or failed run can resume"
@@ -574,6 +636,7 @@ async def resume_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgI
     await _end_leftover_workflow(run, "Resumed by the user")
     run.status, run.headline, run.updated_at = "queued", "Resuming", datetime.now(UTC)
     session.add(run)
+    _mirror_discovery(session, application, "running")
     session.commit()
     session.refresh(run)
     client = await get_temporal_client()

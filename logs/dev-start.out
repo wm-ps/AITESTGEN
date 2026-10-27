@@ -1,0 +1,110 @@
+[dev-up] starting web in parallel with docker...
+[dev-up] rebuilding recording-worker image...
+#1 [internal] load local bake definitions
+#1 reading from stdin 600B done
+#1 DONE 0.0s
+
+#2 [internal] load build definition from Dockerfile
+#2 transferring dockerfile: 2.80kB done
+#2 DONE 0.0s
+
+#3 [internal] load metadata for docker.io/library/python:3.14-slim
+#3 ...
+
+#4 [internal] load metadata for ghcr.io/astral-sh/uv:latest
+#4 DONE 1.1s
+
+#3 [internal] load metadata for docker.io/library/python:3.14-slim
+#3 DONE 2.6s
+
+#5 [internal] load .dockerignore
+#5 transferring context: 257B done
+#5 DONE 0.0s
+
+#6 FROM ghcr.io/astral-sh/uv:latest@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336
+#6 resolve ghcr.io/astral-sh/uv:latest@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 done
+#6 DONE 0.0s
+
+#7 [stage-0  1/10] FROM docker.io/library/python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170
+#7 resolve docker.io/library/python:3.14-slim@sha256:a2b82f3c48559aa0a8446d9af49826b6e2b2016f4cd2afabfe6013ec53729170 done
+#7 DONE 0.0s
+
+#8 [internal] load build context
+#8 transferring context: 55.77kB 0.0s done
+#8 DONE 0.1s
+
+#9 [stage-0  6/10] RUN /app/.venv/bin/playwright install --with-deps chromium
+#9 CACHED
+
+#10 [stage-0  7/10] COPY packages/playwright_typecheck/typecheck/package.json packages/playwright_typecheck/typecheck/package-lock.json packages/playwright_typecheck/typecheck/
+#10 CACHED
+
+#11 [stage-0  9/10] COPY . .
+#11 CACHED
+
+#12 [stage-0  2/10] COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+#12 CACHED
+
+#13 [stage-0  3/10] RUN apt-get update && apt-get install -y --no-install-recommends     xvfb     x11vnc     nodejs     npm     xdotool     && rm -rf /var/lib/apt/lists/*
+#13 CACHED
+
+#14 [stage-0  4/10] WORKDIR /app
+#14 CACHED
+
+#15 [stage-0  5/10] RUN --mount=type=cache,target=/root/.cache/uv     --mount=type=bind,source=uv.lock,target=uv.lock     --mount=type=bind,source=pyproject.toml,target=pyproject.toml     uv sync --frozen --no-dev --package recording-worker --no-install-workspace
+#15 CACHED
+
+#16 [stage-0  8/10] RUN cd packages/playwright_typecheck/typecheck && npm install
+#16 CACHED
+
+#17 [stage-0 10/10] RUN --mount=type=cache,target=/root/.cache/uv     uv sync --frozen --no-dev --package recording-worker
+#17 CACHED
+
+#18 exporting to image
+#18 exporting layers done
+#18 exporting manifest sha256:adf9cca6870719537c4276fa239a9bbf3d8be83325a1bfa0119415bce0958c02 done
+#18 exporting config sha256:905ebf6baa285c360fba0fc5dd96671c7f4fdc8506ee93199ac8ef0bdfdb3c94 done
+#18 exporting attestation manifest sha256:9543c8c7a1b3f73a0c198ee1ffdf6444d8015a095a01b09e4a53f077ea99f7e1 done
+#18 exporting manifest list sha256:5c5e8b2052dbf3803f96311ef26108b9faf1e38e9f548b69c012231e23ba256e done
+#18 naming to docker.io/library/aitestgen-recording-worker:latest done
+#18 unpacking to docker.io/library/aitestgen-recording-worker:latest done
+#18 DONE 0.0s
+
+#19 resolving provenance for metadata file
+#19 DONE 0.0s
+ aitestgen-recording-worker  Built
+[dev-up] docker compose up -d --wait ...
+time="2026-10-19T12:39:09+05:30" level=warning msg="Found orphan containers ([aitestgen-minio-1]) for this project. If you removed or renamed this service in your compose file, you can run this command with the --remove-orphans flag to clean it up."
+ Container aitestgen-temporal-1  Running
+ Container aitestgen-vault-1  Running
+ Container aitestgen-postgres-1  Running
+ Container aitestgen-recording-worker-1  Recreate
+ Container aitestgen-recording-worker-1  Recreated
+ Container aitestgen-postgres-1  Waiting
+ Container aitestgen-vault-1  Waiting
+ Container aitestgen-postgres-1  Healthy
+ Container aitestgen-vault-1  Healthy
+ Container aitestgen-recording-worker-1  Starting
+ Container aitestgen-recording-worker-1  Started
+ Container aitestgen-postgres-1  Waiting
+ Container aitestgen-temporal-1  Waiting
+ Container aitestgen-vault-1  Waiting
+ Container aitestgen-recording-worker-1  Waiting
+ Container aitestgen-recording-worker-1  Healthy
+ Container aitestgen-temporal-1  Healthy
+ Container aitestgen-vault-1  Healthy
+ Container aitestgen-postgres-1  Healthy
+[dev-up] starting API...
+[dev-up] starting discovery worker...
+[dev-up] starting generation worker...
+[dev-up] starting execution worker...
+[dev-up] starting explorer worker...
+
+[dev-up] AITestGen is up (or was already running):
+  Web:      http://localhost:5173
+  API:      http://localhost:8000/docs
+  Temporal: http://localhost:8233
+  Sign-in:  dev@example.com / devpassword123
+  Logs:     /Users/pavank_500328/Downloads/AITESTGEN/logs/{web,api,discovery-worker,generation-worker,execution-worker,explorer-worker,typegen}.log
+  Tail:     tail -f /Users/pavank_500328/Downloads/AITESTGEN/logs/*.log
+  Stop:     /Users/pavank_500328/Downloads/AITESTGEN/scripts/dev-stop.sh        (add --keep-docker to leave Postgres/Temporal/Vault up)

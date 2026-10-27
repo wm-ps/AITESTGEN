@@ -19,15 +19,17 @@ Explorer studies an application the way a new QA engineer would:
 
 ### The UI
 
-The Explorer tab sits in each application's sidebar, next to Journeys, with a Beta pill. It has four views:
-- **Live:** stage progress, counters, a live browser view and the "What Explorer is thinking" feed.
-- **App Summary:** the summary to edit, answer questions on, and confirm.
-- **Screens:** the screens Explorer understood, with screenshots and hints about hidden parts.
-- **Health:** the health score and the problems found, each with a "See screen" button.
+The Explorer tab sits in each application's sidebar, next to Journeys, with a Beta pill. Its tab bar (equal-width tabs; the arrow keys move between them) has four views:
+- **Live:** stage progress, counters, a live browser view, the missions, and the "What Explorer is thinking" feed.
+- **What it learned:** the App Summary to edit, answer questions on (each has an **Other** choice with a text box) and confirm; then "What you told Explorer" and "Teach Explorer" side by side; then **Things that look wrong**, folded.
+- **Screens:** the screens Explorer understood, in the order it found them (sign-in first), with screenshots and where each button leads.
+- **Scenarios:** the proven and known-bug test cases.
+
+The **Questions** button in the header shows how many questions are open and pulses when Explorer is waiting on you. It opens the questions in a dialog.
 
 ## Stage 2 (built): missions, app map and recordings
 
-After you **confirm the App Summary**, Explorer plans a **Mission Board** of 8–15 goals:
+After you **confirm the App Summary**, Explorer plans a **Mission Board** of 6–15 goals (more for bigger apps):
 - **Key tasks:** complete a business task end to end.
 - **Hidden branches:** take a different choice that probably changes the path, such as "someone needs urgent help".
 - **New areas:** parts of the app not yet seen.
@@ -42,12 +44,11 @@ Up to **3 missions run at once**, each in its own **recorded** browser:
 - Delete, pay, approve, reject, cancel and sign-out are **never** pressed without your OK.
 - On production apps, nothing is ever saved.
 
-You can **add your own missions** in plain words, or **skip** missions. A mission cut off by a worker restart goes back in the queue once.
+**Follow-up missions.** The board is planned from the first look, which can't see past screens that need data (a policy number, say). So when a mission reaches a screen the plan didn't know about, it queues a follow-up for each choice there it didn't try ("Try 'Pick up where I left off' on Resume claim report"), and one to carry on from the form or wizard step it stopped on because its own goal was met ("Carry on from Claim type"). A follow-up gets there by replaying the recorded clicks (your answers included). Nothing is repeated, and a run has at most 15 missions; what doesn't fit is listed in the feed as "Not explored".
 
-New views:
-- **Missions:** the board (Up next, Exploring now, Finished, Skipped). Each card shows what it should do, the verdict, new screens found, and **Watch recording**, a video with captions synced to Explorer's thoughts.
-- **App map:** every screen and the ways between them. Hidden screens have dashed borders and an "appears when…" note. Click a screen for its details.
-- **Live:** while missions run, one small live browser per running mission, plus counters for hidden screens found and missions finished.
+You can **skip** missions from Live. Adding your own missions in plain words works through the API (`POST /explorer/runs/{id}/missions`); the tab has no button for it yet. A mission cut off by a worker restart goes back in the queue once.
+
+Where it shows: **Live** lists the missions (Up next, Exploring now, Finished) with one small live browser per running mission; **Screens** shows every screen and, per screen, what each button leads to. Mission recordings are stored and served (`GET /explorer/missions/{id}/recording`) but not played in the tab yet.
 
 ## Stage 3 (built): hunting hidden screens
 
@@ -65,7 +66,8 @@ Each discovery is a hidden screen on the App Map with its "appears when…" cond
 - **Memory per app:** your answers, facts you add and **documents you upload** (PDF, Word, text) are trusted knowledge in every prompt, in this run and every future one.
 - Explorer checks memory before asking, so it never asks twice. Answers to the App Summary questions are saved when you confirm.
 - Answering "correct" to a possible bug turns it into the agreed rule. Answering "bug" confirms it.
-- The **Questions** tab holds the open questions and "What Explorer knows".
+- The **Questions** button opens the open questions in a dialog. A question with choices also has **Other**, which opens a text box for your own answer. What Explorer knows is on **What it learned**.
+- In **Things that look wrong**, each finding shows its screenshot, detail and answers at once. **False alarm** takes it off the list, closes its "is this a bug?" question and remembers the behaviour as correct (`POST /explorer/health/{id}/false-alarm`).
 
 ## Stage 5 (built): proven test cases
 
@@ -96,7 +98,7 @@ The **Test cases** tab has a coverage grid (business area × kind), steps, expec
 
 ## The whole run
 
-Sign in → look around → health check and App Summary → **you confirm** → Mission Board → hidden-screen hunt → breadth checks → proven test cases → highlight video.
+Sign in → look around → health check and App Summary → **you confirm** → Mission Board (plus follow-up missions) → hidden-screen hunt → breadth checks → proven test cases → hand-off to Vantage's Journeys, Scenarios and Test cases → highlight video.
 
 ## Running it
 
@@ -106,7 +108,9 @@ Sign in → look around → health check and App Summary → **you confirm** →
 uv run --env-file .env --package explorer-worker python -m explorer_worker.worker
 ```
 
-Then open an application, go to **Explorer**, and press **Start exploring**. Put any test data in the notes box, for example "use policy number POL-10001".
+Then open an application, go to **Explorer**, and press **Start exploring**. Give test data under **What it learned → Teach Explorer → Facts and test data**, for example "use policy number POL-10001". It is used in every run of that app. (The API also takes `notes` when a run starts; the Start card has no box for them.)
+
+The worker log shows each phase as it starts and ends, and every model call: the model, what it asks for, and a short form of the reply with how long it took.
 
 | Setting | Default | What it does |
 |---|---|---|
@@ -119,12 +123,12 @@ Then open an application, go to **Explorer**, and press **Start exploring**. Put
 
 ## Code map
 
-- `packages/explorer_core`: Explorer's own tables, all prefixed `explorer_`. The migrations are `e7a1c3b5d9f2` (Stage 1), `f3b5d7e9a1c4` (Stage 2), `a4c6e8f0b2d5` (Stage 5), `b5d7f9a1c3e6` (Stage 4) and `c6e8a0b2d4f7` (Stages 6–7).
+- `packages/explorer_core`: Explorer's own tables, all prefixed `explorer_`. The migrations are `e7a1c3b5d9f2` (Stage 1), `f3b5d7e9a1c4` (Stage 2), `a4c6e8f0b2d5` (Stage 5), `b5d7f9a1c3e6` (Stage 4), `c6e8a0b2d4f7` (Stages 6–7) and `d7f9b1c3e5a8` (who started a run); `362ae149aa7c` merges them with the discovery branch and is the head.
 - `apps/workers/explorer`:
   - `understand.py`: the look-around loop
   - `mind.py`: reading and remembering each screen, map edges
   - `pursue.py`: going after a goal step by step (walk-throughs and missions)
-  - `missions.py`: Mission Board planning, running, judging and recordings
+  - `missions.py`: Mission Board planning, running, judging, follow-up missions and recordings
   - `brain.py`: prompts
   - `browser.py`: the browser layer
   - `sense.py`: pure rules, unit-tested
@@ -135,14 +139,15 @@ Then open an application, go to **Explorer**, and press **Start exploring**. Put
   - `breadth.py`: roles, unlinked pages, code coverage
   - `tests_stage.py` and `testkit.py`: planning, building, proving and exporting tests
   - `reel.py`: the highlight video
+  - `promote.py`: the hand-off to Vantage (Journeys, Pages, Scenarios, and the components and forms self-healing reads)
 - `apps/api/src/api/explorer.py`: the `/explorer/...` endpoints.
 - `apps/web/src/explorer/`: the Explorer tab.
 
-The classic discovery and scenario code is untouched. Explorer only reads the `application` row and its saved login.
+Explorer is Vantage's discovery: onboarding starts an Explorer run (`EXPLORER_REPLACES_DISCOVERY`, on by default), and at the end of a run `promote.py` writes its results into the classic tables (`journey`, `journey_step`, `page`, `scenario`, plus `component`, `component_locator`, `form` and `form_field` for self-healing). Re-runs retire Explorer's earlier rows instead of deleting them.
 
 ## Still to come
 
-**Stage 8**, Explorer replacing the old discovery, only happens with your approval (PLAN.md §9).
+**Stage 8**, Explorer replacing the old discovery (PLAN.md §9), is switched on in the code: onboarding starts Explorer and its results land in Journeys, Scenarios and Test cases (see the code map). PLAN.md §10's side-by-side comparison with the old discovery, meant to come before that switch, has not been done. `EXPLORER_REPLACES_DISCOVERY=0` turns the switch off.
 
 The highlight video needs ffmpeg and a font on the machine running the worker. When either is missing, Explorer skips the video and says so in the feed.
 
@@ -165,38 +170,41 @@ The highlight video needs ffmpeg and a font on the machine running the worker. W
 
 ## To do next (from the 2026-10-18 review)
 
+All 14 done (2026-10-19 to 2026-10-21).
+
 Explorer UI (`apps/web/src/explorer/`):
 
-1. **What it learned → "What you told Explorer" and "Teach Explorer".** The
-   design needs work, and the two panels don't end at the same height.
-2. **Things that look wrong.** Add a "False alarm" option. The screen is too
-   dense: show the same information without scrolling.
-3. **Screens to cover.** Remove the "pending" state; it isn't needed.
-4. **Search input.** Make it match the other input fields.
-5. **Questions.** Replace the separate tab with a button that shows a
-   notification when there are questions and opens them in a tidy dialog.
-6. **Tab order.** "What it learned" comes right after Live.
-7. **Tab order.** Scenarios is the last tab.
-8. **Tabs.** The tab bar is uneven; use a better tabs component.
-9. **Questions for you.** Make them simple to read, and always offer an
-   "Other" option with a text box.
-10. **Labels like "Press icon to contact details"** (seen on FNOL) don't make
-    sense to a reader. Name what the button is for, in plain words.
-11. **Screens tab.** Remove "something looks wrong" there. It isn't clear, and
-    "things that look wrong" already covers it.
-12. **Screens tab order.** Show screens in the order Explorer found them (sign
-    in can't be last).
+1. ✅ **"What you told Explorer" and "Teach Explorer"** are the same width and
+   height, and each says so when it's empty.
+2. ✅ **Things that look wrong** has a **False alarm** option, and shows each
+   finding's screenshot, detail and answers in a compact grid with nothing to
+   expand.
+3. ✅ **Screens to cover: no "pending" state.** Already true in the committed
+   code: screens have no status (a screen shows once Explorer reaches it),
+   and no "pending" mark exists anywhere in the Explorer tab.
+4. ✅ **Search input** looks like every other field.
+5. ✅ **Questions** moved from a tab to a header button with a count that
+   pulses when Explorer is waiting; it opens a dialog.
+6. ✅ **Tab order:** "What it learned" comes right after Live.
+7. ✅ **Tab order:** Scenarios is last.
+8. ✅ **Tabs:** equal-width segmented tabs that don't shift; arrow keys move
+   between them.
+9. ✅ **Questions for you** are numbered and easier to read, and every question
+   (in the summary and during a run) offers **Other** with a text box.
+10. ✅ **Plain-word button names.** The shared prompt asks the model to name a
+    button by what it is for, never by its icon; the Screens map drops icon
+    text and calls a bare icon "an unlabelled button".
+11. ✅ **Screens tab:** "Something looks wrong" is gone.
+12. ✅ **Screens tab order:** the order Explorer found them, sign-in first.
 
 Explorer worker:
 
-13. **Feed self-healing.** Healing relies on the database's `component`,
-    `component_locator` (buttons and how to find them), `form` and
-    `form_field` (fields and their input types). Have Explorer save this data
-    for the screens it learns, so healing finds what it expects. Persist only;
-    Explorer's own logic stays the same.
-14. **Debug logging for model calls.** Log each phase as it starts and ends,
-    each model call (what it asks for), and a short form of what came back,
-    so a run can be followed and debugged from the worker log.
+13. ✅ **Feed self-healing.** At hand-off, each screen's Page also gets a
+    `component` + `component_locator` (role locator, text fallback) per
+    button/link, and a `form` with a `form_field` per field (input type,
+    required), in the classic crawler's shape. Persist only.
+14. ✅ **Debug logging for model calls**, and phase start/end, in the worker
+    log.
 
 ## To do next: fewer dropped scenarios (brainstormed 2026-10-18)
 

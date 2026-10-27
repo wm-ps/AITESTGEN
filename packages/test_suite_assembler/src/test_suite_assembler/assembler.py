@@ -478,6 +478,19 @@ def _build_auth_setup_script(auth_method: str, login_evidence: LoginPageEvidence
         "      .then(() => true)\n"
         "      .catch(() => false)\n"
         "    if (!navigated) continue\n"
+        # `[FIXED]` Decide only once the page has settled: a hash-routed app
+        # whose home page needs no login (FNOL) still shows the bare login
+        # address right after goto() and adds its route (`#/ReportClaim`) a
+        # moment later, so checking at once read it as "still on the login
+        # page" and waited for a password field that never exists.
+        "    await Promise.race([\n"
+        "      passwordField.waitFor({ state: 'visible', timeout: 15000 }),\n"
+        "      page.waitForURL(\n"
+        "        (u) => u.href.replace(/#\\/?$/, '') !==\n"
+        "          new URL(loginUrl, u).href.replace(/#\\/?$/, ''),\n"
+        "        { timeout: 15000 },\n"
+        "      ),\n"
+        "    ]).catch(() => {})\n"
         "    if (await isAuthenticated(page, loginUrl)) {\n"
         "      alreadyAuthenticated = true\n"
         "      ready = true\n"

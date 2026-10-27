@@ -90,6 +90,8 @@ async def replay(eyes: Eyes, script: list[dict[str, Any]], failed: list[str] | N
                 await eyes.wait_for_change(before, 8000)
             i += 1
             continue
+        if fresh:
+            await eyes.start_fresh_if_asked()
         if advances_step(step):
             try:
                 await eyes.page.evaluate(UNTICK_UNCHOSEN_JS, chosen_on_screen(script, i))
@@ -126,13 +128,16 @@ async def _do(eyes: Eyes, step: dict[str, Any]) -> bool:
         await eyes.page.goto("about:blank")
         await eyes.goto(str(step["url"]))
         return True
+    # A recorded locator is used as-is: the replay proves the very locator
+    # the exported test will use (ts_locator), not a fresh guess.
+    spec = step.get("locator")
     if action == "fill":
-        return await eyes.fill_field(str(step["field"]), str(step["value"]))
+        return await eyes.fill_field(str(step["field"]), str(step["value"]), spec=spec)
     if action == "choose":
-        return await eyes.choose(str(step.get("field") or ""), str(step["option"]))
+        return await eyes.choose(str(step.get("field") or ""), str(step["option"]), spec=spec)
     if action == "click":
         before = await eyes.fingerprint()
-        ok = await eyes.click_text(str(step["label"]), "button")
+        ok = await eyes.click_text(str(step["label"]), "button", spec=spec)
         if ok:
             await eyes.wait_for_change(before, 8000)
         return ok
@@ -163,21 +168,30 @@ def describe(step: dict[str, Any]) -> str:
     return "opening the screen"
 
 
-def _norm(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip().lower()
-
-
 def api_call_made(calls: list[tuple[str, str, int]], value: str) -> bool:
     """`value` is "METHOD address-part", e.g. "POST /api/claims": did the
     page make that call, and did the server accept it (status below 400)?"""
+    return api_call_count(calls, value) > 0
+
+
+def api_call_count(calls: list[tuple[str, str, int]], value: str) -> int:
     method, _, part = value.strip().partition(" ")
-    return any(
-        m.upper() == method.upper() and part.strip() in url and status < 400
+    return sum(
+        1
         for m, url, status in calls
+        if m.upper() == method.upper() and part.strip() in url and status < 400
     )
 
 
-async def holds(eyes: Eyes, check: dict[str, Any]) -> bool:
+# Same as the exported test's ASSERTION_TIMEOUT_MS for its final check.
+PROOF_WAIT_MS = 15000
+# Proving a proof is ABSENT (the broken-on-purpose run): the page has already
+# settled, so a short look is enough — waiting the full 15s for something
+# that should not appear cost ~15s on every scenario that passed the check.
+ABSENT_WAIT_MS = 3000
+
+
+async def holds(eyes: Eyes, check: dict[str, Any], wait_ms: int = PROOF_WAIT_MS) -> bool:
     """Is the test's proof true on the current screen?"""
     assert eyes.page is not None
     value = str(check.get("value") or "")
@@ -187,8 +201,20 @@ async def holds(eyes: Eyes, check: dict[str, Any]) -> bool:
         return value.lower() in eyes.page.url.lower()
     if check.get("kind") == "api_call":
         return api_call_made(eyes.calls_since_mark(), value)
-    body = await eyes.page.evaluate("() => document.body ? document.body.innerText : ''")
-    return _norm(value) in _norm(body)
+    # Exactly what the exported test checks (`getByText(value)`, visible): one
+    # element showing the text. Several labels joined into one string ("Mobile
+    # number Email Continue") are in the page's text but in no single element,
+    # so they were "proof" here and never matched in the exported test.
+    # And waiting as it waits (expect().toBeVisible, ASSERTION_TIMEOUT_MS): a
+    # confirmation that appears once the app's server answers ("Claim
+    # received" after Send) is proof, not "not on screen" a moment too early.
+    try:
+        await eyes.page.get_by_text(value).filter(visible=True).first.wait_for(
+            state="visible", timeout=wait_ms
+        )
+        return True
+    except Exception:  # noqa: BLE001 — never appeared (or the page broke): not proven
+        return False
 
 
 def without_decisive_step(script: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -203,8 +229,70 @@ def without_decisive_step(script: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return script
 
 
+_INPUTS = ("fill", "choose", "upload")
+
+
+def broken_variants(
+    script: list[dict[str, Any]], own_from: int | None = None
+) -> list[list[dict[str, Any]]]:
+    """The deliberately broken runs to try, in order; the test catches a
+    breakage when its proof fails in any one of them. First without the last
+    real action (`without_decisive_step`). Then — when it is known where the
+    test's own steps begin (`own_from`, after the route to its screen) —
+    without the last thing the test entered or chose: an inline validation
+    message appears on typing, so removing the final Continue changes nothing,
+    while removing the bad value does. Never a step of the route itself: a
+    route that breaks would make any proof vanish and prove nothing."""
+    variants: list[list[dict[str, Any]]] = []
+    last = without_decisive_step(script)
+    if last != script:
+        variants.append(last)
+    if own_from is not None:
+        for index in range(len(script) - 1, max(own_from, 1) - 1, -1):
+            if script[index].get("do") in _INPUTS:
+                variant = script[:index] + script[index + 1 :]
+                if variant not in variants:
+                    variants.append(variant)
+                break
+    return variants
+
+
 def _q(text: object) -> str:
     return json.dumps(str(text), ensure_ascii=False)
+
+
+def ts_locator(spec: dict[str, Any]) -> str:
+    """The exported test's locator for a recorded one (browser.locate): the
+    same Playwright call Explorer made, so the test finds the element Explorer
+    actually used — never a re-guess from the label."""
+    by = spec.get("by")
+    exact = "true" if spec.get("exact") else "false"
+    if by == "role":
+        base = (
+            f"page.getByRole({_q(spec['role'])}, {{ name: {_q(spec['name'])}, exact: {exact} }})"
+        )
+    elif by in ("label", "select_label"):
+        base = f"page.getByLabel({_q(spec['text'])}, {{ exact: {exact} }})"
+    elif by == "placeholder":
+        base = f"page.getByPlaceholder({_q(spec['text'])})"
+    elif by == "text":
+        base = f"page.getByText({_q(spec['text'])}, {{ exact: {exact} }})"
+    elif by == "css":
+        base = f"page.locator({_q(spec['selector'])})"
+    elif by == "select_with":
+        base = (
+            "page.locator('select').filter({ has: page.locator('option', "
+            f"{{ hasText: {_q(spec['option'])} }}) }})"
+        )
+    else:
+        raise ValueError(f"unknown locator {spec!r}")
+    return base + ".filter({ visible: true }).first()"
+
+
+# Same rule as Eyes._choose_by: an option already selected stays selected.
+_CHECKABLE = (
+    "(e) => e.matches('input[type=checkbox],input[type=radio],[role=checkbox],[role=radio]')"
+)
 
 
 def playwright_code(
@@ -312,7 +400,7 @@ def playwright_code(
                 uses_login, value = True, f"CREDENTIALS.{token.strip('{}')}"
             elif "{{" in str(step["value"]):
                 uses_rel, value = True, f"rel({value})"
-            field = (
+            field = ts_locator(step["locator"]) if step.get("locator") else (
                 f"page.getByLabel({_q(step['field'])})"
                 + (
                     f".or(page.locator({_q(field_after_caption(str(step['field'])))}))"
@@ -332,6 +420,30 @@ def playwright_code(
                     f"  await page.getByRole('option', {{ name: {_q(step['suggest'])} }})"
                     ".filter({ visible: true }).first().click({ timeout: ASSERTION_TIMEOUT_MS });"
                 )
+        elif action == "choose" and step.get("locator"):
+            option = _q(step["option"])
+            target = ts_locator(step["locator"])
+            if step["locator"].get("by") in ("select_label", "select_with"):
+                body.append(
+                    act(
+                        target,
+                        f"selectOption({{ label: {option} }}, {{ timeout: ASSERTION_TIMEOUT_MS }})",
+                    )
+                )
+            else:
+                pick = (
+                    f"if (!((await target.evaluate({_CHECKABLE})) && "
+                    "(await target.isChecked().catch(() => false)))) "
+                    "await target.click({ timeout: ASSERTION_TIMEOUT_MS });"
+                )
+                if optional:
+                    body.append(
+                        f"  {{ const target = {target}; if (await target.waitFor("
+                        "{ state: 'visible', timeout: 4000 }).then(() => true, () => false)) "
+                        f"{{ {pick} }} }}"
+                    )
+                else:
+                    body.append(f"  {{ const target = await ensureVisible({target}); {pick} }}")
         elif action == "choose":
             option = _q(step["option"])
             # Choosing means "make sure it's selected": an option a saved
@@ -373,7 +485,7 @@ def playwright_code(
             # replay does: two "Continue" presses in a row otherwise both land
             # on the first screen while the second is still rendering.
             body.append("  { const before = await page.locator('body').innerText();")
-            button = (
+            button = ts_locator(step["locator"]) if step.get("locator") else (
                 f"page.getByRole('button', {{ name: {label} }})"
                 f".or(page.getByRole('link', {{ name: {label} }})).filter({{ visible: true }}).first()"
             )
@@ -508,7 +620,7 @@ _FILL_TS = [
     "  if (!value.trim()) {",
     "    if (readOnly) {",
     "      await box.click();",
-    "      await page.keyboard.press('Control+A');",
+    "      await page.keyboard.press('ControlOrMeta+A');",
     "      await page.keyboard.press('Delete');",
     "      await page.keyboard.press('Escape');",
     "    } else {",
@@ -566,7 +678,7 @@ _FILL_TS = [
     "    for (const v of variants) {",
     "      await box.evaluate((e) => e.removeAttribute('readonly'));",
     "      await box.click();",
-    "      await page.keyboard.press('Control+A');",
+    "      await page.keyboard.press('ControlOrMeta+A');",
     "      await page.keyboard.type(v);",
     "      await page.keyboard.press('Tab');",
     "      await page.waitForTimeout(300);",

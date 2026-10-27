@@ -18,6 +18,7 @@ export type ExplorerStatus =
   | 'failed'
   | 'stopped'
   | 'paused'
+  | 'expired'
 
 export const WORKING_STATUSES: ExplorerStatus[] = ['queued', 'signing_in', 'understanding', 'summarizing', 'confirmed', 'planning', 'exploring', 'hunting', 'testing']
 
@@ -123,7 +124,7 @@ export type AppMap = {
   edges: { from_id: string; to_id: string; action: string }[]
 }
 
-export type TestKind = 'navigation' | 'validation' | 'error_state' | 'data_load' | 'form_submission'
+export type TestKind = 'navigation' | 'validation' | 'error_state' | 'data_load' | 'form_submission' | 'journey'
 
 export type ExplorerTestCase = {
   id: string
@@ -223,6 +224,7 @@ export const explorerApi = {
     request<ExplorerEvent[]>(`/explorer/runs/${runId}/events?after=${after}`),
   screens: (runId: string) => request<ExplorerScreen[]>(`/explorer/runs/${runId}/screens`),
   health: (runId: string) => request<ExplorerHealthIssue[]>(`/explorer/runs/${runId}/health`),
+  falseAlarm: (issueId: string) => request<undefined>(`/explorer/health/${issueId}/false-alarm`, { method: 'POST' }),
   saveBrief: (runId: string, brief: AppBrief) =>
     request<ExplorerRun>(`/explorer/runs/${runId}/brief`, { method: 'PUT', body: JSON.stringify(brief) }),
   confirm: (runId: string) => request<ExplorerRun>(`/explorer/runs/${runId}/confirm`, { method: 'POST' }),

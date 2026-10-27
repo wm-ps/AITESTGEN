@@ -2,11 +2,12 @@
 screenshots, understood screens, health issues, run status. Short-lived DB
 sessions per write so the Live screen sees progress immediately."""
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from domain import Application, PlatformUser
+from domain import Application, DiscoveryRun, PlatformUser
 from explorer_core import (
     ExplorerEvent,
     ExplorerHealthIssue,
@@ -20,6 +21,19 @@ from explorer_core.notify import send_pause_email
 from sqlmodel import Session, col, select
 
 from explorer_worker.db import engine
+
+logger = logging.getLogger(__name__)
+
+
+def _fail_discovery(session: Session, application_id: uuid.UUID, reason: str | None) -> None:
+    discovery_run = session.exec(
+        select(DiscoveryRun)
+        .where(DiscoveryRun.application_id == application_id, DiscoveryRun.source == "crawler")
+        .order_by(col(DiscoveryRun.created_at).desc())
+    ).first()
+    if discovery_run is not None and discovery_run.status == "running":
+        discovery_run.status, discovery_run.failure_reason = "failed", (reason or "")[:500] or None
+        session.add(discovery_run)
 
 
 class Journal:
@@ -41,6 +55,10 @@ class Journal:
                 setattr(run, key, value)
             run.updated_at = datetime.now(UTC)
             session.add(run)
+            if changes.get("status") in ("failed", "expired"):
+                # Ended without a hand-off: the app's discovery record (Stage 8)
+                # says so too, instead of "running" forever.
+                _fail_discovery(session, run.application_id, run.error or run.headline)
             session.commit()
 
     def status(self) -> str | None:
@@ -62,6 +80,15 @@ class Journal:
     def event(
         self, kind: str, title: str, detail: str | None = None, shot_id: uuid.UUID | None = None
     ) -> None:
+        # Phases start and end with these: mirrored to the worker log.
+        if kind in ("phase", "summary", "error"):
+            logger.info(
+                "run %s%s %s: %s",
+                self.run_id,
+                f" mission {self.mission_id}" if self.mission_id else "",
+                kind,
+                title if not detail else f"{title} — {' '.join(detail.split())[:200]}",
+            )
         with Session(engine) as session:
             session.add(
                 ExplorerEvent(

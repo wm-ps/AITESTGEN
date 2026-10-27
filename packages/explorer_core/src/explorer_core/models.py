@@ -34,6 +34,7 @@ RUN_STATUSES = (
     "failed",
     "stopped",
     "paused",  # stopped on purpose, to be resumed from where it left off
+    "expired",  # the App Summary was never confirmed in time; ended for good
 )
 ACTIVE_RUN_STATUSES = (
     "queued",
@@ -41,6 +42,7 @@ ACTIVE_RUN_STATUSES = (
     "understanding",
     "summarizing",
     "awaiting_confirmation",
+    "confirmed",  # between Confirm and mission planning: still running
     "planning",
     "exploring",
     "hunting",
@@ -194,6 +196,12 @@ class ExplorerScreen(SQLModel, table=True):
     # Set when the screen only appeared because of a particular choice or
     # situation (a branch mission) — a "hidden screen" (PLAN.md §5).
     condition: str | None = Field(default=None)
+    # The shortest recorded way here from an entry point, replayable without
+    # the model: scenarios and missions fast-forward to this screen instead of
+    # having the model walk in again (pursue.remember_route).
+    route: list[dict[str, Any]] | None = Field(
+        default=None, sa_column=Column(JSONB, nullable=True)
+    )
     created_at: datetime = _ts()
 
 

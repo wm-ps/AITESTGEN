@@ -26,6 +26,7 @@ with workflow.unsafe.imports_passed_through():
     from explorer_worker.activities import (
         BREADTH_ACTIVITY,
         BUILD_TEST_ACTIVITY,
+        EXPIRE_RUN_ACTIVITY,
         FAIL_RUN_ACTIVITY,
         FINISH_ACTIVITY,
         FINISH_TESTING_ACTIVITY,
@@ -50,6 +51,8 @@ _ONCE = RetryPolicy(maximum_attempts=1)
 _QUICK = timedelta(minutes=2)
 # A run's steps in order; a run can start at any of them (see `run`).
 STEPS = ("understand", "confirm", "plan_missions", "missions", "hunt", "plan_tests", "build_tests")
+# How long the App Summary waits for Confirm before the run expires.
+CONFIRM_WAIT_DAYS = 14
 
 
 @workflow.defn(name=EXPLORER_WORKFLOW_NAME)
@@ -104,9 +107,17 @@ class ExplorerRunWorkflow:
                 return outcome
         if doing("confirm"):
             try:
-                await workflow.wait_condition(lambda: self._confirmed, timeout=timedelta(days=14))
+                await workflow.wait_condition(
+                    lambda: self._confirmed, timeout=timedelta(days=CONFIRM_WAIT_DAYS)
+                )
             except TimeoutError:
-                return "unconfirmed"
+                # Never leave it "awaiting confirmation" with nothing waiting:
+                # that blocks every new run for the app.
+                return await workflow.execute_activity(
+                    EXPIRE_RUN_ACTIVITY,
+                    args=[run_id, CONFIRM_WAIT_DAYS],
+                    start_to_close_timeout=_QUICK,
+                )
         if doing("plan_missions"):
             planned: int = await workflow.execute_activity(
                 PLAN_MISSIONS_ACTIVITY,

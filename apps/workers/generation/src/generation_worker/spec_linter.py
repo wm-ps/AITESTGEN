@@ -178,7 +178,11 @@ def lint_sibling_consistency(code: str, sibling_code: str) -> list[str]:
     return warnings
 
 
-_TEST_CALL_RE = re.compile(r"(test(?:\.describe)?)\(\s*(['\"])(.*?)\2\s*,\s*(?:\{[^}]*?\}\s*,\s*)?")
+# `(?<![\w.$])`: the Playwright call, never a `.test(` method call (a regex's
+# `/x/.test('')` inside a helper string) that comes earlier in the file.
+_TEST_CALL_RE = re.compile(
+    r"(?<![\w.$])(test(?:\.describe)?)\(\s*(['\"])(.*?)\2\s*,\s*(?:\{[^}]*?\}\s*,\s*)?"
+)
 
 
 _INLINE_TAG_RE = re.compile(r"\s*@(?:auth|public)\b")

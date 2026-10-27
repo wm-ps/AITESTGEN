@@ -31,6 +31,7 @@ REEL_ACTIVITY = "explorer_highlight_video"
 PROMOTE_ACTIVITY = "explorer_send_to_vantage"
 RESUME_POINT_ACTIVITY = "explorer_resume_point"
 FAIL_RUN_ACTIVITY = "explorer_fail_run"
+EXPIRE_RUN_ACTIVITY = "explorer_expire_run"
 
 
 @contextlib.asynccontextmanager
@@ -211,6 +212,25 @@ async def promote_activity(run_id: str) -> dict[str, int]:
             (str(exc).splitlines() or ["?"])[0][:300],
         )
         return {}
+
+
+@activity.defn(name=EXPIRE_RUN_ACTIVITY)
+async def expire_run_activity(run_id: str, days: int) -> str:
+    """Nobody confirmed the App Summary in time: the run ends for good
+    ("expired" — not resumable, not active, so the app is free for a new
+    run). A run stopped meanwhile keeps its own status."""
+    journal = Journal(uuid.UUID(run_id))
+    status = journal.status()
+    if status != "awaiting_confirmation":
+        return status or "gone"
+    journal.event(
+        "phase",
+        "App Summary expired",
+        f"Nobody confirmed it within {days} days, so this run has ended. Start a new run: "
+        "it begins from what this one learned, and your answers are kept.",
+    )
+    journal.update_run(status="expired", headline=f"Expired: not confirmed within {days} days")
+    return "expired"
 
 
 @activity.defn(name=FAIL_RUN_ACTIVITY)

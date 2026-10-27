@@ -56,6 +56,9 @@ export function ConnectAppForm({
   const [customEnvironment, setCustomEnvironment] = useState(
     application && !KNOWN_ENVIRONMENTS.includes(application.environment) ? application.environment : '',
   )
+  // On by default: most apps need a login. Off means the app has none — no
+  // credentials are asked for and Explorer opens it directly.
+  const [requiresLogin, setRequiresLogin] = useState(application?.requires_login ?? true)
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [notes, setNotes] = useState<NotesFormState>(EMPTY_NOTES_FORM)
@@ -121,8 +124,8 @@ export function ConnectAppForm({
         environment: environment === 'other' ? customEnvironment : environment,
         discovery_required: discoveryRequired,
         auth_method: 'standard_login' as ApplicationCreate['auth_method'],
-        username,
-        password,
+        requires_login: requiresLogin,
+        ...(requiresLogin ? { username, password } : {}),
         // Backend collapses an all-blank object to `null` — safe to always
         // include, no need to check whether anything was actually typed.
         application_context: toNotesPayload(notes),
@@ -146,8 +149,8 @@ export function ConnectAppForm({
             {readOnly
               ? 'What was submitted when this application connected.'
               : discoveryRequired
-                ? 'Enter the deployed URL and sign-in credentials. Discovery starts immediately — journeys, scenarios and Playwright code follow automatically.'
-                : 'Enter the deployed URL and sign-in credentials. No discovery runs — add test cases yourself by writing them or recording them.'}
+                ? `Enter the deployed URL${requiresLogin ? ' and sign-in credentials' : ''}. Discovery starts immediately — journeys, scenarios and Playwright code follow automatically.`
+                : `Enter the deployed URL${requiresLogin ? ' and sign-in credentials' : ''}. No discovery runs — add test cases yourself by writing them or recording them.`}
           </div>
         </div>
 
@@ -273,22 +276,52 @@ export function ConnectAppForm({
             <div style={{ height: 1, background: 'var(--line)' }} />
 
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-              <div
-                title="Sign-in is required for every application"
-                style={{ width: 36, height: 20, flex: 'none', borderRadius: 1000, padding: 2, display: 'flex', background: 'var(--ok)' }}
+              <button
+                type="button"
+                role="switch"
+                aria-checked={requiresLogin}
+                aria-labelledby="connect-app-requires-login"
+                disabled={readOnly}
+                onClick={() => setRequiresLogin((v) => !v)}
+                style={{
+                  width: 36,
+                  height: 20,
+                  flex: 'none',
+                  borderRadius: 1000,
+                  padding: 2,
+                  display: 'flex',
+                  border: 'none',
+                  cursor: readOnly ? 'default' : 'pointer',
+                  background: requiresLogin ? 'var(--ok)' : 'var(--border-2)',
+                  transition: 'background 0.15s',
+                }}
               >
-                <div style={{ width: 16, height: 16, borderRadius: 1000, background: 'var(--on-ok)', transform: 'translateX(16px)' }} />
-              </div>
+                <span
+                  style={{
+                    width: 16,
+                    height: 16,
+                    borderRadius: 1000,
+                    background: requiresLogin ? 'var(--on-ok)' : '#fff',
+                    transform: requiresLogin ? 'translateX(16px)' : 'none',
+                    transition: 'transform 0.15s',
+                  }}
+                />
+              </button>
               <div>
-                <div style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--fg-1)' }}>This application requires sign-in</div>
+                <div id="connect-app-requires-login" style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--fg-1)' }}>
+                  This application requires sign-in
+                </div>
                 <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
-                  {discoveryRequired
-                    ? 'Credentials are stored encrypted and injected at discovery and run time only.'
-                    : 'Credentials are stored encrypted and injected at run time only.'}
+                  {!requiresLogin
+                    ? 'Off: the app has no login. Discovery and your tests open it directly — no username or password is needed.'
+                    : discoveryRequired
+                      ? 'Credentials are stored encrypted and injected at discovery and run time only. Turn this off if the app has no login.'
+                      : 'Credentials are stored encrypted and injected at run time only. Turn this off if the app has no login.'}
                 </div>
               </div>
             </div>
 
+            {requiresLogin && (
             <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, padding: 14, background: 'var(--panel)', display: 'flex', flexDirection: 'column', gap: 12 }}>
               <Field label="Login URL (optional)">
                 <input
@@ -306,7 +339,7 @@ export function ConnectAppForm({
                     required={!readOnly}
                     readOnly={readOnly}
                     autoComplete="off"
-                    placeholder={readOnly ? 'Stored securely — not shown' : 'Service account email'}
+                    placeholder={readOnly ? 'Stored securely — not shown' : 'Enter the username'}
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     style={{ ...fieldInputStyle, background: 'var(--panel)' }}
@@ -318,7 +351,7 @@ export function ConnectAppForm({
                     readOnly={readOnly}
                     required={!readOnly}
                     autoComplete="off"
-                    placeholder={readOnly ? 'Stored securely — not shown' : 'Password or token'}
+                    placeholder={readOnly ? 'Stored securely — not shown' : 'Enter the password or token'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     style={{ ...fieldInputStyle, background: 'var(--panel)' }}
@@ -326,6 +359,7 @@ export function ConnectAppForm({
                 </Field>
               </div>
             </div>
+            )}
 
             {!readOnly && (
               <div style={{ border: '1px solid var(--border-2)', borderRadius: 10, padding: 14, background: 'var(--panel)', display: 'flex', flexDirection: 'column', gap: notesExpanded ? 14 : 0 }}>

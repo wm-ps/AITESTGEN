@@ -481,15 +481,20 @@ class ApplicationCreate(BaseModel):
         "(tests are authored or recorded instead).",
     )
     auth_method: AuthMethod = "standard_login"
+    requires_login: bool = Field(
+        default=True,
+        description="False when the application has no login at all: no username or "
+        "password is needed, and Explorer opens it directly.",
+    )
     username: str | None = Field(
         default=None,
         description="Dedicated Test Account username — not a real end-user identity. "
-        "Required when auth_method is 'standard_login'.",
+        "Required when auth_method is 'standard_login' and requires_login is true.",
     )
     password: str | None = Field(
         default=None,
         description="Dedicated Test Account password — not a real end-user identity. "
-        "Required when auth_method is 'standard_login'.",
+        "Required when auth_method is 'standard_login' and requires_login is true.",
     )
     session_state: str | None = Field(
         default=None,
@@ -520,7 +525,11 @@ class ApplicationCreate(BaseModel):
 
     @model_validator(mode="after")
     def _credentials_match_auth_method(self) -> ApplicationCreate:
-        if self.auth_method == "standard_login" and not (self.username and self.password):
+        if (
+            self.auth_method == "standard_login"
+            and self.requires_login
+            and not (self.username and self.password)
+        ):
             raise ValueError("username and password are required for standard_login")
         if self.auth_method == "sso_session_reuse" and not self.session_state:
             raise ValueError("session_state is required for sso_session_reuse")
@@ -567,6 +576,7 @@ class ApplicationRead(BaseModel):
     auth_method: AuthMethod
     created_at: datetime
     discovery_required: bool = True
+    requires_login: bool = True
     # `None` only for an Application created with `discovery_required=false`
     # (no crawler DiscoveryRun ever exists for it).
     discovery_run_id: uuid.UUID | None
@@ -692,6 +702,7 @@ def _to_application_read(
         auth_method=application.auth_method,  # type: ignore[arg-type]
         created_at=application.created_at,
         discovery_required=application.discovery_required,
+        requires_login=application.requires_login,
         discovery_run_id=discovery_run.external_id if discovery_run else None,
         discovery_status=discovery_run.status if discovery_run else None,
         discovery_stage=discovery_run.stage if discovery_run else None,
@@ -776,7 +787,13 @@ async def create_application(
     # Exactly one of the two credential shapes is stored, matching the
     # Authentication method select's "one selected at a time" rule (Story 1.4).
     if payload.auth_method == "standard_login":
-        creds = {"username": payload.username, "password": payload.password}
+        # No login: an empty credential is still stored, so every reader of
+        # `secret_ref` keeps working (and credentials can be added later).
+        creds = (
+            {"username": payload.username, "password": payload.password}
+            if payload.requires_login
+            else {"username": "", "password": ""}
+        )
         credential = json.dumps(creds).encode()
     else:
         credential = payload.session_state.encode()  # type: ignore[union-attr]
@@ -789,6 +806,7 @@ async def create_application(
         login_url=payload.login_url,
         environment=payload.environment,
         auth_method=payload.auth_method,
+        requires_login=payload.requires_login or payload.auth_method != "standard_login",
         discovery_required=payload.discovery_required,
         secret_ref=secret_ref.path,
         # Set before `start_discovery_run` below so the very first
@@ -1314,6 +1332,11 @@ def update_application_credentials(
         creds["mfa_enabled"] = True
         creds["totp_seed"] = payload.totp_seed
     VaultSecretsClient().update(SecretRef(path=application.secret_ref), json.dumps(creds).encode())
+    if payload.username and not application.requires_login:
+        # Saving a login means the app has one now.
+        application.requires_login = True
+        session.add(application)
+        session.commit()
     discovery_run = _latest_discovery_run(session, application.id)
     assert discovery_run is not None or not application.discovery_required
     return _to_application_read(session, application, discovery_run)
@@ -1325,6 +1348,39 @@ class CredentialListEntry(BaseModel):
     environment: str
     username: str
     has_password: bool
+    requires_login: bool = True
+
+
+class RequiresLoginPayload(BaseModel):
+    requires_login: bool
+
+
+@app.patch("/applications/{external_id}/requires-login", response_model=ApplicationRead)
+def update_requires_login(
+    external_id: uuid.UUID,
+    payload: RequiresLoginPayload,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> ApplicationRead:
+    """Settings' "Requires sign-in" switch. Off: the app has no login, so
+    Explorer opens it directly (saved credentials are kept, just unused).
+    On: only once a username and password are saved for it."""
+    application = _get_org_application(session, organization_id, external_id)
+    if application.auth_method != "standard_login":
+        raise HTTPException(status_code=422, detail="Only username-and-password apps have this switch")
+    if payload.requires_login:
+        creds = json.loads(VaultSecretsClient().resolve(SecretRef(path=application.secret_ref)))
+        if not (creds.get("username") and creds.get("password")):
+            raise HTTPException(
+                status_code=422,
+                detail="Add this application's username and password first, then turn sign-in on.",
+            )
+    application.requires_login = payload.requires_login
+    session.add(application)
+    session.commit()
+    discovery_run = _latest_discovery_run(session, application.id)
+    return _to_application_read(session, application, discovery_run)
 
 
 # Vantage V2 Settings' cross-application "Saved credentials" table.
@@ -1365,6 +1421,7 @@ def list_credentials(
                 environment=application.environment,
                 username=creds.get("username", ""),
                 has_password=bool(creds.get("password")),
+                requires_login=application.requires_login,
             )
         )
     return result
