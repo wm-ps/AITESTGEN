@@ -3576,6 +3576,10 @@ class TestResultRead(BaseModel):
     # "Retry with self-healing" workflow (`heal-{id}`) is running, otherwise
     # "automatic" (the HealTestActivity right after the test ran).
     heal_kind: str | None = None
+    # Outcomes across this Scenario's recent runs disagree (see
+    # `_flaky_scenario_ids`). Independent of `healed_test_asset_id` — the
+    # frontend gives Self-healed priority when bucketing a result.
+    is_flaky: bool = False
     # Plain-language version of `error_message` for people who don't read
     # Playwright errors (`workflows.failure_explainer`) — `error_message`
     # itself is returned unchanged alongside, as the "Raw error". Source:
@@ -4721,6 +4725,66 @@ def get_test_run_allure_report(
     )
 
 
+# Flaky = a Scenario whose recent outcomes disagree. The window is the
+# Scenario's last N finished results (this run's included), so an old failure
+# that has since been fixed stops flagging the test once it ages out.
+FLAKY_HISTORY_RUNS = 10
+_FLAKY_PASS_STATUSES = frozenset({"passed"})
+_FLAKY_FAIL_STATUSES = frozenset({"failed", "timed_out", "errored"})
+
+
+def _flaky_scenario_ids(
+    session: Session, test_run: TestRun, results: list[TestResult]
+) -> set[uuid.UUID]:
+    """`TestResult.scenario_id`s in `results` that are flaky: across this run
+    plus the Application's earlier completed runs (most recent
+    `FLAKY_HISTORY_RUNS` results per Scenario), at least one pass and at least
+    one fail. `scenario_id` is the key because it survives a heal or
+    regeneration, unlike `test_asset_id`. Cancelled runs, self-heal
+    verification runs and unfinished results (pending/blocked/cancelled) carry
+    no pass/fail signal and are skipped; a result not yet finished itself is
+    never flaky. A first run has a single outcome, so nothing is flaky."""
+    outcomes: dict[uuid.UUID, set[bool]] = {}
+    for r in results:
+        if r.status in _FLAKY_PASS_STATUSES:
+            outcomes[r.scenario_id] = {True}
+        elif r.status in _FLAKY_FAIL_STATUSES:
+            outcomes[r.scenario_id] = {False}
+    if not outcomes:
+        return set()
+
+    ranked = (
+        select(
+            TestResult.scenario_id.label("scenario_id"),  # type: ignore[attr-defined]
+            TestResult.status.label("status"),  # type: ignore[attr-defined]
+            func.row_number()
+            .over(
+                partition_by=TestResult.scenario_id,
+                order_by=TestRun.run_number.desc(),  # type: ignore[attr-defined]
+            )
+            .label("recency"),
+        )
+        .join(TestRun, TestResult.test_run_id == TestRun.id)  # type: ignore[arg-type]
+        .where(
+            TestRun.application_id == test_run.application_id,
+            TestRun.status == "completed",
+            TestRun.run_number < test_run.run_number,
+            TestRun.triggered_by_name.is_distinct_from(_INTERNAL_VERIFICATION_TRIGGER_NAME),  # type: ignore[union-attr]
+            TestResult.scenario_id.in_(outcomes),  # type: ignore[attr-defined]
+            TestResult.status.in_(_FLAKY_PASS_STATUSES | _FLAKY_FAIL_STATUSES),  # type: ignore[attr-defined]
+        )
+        .subquery()
+    )
+    # This run supplies one of the N slots, so only N-1 earlier results count.
+    for scenario_id, status in session.exec(
+        select(ranked.c.scenario_id, ranked.c.status).where(
+            ranked.c.recency <= FLAKY_HISTORY_RUNS - 1
+        )
+    ).all():
+        outcomes[scenario_id].add(status in _FLAKY_PASS_STATUSES)
+    return {scenario_id for scenario_id, seen in outcomes.items() if len(seen) == 2}
+
+
 @app.get(
     "/applications/{external_id}/test-runs/{test_run_external_id}",
     response_model=TestRunRead,
@@ -4779,6 +4843,7 @@ async def get_test_run(
         for r in results
         if r.heal_started_at is not None and r.heal_started_at >= heal_live_after
     }
+    flaky_scenario_ids = _flaky_scenario_ids(session, test_run, list(results))
     # Presentation only: reads error_message, never changes it.
     explanations = {r.id: explain_failure(r.status, r.error_message) for r in results}
     ai_explanations = _ai_failure_explanations(
@@ -4831,6 +4896,7 @@ async def get_test_run(
             ),
             heal_in_progress=r.id in heal_kinds,
             heal_kind=heal_kinds.get(r.id),
+            is_flaky=r.scenario_id in flaky_scenario_ids,
             **_failure_fields(r),
         )
         for r in results

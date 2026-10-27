@@ -395,6 +395,78 @@ class TestGetTestRun:
         assert body["results"][0]["scenario_name"] == "Guest checkout"
 
 
+class TestFlakyDetection:
+    """`TestResultRead.is_flaky`: one Scenario's outcomes across its recent
+    runs (this one included) contain both a pass and a fail."""
+
+    def _latest_is_flaky(self, org: str, runs: list[tuple[str, dict]]) -> bool:
+        """Seeds one completed-by-default run per `(result status, run
+        overrides)` entry, oldest first, all for one Scenario, and returns
+        `is_flaky` of the last run's only result."""
+        init_db()
+        client, _ = _signed_in_client(org)
+        application = _create_application(client, f"{org} App")
+        app_id, asset = _seed_test_asset(application)
+        latest = None
+        for status, overrides in runs:
+            latest = _seed_test_run(app_id, **overrides)
+            with Session(engine) as session:
+                session.add(
+                    TestResult(
+                        test_run_id=latest.id,
+                        test_asset_id=asset.id,
+                        scenario_id=asset.scenario_id,
+                        status=status,
+                    )
+                )
+                session.commit()
+        assert latest is not None
+        response = client.get(
+            f"/applications/{application['id']}/test-runs/{latest.external_id}"
+        )
+        assert response.status_code == 200
+        [result] = response.json()["results"]
+        return result["is_flaky"]
+
+    def test_first_run_is_never_flaky(self) -> None:
+        assert not self._latest_is_flaky("Org Flaky First", [("failed", {})])
+
+    def test_mixed_outcomes_across_runs_are_flaky(self) -> None:
+        statuses = ["failed", "failed", "passed", "failed", "passed"]
+        assert self._latest_is_flaky("Org Flaky Mixed", [(s, {}) for s in statuses])
+
+    def test_a_pass_to_fail_flip_is_flaky(self) -> None:
+        assert self._latest_is_flaky("Org Flaky Flip", [("passed", {}), ("failed", {})])
+
+    def test_consistent_outcomes_are_not_flaky(self) -> None:
+        assert not self._latest_is_flaky("Org Flaky All Pass", [("passed", {})] * 3)
+        assert not self._latest_is_flaky("Org Flaky All Fail", [("failed", {})] * 3)
+
+    def test_timed_out_and_errored_count_as_failures(self) -> None:
+        runs = [("passed", {}), ("timed_out", {}), ("errored", {}), ("passed", {})]
+        assert self._latest_is_flaky("Org Flaky Timeout", runs)
+
+    def test_a_failure_older_than_the_window_stops_flagging(self) -> None:
+        # 10 results = this run + the 9 before it; the lone failure is the 11th.
+        runs = [("failed", {})] + [("passed", {})] * 10
+        assert not self._latest_is_flaky("Org Flaky Aged Out", runs)
+        runs = [("failed", {})] + [("passed", {})] * 9
+        assert self._latest_is_flaky("Org Flaky In Window", runs)
+
+    def test_cancelled_and_verification_runs_carry_no_signal(self) -> None:
+        runs = [
+            ("passed", {}),
+            ("failed", {"status": "cancelled"}),
+            ("failed", {"triggered_by_name": "Add Test Case"}),
+            ("passed", {}),
+        ]
+        assert not self._latest_is_flaky("Org Flaky Skipped Runs", runs)
+
+    def test_a_result_still_pending_is_not_flaky(self) -> None:
+        runs = [("passed", {}), ("failed", {}), ("pending", {"status": "running"})]
+        assert not self._latest_is_flaky("Org Flaky Pending", runs)
+
+
 class _FakeObjectStore:
     presigned: list = []
 

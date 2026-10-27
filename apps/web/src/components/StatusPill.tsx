@@ -37,7 +37,8 @@ const STATUS_COLORS: Record<string, { background: string; foreground: string }> 
   passed: { background: 'var(--good-wash)', foreground: 'var(--good-strong)' },
   // Not a stored TestResult.status — a display-only bucket for a result
   // that only passed after auto-heal fixed it (healed_test_asset_id set +
-  // status passed). Computed by callers, never sent by the API.
+  // status passed), i.e. "Self-healed" on the Runs tab. Computed by callers,
+  // never sent by the API. Unrelated to `TestResultRead.is_flaky`.
   flaky: { background: 'var(--warn-wash)', foreground: 'var(--warn-strong)' },
   timed_out: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },
   errored: { background: 'var(--danger-wash)', foreground: 'var(--danger-strong)' },

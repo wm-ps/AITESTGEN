@@ -2442,6 +2442,11 @@ export interface components {
             heal_in_progress: boolean;
             /** Heal Kind */
             heal_kind?: string | null;
+            /**
+             * Is Flaky
+             * @default false
+             */
+            is_flaky: boolean;
             /** Failure Title */
             failure_title?: string | null;
             /** Failure Detail */

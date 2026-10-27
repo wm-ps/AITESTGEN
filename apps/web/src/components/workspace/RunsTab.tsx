@@ -345,13 +345,23 @@ const RESULT_GRID_TEMPLATE = '50% 1fr 1fr'
 // Results/Pass rate/chevron grid.
 const RUN_ROW_GRID_TEMPLATE = 'minmax(140px,1.3fr) minmax(110px,0.9fr) 90px minmax(130px,1.4fr) 84px 20px'
 
-// Not a stored TestResult field — a result only reads as "flaky" once it
+// Not a stored TestResult field — a result only reads as self-healed once it
 // ended up passed *after* auto-heal touched it (healed_test_asset_id set).
-// Browser split and commit/branch metadata from the prototype's Runs screen
-// were explicitly skipped (no such data exists in this domain) — flaky is
-// the one extra bucket that's computable from fields already on the row.
-function isFlaky(result: TestResultRead): boolean {
+function isSelfHealed(result: TestResultRead): boolean {
   return result.status === 'passed' && result.healed_test_asset_id != null
+}
+
+type ResultBucket = 'passed' | 'healed' | 'flaky' | 'failed'
+
+// Every finished result lands in exactly one bucket, checked in this order:
+// Self-healed (existing rule, unchanged) → Flaky (`is_flaky`: its Scenario's
+// recent outcomes disagree) → Passed / Failed. So the buckets always sum to
+// the run's finished results. Pending/blocked/cancelled results have no bucket.
+function resultBucket(result: TestResultRead): ResultBucket | null {
+  if (isSelfHealed(result)) return 'healed'
+  if (result.status !== 'passed' && !NON_PASSED_STATUSES.has(result.status)) return null
+  if (result.is_flaky) return 'flaky'
+  return result.status === 'passed' ? 'passed' : 'failed'
 }
 
 // Same "Test Case" / "Duration" / "Status" columns as the Test Suite tab's
@@ -615,6 +625,16 @@ function TestResultRow({
               Self-healed
             </span>
           )}
+          {/* Mutually exclusive with Self-healed, same priority as the
+              summary buckets (`resultBucket`). */}
+          {resultBucket(liveResult) === 'flaky' && (
+            <span
+              title="Inconsistent results across this test's recent runs — it has both passed and failed."
+              style={healChipStyle('var(--flaky)')}
+            >
+              Flaky
+            </span>
+          )}
           {!showHealing && canRetryHeal && healBlockedReason && (
             <button
               type="button"
@@ -842,89 +862,70 @@ function donutArc(fraction: number): string {
   return `${len.toFixed(2)} ${DONUT_CIRCUMFERENCE.toFixed(2)}`
 }
 
-type ResultSegment = 'passed' | 'flaky' | 'failed'
+type ResultSegment = ResultBucket
 
-// "Result split" donut — pass/flaky/fail arcs stacked around one ring
-// (rotated -90deg so the first arc starts at 12 o'clock), same three
+// Bucket display order, colour and label — shared by the summary tiles, the
+// donut arcs and its legend so the four can't drift apart.
+const RESULT_SEGMENTS: { key: ResultSegment; color: string; label: string }[] = [
+  { key: 'passed', color: 'var(--good-strong)', label: 'Passed' },
+  { key: 'healed', color: 'var(--warn-strong)', label: 'Self-healed' },
+  { key: 'flaky', color: 'var(--flaky-strong)', label: 'Flaky' },
+  { key: 'failed', color: 'var(--danger-strong)', label: 'Failed' },
+]
+
+// "Result split" donut — one arc per bucket stacked around one ring
+// (rotated -90deg so the first arc starts at 12 o'clock), same four
 // buckets as the summary tiles above it. Sized up from the original 132px —
 // the card around it has room to spare — and interactive: hovering an arc
 // (or the matching legend row, via `hovered`/`onHover` from the parent)
-// thickens that segment and fades the other two, instead of a static ring.
+// thickens that segment and fades the others, instead of a static ring.
 function ResultSplitDonut({
-  passed,
-  flaky,
-  failed,
+  counts,
   total,
   hovered,
   onHover,
 }: {
-  passed: number
-  flaky: number
-  failed: number
+  counts: Record<ResultSegment, number>
   total: number
   hovered: ResultSegment | null
   onHover: (segment: ResultSegment | null) => void
 }) {
-  const passFrac = total > 0 ? passed / total : 0
-  const flakyFrac = total > 0 ? flaky / total : 0
-  const failFrac = total > 0 ? failed / total : 0
-  const rate = total > 0 ? `${Math.round((passed / total) * 100)}%` : '—'
+  const rate = total > 0 ? `${Math.round((counts.passed / total) * 100)}%` : '—'
   const SIZE = 156
   function segStyle(segment: ResultSegment): { strokeWidth: number; opacity: number } {
     if (!hovered) return { strokeWidth: 5, opacity: 1 }
     return hovered === segment ? { strokeWidth: 7, opacity: 1 } : { strokeWidth: 5, opacity: 0.35 }
   }
-  const passStyle = segStyle('passed')
-  const flakyStyle = segStyle('flaky')
-  const failStyle = segStyle('failed')
+  let consumed = 0
   return (
     <div style={{ position: 'relative', width: SIZE, height: SIZE, flex: 'none' }}>
       <svg viewBox="0 0 42 42" style={{ width: SIZE, height: SIZE, transform: 'rotate(-90deg)' }}>
         <circle cx={21} cy={21} r={DONUT_RADIUS} fill="none" stroke="var(--panel-2)" strokeWidth={5} />
-        <circle
-          cx={21}
-          cy={21}
-          r={DONUT_RADIUS}
-          fill="none"
-          stroke="var(--good-strong)"
-          strokeWidth={passStyle.strokeWidth}
-          strokeOpacity={passStyle.opacity}
-          strokeDasharray={donutArc(passFrac)}
-          strokeLinecap="round"
-          style={{ transition: 'stroke-width 120ms ease, stroke-opacity 120ms ease', cursor: passed > 0 ? 'pointer' : 'default' }}
-          onMouseEnter={() => passed > 0 && onHover('passed')}
-          onMouseLeave={() => onHover(null)}
-        />
-        <circle
-          cx={21}
-          cy={21}
-          r={DONUT_RADIUS}
-          fill="none"
-          stroke="var(--warn-strong)"
-          strokeWidth={flakyStyle.strokeWidth}
-          strokeOpacity={flakyStyle.opacity}
-          strokeDasharray={donutArc(flakyFrac)}
-          strokeDashoffset={-(passFrac * DONUT_CIRCUMFERENCE)}
-          strokeLinecap="round"
-          style={{ transition: 'stroke-width 120ms ease, stroke-opacity 120ms ease', cursor: flaky > 0 ? 'pointer' : 'default' }}
-          onMouseEnter={() => flaky > 0 && onHover('flaky')}
-          onMouseLeave={() => onHover(null)}
-        />
-        <circle
-          cx={21}
-          cy={21}
-          r={DONUT_RADIUS}
-          fill="none"
-          stroke="var(--danger-strong)"
-          strokeWidth={failStyle.strokeWidth}
-          strokeOpacity={failStyle.opacity}
-          strokeDasharray={donutArc(failFrac)}
-          strokeDashoffset={-((passFrac + flakyFrac) * DONUT_CIRCUMFERENCE)}
-          strokeLinecap="round"
-          style={{ transition: 'stroke-width 120ms ease, stroke-opacity 120ms ease', cursor: failed > 0 ? 'pointer' : 'default' }}
-          onMouseEnter={() => failed > 0 && onHover('failed')}
-          onMouseLeave={() => onHover(null)}
-        />
+        {RESULT_SEGMENTS.map(({ key, color }) => {
+          const count = counts[key]
+          const frac = total > 0 ? count / total : 0
+          const offset = -(consumed * DONUT_CIRCUMFERENCE)
+          consumed += frac
+          const style = segStyle(key)
+          return (
+            <circle
+              key={key}
+              cx={21}
+              cy={21}
+              r={DONUT_RADIUS}
+              fill="none"
+              stroke={color}
+              strokeWidth={style.strokeWidth}
+              strokeOpacity={style.opacity}
+              strokeDasharray={donutArc(frac)}
+              strokeDashoffset={offset}
+              strokeLinecap="round"
+              style={{ transition: 'stroke-width 120ms ease, stroke-opacity 120ms ease', cursor: count > 0 ? 'pointer' : 'default' }}
+              onMouseEnter={() => count > 0 && onHover(key)}
+              onMouseLeave={() => onHover(null)}
+            />
+          )
+        })}
       </svg>
       <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 21, color: 'var(--fg)', fontWeight: 600 }}>
         {rate}
@@ -969,16 +970,12 @@ function ResultsBySuiteTooltip({ active, payload }: TooltipContentProps<number, 
 }
 
 function ResultsBySuite({ results }: { results: TestResultRead[] }) {
-  const bySuite = new Map<string, { passed: number; flaky: number; failed: number }>()
+  const bySuite = new Map<string, Record<ResultBucket, number>>()
   for (const r of results) {
     const key = r.journey_name || 'Other'
-    const bucket = bySuite.get(key) ?? { passed: 0, flaky: 0, failed: 0 }
-    if (r.status === 'passed') {
-      if (isFlaky(r)) bucket.flaky += 1
-      else bucket.passed += 1
-    } else if (NON_PASSED_STATUSES.has(r.status)) {
-      bucket.failed += 1
-    }
+    const bucket = bySuite.get(key) ?? { passed: 0, healed: 0, flaky: 0, failed: 0 }
+    const kind = resultBucket(r)
+    if (kind) bucket[kind] += 1
     bySuite.set(key, bucket)
   }
   // Full names go in the tooltip/legend already — the axis just needs a
@@ -991,7 +988,8 @@ function ResultsBySuite({ results }: { results: TestResultRead[] }) {
     name: name.length > maxNameChars ? `${name.slice(0, maxNameChars - 1)}…` : name,
     fullName: name,
     Passed: v.passed,
-    'Self-healed': v.flaky,
+    'Self-healed': v.healed,
+    Flaky: v.flaky,
     Failed: v.failed,
   }))
   return (
@@ -1019,6 +1017,7 @@ function ResultsBySuite({ results }: { results: TestResultRead[] }) {
             <Tooltip content={ResultsBySuiteTooltip} cursor={{ fill: 'var(--hover)' }} />
             <Bar dataKey="Passed" stackId="a" fill="var(--good-strong)" radius={0} />
             <Bar dataKey="Self-healed" stackId="a" fill="var(--warn-strong)" radius={0} />
+            <Bar dataKey="Flaky" stackId="a" fill="var(--flaky-strong)" radius={0} />
             <Bar dataKey="Failed" stackId="a" fill="var(--danger-strong)" radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
@@ -1046,9 +1045,11 @@ function RunDetail({
   const [resultSortKey, setResultSortKey] = useState<ResultSortKey | null>(null)
   const [resultSortDir, setResultSortDir] = useState<'asc' | 'desc'>('asc')
   const results = run.results ?? []
-  const flakyCount = results.filter(isFlaky).length
-  const cleanPassedCount = run.passed_count - flakyCount
-  const failedCount = run.failed_count + run.timed_out_count + run.errored_count
+  const bucketCounts: Record<ResultBucket, number> = { passed: 0, healed: 0, flaky: 0, failed: 0 }
+  for (const r of results) {
+    const kind = resultBucket(r)
+    if (kind) bucketCounts[kind] += 1
+  }
   const runningResultId = run.status === 'running' ? results.find((r) => r.status === 'pending')?.id : undefined
   // Finished (passed/failed/etc.) first, still-pending ones last — each
   // group keeps its original request order (stable sort on one boolean).
@@ -1136,9 +1137,9 @@ function RunDetail({
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 14 }}>
             <SummaryTile label="Total" value={String(run.total_count)} />
-            <SummaryTile label="Passed" value={String(cleanPassedCount)} valueColor="var(--good-strong)" />
-            <SummaryTile label="Self-healed" value={String(flakyCount)} valueColor="var(--warn-strong)" />
-            <SummaryTile label="Failed" value={String(failedCount)} valueColor="var(--danger-strong)" />
+            {RESULT_SEGMENTS.map(({ key, color, label }) => (
+              <SummaryTile key={key} label={label} value={String(bucketCounts[key])} valueColor={color} />
+            ))}
             <SummaryTile label="Duration" value={formatDuration(runDurationMs(run))} />
           </div>
 
@@ -1147,21 +1148,13 @@ function RunDetail({
               <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Result split</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 22, marginTop: 18 }}>
                 <ResultSplitDonut
-                  passed={cleanPassedCount}
-                  flaky={flakyCount}
-                  failed={failedCount}
+                  counts={bucketCounts}
                   total={run.total_count}
                   hovered={hoveredSegment}
                   onHover={setHoveredSegment}
                 />
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
-                  {(
-                    [
-                      { key: 'passed' as const, color: 'var(--good-strong)', label: 'Passed', value: cleanPassedCount },
-                      { key: 'flaky' as const, color: 'var(--warn-strong)', label: 'Self-healed', value: flakyCount },
-                      { key: 'failed' as const, color: 'var(--danger-strong)', label: 'Failed', value: failedCount },
-                    ]
-                  ).map((row) => (
+                  {RESULT_SEGMENTS.map((segment) => ({ ...segment, value: bucketCounts[segment.key] })).map((row) => (
                     <div
                       key={row.key}
                       onMouseEnter={() => row.value > 0 && setHoveredSegment(row.key)}

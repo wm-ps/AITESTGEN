@@ -142,6 +142,31 @@ describe('RunsTab', () => {
     expect(retry).toBeEnabled()
   })
 
+  // Buckets are exclusive and ranked Self-healed > Flaky > Passed/Failed, so
+  // a healed result that is also flaky counts only as Self-healed, and the
+  // four tiles always add up to the finished results.
+  it('splits results into Passed / Self-healed / Flaky / Failed by priority', async () => {
+    const base = { ...failedResult, error_message: null, heal_blocked_reason: null }
+    stubRunDetail([
+      { ...base, id: 'r1', scenario_name: 'Clean pass', status: 'passed' },
+      { ...base, id: 'r2', scenario_name: 'Healed pass', status: 'passed', healed_test_asset_id: 'asset-2' },
+      { ...base, id: 'r3', scenario_name: 'Healed and flaky', status: 'passed', healed_test_asset_id: 'asset-3', is_flaky: true },
+      { ...base, id: 'r4', scenario_name: 'Flaky pass', status: 'passed', is_flaky: true },
+      { ...base, id: 'r5', scenario_name: 'Flaky fail', status: 'failed', is_flaky: true },
+      { ...base, id: 'r6', scenario_name: 'Plain fail', status: 'failed' },
+      { ...base, id: 'r7', scenario_name: 'Timed out', status: 'timed_out' },
+    ])
+
+    render(<RunsTab applicationId="app-1" initialRunId="run-1" />)
+
+    const tileValue = async (label: string) =>
+      (await screen.findByText(label, { selector: 'div' })).nextElementSibling?.textContent
+    await waitFor(async () => expect(await tileValue('Flaky')).toBe('2'))
+    expect(await tileValue('Passed')).toBe('1')
+    expect(await tileValue('Self-healed')).toBe('2')
+    expect(await tileValue('Failed')).toBe('2')
+  })
+
   // The toolbar's Cancel run (Workspace) hands the cancelled run down — an
   // open detail shows it at once, and a stale "running" poll can't revert it.
   it('shows a run cancelled from the toolbar at once and never back as running', async () => {

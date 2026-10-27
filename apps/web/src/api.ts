@@ -235,6 +235,9 @@ export type TestResultRead = {
   // the automatic heal after the test ran, or a manual "Retry".
   heal_in_progress?: boolean
   heal_kind?: 'automatic' | 'manual' | null
+  // This Scenario's recent outcomes disagree (both passed and failed). The
+  // Runs tab ranks Self-healed above Flaky when bucketing a result.
+  is_flaky?: boolean
   // Plain-language failure for the "Summary" tab; `error_message` stays the
   // untouched "Raw error". Source "ai" = an LLM explained an error no rule
   // recognised (shown with an "Explained by AI" caption); null = not
