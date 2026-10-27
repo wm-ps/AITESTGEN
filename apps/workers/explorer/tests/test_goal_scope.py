@@ -113,3 +113,22 @@ def test_quiet_mind_knows_a_known_screens_goal_fit() -> None:
     elsewhere = SimpleNamespace(url="https://app#/Other", inventory={}, shot=b"")
     asyncio.run(mind.take_in(elsewhere, None))  # type: ignore[arg-type]
     assert mind.last_goal_fit is None
+
+
+def _screens(*fits: str | None) -> list[SimpleNamespace]:
+    return [SimpleNamespace(name=f"S{i}", goal_fit=f) for i, f in enumerate(fits)]
+
+
+def test_only_screens_inside_the_goal_are_planned() -> None:
+    kept = goal.screens_in_goal(_screens("inside", None, "on_the_way", "past_stop", "outside"))
+    assert [s.goal_fit for s in kept] == ["inside", None]
+
+
+def test_without_a_goal_every_screen_is_planned() -> None:
+    assert len(goal.screens_in_goal(_screens(None, None, None))) == 3
+
+
+def test_follow_ups_only_on_screens_inside_the_goal() -> None:
+    planned = [{"title": "a", "start_screen": "S0"}, {"title": "b", "start_screen": "S1"}, {"title": "c"}]
+    fits = {"S0": "inside", "S1": "outside"}
+    assert [m["title"] for m in goal.follow_ups_in_goal(planned, fits)] == ["a", "c"]

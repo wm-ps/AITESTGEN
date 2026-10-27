@@ -198,6 +198,7 @@ def route_screens(screens: list[ExplorerScreen]) -> dict[str, uuid.UUID]:
 
 async def plan_tests(run_id: uuid.UUID) -> int:
     journal = Journal(run_id)
+    await ensure_scope(run_id)  # with a goal, the brief below holds its strict rule
     with Session(engine) as session:
         run = session.get(ExplorerRun, run_id)
         if run is None or run.status in ("stopped", "paused"):
@@ -208,11 +209,11 @@ async def plan_tests(run_id: uuid.UUID) -> int:
         names = {s.id: s.name for s in screens}
         # States the hunt faked (no data, server error, a year from now) can't
         # be reached by a test: plan only on screens a user can really open.
-        # Screens you left out at review get no scenarios.
+        # Screens you left out at review, or outside your goal, get no scenarios.
         skip = set(brief.get("skip_screens") or [])
         screens = [
             s
-            for s in screens
+            for s in screens_in_goal(screens)
             if not (s.condition or "").startswith("Simulated") and s.name not in skip
         ]
         links = [
