@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBullseye, faCircleCheck, faCircleQuestion, faListOl, faPen, faPlus, faTrashCan } from '@fortawesome/free-solid-svg-icons'
 import { LoadingDots } from '../components/LoadingDots'
@@ -36,6 +36,9 @@ export function SummaryView({
   const [draft, setDraft] = useState<AppBrief>(run.brief ?? {})
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState<'save' | 'confirm' | null>(null)
+  // Confirm pressed with a question still open: say why nothing happened.
+  const [confirmBlocked, setConfirmBlocked] = useState(false)
+  const questionsRef = useRef<HTMLDivElement>(null)
   const editable = run.status === 'awaiting_confirmation'
 
   useEffect(() => {
@@ -127,6 +130,11 @@ export function SummaryView({
                   className="button-primary"
                   disabled={busy !== null}
                   onClick={async () => {
+                    if (unanswered > 0) {
+                      setConfirmBlocked(true)
+                      questionsRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+                      return
+                    }
                     setBusy('confirm')
                     try {
                       await onConfirm()
@@ -138,6 +146,11 @@ export function SummaryView({
                 >
                   {busy === 'confirm' ? <LoadingDots label="Confirming" /> : (<><FontAwesomeIcon icon={faCircleCheck} /> Looks right — confirm</>)}
                 </button>
+                {confirmBlocked && unanswered > 0 && (
+                  <span role="alert" style={{ alignSelf: 'center', fontSize: 12.5, fontWeight: 600, color: 'var(--warn-2)' }}>
+                    Answer the questions first — they change what Explorer tests.
+                  </span>
+                )}
               </>
             )}
           </div>
@@ -146,6 +159,7 @@ export function SummaryView({
 
       {questions.length > 0 && (
         <div
+          ref={questionsRef}
           style={{
             ...glassCard,
             padding: '18px 20px',
@@ -207,7 +221,7 @@ export function SummaryView({
           icon={faBullseye}
           aside={tiles.length > 0 ? <span style={{ fontSize: 12, color: 'var(--fg-5)' }}>{tiles.length - tiles.filter((t) => skipped.has(t.name)).length} of {tiles.length} screens included</span> : undefined}
         >
-          What to cover
+          Goal
         </SectionTitle>
         {editable ? (
           <>
