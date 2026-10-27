@@ -120,10 +120,15 @@ class QuietMind(Mind):
         # Screens a route may be saved for (see `route_screens`); empty = none.
         self.screen_ids: dict[str, uuid.UUID] = {}
         self.visited: set[str] = set()  # address patterns this walk was on
+        # Address pattern -> the screen's place against the run's Goal
+        # (explorer_worker.goal); empty = no goal.
+        self.goal_fits: dict[str, str] = {}
+        self.last_goal_fit: str | None = None
 
     async def take_in(self, visit: Visit, reached_by: str | None, action: str | None = None) -> str:
         self.heartbeat()
         self.visited.add(url_pattern(visit.url))
+        self.last_goal_fit = self.goal_fits.get(url_pattern(visit.url))
         self.last_screen_id = self.screen_ids.get(url_pattern(visit.url))
         headings = visit.inventory.get("headings") or []
         name = str(headings[0] if headings else visit.inventory.get("title") or "screen")[:80]

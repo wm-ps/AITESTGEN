@@ -93,3 +93,23 @@ def test_scope_text_is_strict_only_with_a_goal() -> None:
     text = brain.scope({"focus": "x", "scope": {"rule": "Only claim reporting up to Find your policy."}})
     assert "STRICT" in text and "Only claim reporting up to Find your policy." in text
     assert brain.scope({}) == ""
+
+
+def test_quiet_mind_knows_a_known_screens_goal_fit() -> None:
+    from explorer_worker.sense import url_pattern
+    from explorer_worker.tests_stage import QuietMind
+
+    class _J:
+        def event(self, *a: object) -> None: ...
+        def shot(self, data: bytes) -> None: ...
+        def screen_rows(self) -> list[object]:
+            return []
+
+    mind = QuietMind(_J(), None, lambda: None)  # type: ignore[arg-type]
+    mind.goal_fits = {url_pattern("https://app#/PolicySelection"): "past_stop"}
+    here = SimpleNamespace(url="https://app#/PolicySelection", inventory={"headings": ["Pick"]}, shot=b"")
+    asyncio.run(mind.take_in(here, None))  # type: ignore[arg-type]
+    assert mind.last_goal_fit == "past_stop"
+    elsewhere = SimpleNamespace(url="https://app#/Other", inventory={}, shot=b"")
+    asyncio.run(mind.take_in(elsewhere, None))  # type: ignore[arg-type]
+    assert mind.last_goal_fit is None

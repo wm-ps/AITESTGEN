@@ -80,9 +80,17 @@ async def perceive(
     known: list[str],
     notes: str | None,
     already_noted: list[str] | None = None,
+    goal_rule: str | None = None,
 ) -> dict[str, Any]:
     user = (
-        f"Screen address: {inventory.get('url')}\n"
+        (
+            f"The user's goal (strict): {goal_rule}\nAlso reply with \"goal_fit\": "
+            "\"inside | on_the_way | past_stop | outside\" — where this screen sits "
+            "against that goal (on_the_way = must be passed through to reach it).\n"
+            if goal_rule
+            else ""
+        )
+        + f"Screen address: {inventory.get('url')}\n"
         f"Screens already understood: {', '.join(known) or 'none yet'}\n"
         f"Problems already noted: {'; '.join((already_noted or [])[-40:]) or 'none'}\n"
         + (f"What the user told us about the app: {notes}\n" if notes else "")

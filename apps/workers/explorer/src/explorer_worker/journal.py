@@ -181,6 +181,11 @@ class Journal:
             session.commit()
             return row.id, True
 
+    def goal_fit_of(self, screen_id: uuid.UUID) -> str | None:
+        with Session(engine) as session:
+            screen = session.get(ExplorerScreen, screen_id)
+            return screen.goal_fit if screen else None
+
     def set_goal_fit(self, fits: dict[str, str]) -> None:
         """Each named screen's place against the run's Goal (explorer_core.GOAL_FITS)."""
         with Session(engine) as session:

@@ -8,6 +8,8 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from explorer_core import GOAL_FITS
+
 from explorer_worker import brain
 from explorer_worker.browser import Visit
 from explorer_worker.journal import Journal
@@ -23,6 +25,7 @@ class Mind:
         heartbeat: Callable[[], None],
         condition: str | None = None,
         home_url: str | None = None,
+        goal_rule: str | None = None,
     ) -> None:
         self.journal = journal
         self.notes = notes
@@ -32,6 +35,10 @@ class Mind:
         self.home_pattern = url_pattern(home_url) if home_url else None
         self.understood = [s.name for s in journal.screen_rows()]
         self.last_screen_id: uuid.UUID | None = None
+        # The run's Goal as a strict rule (explorer_worker.goal), and where the
+        # screen just reached sits against it; None = no goal.
+        self.goal_rule = goal_rule
+        self.last_goal_fit: str | None = None
         self.last_reading: dict[str, Any] = {}
         self.new_screens = 0
         # Records the app created during this pursuit, usable right away.
@@ -54,7 +61,12 @@ class Mind:
         else:
             already_noted = [i.title for i in journal.health_rows()]
             reading = await brain.perceive(
-                visit.shot, visit.inventory, self.understood, self.notes, already_noted
+                visit.shot,
+                visit.inventory,
+                self.understood,
+                self.notes,
+                already_noted,
+                goal_rule=self.goal_rule,
             )
             if key:
                 _READINGS[(journal.run_id, key)] = reading
@@ -78,9 +90,15 @@ class Mind:
                 "reached_by": reached_by,
                 "shot_id": shot_id,
                 "condition": self.condition,
+                "goal_fit": (
+                    reading.get("goal_fit")
+                    if self.goal_rule and reading.get("goal_fit") in GOAL_FITS
+                    else None
+                ),
             },
             home_pattern=self.home_pattern,
         )
+        self.last_goal_fit = journal.goal_fit_of(screen_id) if self.goal_rule else None
         if self.last_screen_id is not None and screen_id != self.last_screen_id:
             journal.transition(self.last_screen_id, screen_id, action or reached_by or "")
         self.last_screen_id = screen_id
