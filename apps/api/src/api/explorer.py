@@ -506,6 +506,15 @@ _EXPIRED = (
 )
 
 
+def unanswered_questions(brief: dict[str, Any] | None) -> int:
+    """The App Summary's own questions still waiting for an answer."""
+    return sum(
+        1
+        for item in (brief or {}).get("questions_for_you") or []
+        if isinstance(item, dict) and not str(item.get("answer") or "").strip()
+    )
+
+
 @router.post("/runs/{run_id}/confirm", response_model=RunRead)
 async def confirm_brief(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep) -> RunRead:
     run, application = _owned_run(session, run_id, org_id)
@@ -513,6 +522,10 @@ async def confirm_brief(run_id: uuid.UUID, session: SessionDep, org_id: CurrentO
         raise HTTPException(status_code=409, detail=_EXPIRED)
     if run.status != "awaiting_confirmation":
         raise HTTPException(status_code=409, detail="nothing to confirm right now")
+    if unanswered_questions(run.brief):
+        raise HTTPException(
+            status_code=409, detail="Answer the questions first — they change what Explorer tests."
+        )
     client = await get_temporal_client()
     await client.get_workflow_handle(explorer_workflow_id(run.external_id)).signal(
         BRIEF_CONFIRMED_SIGNAL
