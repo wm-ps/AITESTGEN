@@ -1,75 +1,41 @@
 ---
-baseline_commit: dea7fc8fd61fa0d3e4fd4db2c491e763b149759d
+last_updated: 2026-10-27
 ---
 
-# Story 2.17: Save-as-Project — Cross-Session Pause & Resume
+# Story 2.17: Pause and Resume Discovery
 
-*Added per `sprint-change-proposal-2026-07-29.md`. "Project" maps onto the existing `Application` entity — no new `Project` table is introduced; see Architecture AD-22.*
+Status: done
 
-*`[2026-08-03]` Unaffected by the Discovery Engine v2 rewrite (`docs/DISCOVERY_ENGINE_V2.md`), and worth stating why: this story is "re-authenticate, load what's confirmed, don't re-explore canonical states" — it never depended on Story 2.16's step-replay mechanism, so replacing that mechanism does not change this story's scope. It is genuinely simpler than it looks. Its `[GAP]`-flagged dashboard should be designed in the same UX pass as Stories 2.20 and 2.22, which need adjacent screens.*
-
-Status: ready-for-dev
-
-<!-- Note: Validation is optional. Run validate-create-story for quality check before dev-story. -->
+> This story describes the **classic discovery engine**. New applications are discovered by **Explorer** (Epic 8); the classic engine now runs only for applications it discovered before Explorer became the default, or when operations switch new applications back to it.
 
 ## Story
 
-As a user,
-I want to pause an entire in-progress discovery effort and resume it later without losing progress or re-exploring what's already confirmed,
-so that missing test data doesn't force me to finish everything in one sitting.
+As a member or admin,
+I want to pause a running Discovery and resume it later without losing progress or re-exploring what's already confirmed,
+so that I don't have to let Discovery run to the end in one go.
 
-## Acceptance Criteria
+## What it does today
 
-1. **Given** a running Discovery Run, **when** the user pauses it, **then** `DiscoveryRun.status` is set to `paused`; the confirmed Application Model, open `BlockedTask`s (Story 2.15), and the remaining exploration queue are all already durable — no new persistence mechanism beyond what Stories 2.15/2.16/2.2 already write. [Source: epics.md#Story 2.17; FR-44; architecture#AD-22]
-2. **Given** a paused project, **when** the user resumes it (same or different session), **then** the platform re-authenticates fresh, loads the confirmed model and open Blocked items, and does not re-explore any already-canonical state. [Source: FR-44]
-3. Every fingerprint-cache lookup (Story 2.10), `BlockedTask` (Story 2.15), and remaining-exploration-queue entry is scoped by the existing `application_id` — pausing/resuming is a matter of filtering by that ID, not a new grouping mechanism. [Source: architecture#AD-22]
+- While Discovery is running, the Journeys tab shows a **Pause Discovery** button. While it is paused, it shows **Resume Discovery** instead. The button shows trailing bouncing dots while it works. Viewers don't see either button.
+- Pausing stops the run and marks it paused. Everything already found stays saved: the pages, the application model and any blocked items. The tab shows "Discovery paused. Resume to continue exploring from where it left off."
+- Resuming, from the same or a later session, starts a new pass that:
+  - signs in fresh
+  - picks up from where exploring stopped
+  - skips pages that were already confirmed rather than exploring them again
+- Everything is tied to the application, so resuming works from any session.
+- Pause only works on a running Discovery and resume only on a paused one. Otherwise the user gets "Could not pause discovery. Try again." or "Could not resume discovery. Try again."
+- Pause and resume are refused for applications added without Discovery (Story 2.24).
+- They are also refused for any application that has ever had an Explorer run: "Explorer discovers this application: pause or resume it from the Explorer tab." Explorer has its own Pause, Stop and Resume on the Explorer tab (Story 8.1).
 
-**`[GAP — flagged, not designed here]`** The dashboard surfacing Confirmed/Blocked/Remaining counts and "Paused — Action Needed" status (per the source document's worked example) has no equivalent screen in the current 6-screen IA (`DESIGN.md`/`EXPERIENCE.md`) — needs a UX pass before this AC's frontend half can be built; see Story 1.2's amendment note.
+## Acceptance criteria
 
-## Tasks / Subtasks
+1. **Given** a running Discovery, **when** a member or admin clicks Pause Discovery, **then** the run is marked paused and everything found so far is kept.
+2. **Given** a paused Discovery, **when** they click Resume Discovery, **then** Vantage signs in fresh, continues from where it stopped and doesn't re-explore pages already confirmed.
+3. **Given** the run isn't in the right state, or the request fails, **then** a plain "Could not pause/resume discovery. Try again." message is shown.
+4. **Given** a viewer, **then** neither button is shown and the server refuses the request.
+5. **Given** an application that has had an Explorer run, **when** anyone tries to pause or resume classic Discovery, **then** the server refuses and points them to the Explorer tab.
 
-- [ ] Task 1: Extend `DiscoveryRun.status` with `paused` (AC: 1)
-  - [ ] Update the `status` field's allowed values from `running | complete | failed` to `running | complete | failed | paused` in `packages/domain` — no schema change needed if `status` is already a plain string column (per Story 2.1's existing convention, not a DB enum); if it is a DB enum, add a migration for the new value
-  - [ ] Add a `pause_discovery_run` operation (API endpoint or service function, following Story 2.1's `start_discovery_run` pattern) that sets `status="paused"` on a running `DiscoveryRun` — does not touch any other table; everything else needed for resume is already durable per Stories 2.2/2.15/2.16
-- [ ] Task 2: Build the resume-a-project flow (AC: 2, 3)
-  - [ ] Add a `resume_discovery_run` operation: re-authenticate (reuse Story 2.2's `establish_session`, no assumption of a live prior session — mirrors Story 2.4's/AD-11's existing "session expiry means re-auth" philosophy), load canonical `Page`/`Journey` rows for the `application_id`, load open `BlockedTask` rows for the same `application_id`, and resume the exploration queue from wherever Story 2.2's crawl loop left off (queue state is already checkpointed via the same real-time typed-row writes AD-8 already requires — no new checkpoint format)
-  - [ ] Verify every read in this path filters by `application_id`, not a new grouping key — per AD-22, "Project" is the existing `Application`, this task must not introduce a parallel scoping mechanism
-- [ ] Task 3: Verify end-to-end (AC: 1-3)
-  - [ ] Pausing a running Discovery Run sets `status=paused` without touching any other table
-  - [ ] Resuming a paused run (simulate "days later" by tearing down and restarting the worker process) re-authenticates fresh and does not re-explore any state already present as a canonical `Page`
-  - [ ] Confirm no new "Project" table or grouping column was introduced anywhere in this story's implementation
+## Gaps / not built
 
-## Dev Notes
-
-- **This story is almost entirely a status-value extension plus a resume-orchestration wrapper around existing durability** — Stories 2.2 (typed-row real-time writes), 2.15/2.16 (`BlockedTask`/`ExplorationStep`), and 2.5 (canonical Application Model) already provide everything "don't lose progress" requires. Do not build a second, parallel persistence layer for pause/resume; that would violate AD-22's explicit "no new Project table" decision.
-- **The dashboard `[GAP]` is real and should not be worked around with ad hoc UI** — this story's frontend surface is intentionally left undesigned pending a UX pass (see Story 1.2's amendment note and the architecture Deferred section). Implementing only the backend halves of AC 1/2/3 and stopping there, pending that UX pass, is the correct scope for this story as currently written — do not invent a dashboard layout to "complete" the story.
-- **Crash recovery (Story 2.18) and pause/resume share the same resume path** — a `paused` status set deliberately by the user and a mid-crawl worker crash both resume via the mechanism this story builds (per AD-22/AD-23). Coordinate module boundaries with Story 2.18 so the resume logic isn't duplicated.
-
-### Project Structure Notes
-
-- Extends the existing `DiscoveryRun.status` value set — no new domain entity. Adds `pause_discovery_run`/`resume_discovery_run` operations, likely in `apps/api/src/api/discovery.py` (mirroring Story 2.1's `start_discovery_run`) plus the worker-side resume orchestration in `apps/workers/discovery`.
-- Depends on Stories 2.2, 2.5, 2.10, 2.15, 2.16 all being in place — this story's "don't re-explore" guarantee is only as good as those stories' durability.
-
-### References
-
-- [Source: _bmad-output/planning-artifacts/epics.md#Story 2.17]
-- [Source: _bmad-output/planning-artifacts/sprint-change-proposal-2026-07-29.md — Sections 16, 16.1-16.5 of the source design document]
-- [Source: _bmad-output/planning-artifacts/architecture/architecture-AITestGen-2026-07-13/ARCHITECTURE-SPINE.md#AD-11, #AD-13, #AD-22]
-- [Source: _bmad-output/implementation-artifacts/1-2-sign-in-organization-scoped-workspace.md — the Home screen `[GAP]` note this story's frontend half is blocked on]
-- [Source: _bmad-output/implementation-artifacts/2-4-session-expiry-handling.md — the existing re-authentication philosophy this story's resume flow mirrors]
-
-## Previous Story Intelligence
-
-Story 2.1's `start_discovery_run` (`apps/api/src/api/discovery.py`) is the pattern to follow for this story's `pause_discovery_run`/`resume_discovery_run` — check its exact current shape before adding siblings to it.
-
-## Latest Technical Notes
-
-No new library decisions.
-
-## Project Context Reference
-
-No `project-context.md` exists yet in this repository.
-
-## Change Log
-
-- 2026-07-29 — Story created per `sprint-change-proposal-2026-07-29.md`.
+- There is no summary screen showing confirmed / blocked / remaining counts for a paused Discovery.
+- A failed run can't be resumed; only a paused one can (see Story 2.4).

@@ -1,582 +1,524 @@
 ---
-name: 'Application Intelligence Platform'
+name: 'Vantage (AITestGen)'
 type: architecture-spine
 purpose: build-substrate
 altitude: initiative
-paradigm: 'Durable Orchestrated Pipeline with Ports & Adapters at the boundaries'
-scope: 'Application Intelligence Platform V1 — discovery engine, AI journey/capability inference, human curation, scenario/Playwright test generation. CI/CD delivery, analytics dashboards, and on-prem deployment removed from V1 scope 2026-07-15 (see Module Map/Deferred); Journey-detail analytics retained.'
+paradigm: 'Durable Orchestrated Pipeline (Temporal) with Ports & Adapters at the boundaries'
+scope: 'Vantage as built today: sign-in and org-scoped workspace, application onboarding, discovery (Explorer by default; the classic crawler with AI journey inference for older applications), journey curation, scenario and Playwright test generation, plain-English and recorded test cases, test execution with self-healing, flaky flags, Allure reports, run emails and schedules, and workspace administration (team, roles, settings, activity).'
 status: final
 created: '2026-07-13'
-updated: '2026-07-29'
-binds: [FR-1, FR-2, FR-3, FR-6, FR-7, FR-8, FR-9, FR-12, FR-13, FR-14, FR-15, FR-16, FR-17, FR-23, FR-30, FR-31, FR-32, FR-33, FR-34, FR-35, FR-36, FR-37, FR-38, FR-39, FR-40, FR-41, FR-42, FR-43, FR-44, FR-45, FR-46, FR-47]
+updated: '2026-10-27'
+snapshot: 'branch feature-crawl2.0 @ 460f8e4 (includes the Explorer merge 2d88b20)'
 sources:
-  - '../../prds/prd-AITestGen-2026-07-13/prd.md'
-  - '../../briefs/brief-AITestGen-2026-07-12/brief.md'
-  - '../../ux-designs/ux-AITestGen-2026-07-13/DESIGN.md'
+  - 'current code, config, migrations and git history (verified 2026-10-27)'
+  - 'docs/DISCOVERY_ENGINE_V2.md (classic crawl-engine design spine, matches the code)'
+  - 'docs/vantage-explorer/ (Explorer design notes; this spine is grounded in the code, not those notes)'
 companions: []
 ---
 
-# Architecture Spine — Application Intelligence Platform
+# Architecture Spine — Vantage (AITestGen)
+
+This spine describes the system as it exists on 2026-10-27. Every decision below is backed by current code; decisions that were reversed are listed only in **Decisions retired** at the end.
 
 ## Design Paradigm
 
-**Durable Orchestrated Pipeline with Ports & Adapters at the boundaries.** The product's core mechanic — discover → infer → *human gate* → generate → deliver — is a multi-stage pipeline where stages are long-running, retriable, and independently ownable. Temporal Workflows carry the pipeline's coordination; Temporal Activities are the only place side effects (browser automation, LLM calls, DB writes, Git operations) happen. Everything the platform doesn't control — the AI provider, the customer's Git/CI provider, the secrets store — sits behind a named interface (a "port"), with swappable implementations ("adapters"). This is what lets V2/V3 add new AI-heavy capability, and later on-prem deployment, without destabilizing V1's boundaries.
+**Durable Orchestrated Pipeline with Ports & Adapters at the boundaries.** The product's long-running work (discover → infer → generate → execute → heal → report) runs as Temporal Workflows. Workflows coordinate only; Temporal Activities in the worker apps own every side effect (browser automation, LLM calls, DB writes, S3, Vault, SMTP, subprocesses). Everything external sits behind a small adapter package: the LLM (`packages/ai_provider`), secrets (`packages/secrets_client`), object storage (`packages/object_store`) and email (`packages/mailer`). The one deliberate exception is the Explorer module (AD-22), which has its own LLM client and its own email helper. Human actions (rename/delete a journey, trigger generation, run tests, change settings) are ordinary CRUD through the API, never a paused workflow.
 
 Layer → namespace map:
 
 | Layer | Namespace | Role |
 | --- | --- | --- |
-| Presentation | `apps/web` | Renders state; performs no business logic |
-| Command/Query surface | `apps/api` | Owns the Trusted Knowledge Model's writes; starts/queries workflows |
-| Orchestration | `packages/workflows` | Coordination only — no I/O (AD-2) |
-| Execution | `apps/workers/*` | All I/O-performing Activities |
-| Ports | `packages/ai_provider`, `packages/delivery_adapters`, `packages/ci_instructions`, `packages/secrets_client` | Interfaces insulating the domain from vendors |
-| Domain | `packages/domain` | Entities and their invariants, shared by API and workers |
-
-## Invariants & Rules
+| Presentation | `apps/web` | React SPA; renders state, polls the API, mirrors role permissions |
+| Command/Query surface | `apps/api` | Auth, org scoping, CRUD, starts/queries/cancels Temporal workflows, read-time derivations (flaky flags, coverage report, activity feed) |
+| Orchestration | `packages/workflows` | Temporal workflow definitions + pure helpers (`heal_policy`, `failure_explainer`); no I/O (AD-2) |
+| Execution | `apps/workers/explorer`, `apps/workers/discovery`, `apps/workers/generation`, `apps/workers/execution` | Temporal workers; all I/O-performing Activities. The Explorer worker keeps its workflow in the worker package (`explorer_worker/workflow.py`), not in `packages/workflows` |
+| Interactive service | `apps/workers/recording` | Not a Temporal worker: FastAPI + websockets for Record & Play |
+| Adapters | `packages/ai_provider`, `packages/secrets_client`, `packages/object_store`, `packages/mailer` | Insulate the domain from LiteLLM, Vault, S3 and SMTP |
+| Shared engines | `packages/safety_classifier`, `packages/locator_capture`, `packages/playwright_typecheck`, `packages/test_suite_assembler` | Pure or subprocess-bound helpers shared by several workers |
+| Domain | `packages/domain`, `packages/explorer_core` | SQLModel entities shared by API and workers; `explorer_core` holds the `explorer_*` tables, constants (task queue, statuses) and Explorer's email helper |
 
 ```mermaid
 flowchart LR
-    web[apps/web] --> api[apps/api]
+    web[apps/web] -->|JSON/HTTPS, cookie session| api[apps/api]
+    web -->|websocket noVNC + control| rec[apps/workers/recording]
     api --> domain[packages/domain]
-    api --> workflows[packages/workflows]
-    workflows --> workersDisc[apps/workers/discovery]
-    workflows --> workersGen[apps/workers/generation]
-    workersDisc --> aiPort[packages/ai_provider]
-    workersGen --> aiPort
-    workersGen --> deliveryPort[packages/delivery_adapters]
-    workersDisc --> secretsPort[packages/secrets_client]
-    workersDisc --> domain
-    workersGen --> domain
+    api -->|start/query/cancel| temporal[(Temporal)]
+    api --> rec
+    temporal --> expl[explorer worker<br/>default discovery engine]
+    temporal --> disc[discovery worker<br/>classic crawler]
+    temporal --> gen[generation worker<br/>+ live-exploration queue]
+    temporal --> exe[execution worker]
+    disc & gen & exe --> domain
+    expl --> domain
+    expl --> ecore[packages/explorer_core]
+    api --> ecore
+    disc & gen & exe --> ai[packages/ai_provider → LiteLLM proxy]
+    expl -->|own httpx client, explorer_worker/llm.py| litellm[LiteLLM proxy]
+    disc & exe & rec & expl --> secrets[packages/secrets_client → Vault]
+    disc & exe --> s3[packages/object_store → S3]
+    expl -.->|page screenshots only, if configured| s3
+    exe --> mail[packages/mailer → SMTP]
+    api --> mail
+    ecore -->|explorer_core/notify.py| smtp[SMTP]
 ```
 
-### AD-1 — Bounded discovery workflow; generation starts immediately, not gated on human curation `[REWRITTEN 2026-07-15]` `[UPDATED 2026-07-18]`
+## Invariants & Rules (Architecture Decisions)
 
-- **Binds:** FR-6, FR-7, FR-8, FR-9, FR-13, FR-14, FR-15, FR-30
-- **Prevents:** Modeling unbounded human-curation latency inside a workflow's execution history; and, now that generation is no longer gated on a human decision, any ambiguity over whether Discovery → Inference → Generation is one continuous machine-driven pipeline or needs an external trigger.
-- **Rule:** `DiscoveryWorkflow` is bounded: it runs Discovery, then Application Model Building (FR-30, AD-14), then Inference, and for each candidate Journey `InferenceActivity` creates, immediately starts an independent, short-lived `GenerationWorkflow` in the same step (see AD-9) — no human action, no API call, no approval status in between. `[UPDATED 2026-07-18]` `InferenceActivity` reads canonical Application Model rows resolved by `ApplicationModelBuilderActivity`, never a raw/superseded capture directly (see AD-8, AD-14). The Temporal workflow ID is `generation-{journey_id}-{attempt}`, `attempt=1` at creation. Human curation (rename via FR-12, delete via FR-13) is ordinary CRUD through `apps/api` against Postgres, entirely decoupled from workflow orchestration — renaming or deleting a Journey never touches its `GenerationWorkflow`. Deleting a Journey (soft-delete, `status=deleted`) excludes it, and anything already generated for it, from downstream reads (Generate Suite compilation, Analytics) but does **not** cancel an in-flight or completed `GenerationWorkflow`. `[UPDATED 2026-07-27]` There is no mechanism to redo generation for a Journey the reviewer keeps — FR-18 (full regeneration) is cut in full, not deferred; deletion only excludes, it never triggers anything new. This AD's `attempt`/`GenerationWorkflow` scaffold is unchanged — it simply has no second caller today. `[NOTE]` This reverses the original design (approval gated generation, an explicit Approve click started `GenerationWorkflow`) — see `sprint-change-proposal-2026-07-15.md` for the rationale (per-item approval doesn't scale to a real discovery run's candidate volume) and the tradeoff it accepts (PRD §12 Risk item 2).
+### AD-1 — Discovery is one bounded workflow; generation is an explicit, separate trigger
+
+- **Two discovery engines.** `apps/api/src/api/discovery.py` reads `EXPLORER_REPLACES_DISCOVERY` (default `"1"`; `"0"` restores the crawler). While it is on, every fresh (non-resume) `start_discovery_run` — including the one `create_application` starts — calls `api.explorer.begin_run`, which starts `ExplorerRunWorkflow` (AD-22) and mirrors a `DiscoveryRun` row to `running` (stage `explorer`). If the Explorer queue has no pollers, it writes `DiscoveryRun(status="failed", stage="explorer", failure_reason="worker_unavailable")`. The classic crawler below now runs only when the flag is `0`, or to resume a crawler run. `ApplicationRead.discovery_engine` is `"explorer"` once **any** `explorer_run` exists for the application, otherwise `"crawler"`; the web uses it to hide Journeys/Scenarios and show the Explorer tab.
+- **Rule (classic crawler):** `DiscoveryWorkflow` (queue `discovery-task-queue`) runs `DiscoveryActivity` → `ApplicationModelBuilderActivity` → `InferenceActivity` and ends. It does **not** start generation. Scenario generation starts only when the user triggers it (`POST /applications/{id}/generate-scenarios`), which starts one `GenerationWorkflow` per Journey with id `generation-{journey_id}-{attempt}`; suite (Playwright code) generation is a separate `SuiteGenerationWorkflow` (`suite-{journey_id}-{attempt}`). Curation (rename/delete) is plain CRUD and never touches a workflow.
+- **Discovery is optional per application:** `Application.discovery_required=false` creates the application with no discovery run; test cases then come only from plain-English authoring or recording.
+- **Explorer is the deliberate exception to "no human wait inside a workflow":** `ExplorerRunWorkflow` waits up to 14 days for the `brief_confirmed` signal (AD-22). It still never starts generation; it promotes proven scenarios and stops, and the user presses Generate tests.
+- **Prevents:** human latency inside workflow history; a crawl silently spending LLM budget on journeys nobody kept.
 
 ### AD-2 — Workflows orchestrate only; Activities own all I/O
 
-- **Binds:** `packages/workflows`, `apps/workers/*`
-- **Prevents:** Non-deterministic workflow code (a direct DB call, HTTP call, or `datetime.now()` inside a Workflow breaks Temporal's replay guarantee) and, more broadly, two workers independently deciding where a side effect belongs.
-- **Rule:** Code under `packages/workflows` contains no network calls, no DB access, and no direct browser/LLM/Git calls — only calls to Activities and Workflow-safe primitives (timers, signals). All I/O lives in `apps/workers/*` Activities.
+- **Rule:** `packages/workflows` contains no network, DB, browser, LLM, filesystem or wall-clock calls — only Activity calls, child workflows, timers and signals. Pure decision helpers that need no I/O (`heal_policy.py`, `failure_explainer.py` rules) live there too.
+- **Prevents:** Temporal replay non-determinism.
 
-### AD-3 — AI calls go through one `AIProvider` port
+### AD-3 — Every LLM call goes through one `AIProvider` port, over a LiteLLM proxy
 
-- **Binds:** FR-8, FR-16, FR-17
-- **Prevents:** Vendor SDK calls scattered across Inference/Scenario/Playwright-generation Activities, which would make a future hosted-vs-customer-supplied-endpoint split a rewrite instead of a config change if on-prem is ever built. `[UPDATED 2026-07-15]` This was previously also bound to FR-27 (on-prem data locality); that FR is removed (on-prem deployment parked for a later release), but the port design still pays for itself even hosted-only, and keeps a future on-prem split cheap if it's ever decided.
-- **Rule:** No Activity imports an AI vendor SDK directly. All inference/generation calls go through `packages/ai_provider`'s `AIProvider` interface; only that package's implementations may hold vendor-specific code.
+- **Rule:** No worker or API module imports a vendor SDK. `packages/ai_provider` defines the `AIProvider` Protocol; its only implementation, `HostedAIProvider`, POSTs `/chat/completions` via httpx to a LiteLLM proxy (`LITELLM_BASE_URL`, `LITELLM_API_KEY`). The model is an alias (`AI_MODEL`; prod `gpt-5.6-luna`, code default `anthropic/claude-sonnet-5`), with one GPT-specific request-param branch. Prompts are inline in `hosted.py`.
+- **Port methods (Protocol):** `infer_journeys`, `generate_scenarios`, `infer_state_similarity`, `classify_action_safety`, `decide_live_exploration_action`, `generate_playwright` (also used for typecheck repair and self-heal). `analyze_test_case_prompt` and `explain_test_failure` exist only on `HostedAIProvider`, not on the Protocol.
+- **Exception — Explorer:** `apps/workers/explorer/src/explorer_worker/llm.py` deliberately does not use `packages/ai_provider`. It POSTs to `{LITELLM_BASE_URL}/chat/completions` itself (httpx, `response_format: json_object`, images as base64 JPEG, 3 attempts with backoff, 240 s timeout, raises `LLMError` when `LITELLM_BASE_URL` is unset). Two model tiers: `EXPLORER_THINKING_MODEL` (default `gpt-5.6-sol`; reading screens, writing the App Summary) and `EXPLORER_FAST_MODEL` (default `gpt-5.6-luna`; quick choices). Prompts live in `brain.py`. It still uses no vendor SDK and still goes through the same LiteLLM proxy, so the lock-in goal holds; what is lost is the single port.
+- **Prevents:** vendor lock-in and SDK churn; swapping models is a config change.
 
-### AD-4 — CI/CD delivery goes through one `DeliveryAdapter` port, keyed by Git host — not by CI system `[FEATURE REMOVED 2026-07-15 — port retained as forward-compatible seam]`
+### AD-4 — LangGraph + Playwright MCP is confined to live exploration
 
-- **Binds:** none currently — previously FR-19, FR-20, FR-21, all removed (no supporting screen in current UX). This AD's port design is retained per Story 1.1's Structural Seed, in case CI/CD delivery is ever redesigned from scratch, but no active story builds against it.
-- **Prevents:** Provider-identity branching (`if provider == "github"`) leaking into `CIDeliveryActivity` or generation logic; and, specifically, treating "GitHub Actions / GitLab CI / Jenkins / Azure DevOps" as four symmetric repo-delivery targets when Jenkins is a CI runner with no native Git-hosting/PR API of its own — a Jenkins customer's source still lives on GitHub, GitLab, or another host, and that host is what actually receives the PR or commit.
-- **Rule:** `CIDeliveryActivity` calls only the `DeliveryAdapter` interface in `packages/delivery_adapters`, selected by the Application's configured **Git host** (GitHub, GitLab, or Azure Repos) — never by its CI system. FR-21's manual pipeline-wiring instructions are a separate concern, owned by `packages/ci_instructions` (see Structural Seed), keyed by the Application's configured **CI system** (GitHub Actions, GitLab CI, Jenkins, or Azure Pipelines) independently of which host it delivers to — so a Jenkins-on-GitHub customer gets the GitHub `DeliveryAdapter` plus Jenkins-flavored wiring instructions, not a "Jenkins adapter" that doesn't correspond to anything real.
+- **Rule:** LangGraph is used in exactly one place: `apps/workers/generation/.../live_exploration/agent.py`, a `StateGraph` observe → decide → act loop for plain-English test cases. The browser is driven through Playwright MCP (`@playwright/mcp@0.0.41`, stdio subprocess); decisions come from `AIProvider`. It runs on its own queue (`live-exploration-task-queue`, a second `Worker` in the generation process). The crawler and the self-heal loop use in-process Playwright, not MCP.
+- **Prevents:** agent-framework sprawl into deterministic pipelines.
 
-### AD-5 — Discovery credentials never touch primary storage in plaintext
+### AD-5 — Target-application credentials live only in Vault
 
-- **Binds:** FR-2, FR-3
-- **Prevents:** A Dedicated Test Account credential or SSO/MFA session state landing in a Postgres column or an application log in recoverable form.
-- **Rule:** Credentials and session state are written and read only through `packages/secrets_client`, backed by a dedicated secrets store (Vault or cloud KMS-backed envelope encryption). `packages/domain` models store a secret *reference*, never a secret value.
+- **Rule:** Target-app login credentials and SSO `storageState` JSON are written/read only through `packages/secrets_client` (hvac, Vault KV v2 at `secret/`). `Application.secret_ref` stores the path, never the value. The execution worker resolves credentials into the Playwright subprocess environment only; generated/downloaded projects read them from `process.env.*`.
+- **Explorer roles:** extra test accounts per application (`explorer_role`) are stored in Vault the same way; the row keeps only `secret_ref`, and `DELETE /explorer/roles/{id}` deletes the Vault secret.
+- **Sign-in switch:** `PATCH /applications/{id}/requires-login` (admin) turning sign-in off writes an empty storageState (`{"cookies":[],"origins":[]}`) to Vault and sets `auth_method="none"`; `PUT …/credentials` on a `none` app switches it back to `standard_login` with `requires_login=true`.
+- **Not in Vault:** platform deployment secrets (k8s Secret `aitestgen-secrets`).
+- **Prevents:** credentials in Postgres, logs or generated code.
 
-### AD-6 — The API's generated OpenAPI spec is the only contract between frontend and backend
+### AD-6 — The FastAPI OpenAPI spec is the frontend/backend contract
 
-- **Binds:** `apps/web`, `apps/api`
-- **Prevents:** Frontend (TypeScript) and backend (Python) type definitions for the same entity drifting apart — a real risk now that they're two languages with no shared compiler.
-- **Rule:** `apps/web`'s API types are generated from `apps/api`'s FastAPI/Pydantic-derived OpenAPI spec. No hand-written duplicate of a request/response shape is permitted in `apps/web`.
+- **Rule:** `apps/web/src/api-types.gen.ts` is generated by `openapi-typescript` from `apps/api`'s `/openapi.json`; a CI job fails on drift. Known exception: a few fields (`role`, `discovery_required`) are hand-patched in `api.ts` pending regeneration.
 
-### AD-7 — Trusted Knowledge Model has one deletion path `[REWRITTEN 2026-07-15]`
+### AD-7 — One deletion path for journeys
 
-- **Binds:** FR-9, FR-12, FR-13, FR-14
-- **Prevents:** A Journey or Capability being excluded from the Trusted Knowledge Model from anywhere other than the reviewer-facing delete endpoint — e.g., a worker silently discarding a candidate it decided was low-quality, which would remove the one lever a human has over what the platform trusts.
-- **Rule:** Only `apps/api`'s delete endpoint may transition a Journey/Capability's status to `deleted`. Workers may only write `candidate` (Discovery/Inference), or downstream generation status (`generated`, `delivered`) — never a deletion. `[NOTE]` There is no more `approved`/`rejected` state (FR-10/FR-11 cut) — every non-`deleted` Journey/Capability is, by definition, part of the Trusted Knowledge Model from the moment it's discovered (FR-14).
+- **Rule:** Only the API (`DELETE /journeys/{id}`) moves a Journey to `status=deleted`. Workers write `candidate` only. Deleted journeys are excluded from downstream reads; nothing already generated is cancelled.
 
-### AD-8 — Application Model records are captured typed, merged to canonical, and every inferred artifact traces back to one `[REWRITTEN 2026-07-18 — Evidence removed]`
+### AD-8 — Discovery captures typed rows; the Model Builder merges to canonical
 
-- **Binds:** FR-6, FR-8, FR-23, FR-30
-- **Prevents:** A Journey/Scenario/TestAsset existing in the database with no traceable path back to the discovery signal that produced it (breaking the "auditable, not black-box" trust mechanic in `DESIGN.md`); a run-level-only pointer that can't answer "which capture supports *this* Journey" when one Discovery Run yields several Journeys, or "which generation attempt produced *this* Test Asset" if a second attempt is ever written; and, as of this revision, a generic flat capture record (`Evidence`) that duplicates what typed records already hold, adding an indirection layer with no benefit. `[UPDATED 2026-07-15]` Previously also bound to FR-24 (coverage analytics); that FR is removed, but the `current` flag this AD establishes still does real work for Generate Suite compilation, independent of any analytics screen. `[UPDATED 2026-07-27]` No longer bound to FR-18 (regeneration) — cut in full; see the `generation_run_id`/`current` note below.
-- **Rule:**
-  - **There is no generic `Evidence` table.** `DiscoveryActivity` writes directly into five typed tables as it captures each observation — `Page`, `Form` (+ `FormField`, `ValidationRule`), `Action`, `ApiEndpoint`, `PageTransition` — every row scoped by both `application_id` (the Application it belongs to) and `discovery_run_id` (the run that captured it). Every row `DiscoveryActivity` writes has `merged_into_id = null` at write time; it never resolves duplicates itself.
-  - Of those five, **`Page`, `Form`, `Action`, `ApiEndpoint`, and `PageTransition` each carry a nullable, self-referencing `merged_into_id`**: `null` means the row is canonical (authoritative for its Application); non-null means the row has been superseded, merged into the referenced row of the same table. Only `ApplicationModelBuilderActivity` ever sets `merged_into_id` (AD-14) — it groups raw rows by a normalized identity (e.g. a Page's normalized `url_template`) *across all of an Application's Discovery Runs, not just the current one* — this cross-run matching is what makes the Application Model genuinely reusable: a page re-visited on a later re-discovery run resolves to the same canonical `Page`, it doesn't spawn a duplicate.
-  - `Component`, `ComponentLocator`, and `Assertion` are **purely derived** — `DiscoveryActivity` never writes them. `ApplicationModelBuilderActivity` synthesizes a `Component` row for **every automatable element**, not only clickable ones: grouping canonical `Action` rows on the same canonical `Page` by label/selector shape (for buttons/links), *and* one `Component` per canonical `FormField` (for form inputs — `type` reflects the field's `input_type`) — both find-or-create by a stable identity, so re-running against a new Discovery Run updates rather than duplicates. `ComponentLocator` (preferred + fallback) is derived the same way regardless of which kind of `Component` it belongs to — one mechanism for every locator, not a separate one for form fields. `FormField` gains a nullable `component_id` back-reference to its derived `Component`, so `ScenarioGenerationActivity`/`PlaywrightGenerationActivity` can join a field's validation rules with its locator in one step. `Assertion` rows are derived from canonical `PageTransition`/`ApiEndpoint` outcomes, with an optional nullable `component_id` when the assertion targets a specific element (e.g. "success message visible") rather than a page/API-level outcome.
-  - `InferenceActivity` attributes a candidate Journey by setting `journey_id` — **only on canonical rows** (`merged_into_id IS NULL`) of `Page`, `Form`, `ApiEndpoint`, and on `Component` — never on a superseded/duplicate row, and never on raw `Action`/`PageTransition` rows (those stay as unattributed capture detail; `Component` is the attributable, deduped unit a Journey actually references). A Journey's evidence trail (FR-23) is the set of these `journey_id`-matching canonical rows.
-  - `Journey.discovery_run_id` is set once, at creation, and is immutable — it identifies which Discovery Run *discovered* the Journey, independent of how many times it's later regenerated.
-  - `Scenario` and `TestAsset` rows carry their own `generation_run_id` (the `GenerationWorkflow` attempt — AD-1 — that produced them) plus a `current: bool` flag, both of which support Story 4.1/4.2's own idempotent re-trigger protection (AD-9) independent of any regeneration feature. `[UPDATED 2026-07-27]` FR-18 (regeneration) is cut in full — no caller ever produces a second attempt today — but this scaffold is retained as-is rather than unwound, since unwinding it would mean reopening already-implemented Story 4.1/4.2 code for no functional gain. Were a second attempt ever written, it would write new `Scenario`/`TestAsset` rows with `current=true` and flip the prior attempt's rows to `current=false` (soft-superseded, retained for audit — never deleted). The Journey Explorer and coverage analytics (FR-24) only ever read `current=true` rows; "does this Journey have a Test Asset" is `EXISTS(... current=true)`.
-  - `Page` stores structured metadata (URL, title) directly as columns, not JSONB — the typed-table model replaces `Evidence.details`'s generic JSON blob. Large binary artifacts (screenshots) are never stored inline — `Page.object_storage_key` holds an object-storage key/reference; the object-storage backend itself is deferred (Operational Envelope), but the split between structured-columns-in-Postgres and blobs-in-object-storage is decided now.
+*Classic crawler only. Explorer keeps its own `explorer_*` tables (AD-22) and stores its screenshots and videos as bytes in Postgres, not S3.*
 
-### AD-9 — Side-effecting Activities must be idempotent under Temporal's at-least-once retry `[UPDATED 2026-07-15]`
+- **Rule:** `DiscoveryActivity` writes typed rows (`page`, `form`, `form_field`, `validation_rule`, `action`, `api_endpoint`, `page_transition`), each scoped by `application_id` and `discovery_run_id`, with `merged_into_id = null`. There is no generic Evidence table. Screenshots go to S3 (`discovery-runs/` prefix); Postgres stores the key.
+- `ApplicationModelBuilderActivity` is the only writer of `merged_into_id` (cross-run, per Application) and the only writer of derived `component`, `component_locator`, `assertion` rows (idempotent find-or-create).
+- `InferenceActivity` is the only writer of `journey`, `journey_step`, `capability` and of `journey_id` attribution on canonical rows.
 
-- **Binds:** `apps/workers/discovery`, `apps/workers/generation`
-- **Prevents:** A retried Activity re-doing an external side effect a customer can see — a duplicate PR, a form double-submitted against the target application — or, since `InferenceActivity` now creates a candidate Journey and starts its `GenerationWorkflow` in the same step (AD-1), a retry either double-creating the Journey row or failing to start generation for one a prior partial attempt already created.
-- **Rule:** Every Activity that performs an external side effect must check-before-acting using a deterministic key derived from its inputs (e.g., a PR branch name derived from `journey_id` + `attempt`), so a retry finds and reuses its own prior effect instead of repeating it. `InferenceActivity`'s candidate-creation step is keyed by the same `identity_key` already established for re-discovery dedup (AD-13) — a retry that finds a matching `identity_key` already on the Application skips re-creating the row, then (whether just created or found from a prior attempt) starts `GenerationWorkflow` with ID `generation-{journey_id}-1`. Temporal's duplicate-workflow-ID rejection makes this step naturally idempotent on its own — there is no longer a gap between two independently-writable operations the way an approve-endpoint-triggered start had, so no separate reconciliation sweep is needed.
+### AD-9 — Side-effecting Activities are idempotent under at-least-once retry
 
-### AD-10 — Discovery Run completeness is a first-class, queryable status `[UPDATED 2026-07-15]` `[EXTENDED 2026-07-21]`
+- **Rule:** Deterministic workflow ids (`generation-{journey_id}-{attempt}`, `suite-…`, `regenerate-{scenario_id}`, `autofill-{scenario_id}`, `heal-{test_result_id}`) let Temporal's duplicate-id rejection absorb double clicks. `EnsureTestSuiteActivity` is fetch-or-create. Run-completed email is claimed once (lost rather than duplicated). Journey creation is keyed by `identity_key` (AD-13).
 
-- **Binds:** FR-7, FR-33, PRD §10 Reliability NFR
-- **Prevents:** A Discovery Run that failed being indistinguishable from one that finished exhaustively — silently presenting a partial map as a finished one.
-- **Rule:** `DiscoveryRun.status` is one of `running | complete | failed`, set by `DiscoveryWorkflow`: `complete` on exhaustive-traversal termination, `failed` on unrecoverable error (AD-11). `apps/api` and the UI's status pill read this field directly — completeness is never inferred from the presence/absence of other data. There is no `incomplete` value — FR-5 (time budget), the only thing that used to produce it, is removed; a Discovery Run has no safety cap and runs until genuinely exhaustive (accepted risk, PRD §12 item 7).
-- **`[NEW 2026-07-21]` Rule (stage tracking, FR-33):** `DiscoveryRun` additionally carries a `stage` field — `initializing | authenticating | discovering | analyzing` — meaningful only while `status=running`:
-  - `initializing`: set at `DiscoveryWorkflow` start (Story 2.1)
-  - `authenticating`: set once `DiscoveryActivity` begins session establishment (FR-3)
-  - `discovering`: set once crawl begins; remains through `ApplicationModelBuilderActivity` (Story 2.5) — Model Builder folds into this stage, not `analyzing`, since it's still processing what was crawled, not yet AI inference
-  - `analyzing`: set once `InferenceActivity` begins (Story 2.6); `status` flips to `complete` when `InferenceActivity` finishes
+### AD-10 — Run state is a first-class, queryable column, never inferred
 
-  `apps/api` exposes `stage` on the existing `DiscoveryRun` read endpoint. The frontend polls this endpoint and maps `stage` to a fixed business-language label + percentage client-side — no new percentage-tracking column is stored; the mapping is presentation-only. No new port, no streaming infrastructure — this is an extension of the existing REST read pattern, not a new architecture paradigm. `[UPDATED 2026-07-21, live UX correction]` The percentage shown for a stage in progress is that of the *previous* stage's completion, not the current stage's own target (Initialization 0%, Authentication 10%, Discovery 25%, Analysis 75%) — pairing "Discovery" with a 75% target the instant crawling started made the by-far-longest stage look nearly done. 100% is never rendered client-side; Journeys appearing is the view's actual completion signal. See `sprint-change-proposal-2026-07-21.md`.
+- **Discovery:** `discovery_run.status` ∈ `running | paused | complete | failed`; `stage` ∈ `initializing | authenticating | discovering | analyzing | analyzed`; `stop_reason` ∈ `exhausted | max_pages | max_duration` tells a full crawl from a capped one; `source` ∈ `crawler | live_exploration`.
+- **Explorer:** `explorer_run.status` ∈ `queued | signing_in | understanding | summarizing | awaiting_confirmation | confirmed | planning | exploring | explored | hunting | testing | tested | failed | stopped | paused | expired`. `ACTIVE_RUN_STATUSES` (queued … testing, minus `explored`/`tested`) allows one active run per application. Mission, test-case and question rows carry their own status columns (AD-22). The Explorer UI polls `/events?after=<id>` every 1.5 s and the run every 2.5 s, using `explorer_event`'s bigint identity as the cursor.
+- **Test runs:** `test_run.status` ∈ `pending | running | completed | blocked | cancelled`; `test_result.status` ∈ `pending | passed | failed | timed_out | errored | blocked | cancelled`.
+- The web polls these; percentages are presentation-only.
 
-### AD-11 — Session expiry is a named failure mode, not a silent partial result
+### AD-11 — Failures are typed, small, and plain-English
 
-- **Binds:** FR-3
-- **Prevents:** A Discovery Run whose session expired mid-crawl producing a truncated map that looks like a normal (if small) result, instead of the graceful failure + re-authentication prompt FR-3 requires.
-- **Rule:** `DiscoveryActivity` detects an auth-redirect (session expired) as a distinct condition from a normal stop condition (AD-10) and terminates the run with `DiscoveryRun.status=failed`, `failure_reason=session_expired`. `apps/api` surfaces a re-authentication prompt keyed specifically off that reason — distinguishable from any other `failed` cause.
+- **Discovery:** a fixed `discovery_error` taxonomy, DISC-001 (Temporal restart) … DISC-006 (form-field resolution timeout), each with code + human message. Session loss mid-crawl triggers bounded re-login (`_MAX_CONSECUTIVE_REAUTH_ATTEMPTS=3`) before failing.
+- **Service availability:** before starting a workflow the API checks `has_pollers(task_queue)` and returns 503 with a machine code (`DISCOVERY_/GENERATION_/EXECUTION_/LIVE_EXPLORATION_/EXPLORER_UNAVAILABLE`; `EXPLORER_UNAVAILABLE` is handled inside `ExplorerTab.tsx`, not `errorCodes.ts`); a failed Temporal Schedule call returns 502 `SCHEDULE_BACKEND_UNAVAILABLE`. The web maps codes in `errorCodes.ts`.
+- **Test failures:** `failure_explainer.py` regex rules give a deterministic title/detail and a run-level root-cause category; unmatched errors go to the LLM once and are cached in `failure_explanation` by `error_fingerprint` of the redacted text.
+- **Credentials:** `VerifyCredentialsWorkflow` performs a real login before discovery starts (`valid | invalid | uncertain`).
 
-### AD-12 — Every Application belongs to exactly one Organization; every query is Organization-scoped
+### AD-12 — Every query is Organization-scoped through one dependency
 
-- **Binds:** platform auth
-- **Prevents:** Independently-built endpoints deciding "which Applications can this user see" differently — a data-leak risk across customer organizations once more than one exists. `[UPDATED 2026-07-15]` Previously also bound to FR-25 (multi-application dashboard), now removed; the tenant boundary is foundational on its own merits — multiple Applications per Organization is real regardless of whether a cross-Application dashboard exists to view them.
-- **Rule:** `Organization` is a first-class entity. `Application` (and everything under it) belongs to exactly one `Organization`. `apps/api` scopes every query by the authenticated user's `Organization` through one central mechanism (e.g., a default query-layer filter), never left to individual endpoints to remember. This holds regardless of the still-open deployment-infra-topology question (see Deferred) — even a single-tenant on-prem deployment has exactly one `Organization`.
+- **Rule:** `current_org_id` (`CurrentOrgIdDep`) is the single tenant-scoping mechanism. Roles (`admin | member | viewer`) are org-wide. `block_viewer_writes` is a global FastAPI dependency that denies every POST/PUT/PATCH/DELETE for viewers except `/auth/logout` (deny by default); `NotViewerDep` also blocks the Allure report and suite download. `require_admin` gates team, invites, role changes, application edit/delete, credentials (list/reveal/verify/update), execution-policy update, Settings, the admin cleanup/reconcile triggers and the Activity feed. The web mirrors this in `PermissionsContext.tsx`.
+- **Explorer gap:** the `/explorer` router (`apps/api/src/api/explorer.py`) guards every route with `CurrentOrgIdDep` only (`start_run` also takes `CurrentUserDep` to record the starter). The app-wide `block_viewer_writes` still applies, so viewers cannot change anything there. But nothing on that router uses `require_admin` or `NotViewerDep`: any member can add or delete role test accounts (Vault secrets), knowledge and documents, and a viewer can download the tests zip (`/runs/{id}/tests/download`), the report, mission recordings and the highlight video. Explorer actions also write nothing to `activity_event`.
 
-### AD-13 — Journeys carry a stable identity key, separate from their AI-generated name, for re-discovery dedup
+### AD-13 — Journeys carry a deterministic `identity_key`
 
-- **Binds:** FR-15
-- **Prevents:** Two engineers implementing FR-15's "is this Journey new?" check against different notions of identity — one comparing AI-generated names (which can vary slightly run to run), another comparing something else — producing inconsistent, unreliable dedup.
-- **Rule:** `InferenceActivity` computes a deterministic `identity_key` for each candidate Journey from its underlying canonical Page/Component/ApiEndpoint signature (AD-8), not from its AI-generated display name. On re-discovery, a new candidate whose `identity_key` matches an existing Journey in the same Application is suppressed from the review queue (FR-15) and does not alter the existing Journey's `discovery_run_id` or Application Model attribution (AD-8) — the original attribution is preserved, consistent with FR-15's "existence check," a materially smaller capability than change detection.
+- **Rule:** `identity_key.py` derives a Journey's identity from its canonical page/component signature, not its AI name. Re-discovery suppresses duplicates and keeps original attribution.
 
-### AD-14 — Application Model Builder owns merge/derivation; each entity has exactly one class of writer `[NEW 2026-07-18]` `[REWRITTEN 2026-07-18 — Evidence removed]`
+### AD-14 — Crawl heuristics are deliberate, bounded sampling (see `docs/DISCOVERY_ENGINE_V2.md`)
 
-- **Binds:** FR-6, FR-30
-- **Prevents:** A Journey/Capability row, or any Application Model row, being written or mutated from anywhere other than its one designated Activity — e.g., `DiscoveryActivity` deciding two pages are duplicates and merging them itself, or `InferenceActivity` writing to `Page`/`Component` — which would make it impossible to reason about where a given row's data came from, mirroring the problem AD-7 solves for the Trusted Knowledge Model's deletion path.
-- **Rule:** Three, and only three, classes of writer exist for Application Model data:
-  1. `DiscoveryActivity` (Story 2.2) — the only writer of new `Page`, `Form`, `FormField`, `ValidationRule`, `Action`, `ApiEndpoint`, and `PageTransition` rows. Every row it writes has `merged_into_id = null` (where that column exists) — it never resolves duplicates, only captures.
-  2. `ApplicationModelBuilderActivity` (Story 2.5) — the *only* writer that ever sets an existing `Page`/`Form`/`Action`/`ApiEndpoint`/`PageTransition` row's `merged_into_id`, and the *only* writer of `Component`, `ComponentLocator`, and `Assertion` rows (which `DiscoveryActivity` never writes at all — they have no raw/captured form).
-  3. `InferenceActivity` (Story 2.6) — only writer of `Journey`/`Capability` rows; the only writer of `journey_id` onto canonical (`merged_into_id IS NULL`) `Page`/`Form`/`ApiEndpoint`/`Component` rows (AD-8). Reads the Application Model, never writes to `Page`/`Form`/`Action`/`ApiEndpoint`/`PageTransition`/`Component`/`ComponentLocator`/`Assertion` beyond that one `journey_id` attribution.
+*AD-14 and AD-15 describe the classic crawler only. Explorer's equivalents are in AD-22.*
 
-  A new merge heuristic or normalization rule is isolated to `ApplicationModelBuilderActivity` and never requires a change to Discovery's crawl code or Inference's AI logic.
+- Pipeline: PREPARE → crawl loop (Observe → Identify → Enumerate → Decide → Act → Return) → CLOSE OUT, breadth-first.
+- **State identity** (`state_identity.py`): SAME/VARIANT/NEW by route templating + fingerprint scoring; per-application thresholds (0.75/0.35); in-process cache, no Redis.
+- **Sampling:** one action per distinct label (no per-page count cap; removed 2026-07-22); frames (depth 3), shadow DOM, popups, tabs; scroll/"load more" sampled, not exhausted; broken destinations excluded; nav retries `_MAX_NAV_RETRIES=2`.
+- **Readiness:** network-quiet (ignores analytics/polling) + 300 ms DOM-stable + content check; page-load timeout default 15 s, per-app/per-run override; not settled → DISC-004.
+- **Caps:** `DiscoverySettings.max_pages` (default 500) and `max_discovery_duration_minutes` (default 30) end a run with `stop_reason` recorded. `DiscoveryActivity` has a 6 h start-to-close and 2 min heartbeat.
 
-### AD-15 — Crawl optimization heuristics are deliberate sampling, not incomplete coverage `[NEW 2026-07-18]` `[UPDATED 2026-07-19]`
+### AD-15 — Planner order: loop guard → safety → data; the crawl never blocks
 
-`[PARTIALLY SUPERSEDED 2026-07-29 — see AD-17]` Rule 5 ("navigation-first") is superseded by the Action Priority Model (AD-17/FR-38) for the untried-in-page-action-vs-unvisited-nav case; rules 1-4 (page-fingerprint dedup, representative-action/form sampling, error-destination handling, button-triggered-navigation-continuation) are unaffected and remain in force, now read alongside AD-16's SAME/VARIANT/NEW classification (FR-37) rather than as the sole dedup mechanism.
+- **Rule:** `planner.py` tiers actions and runs a fixed chain (`loop_guard` → safety → data) yielding `execute | defer | skip`, gated by `interaction_level` (passive/normal/aggressive).
+- **Safety** (`safety_engine.py` + `packages/safety_classifier`): Clearly Destructive is always refused; Ambiguous per `Application.safety_posture`. The AI safety consult exists but is not wired.
+- **Data** (`data_resolver.py`): Test Data Pool → per-run reuse → safe synthesis → DEFER; every value is logged to `synthetic_data_entry`.
+- **Blocked frontier:** DEFERs aggregate into `blocked_task` by `(application_id, aggregation_key)` with `exploration_step` rows as a human-readable record.
+- **Pause/resume** of a run is exposed (`/pause-discovery`, `/resume-discovery`); both return 409 for Explorer applications (`_require_crawler_discovery` in `main.py`), which pause and resume through `/explorer/runs/{id}/pause|resume` instead. The separate re-crawl-from-entry-point `resume.py` exists but is not wired to any caller.
 
-- **Binds:** FR-6, FR-7
-- **Prevents:** FR-7's "exhaustive traversal" being misread as "every DOM instance of every action is individually exercised" — which would make page-fingerprint dedup and representative-action sampling look like a completeness regression instead of an intentional design decision.
-- **Rule:** Page-fingerprint deduplication (the same logical page reached via multiple navigation paths is processed once) and representative-action sampling (a repeated identical action pattern, e.g., an "Edit" button repeated per grid row, is exercised once) are AD-level decisions, not implementation shortcuts. `DiscoveryRun.status=complete` (AD-10) means exhaustive traversal of distinct pages and distinct action *patterns* — it does not mean every individual DOM instance of a repeated action was separately exercised. This narrows PRD §12 Risk item 7 (unbounded exploration from repeated actions) without affecting the accepted risk around unbounded *page* growth (infinite pagination, calendar next-links), which is unrelated to action repetition.
-- **`[UPDATED 2026-07-19]`** Four further sampling/robustness rules, same AD-level status as the above (deliberate, not a completeness gap):
-  1. **Representative-form sampling** — a `Form` with an identical shape and starting field values (hidden fields included, since a hidden field can be the only thing distinguishing two otherwise-identical forms, e.g. a per-product "Add to Cart") reachable identically from more than one page is captured once, mirroring representative-action sampling.
-  2. **Bounded per-page action budget** — representative-action sampling additionally caps the number of distinct action *labels* exercised per page (a small constant, page-body content prioritized over shared nav/header/footer chrome), so a site-wide button doesn't crowd out every page-specific call-to-action. This further narrows PRD §12 Risk item 7 beyond repeated-instance dedup: a page with many genuinely distinct actions, not just repeated ones, is now also bounded.
-  3. **Error/broken-destination handling is exclusionary, not exploratory** — a destination that fails to load (network/DNS error) or returns a 4xx/5xx response is marked visited and never persisted as a `Page` or explored further. It was never a real business page, so excluding it isn't a completeness gap against FR-7.
-  4. **Button-triggered navigation is followed onward** — a page reached only via a non-link action (e.g. a client-side "Add to Cart" button) is now enqueued for further traversal like any other discovered page, closing what was previously a structural blind spot: a flow reachable only through such an action was invisible to the crawler past the first click. This is a completeness *fix*, not a new sampling rule — flagged here because it changes what "exhaustive" (AD-10) actually covers.
+### AD-16 — Generated tests are TypeScript `@playwright/test`, gated by a real typecheck
 
-> **`[2026-08-03]` Discovery Engine mechanics — AD-15 through AD-23 are read alongside `docs/DISCOVERY_ENGINE_V2.md`,** which is the authoritative design spine for the crawl engine following a feasibility review of the 2026-07-29 story batch. AD-21 was rewritten (see below). Three decisions introduced by that review are documented in the spine rather than as separate ADs, since each is a mechanism internal to Discovery rather than a cross-cutting structural rule: the **State Return ladder** and per-state return budget (spine §F — bounding the previously unbounded cost of restoring a state to try its next action, with `unreached` as a first-class reported outcome); the per-Application **safety posture** setting (spine §D — making the coverage-vs-caution trade-off explicit rather than universally deferring on ambiguity); and the **`record_diagnostic()` sink** (spine §5 — making every tunable heuristic observable, without which none of them can actually be tuned). Frame and shadow-DOM traversal (spine §A) likewise sits under AD-15's sampling umbrella as a capture-completeness rule, not a new decision.
+- **Rule:** `PlaywrightGenerationActivity` produces a TS spec per Scenario, grounded on known pages and locators, then runs `tsc --noEmit` (`packages/playwright_typecheck`) with an AI repair loop, then `spec_linter.py`. Linter findings are flag-only (`needs_review` + warnings). Suite generation fans out in up to 3 waves with a 30 s cooldown. Recorded specs go through the same typecheck.
+- **Explorer-proven code:** Explorer's promoted scenarios carry `grounding.proven_code`. `_proven_explorer_code` (generation `activities.py`) typechecks it and uses it as-is; only if it fails the typecheck does the normal `_generate_and_typecheck` path run. `spec_linter.resolve_requires_auth` trusts a boolean `grounding.requires_auth`. `_TEST_CALL_RE` has a lookbehind so it no longer matches `.test(` (e.g. regex `.test(` in a spec).
+- **Three sources of scenarios:** `discovery` (crawl → journey → scenarios, or Explorer promote, which also writes `source="discovery"` and is told apart by `grounding.explorer_test`), `nl` (plain-English via live exploration, AD-4; the verification runs are discarded), `recorded` (Record & Play, AD-19).
 
-### AD-16 — State Identity Engine runs against an in-process runtime cache, not a new persistent tier `[NEW 2026-07-29]`
+### AD-17 — Execution runs the real Playwright CLI per spec, on one worker host per run
 
-- **Binds:** FR-37
-- **Prevents:** Introducing Redis (or any new stateful service) before it's proven necessary — YAGNI applied to infra, not just code.
-- **Rule:** The SAME/VARIANT/NEW comparison runs against a plain in-process cache scoped to one `DiscoveryActivity` execution, rebuilt from canonical (`merged_into_id IS NULL`) `Page` rows at Activity start. This is sufficient because Save-as-Project resume (AD-22) relies on the *permanent* DB's canonical rows for "don't re-explore what's confirmed," never on the runtime cache surviving a pause. Add a real distributed cache only if a single-process cache measurably can't keep up — not speculatively.
+- **Rule:** `ApplicationTestExecutionWorkflow` → `PrepareTestRunActivity` assembles the project once (`test_suite_assembler`, local dir) → `ExecuteTestActivity` runs `npx playwright test` per spec (within-run `asyncio.Semaphore`, default 5) → `GenerateAllureReportActivity` → `FinalizeTestRunActivity` → `SendTestRunReportEmailActivity`. Artifacts (screenshot/trace/video) go to S3 under `test-runs/`.
+- **One at a time:** `PrepareTestRunActivity` sets `PrepareTestRunActivityResult.one_at_a_time` when any scenario's `grounding.one_at_a_time` is true (Explorer sets it when it guesses the app keeps state per login, `sense.py` `keeps_state`); the workflow then uses a semaphore of 1.
+- **Sign-in step:** the `--project=setup` auth step's timeout is 180 s for applications with discovery (was 60 s) and 150 s (`_AUTH_SETUP_TIMEOUT_NO_DISCOVERY_S`) without. `auth.setup.ts` (assembler) races "password field visible" against "URL left the login page" before checking `isAuthenticated`; when current `@auth` assets exist without a recorded login form, the assembler falls back to `generic_login_evidence`. The `@auth` failure hint fires only on failed/timedOut and appends the original error.
+- **Skipped → blocked:** a Playwright `skipped` result is stored as `test_result.status="blocked"` with `blocked_reason` taken from the `test.fixme`/`test.skip` annotation (`_skip_reason`).
+- The Allure step reads the local project dir, so a run must stay on one execution-worker host; the deployment is single-replica on purpose.
+- Only one run per application at a time (`EXECUTION_IN_PROGRESS`).
+- **Cancel:** the API marks run/results cancelled under a row lock, then cancels the workflow; activities heartbeat, watch the row and kill Playwright process trees; `CleanupCancelledTestRunActivity` runs; no report, no email.
+- **Stale runs:** `ReconcileStaleTestRunsWorkflow` every 15 min.
 
-### AD-17 — Action Priority Model supersedes AD-15's navigation-first rule `[NEW 2026-07-29]`
+### AD-18 — Self-healing never rewrites an assertion
 
-- **Binds:** FR-38 (supersedes FR-6's navigation-first clause, AD-15 rule 5)
-- **Prevents:** Two competing action-ordering rules coexisting in the codebase — the old "prefer unvisited nav over repeating an already-done same-page action" and the new "finish all untried Tier-1 in-page actions before any Tier-2 navigation" disagree on the untried-in-page-action-vs-unvisited-nav case, which the old rule never actually addressed but which is exactly the case that motivated this change (a page left prematurely before its own actions are explored).
-- **Rule:** Every candidate action carries a Tier 1 (in-page) or Tier 2 (navigation-intent) tag, assigned deterministically (ARIA/landmark role, route-changing href, layout position) with AI as a fallback only for genuinely ambiguous cases (mirrors AD-3's AI-assists-deterministic pattern). The Exploration Planner exhausts all untried Tier 1 actions on a state — including finishing any AD-18 scroll/pagination sampling — before considering any Tier 2 action. AD-15's "navigation-first" label is retired; its underlying repeated-interaction-avoidance behavior is retained as one of AD-22's loop-prevention backstops, not as a competing priority rule.
+- **Rule:** after every failed execute, `HealTestActivity` runs: evidence → AI diagnosis (+ `live_inspection.py` on the live page) → targeted edit → typecheck → assertion-change guard (`assertions.js`) → re-run.
+- `heal_policy.py`: failures inside `expect(...)` are never healed; infra failures get one same-code retry with no AI.
+- **Switch:** `AUTO_HEAL_ENABLED` (execution `activities.py`, default `"1"`; any other value turns automatic heals off, manual heals still run).
+- **Known bugs are never healed:** heal is skipped when the scenario's `grounding.proven_code` contains `test.fixme(true` (an Explorer known-bug test).
+- Budgets: automatic `AUTO_HEAL_ATTEMPT_CAP=2`; manual (`POST /test-results/{id}/heal`, `HealTestExecutionWorkflow`) capped by `DiscoverySettings.max_heal_attempts`.
+- **Flaky** is computed at read time, not stored: a scenario is flaky if its last 10 completed (non-verification) results include at least one pass and one fail/timeout/error.
 
-### AD-18 — Infinite scroll/pagination is sampled and validated, never crawled to exhaustion `[NEW 2026-07-29]`
+### AD-19 — Record & Play is a separate interactive service, not a workflow
 
-- **Binds:** FR-36
-- **Rule:** After a scroll/"Load More" action, a bounded sample (2-3 iterations) is compared via AD-16's State Identity Engine; consecutive SAME classifications confirm a repeating pattern, at which point the region is marked sampled and control returns to the Planner. A hard scroll/pagination budget per page applies regardless of validation outcome (AD-22 — Loop Prevention, see below).
+- **Rule:** `apps/workers/recording` (FastAPI :8100) runs, per session, Xvfb + headed Chromium with `playwright codegen --target playwright-test` + x11vnc. RFB bytes are proxied in-process over `/recordings/{token}/vnc`; stop/cancel over `/recordings/{token}/control`. The web uses `@novnc/novnc` `RFB` directly.
+- Tokens are minted by the API (sha256 stored, 30 min expiry). Pool: `RECORDING_MAX_CONCURRENT_SESSIONS=4`, max 60 min. `auth_mode=authenticated` pre-mints a storageState.
+- Output is normalized, typechecked, and saved as a `recorded` Scenario + TestAsset.
 
-### AD-19 — Safety Engine classification is a distinct step, before Data Resolution `[NEW 2026-07-29]`
+### AD-20 — Schedules are Temporal Schedules; only test runs are scheduled
 
-- **Binds:** FR-39
-- **Prevents:** An action being executed (or its input resolved) before its safety classification is known — resolving data for an action that turns out to be destructive would be wasted work at best, a false sense of "we tried" at worst.
-- **Rule:** The Exploration Planner asks the Safety Engine before the Data Resolver. Clearly Destructive → SKIP immediately, Data Resolver never consulted. Safe or Ambiguous → proceed to Data Resolution; an Ambiguous action that *does* resolve its data still lands in the Blocked Frontier (AD-20) for approval, it is never executed on the strength of having data alone. A Safe action gets a lightweight before/after indicator check post-execution; a detected anomaly is logged, visibility-only, never blocking.
+- **Rule:** user schedules (`daily | weekly | monthly | custom_cron`) are created by the API (`schedule_spec.py`) as Temporal Schedules with overlap=SKIP targeting `ScheduledExecutionWorkflow`, which checks `CheckScheduleGateActivity` and then runs the execution workflow as a child. Default zone `SCHEDULE_DEFAULT_TIME_ZONE` (prod Asia/Kolkata). Discovery is never scheduled.
+- System schedules (daily cleanup `0 6 * * *` Asia/Kolkata; stale-run reconcile `*/15 * * * *`) are created by scripts, not at boot.
 
-### AD-20 — Blocked Frontier persists full exploration paths, referencing confirmed Pages, never duplicating them `[NEW 2026-07-29]`
+### AD-21 — Platform auth is a server-signed cookie, invite-only
 
-- **Binds:** FR-42, FR-43
-- **Prevents:** A resumed blocked path being unreconstructable because only the blocking step was recorded, or the path record duplicating already-confirmed Page data instead of referencing it.
-- **Rule:** `BlockedTask` is one row per blocked path; `ExplorationStep` is one row per step in it, ordered by `step_order`, each referencing (not duplicating) an already-confirmed `Page` via FK, and storing the exact action + input values used (synthetic values included verbatim). Aggregation of requirements with identical content into one consolidated ask (FR-42) is resolved at read time from open `BlockedTask` rows sharing the same `required_description`, not a separate aggregation table. `[NAMING]` This entity is `ExplorationStep`, deliberately not `JourneyStep` — it exists before, and independent of, whether `InferenceActivity` ever creates a `Journey` from this path; conflating the two names would be a standing source of confusion between a crawl-time path and the Trusted Knowledge Model's `Journey` entity.
+- **Rule:** email + bcrypt password; session is an httpOnly `session` cookie signed with itsdangerous (`SESSION_SECRET_KEY`), samesite=lax, sliding 1 h idle expiry (re-issued per request, updates `last_active_at`). No self-signup: admin-issued single-use invites and password-reset tokens (sha256 stored). No platform SSO/OAuth/JWT. "SSO session reuse" is a *target-app* auth method only.
 
-### AD-21 — Resume re-crawls from a confirmed entry point; it never replays stored steps `[NEW 2026-07-29]` `[SUPERSEDED AND REWRITTEN 2026-08-03]`
+### AD-22 — Explorer is a separate module that hands only proven scenarios to the core pipeline
 
-- **Binds:** FR-43
-- **Prevents:** A blind re-submit creating a duplicate real-world business record, and a resume path that only works on applications with deep-linkable server state.
-- **Rule:** On resume, the supplied value is written to the Application's Test Data Pool (Story 2.20), a fresh browser session is always established (no assumption the blocking session survived), and the engine **re-crawls forward from the nearest confirmed entry point** — the last canonical `Page` on the recorded path whose URL re-navigates and re-fingerprints (AD-16) to the same state. Normal crawl rules apply from there: safety classification (AD-19), loop prevention (AD-22), and state return all behave exactly as in a first-time crawl. If no recorded step qualifies as an entry point, resume falls back to the Application root and the coverage report states that the shorter path could not be used. `ExplorationStep` rows remain a **human-readable diagnostic record of how the crawler reached the block** — they are explicitly not an execution script.
-- **`[REWRITE RATIONALE 2026-08-03]`** The original rule replayed each `ExplorationStep` via its stored action/inputs, skipping steps with "known-irreversible" effects by navigating directly to their resulting Page. A feasibility review found four independent reasons that cannot be made reliable: (1) "known-irreversible" is not determinable from the DOM — the same undecidable problem as AD-19's safety classification, but here a wrong guess creates a duplicate record in the customer's system; (2) deep-linking past a skipped step fails wherever the destination depends on server-side state established by the steps before it; (3) stored inputs go stale and were never staleness-checked (only the newly supplied value was); (4) the target application may have changed between block and resume. The original rule's own closing sentence — *"Where this cannot be generalized across target applications, flag it as an app-specific open question at implementation time"* — was the decision conceding it had no general answer. Re-crawling is slower and strictly more robust: it assumes nothing about idempotency, needs no irreversibility oracle, revalidates that the path still exists, and reuses the crawl loop that already has to work rather than a second execution path exercised only on resume. See `docs/DISCOVERY_ENGINE_V2.md#E — ACT`.
-
-### AD-22 — Save-as-Project pause/resume maps onto the existing Application entity; no new Project table `[NEW 2026-07-29]`
-
-- **Binds:** FR-44
-- **Prevents:** A parallel "Project" concept duplicating what `Application` (already Organization-scoped, already the durable re-discovery unit per AD-13/FR-15) already provides.
-- **Rule:** `DiscoveryRun.status` gains `paused`. Every fingerprint-cache lookup (AD-16), `BlockedTask`, and remaining-exploration-queue entry is scoped by the existing `application_id` — pausing/resuming is a matter of filtering by that ID, not a new grouping mechanism. On resume: re-authenticate fresh (no live session assumed, matching AD-11's existing session-expiry philosophy), load canonical `Page`/`Journey` rows and open `BlockedTask` rows, and never re-explore an already-canonical state.
-
-### AD-23 — Crash recovery is continuous checkpointing; errors are typed, not silent `[NEW 2026-07-29]`
-
-- **Binds:** FR-45
-- **Rule:** Every `Page`/`Action`/`ApiEndpoint`/`PageTransition` write (already real-time per AD-8) doubles as the engine's crash checkpoint — no separate checkpoint mechanism. On worker restart, `DiscoveryActivity` resumes from the last confirmed-safe point via the same `paused`-aware resume path as AD-22, treating any action in-flight at crash time as unconfirmed and re-verifying rather than assuming success. A target-application failure (5xx, broken render, or a DISC-004 timeout past FR-35's Page Load Timeout) is retried a small bounded number of times, then written as a `DiscoveryError` row (not a `Page` row, not misclassified as NEW) and the crawl continues elsewhere. Every `DiscoveryError` carries both a fixed `error_code` (DISC-001..006 starter taxonomy) and a human-readable message — machine-readable for logs/support correlation, human-readable for the UI, never one without the other.
+- **Shape:** worker `apps/workers/explorer/src/explorer_worker/` (package `explorer-worker`, Python ≥3.14), tables and constants in `packages/explorer_core`, API router `apps/api/src/api/explorer.py` (`/explorer`, 36 routes, mounted with `app.include_router(explorer_router)`), web `apps/web/src/explorer/` (`ExplorerTab`, `LiveView`, `SummaryView`, `ScreensView`, `ScenariosView`, `HealthView`, `QuestionsView`, `RolesPanel`, `explorerApi.ts`). Explorer reads only its own `explorer_*` tables while running; the core tables are written in one place, the promote stage.
+- **Workflow:** `ExplorerRunWorkflow` on `explorer-task-queue`, id `explorer-run-{run.external_id}` (a "Not a bug" hand-off uses `…-send-{uuid4}`). Modes: `full` (understand → wait for `brief_confirmed` → plan_missions → mission pool → hunt → breadth → plan_tests → test pool → promote → reel), `missions` (pool → hunt → breadth, returns `explored`), `tests` (from plan_tests), `resume` (start step from `explorer_resume_point`), `send` (promote only). Mission and test pools run up to `MAX_PARALLEL=3`; retry policy `maximum_attempts=1`, a pool item that dies is requeued once. Hunt, breadth, plan_tests, promote and reel are "bonus" steps that log and continue on failure; any other non-cancel `ActivityError` runs `explorer_fail_run`. Pause and Stop cancel the workflow. Unconfirmed summaries expire after `CONFIRM_WAIT_DAYS=14` (`explorer_expire_run`; `expired` cannot be resumed). `MISSIONS_ADDED_SIGNAL` is defined but unused: adding a mission to an `explored` run starts a new `missions` execution.
+- **Activities (18):** `explorer_understand_app` (2 h, 5 min heartbeat), `explorer_plan_missions` (15 min), `explorer_queued_missions`, `explorer_run_mission` (45 min), `explorer_finish_exploring`, `explorer_requeue_mission`, `explorer_hunt_hidden_screens` (40 min), `explorer_breadth` (40 min), `explorer_plan_tests` (20 min), `explorer_planned_tests`, `explorer_build_test` (45 min), `explorer_requeue_test`, `explorer_finish_testing`, `explorer_send_to_vantage` (promote, 10 min), `explorer_highlight_video` (20 min), `explorer_resume_point`, `explorer_fail_run`, `explorer_expire_run`.
+- **Stages in code:** `understand.py` (first look, App Summary), `missions.py`/`pursue.py` (mission walking, risk gating), `hunt.py` (hidden screens), `breadth.py` (roles, unlinked pages, JS coverage), `tests_stage.py`/`testkit.py`/`quality.py` (7 test kinds: navigation, data_load, form_submission, validation, error_state, journey, page_quality; proving), `promote.py` (hand-off), `reel.py` (highlight video), `memory.py` (questions, knowledge), `browser.py` (Playwright), `sense.py` (heuristics), `session.py` (sign-in and session reuse), `journal.py` (events, run updates, email).
+- **Hand-off (`promote.py`):** only `explorer_test_case.status="proven"` rows are promoted. It writes `DiscoveryRun` (source `crawler`, stage `explorer` → `analyzed`), `Journey` (`identity_key` `explorer:<slug>`), `JourneyStep`, `Page`, `Component`/`ComponentLocator`/`Form`/`FormField`, and `Scenario` (`source="discovery"`, `safety_classification="SAFE"`, type happy for navigation/data_load/form_submission/journey and negative for validation/error_state/page_quality, `grounding` = `{explorer_test, kind, proven: True, requires_auth, check, captured_flow, proven_code, one_at_a_time}`). It retires older `Scenario`/`TestSuite`/`TestAsset` rows (`current=False`). It **does not create TestAssets**: the user runs generation, which uses the proven code (AD-16). The `explorer_core/models.py` docstring saying Explorer "never reads or writes" the classic tables is stale for this step.
+- **Limits:** `MAX_MISSIONS=15`, `MAX_TESTS=150` (test cap `clamp(15 × screens, 10, 150)`), `MAX_JOURNEYS=8`, `JOURNEY_STEPS=40`, promote `MAX_STEPS=12`; static-asset cache 30 min / 300 MB; signed-in session reused for 20 min. Tunables are env vars (see Configuration below).
+- **Prevents:** a second discovery engine reaching into the classic crawler's tables, and unproven AI guesses becoming test cases.
 
 ## Consistency Conventions
 
 | Concern | Convention |
 | --- | --- |
-| Naming (entities, files, interfaces, events) | Domain models: singular PascalCase (`Application`, `DiscoveryRun`, `Capability`, `Journey`, `Scenario`, `TestAsset`, `Page`, `Component`). DB tables: snake_case plural. API JSON: camelCase (FastAPI field aliasing). Temporal workflows: PascalCase + `Workflow` (`DiscoveryWorkflow`, `GenerationWorkflow`). Activities: PascalCase + `Activity`. Ports: PascalCase + `Provider`/`Adapter`/`Client` (`AIProvider`, `DeliveryAdapter`, `SecretsClient`). |
-| Data & formats (ids, dates, error shapes, envelopes) | Internal primary keys: UUIDv7 (Postgres 18 native `uuidv7()`) for index locality. Any id exposed in an API response is a separate, opaque UUIDv4 — the UUIDv7 PK never leaves the backend, since its timestamp prefix would leak record-creation time. Dates: UTC, ISO 8601, stored as `timestamptz`. API errors: RFC 7807 `application/problem+json` envelope. |
-| State & cross-cutting (mutation, errors, logging, config, auth) | Trusted Knowledge Model single-deletion-path rule (AD-7). Workflows orchestrate only (AD-2). Canonical-vs-superseded (`merged_into_id`) required on every mergeable Application Model row, and a traceable path to source capture on every inferred row, at Journey vs. generation-attempt granularity (AD-8). Side-effecting Activities are idempotent under retry (AD-9). Every query is Organization-scoped (AD-12). Structured JSON logs, correlated by Temporal `workflow_id` across `apps/api` and `apps/workers/*`. Config via environment + secrets-store references only; no hardcoded vendor SDK call or deployment-mode branch outside the port packages (AD-3, AD-4). `packages/secrets_client`'s backing store (Vault vs. cloud KMS) is chosen at deploy time behind the same port — not a V1 blocker. Platform user auth (`apps/web` ↔ `apps/api`) is a distinct namespace from discovery target credentials (Dedicated Test Account) — never conflated. |
+| Naming | Entities singular PascalCase; tables snake_case singular (`test_run`, `discovery_run`); workflows `…Workflow`; activities `…Activity`; task queues `<area>-task-queue`. API JSON is snake_case (no camelCase aliasing). |
+| IDs & dates | Internal PKs UUIDv7 (`server_default uuidv7()`, Postgres 18). API exposes a separate UUIDv4 `external_id`. Timestamps `timestamptz`, UTC. Per-app human counters: `next_test_run_number`, `next_test_case_number`. |
+| Errors | FastAPI `{"detail": …}`; machine codes in `detail` where the web must branch (AD-11), free text otherwise. No RFC 7807 envelope. |
+| Config | `os.environ` only (no settings library); k8s ConfigMap + Secret. Global runtime knobs live in the `discovery_settings` singleton (id=1), editable on the Settings page. Explorer's knobs are env-only (table below). |
+| Logging | stdlib `logging` INFO to stdout; discovery observability is in DB (`diagnostic_record`, `discovery_error`, coverage report; for Explorer, `explorer_event`). |
+| Busy UI / icons | Trailing `BouncingDots`, never spinners; vertical kebab menus (see CLAUDE.md). |
+| Shortcuts | Deliberate bounded simplifications are tagged `ponytail:` in code with their ceiling (82 in tracked source: 66 before the Explorer merge plus 16 in Explorer). |
 
-## Stack
+### Configuration added with Explorer
 
-| Name | Version |
-| --- | --- |
-| Python | 3.14.6 |
-| FastAPI | current stable |
-| SQLModel | current stable |
-| Alembic | current stable |
-| PostgreSQL | 18.4 |
-| Temporal (Python SDK) | current GA |
-| Playwright (Python) | 1.57+ |
-| React | 19.x |
-| Vite | 8.1.x (Vite 8, Mar 2026 — Rolldown/Oxc-based; full plugin compatibility per vite.dev) |
-| TypeScript | 7.0 (GA July 8, 2026 — native Go compiler; verify AD-6's OpenAPI→TS codegen tooling supports it before adopting, else pin 5.9 as fallback) |
+| Env var | Default | Read in |
+| --- | --- | --- |
+| `EXPLORER_REPLACES_DISCOVERY` | `1` (`0` = classic crawler) | `apps/api/src/api/discovery.py` |
+| `AUTO_HEAL_ENABLED` | `1` (anything else = automatic heals off; manual heals still run) | `apps/workers/execution/src/execution_worker/activities.py` |
+| `LITELLM_BASE_URL` / `LITELLM_API_KEY` | none (`LLMError` if the URL is unset) | `explorer_worker/llm.py` |
+| `EXPLORER_THINKING_MODEL` / `EXPLORER_FAST_MODEL` | `gpt-5.6-sol` / `gpt-5.6-luna` | `explorer_worker/llm.py` |
+| `EXPLORER_WORKER_MAX_CONCURRENT_ACTIVITIES` | `8` | `explorer_worker/worker.py` |
+| `EXPLORER_WAIT_MINUTES` | `10` (`0` = never wait for an answer) | `explorer_worker/memory.py` |
+| `EXPLORER_MISSION_STEPS` / `EXPLORER_TASK_PASSES` | `20` / `1` | `explorer_worker/missions.py` |
+| `EXPLORER_PROOF_RUNS` | `1` (`0` = proving off) | `explorer_worker/tests_stage.py` |
+| `EXPLORER_FIRST_LOOK_SCREENS` / `EXPLORER_REVISIT_SCREENS` / `EXPLORER_FIRST_LOOK_MINUTES` | `24` / `10` / `25` | `explorer_worker/understand.py` |
+| `TEMPORAL_ADDRESS` | `localhost:7233` | `explorer_worker/worker.py` |
+| `DATABASE_URL` | `postgresql+psycopg://postgres:postgres@localhost:5433/aitestgen` | `explorer_worker/db.py` |
+| `FRONTEND_BASE_URL`, `SMTP_HOST/PORT/USER/PASSWORD/FROM/FROM_NAME` | `http://localhost:5173`; SMTP unset = log instead of send | `explorer_core/notify.py` |
+
+None of the `EXPLORER_*` or `AUTO_HEAL_ENABLED` variables is in `ops/k8s/01-configmap.yaml` (it already has `LITELLM_BASE_URL`), so a deployed API runs with `EXPLORER_REPLACES_DISCOVERY` on.
+
+## Stack (locked versions, 2026-10-27)
+
+| Layer | Name | Version |
+| --- | --- | --- |
+| Runtime | Python | 3.14.6 (`python:3.14-slim` images) |
+| API | FastAPI / uvicorn | 0.139.0 / 0.51.0 |
+| ORM / DB driver / migrations | SQLModel / SQLAlchemy / psycopg / Alembic | 0.0.39 / 2.0.51 / 3.3.4 / 1.18.5 |
+| Database | PostgreSQL | 18.4 (local Docker); prod external host |
+| Orchestration | Temporal Python SDK / server | 1.30.0 / `temporalio/admin-tools:1.31.2` `start-dev` |
+| Browser | Playwright (Python) | 1.61.0 |
+| Agent | LangGraph / langchain-core / mcp | 1.2.11 / 1.6.1 / 2.1.1; `@playwright/mcp@0.0.41` |
+| LLM transport | httpx → LiteLLM proxy | httpx 0.28.1 (Explorer: model aliases `gpt-5.6-sol` / `gpt-5.6-luna`) |
+| Document parsing (Explorer knowledge uploads) | pypdf | 6.20.1 (API dependency `pypdf>=5.0`; .docx is read by unzipping, no library) |
+| Secrets / storage | hvac → Vault / boto3 → S3 | 2.4.0 → `hashicorp/vault:1.18` / 1.43.55 → AWS S3 |
+| Misc Python | pydantic, bcrypt, itsdangerous, pillow | 2.13.4, 5.0.0, 2.2.0, 12.3.0 |
+| Python tooling | uv workspace, ruff, pyright, pytest | ruff 0.15.21, pyright 1.1.411, pytest 9.1.1 |
+| Web | React / Vite / TypeScript / Tailwind | 19.2.7 / 8.1.5 / 5.9.3 / 4.3.3 |
+| Web libs | recharts, @novnc/novnc, FontAwesome, openapi-typescript | 3.10.1, 1.7.0, 7, ^7.13 |
+| Web tooling | vitest, oxlint | 3.2.7, 1.74.0 |
+| Web build/serve | Node / nginx | `node:22-alpine` / `nginx:1.27-alpine` |
+| Generated projects | @playwright/test / allure / allure-playwright | ^1.48.0 / ^3.20.1 / ^3.13.0 |
+
+See `reviews/review-version-currency.md` for the currency check of this table.
 
 ## Structural Seed
 
 ```text
 apps/
-  web/                      # React + Vite + TS SPA — Discover Journeys, Review Scenarios, Generate Suite
-  api/                      # FastAPI service — auth, CRUD, curation endpoints, starts/queries workflows
+  api/                 FastAPI: main.py (~5.8k lines) + auth, activity, coverage_report, discovery,
+                       explorer (/explorer router, ~1.5k lines), invites, password_reset, recordings,
+                       schedule_spec, temporal_client, test_suite_export, db;
+                       src/api/scripts/ (seed, backfills, create schedules, smoke)
+  web/                 React 19 + Vite 8 SPA; no router lib (pathname + shell state), no data lib
+                       (fetch in src/api.ts + polling hooks); nginx in prod; src/explorer/ = Explorer tab
   workers/
-    discovery/               # DiscoveryActivity (Playwright), InferenceActivity
-    generation/               # ScenarioGenerationActivity, PlaywrightGenerationActivity, CIDeliveryActivity (unbuilt — see below)
+    explorer/          explorer-task-queue: ExplorerRunWorkflow; understand, missions, pursue, hunt,
+                       breadth, tests_stage, testkit, quality, promote, reel, memory, brain, llm,
+                       browser, sense, session, mind, journal, resume, samples, db
+                       (no Dockerfile, k8s manifest or Jenkinsfile yet)
+    discovery/         discovery-task-queue: DiscoveryWorkflow, VerifyCredentialsWorkflow;
+                       crawler, session, credential_check, state_identity, planner, safety_engine,
+                       data_resolver, blocked_frontier, widgets, model_builder, journey_clustering,
+                       identity_key, screenshot_quality, diagnostics
+    generation/        generation-task-queue: GenerationWorkflow, SuiteGenerationWorkflow,
+                       LiveExplorationTestWorkflow, RegenerateTestAssetWorkflow,
+                       AutofillScenarioTestDataWorkflow; live-exploration-task-queue:
+                       LiveExploreActivity, LiveHealActivity (LangGraph + Playwright MCP); spec_linter
+    execution/         execution-task-queue: ApplicationTestExecutionWorkflow, HealTestExecutionWorkflow,
+                       ScheduledExecutionWorkflow, CleanupWorkflow, ReconcileStaleTestRunsWorkflow;
+                       live_inspection, project_cache, run_report_email
+    recording/         FastAPI + websockets Record & Play service (Xvfb, Chromium, codegen, x11vnc)
 packages/
-  domain/                    # SQLModel entities: Organization, Application (gains favicon_url, nullable — FR-32, added
-                              #   2026-07-21, not secrets-managed: public asset reference, not a credential; gains
-                              #   page_load_timeout_seconds default — FR-35, added 2026-07-29), DiscoveryRun (gains
-                              #   stage field — FR-33, added 2026-07-21, see AD-10 extension; gains paused status value and
-                              #   page_load_timeout_seconds override — FR-44/FR-35, added 2026-07-29), Capability, Journey, Scenario,
-                              #   TestAsset, Page (gains variant_of_page_id self-FK and observed behavior/scroll signals — FR-37,
-                              #   added 2026-07-29), Form, FormField, ValidationRule, Action, ApiEndpoint, PageTransition, Component,
-                              #   ComponentLocator, Assertion (added 2026-07-18, FR-30 — no generic Evidence table; see AD-8/AD-14),
-                              #   BlockedTask, ExplorationStep, SyntheticDataEntry, DiscoveryError (added 2026-07-29, FR-42/43/45 —
-                              #   see AD-20/AD-23; ExplorationStep deliberately not named JourneyStep, see AD-20's naming note)
-  workflows/                  # DiscoveryWorkflow, GenerationWorkflow — orchestration only (AD-2)
-  ai_provider/                 # AIProvider interface + hosted implementation (AD-3); on-prem implementation not built, see Deferred
-  delivery_adapters/            # DeliveryAdapter interface — retained as a forward-compatible seam (AD-4); CI/CD Delivery feature removed 2026-07-15, no adapter implementations built
-  ci_instructions/               # CIInstructionsGenerator interface — same status as delivery_adapters above; no templates built
-  secrets_client/               # SecretsClient interface + Vault/KMS implementation (AD-5)
-migrations/                  # Alembic migration scripts
+  domain/              SQLModel entities
+  explorer_core/       explorer_* tables (models.py), constants (task queue, statuses), notify.py email
+  workflows/           workflow definitions + heal_policy, failure_explainer (no I/O)
+  ai_provider/         AIProvider + HostedAIProvider (LiteLLM over httpx)
+  secrets_client/      Vault KV v2 (hvac)
+  object_store/        S3 (boto3)
+  mailer/              SMTP + branded header
+  test_suite_assembler/ TestAsset → runnable TS Playwright project; vantage_report Allure plugin
+  safety_classifier/   destructive/safe/ambiguous classifier
+  locator_capture/     DOM/locator extraction (crawler + self-heal)
+  playwright_typecheck/ tsc --noEmit gate, assertions.js guard, process_tree kill
+  ci_instructions/, delivery_adapters/   empty seams; CI/CD delivery removed
+migrations/            Alembic, 85 revisions, single head c1f4a7e2d9b6 (alembic.ini at root)
+ops/k8s/               EKS manifests (ops/k8s_BK is an older backup)
+ops/jenkins/           one Jenkinsfile per deployable + Jenkinsfile-sonar
+docker-compose.yml     local deps: postgres:18.4 (:5433), Temporal dev server (:7233/UI :8233),
+                       vault:1.18 (:8200), recording-worker (:8100); no MinIO
 ```
 
-`[NOTE — 2026-07-15]` `delivery_adapters/` and `ci_instructions/` are scaffolded as empty port interfaces only (Story 1.1) — no adapter/generator implementations, and no story builds against them, since CI/CD Delivery (Epic 5) is removed. They're kept in the seed because an empty interface costs nothing and preserves the seam if this is ever redesigned; do not read their presence as "CI/CD delivery is in scope." The diagrams later in this document (Containers, Components, Sequence) still depict `CIDeliveryActivity` and related nodes for the same reason — original structural design, not current build scope.
-
-### Operational Envelope
-
-Decided now (independent of the still-open deployment-infra-topology question, see Deferred): every `apps/*` service ships as its own container image; the platform's own CI (build/test/lint on this codebase — distinct from the removed customer-facing CI/CD delivery feature) runs on GitHub Actions; traces and metrics extend the existing logging convention — every span/metric is correlated by Temporal `workflow_id`, matching the log-correlation convention above, via OpenTelemetry.
-
-Deferred (genuinely coupled to the SaaS/on-prem topology decision, not decidable in isolation): where Temporal itself runs (self-hosted cluster vs. Temporal Cloud), and the production infra/provider choice. `[RESOLVED 2026-07-24]` The object-storage backend for raw discovery-evidence blobs (previously deferred here — see AD-8 note) is decided: AWS S3 in production; the docker-compose MinIO service remains the local-dev/CI substitute unchanged (see `sprint-change-proposal-2026-07-24.md`).
-
-### System Context
-
-```mermaid
-C4Context
-title System Context — Application Intelligence Platform
-
-Person(qa, "QA Director / Engineering Leader", "Reviews discovered journeys, owns the Trusted Knowledge Model")
-
-System(platform, "Application Intelligence Platform", "Discovers, maps, and generates regression tests for business journeys")
-
-System_Ext(targetApp, "Customer's Target Application", "Non-production web app under discovery")
-System_Ext(aiProvider, "AI Provider", "Hosted (SaaS) or customer-supplied (on-prem, deferred) LLM endpoint")
-
-Rel(qa, platform, "Curates journeys (rename/delete), reviews generated Test Assets", "HTTPS")
-Rel(platform, targetApp, "Explores autonomously using dedicated test credentials", "HTTPS, browser automation")
-Rel(platform, aiProvider, "Infers journeys/capabilities, generates scenarios & tests", "HTTPS API")
-```
-
-*(2026-07-15: `gitProvider` and its delivery Rel removed from this diagram — CI/CD delivery is cut in full, see AD-4/Module Map. The separate "Engineering Leader" actor is merged into `qa` — its only Rel was the now-removed release-readiness dashboard.)*
-
-### Containers
-
-```mermaid
-C4Container
-title Container Diagram — Application Intelligence Platform
-
-Person(qa, "QA Director / Engineering Leader")
-
-System_Boundary(platform, "Application Intelligence Platform") {
-  Container(spa, "Web App", "React, Vite, TypeScript", "Discover Journeys (review + detail), Generate Suite")
-  Container(api, "API Service", "Python, FastAPI", "Auth, CRUD, curation actions (rename/delete), starts/queries DiscoveryWorkflow")
-  Container(temporal, "Temporal Server", "Temporal", "Durable workflow orchestration & state")
-  Container(discoveryWorker, "Discovery & Inference Worker", "Python, Playwright, Temporal SDK", "Crawls target app, calls AI provider, writes candidates, starts GenerationWorkflow per candidate (AD-1)")
-  Container(genWorker, "Generation Worker", "Python, Temporal SDK", "Scenario gen, Playwright gen")
-  ContainerDb(db, "Primary Database", "PostgreSQL", "Applications, Journeys, Capabilities, Scenarios, Test Assets, evidence")
-  ContainerDb(secrets, "Secrets Store", "Vault / cloud KMS", "Dedicated test account credentials, session state")
-}
-
-System_Ext(targetApp, "Customer's Target Application")
-System_Ext(aiProvider, "AI Provider")
-
-Rel(qa, spa, "Uses", "HTTPS")
-Rel(spa, api, "Calls", "JSON/HTTPS")
-Rel(api, db, "Reads/writes", "SQL")
-Rel(api, temporal, "Starts DiscoveryWorkflow", "gRPC")
-Rel(temporal, discoveryWorker, "Dispatches activities")
-Rel(discoveryWorker, temporal, "Starts GenerationWorkflow per candidate Journey, no approval gate (AD-1)")
-Rel(temporal, genWorker, "Dispatches activities")
-Rel(discoveryWorker, targetApp, "Explores", "HTTPS")
-Rel(discoveryWorker, secrets, "Fetches credentials")
-Rel(discoveryWorker, aiProvider, "Infers journeys/capabilities")
-Rel(discoveryWorker, db, "Writes candidates")
-Rel(genWorker, aiProvider, "Generates scenarios & test code")
-Rel(genWorker, db, "Writes scenarios/test assets")
-```
-
-*(2026-07-15: `gitProvider` and its delivery Rel removed — CI/CD delivery is cut in full; `DeliveryAdapter` port is retained only as an unbuilt seam, see AD-4. Renamed "Generation & Delivery Worker" → "Generation Worker" and dropped Web App's Capability Map/Dashboards, matching the Deferred section.)*
-
-### Components — Workers
-
-```mermaid
-C4Component
-title Component Diagram — Discovery, Inference & Generation Workers
-
-Container_Boundary(workers, "Workers (Temporal Activities)") {
-  Component(discoveryAct, "Discovery Activity", "Playwright", "Autonomous crawl: pages, actions, forms, API calls, state transitions")
-  Component(inferenceAct, "Inference Activity", "Python", "Raw signal -> candidate Journeys/Capabilities")
-  Component(scenarioAct, "Scenario Generation Activity", "Python", "Discovered Journey -> happy-path & negative Scenarios")
-  Component(playwrightAct, "Playwright Generation Activity", "Python", "Scenario -> executable Playwright Test Asset")
-
-  Component(aiIface, "AIProvider Interface", "Python Protocol", "Single abstraction for all LLM calls")
-  Component(aiSaas, "Hosted AI Client", "Vendor SDK", "SaaS mode implementation")
-  Component(aiOnPrem, "Customer-Endpoint AI Client", "Vendor SDK", "On-prem mode implementation (deferred)")
-
-  Component(secretsClient, "Secrets Client", "Python", "Fetches/decrypts credentials & session state")
-}
-
-ContainerDb(db, "PostgreSQL")
-System_Ext(targetApp, "Target Application")
-System_Ext(aiProvider, "AI Provider")
-ContainerDb(secrets, "Secrets Store")
-
-Rel(discoveryAct, targetApp, "Crawls")
-Rel(discoveryAct, secretsClient, "Gets credentials")
-Rel(secretsClient, secrets, "Reads")
-Rel(inferenceAct, aiIface, "Calls")
-Rel(scenarioAct, aiIface, "Calls")
-Rel(playwrightAct, aiIface, "Calls")
-Rel(aiIface, aiSaas, "implemented by")
-Rel(aiIface, aiOnPrem, "implemented by")
-Rel(aiSaas, aiProvider, "HTTPS")
-Rel(discoveryAct, db, "writes raw signal")
-Rel(inferenceAct, db, "writes candidates")
-Rel(scenarioAct, db, "writes scenarios")
-Rel(playwrightAct, db, "writes test assets")
-```
-
-*(2026-07-15: CI Delivery Activity, the `DeliveryAdapter` interface and its GitHub/GitLab/Azure Repos adapters, the CI Instructions Generator, and the `gitProvider` external system removed from this diagram — none are built, the feature is removed in full (see AD-4/Module Map). The retained port contracts are documented as text in Module Contracts below, not depicted here as implemented components.)*
-
-### Components — API Service
-
-The same "one module, one job" rule applies inside `apps/api`. Onboarding, Review, and Analytics never call each other directly or share handler code — each talks only to `packages/domain`, and every one of them passes through the same Organization-scoping middleware (AD-12) rather than re-implementing tenant isolation.
-
-```mermaid
-C4Component
-title Component Diagram — API Service
-
-Container_Boundary(api, "API Service (apps/api)") {
-  Component(tenantMw, "Organization-Scoping Middleware", "Python", "Applies the authenticated user's Organization filter to every query (AD-12)")
-  Component(onboarding, "Onboarding Module", "FastAPI router", "Application registration (FR-1-5)")
-  Component(review, "Review Module", "FastAPI router", "Rename/delete curation; sole path that can exclude a Journey from the Trusted Knowledge Model (FR-9, FR-12-14, AD-7)")
-  Component(analytics, "Analytics Module", "FastAPI router", "Journey Explorer reads (FR-23) — Capability Map/coverage/dashboard reads removed 2026-07-15, no supporting screen")
-  Component(domainPkg, "packages/domain", "SQLModel", "Entities: Organization, Application, DiscoveryRun, Capability, Journey, Scenario, TestAsset, Page, Form, Action, ApiEndpoint, PageTransition, Component, ComponentLocator, Assertion")
-}
-
-ContainerDb(db, "PostgreSQL")
-Container(temporal, "Temporal Server")
-Container(spa, "Web App")
-
-Rel(spa, tenantMw, "All requests pass through")
-Rel(tenantMw, onboarding, "Scoped request")
-Rel(tenantMw, review, "Scoped request")
-Rel(tenantMw, analytics, "Scoped request")
-Rel(onboarding, domainPkg, "Writes Application")
-Rel(review, domainPkg, "Writes curation state — rename/delete (AD-7)")
-Rel(analytics, domainPkg, "Reads current=true rows only — no write path")
-Rel(domainPkg, db, "Persists")
-```
-
-### Module Contracts ("C4" — the interfaces this spine actually fixes)
-
-No implementation exists yet, so a class diagram would be fiction. What *is* fixed, and genuinely worth a developer reading before writing a line of code, is the shape of each port and each module's Activity signature — because these are exactly what two independently-built modules must agree on byte-for-byte to stay loosely coupled. Everything not listed here (internal helper functions, private classes) is left to the implementer.
-
-**Ports** (`packages/*`, AD-3/AD-4/AD-5):
-
-```text
-# packages/ai_provider
-class AIProvider(Protocol):
-    def infer_journeys(pages: list[Page]) -> list[JourneyCandidate]: ...  # `[UPDATED 2026-07-18]` canonical Pages (with related Components/Forms/ApiEndpoints loaded), not Evidence — Evidence removed, see AD-8
-    def generate_scenarios(journey: Journey, pages: list[Page]) -> list[Scenario]: ...  # `[UPDATED 2026-07-18]`
-    def generate_playwright(scenario: Scenario) -> TestAssetCode: ...
-# Implementations: HostedAIProvider (SaaS), CustomerEndpointAIProvider (on-prem, deferred)
-
-# packages/delivery_adapters — retained as a forward-compatible seam; CI/CD delivery feature removed 2026-07-15, no implementations built (AD-4)
-class DeliveryAdapter(Protocol):
-    def deliver(test_asset: TestAsset, application: Application, mode: Literal["pr", "direct_commit"]) -> DeliveryResult: ...
-# Implementations: none built — GitHubAdapter/GitLabAdapter/AzureReposAdapter were the planned shape, keyed by Git host (AD-4), not CI system
-
-# packages/ci_instructions — retained as a forward-compatible seam; feature removed 2026-07-15, no templates built
-class CIInstructionsGenerator(Protocol):
-    def render(ci_system: Literal["github_actions", "gitlab_ci", "jenkins", "azure_pipelines"]) -> InstructionsTemplate: ...
-
-# packages/secrets_client
-class SecretsClient(Protocol):
-    def store(organization_id: UUID, secret: bytes) -> SecretRef: ...
-    def resolve(ref: SecretRef) -> bytes: ...
-# Implementations: VaultSecretsClient, CloudKMSSecretsClient — chosen at deploy time
-```
-
-**Module Activities** (input → output, per Module Map row above):
-
-```text
-DiscoveryActivity(application: Application, secret_ref: SecretRef) -> DiscoveryRun
-ApplicationModelBuilderActivity(discovery_run: DiscoveryRun) -> ApplicationModelBuilderOutput  # `[NEW 2026-07-18]` merges duplicate Page/Form/Action/ApiEndpoint/PageTransition rows (this + prior runs, same Application), derives Component/ComponentLocator/Assertion
-InferenceActivity(discovery_run: DiscoveryRun, pages: list[Page]) -> list[Journey]  # `[UPDATED 2026-07-18]` canonical Pages only, not Evidence
-ScenarioGenerationActivity(journey: Journey) -> list[Scenario]
-PlaywrightGenerationActivity(scenario: Scenario) -> TestAsset
-# CIDeliveryActivity(test_asset: TestAsset, application: Application) -> DeliveryResult  — retained signature, unbuilt; CI/CD delivery removed 2026-07-15, see Module Map
-```
-
-Every Activity signature above takes and returns `packages/domain` types only — never a raw dict or a type private to one worker — which is what makes AD-9's idempotency contract and AD-2's "Workflows call Activities, not each other's internals" enforceable at a type-checker level, not just a code-review convention.
-
-### Sequence — Discovery to Delivery
-
-```mermaid
-sequenceDiagram
-    actor QA as QA Director
-    participant SPA as Web App
-    participant API as API Service
-    participant TMP as Temporal
-    participant DW as Discovery/Inference Worker
-    participant DB as Postgres
-    participant TGT as Target Application
-    participant AI as AI Provider
-    participant GW as Generation Worker
-
-    QA->>SPA: Configure Application (URL, creds) — submit starts discovery immediately (2026-07-15: no scope/time-budget config, FR-4/FR-5 removed)
-    SPA->>API: POST /applications
-    API->>DB: Create Application record
-    API->>TMP: Start DiscoveryWorkflow
-    TMP->>DW: Dispatch DiscoveryActivity
-    DW->>TGT: Explore (pages, actions, forms, APIs), full Application
-    alt session expired mid-crawl
-        DW->>DB: DiscoveryRun.status=failed, reason=session_expired (AD-11)
-        Note over DW: Workflow ends; API surfaces re-auth prompt
-    else exhaustive traversal (FR-7 — only stop condition, no time budget)
-        DW->>DB: Persist typed Page/Form/Action/ApiEndpoint/PageTransition rows (merged_into_id=null, tagged discovery_run_id + application_id) [UPDATED 2026-07-18 — no Evidence table]
-        DW->>DB: DiscoveryRun.status=complete (AD-10)
-        TMP->>DW: Dispatch ApplicationModelBuilderActivity [NEW 2026-07-18]
-        DW->>DB: Merge duplicate rows (this + prior runs) via merged_into_id; derive Component/ComponentLocator/Assertion (AD-8, AD-14)
-        TMP->>DW: Dispatch InferenceActivity
-        DW->>AI: Infer Journeys/Capabilities from canonical Application Model rows
-        AI-->>DW: Candidate Journeys/Capabilities (business language)
-        DW->>DB: Write candidate Journeys (status=candidate, identity_key set — AD-13)
-        DW->>DB: Attribute canonical rows to their Journey (journey_id — AD-8)
-        Note over DW: For each candidate Journey just created, immediately start GenerationWorkflow(id="generation-{journeyId}-1") — no approval gate (AD-1, AD-9)
-        DW->>TMP: Start GenerationWorkflow per candidate Journey
-        Note over TMP: DiscoveryWorkflow completes (bounded — AD-1)
-    end
-
-    TMP->>GW: Dispatch ScenarioGenerationActivity
-    GW->>AI: Generate happy-path + negative scenarios
-    AI-->>GW: Scenarios
-    GW->>DB: Write Scenarios
-    TMP->>GW: Dispatch PlaywrightGenerationActivity
-    GW->>AI: Generate Playwright code from Scenario
-    AI-->>GW: Playwright Test Asset
-    GW->>DB: Write Test Asset
-
-    Note over QA,API: Curation (rename/delete) is decoupled from the above — a reviewer can act any time, before, during, or after generation completes (AD-1)
-    QA->>SPA: Open Discover Journeys
-    SPA->>API: GET /discover-journeys
-    API->>DB: Read candidates
-    QA->>SPA: Rename or Delete a Journey
-    SPA->>API: PATCH/DELETE /journeys/{id}
-    API->>DB: Update name, or status=deleted excluding it from downstream reads (Trusted Knowledge Model — AD-7)
-```
-
-*(2026-07-15: CI Delivery dispatch — `CIDeliveryActivity` → customer Git host → delivery confirmation — and the Dashboard/`GET /analytics` coverage flow removed from this sequence; neither is built, see Module Map/Deferred. Generate Suite's post-generation execution step is a confirmed UI placeholder with no architecture decision made yet, see Deferred.)*
-
-### Core-Entity ERD
+### Data model
 
 ```mermaid
 erDiagram
+    ORGANIZATION ||--o{ PLATFORM_USER : has
+    ORGANIZATION ||--o{ INVITE : issues
     ORGANIZATION ||--o{ APPLICATION : owns
+    ORGANIZATION ||--o{ ACTIVITY_EVENT : logs
     APPLICATION ||--o{ DISCOVERY_RUN : has
-    APPLICATION ||--o{ CAPABILITY : scopes
-    APPLICATION ||--o{ PAGE : "owns (canonical, application-scoped)"
-    DISCOVERY_RUN ||--o{ JOURNEY : discovers
     DISCOVERY_RUN ||--o{ PAGE : captures
-    DISCOVERY_RUN ||--o{ ACTION : captures
-    DISCOVERY_RUN ||--o{ API_ENDPOINT : captures
-    PAGE ||--o{ PAGE : "merged_into (self-ref, AD-8)"
-    PAGE ||--o{ ACTION : "observed on"
     PAGE ||--o{ FORM : "observed on"
-    PAGE ||--o{ API_ENDPOINT : "observed on"
-    PAGE ||--o{ COMPONENT : "derives (by Model Builder)"
-    COMPONENT ||--o{ COMPONENT_LOCATOR : has
     FORM ||--o{ FORM_FIELD : has
     FORM_FIELD ||--o{ VALIDATION_RULE : has
+    PAGE ||--o{ ACTION : "observed on"
+    DISCOVERY_RUN ||--o{ API_ENDPOINT : captures
+    DISCOVERY_RUN ||--o{ PAGE_TRANSITION : captures
+    PAGE ||--o{ COMPONENT : derives
+    COMPONENT ||--o{ COMPONENT_LOCATOR : has
+    DISCOVERY_RUN ||--o{ DISCOVERY_ERROR : records
+    APPLICATION ||--o{ BLOCKED_TASK : aggregates
+    BLOCKED_TASK ||--o{ EXPLORATION_STEP : "reached via"
+    APPLICATION ||--o{ TEST_DATA_ENTRY : seeds
     CAPABILITY ||--o{ JOURNEY : groups
-    JOURNEY ||--o{ PAGE : "attributed from (canonical only, by Inference)"
-    JOURNEY ||--o{ COMPONENT : "attributed from (by Inference)"
+    DISCOVERY_RUN ||--o{ JOURNEY : discovers
+    JOURNEY ||--o{ JOURNEY_STEP : has
     JOURNEY ||--o{ SCENARIO : generates
-    SCENARIO ||--o| TEST_ASSET : "compiles to"
+    JOURNEY ||--o{ TEST_SUITE : "per attempt"
+    SCENARIO ||--o{ TEST_ASSET : "compiles to (current flag)"
+    APPLICATION ||--o{ TEST_RUN : runs
+    SCHEDULE ||--o{ TEST_RUN : triggers
+    TEST_RUN ||--o{ TEST_RESULT : has
+    TEST_RESULT ||--o{ TEST_RESULT_ARTIFACT : "S3 pointers"
+    APPLICATION ||--o{ RECORDING_SESSION : has
+    APPLICATION ||--o{ EXPLORER_RUN : "explored by"
+    EXPLORER_RUN ||--o{ EXPLORER_EVENT : streams
+    EXPLORER_RUN ||--o{ EXPLORER_SCREEN : maps
+    EXPLORER_RUN ||--o{ EXPLORER_MISSION : plans
+    EXPLORER_RUN ||--o{ EXPLORER_TEST_CASE : proves
+    EXPLORER_RUN ||--o{ EXPLORER_QUESTION : asks
+    APPLICATION ||--o{ EXPLORER_KNOWLEDGE : remembers
+    APPLICATION ||--o{ EXPLORER_ROLE : "test accounts"
+    EXPLORER_TEST_CASE }o--o| SCENARIO : "promoted, proven only (grounding link, no FK)"
 ```
 
-`ORGANIZATION` is the tenant boundary (AD-12) — every query in `apps/api` is scoped by it. `[REWRITTEN 2026-07-18 — Evidence removed]` `PAGE` (and `FORM`/`ACTION`/`API_ENDPOINT`/`PAGE_TRANSITION`, not all shown above for diagram clarity) is captured against a `DISCOVERY_RUN` directly — there is no intermediate generic capture entity. A `PAGE` row may point at another `PAGE` via `merged_into_id` once `ApplicationModelBuilderActivity` resolves it as a duplicate (AD-8); `COMPONENT`/`COMPONENT_LOCATOR`/`ASSERTION` have no raw form at all — the Model Builder derives them directly. `JOURNEY` attribution (by `InferenceActivity`) only ever targets canonical (non-merged) rows.
+| Group | Tables |
+| --- | --- |
+| Tenancy & users | `organization`, `platform_user` (role, `last_active_at`), `invite`, `password_reset`, `activity_event` (categories discovery/scenarios/test_cases/test_runs/settings; outcomes running/done/failed/changed/stopped) |
+| Application | `application` (url, login_url, `auth_method` ∈ `standard_login | sso_session_reuse | none`, `secret_ref`, `safety_posture`, identity thresholds, `page_load_timeout_seconds`, `discovery_required`, `requires_login` (bool, NOT NULL, default true; set to `auth_method != "none"` on create), counters, soft-delete `deleted_at`), `discovery_settings` (global singleton), `execution_policy` (vestigial) |
+| Discovery capture | `discovery_run`, `page`, `form`, `form_field`, `validation_rule`, `action`, `api_endpoint`, `page_transition` |
+| Derived model | `component`, `component_locator`, `assertion` |
+| Inference | `journey` (candidate/deleted, `identity_key`, attempt, `captured_flow`, `generation_error`), `journey_step`, `capability` |
+| Engine bookkeeping | `diagnostic_record` (JSONB sink), `discovery_error`, `blocked_task`, `exploration_step`, `synthetic_data_entry`, `test_data_entry` |
+| Generation | `scenario` (type happy/negative/edge; source discovery/nl/recorded; `test_data`; `safety_classification`; `test_case_number`), `test_suite`, `test_asset` (`current`, status incl. `needs_review`, warnings) |
+| Execution | `test_run`, `test_result` (auto/manual heal counters, `heal_started_at`, `healed_test_asset_id`, `blocked_reason`), `test_result_artifact`, `failure_explanation`, `schedule`, `recording_session` |
+| Explorer (`packages/explorer_core/models.py`) | `explorer_run` (status per AD-10, headline, health_score, requirements_first, `brief` JSONB, brief_confirmed_at, notes, `started_by_id` → platform_user, `insights`/`branch_points` JSONB, error), `explorer_event` (bigint identity PK = polling cursor; kind thought/action/screen/health/phase/summary/error/question), `explorer_shot` (**JPEG bytes in Postgres**), `explorer_screen` (signature, entity, view_kind, mode, url_pattern, fields, actions, hidden_hints, condition, `route` JSONB), `explorer_health_issue` (crash/broken_link/server_error/background_error/slow/wording/looks_wrong/false_alarm/accepted), `explorer_mission` (kind task/branch/area/rule/custom; status queued/running/waiting/done/blocked/failed/skipped), `explorer_transition`, `explorer_recording` (**webm bytes in Postgres**; kind mission/proof/reel), `explorer_test_case` (kind, `script`/`check` JSONB, status planned/building/proven/known_bug/dropped, trust confirmed/standard/seen, proof_runs, proof_passes, catches_breakage, code), `explorer_question` (data/risk/rule/clarify; open/answered/dismissed; issue_id), `explorer_knowledge` (per application; answer/doc/fact), `explorer_role` (per application; Vault `secret_ref`), `explorer_access` |
 
-*(2026-07-15: `CI_CONFIG` entity and its relation removed — no feature configures a Git host/export mode; CI/CD delivery is cut in full, see AD-4/Module Map.)*
+Explorer migrations (10, all after the July–October chain): `e7a1c3b5d9f2` base tables (parent `b8d4f6a0c2e3`) → `f3b5d7e9a1c4` missions/map/recordings → `a4c6e8f0b2d5` test cases → `b5d7f9a1c3e6` questions/knowledge → `c6e8a0b2d4f7` roles/access/insights/reel → `d7f9b1c3e5a8` `explorer_run.started_by_id` → merge `362ae149aa7c` (with `d4a1c7e9b3f2`) → `a8c2e4f6b1d3` `explorer_screen.route` → `b9d3f5a7c2e4` `application.requires_login` → merge `c1f4a7e2d9b6` (with the crawl branch head `e4c8b2d6f1a7`), now the single head. Because Explorer and the crawl branch share one database, switching between branches needs `alembic stamp --purge` then `upgrade heads`.
 
-## Module Map
+Migrations: Alembic; prod applied by the API Jenkins pipeline (`kubectl exec deployment/api -- alembic upgrade head`); CI runs `uv run alembic upgrade head`. `api.db.init_db()` (`create_all`) is used only by test fixtures and the dev seed/backfill scripts.
 
-Every PRD feature area is one loosely-coupled module: a single Activity, endpoint group, or port package with one job, talking to its neighbors only through the domain (Postgres) or a port interface — never by importing another module's internals. This is the enforceable version of "loosely coupled": each row's **Isolation** column is what AD-2/AD-3/AD-4/AD-9 actually buy — a change contained to one module without a ripple.
+### Workflows and queues
 
-| Module | Responsibility | Enables | Inputs | Outputs (where to observe) | Depends on | Isolation — what a fix/enhancement touches |
-| --- | --- | --- | --- | --- | --- | --- |
-| **Onboarding**<br>`apps/api` Application router, `packages/secrets_client` | Register an Application; capture URL, env, credentials; starts `DiscoveryWorkflow` immediately on submit | FR-1–3, FR-31, FR-32 | Form submission from `apps/web` | `Application` row (Postgres); secret reference in SecretsClient | `packages/domain`, `packages/secrets_client` (AD-5) | A new credential type stays inside this module + its SecretsClient implementation. `[UPDATED 2026-07-15]` No scope/time-budget capture — FR-4/FR-5 removed. `[UPDATED 2026-07-21]` Gains a synchronous reachability pre-check (HTTP request to Base URL, 2xx/3xx = reachable) before Application creation, and a best-effort favicon fetch on success (`Application.favicon_url`) — no new port, no workflow change; both isolated to this module. |
-| **Discovery**<br>`apps/workers/discovery` (`DiscoveryActivity`), `DiscoveryWorkflow` | Autonomously explore the entire target app; detect the exhaustive-traversal stop condition | FR-6–7, FR-33 | `Application` config + credentials (via SecretsClient) | `Page`/`Form`/`FormField`/`ValidationRule`/`Action`/`ApiEndpoint`/`PageTransition` rows (`merged_into_id=null`), `DiscoveryRun.status` + `DiscoveryRun.stage` (Postgres) `[UPDATED 2026-07-18 — replaces Evidence]` `[UPDATED 2026-07-21 — stage added]` | Target Application (external), SecretsClient | A new crawl strategy never touches the Model Builder or Inference — it only ever writes new typed rows + `DiscoveryRun.status`/`stage`, never resolves duplicates itself (AD-14). `[UPDATED 2026-07-15]` No scope/budget config to respect — always full-Application, exhaustive-traversal only. `[UPDATED 2026-07-21]` Sets `stage=authenticating`/`discovering` at its natural checkpoints (AD-10 extension); the raw live-feed is no longer user-facing (Story 2.2 AC3 walked back) — Story 2.7 owns display. |
-| **Application Model Builder**<br>`apps/workers/discovery` (`ApplicationModelBuilderActivity`) `[NEW 2026-07-18]` `[REWRITTEN 2026-07-18 — Evidence removed]` | Merge duplicate Page/Form/Action/ApiEndpoint/PageTransition captures (within and across Discovery Runs) into canonical rows via `merged_into_id`; derive Component/ComponentLocator/Assertion from canonical rows | FR-30 | Typed rows from Discovery (this and prior runs, same Application) | `merged_into_id` set on superseded rows; new `Component`/`ComponentLocator`/`Assertion` rows | `packages/domain` (AD-14) | A new merge/derivation rule is isolated to this module — never touches Discovery's crawl code or Inference's AI logic (AD-14) |
-| **Inference**<br>`apps/workers/discovery` (`InferenceActivity`) | `[UPDATED 2026-07-18]` Canonical Application Model rows → candidate Journeys/Capabilities; attribute canonical rows to a Journey (`journey_id`, never on a superseded row); compute `identity_key`; `[UPDATED 2026-07-15]` immediately starts `GenerationWorkflow` per candidate (AD-1) — no approval gate | FR-8, FR-14, FR-15, FR-33 | Canonical (`merged_into_id IS NULL`) Application Model rows, from the Model Builder — never raw/superseded rows | `Journey`/`Capability` rows (`status=candidate`), `journey_id` attribution on canonical rows, one `GenerationWorkflow` started per candidate, `DiscoveryRun.stage=analyzing` `[ADDED 2026-07-21]` | `AIProvider` port (AD-3) | Changing the inference prompt/model, or the `identity_key` fingerprint (AD-13), never touches Discovery's crawl code, the Application Model Builder, or Review's curation logic |
-| **Review**<br>`apps/api` review endpoints, `packages/domain` | `[UPDATED 2026-07-15]` Human rename / delete curation; sole path that can exclude a Journey from the Trusted Knowledge Model — no approve/reject, no longer starts `GenerationWorkflow` (moved to Inference, above) | FR-9, FR-12–14 | Candidate Journeys/Capabilities; reviewer action from `apps/web` | `status=deleted`, or updated name | `packages/domain` (AD-7) | A new curation action is isolated to this module — Discovery, Inference, and Generation only ever read `status`, never assume how it got there |
-| **Scenario Generation**<br>`apps/workers/generation` (`ScenarioGenerationActivity`) | Discovered Journey → happy-path + negative Scenarios, triggered immediately at creation (no approval gate) | FR-14, FR-16 | Discovered `Journey` + its attributed canonical Application Model rows (`[UPDATED 2026-07-18]` no Evidence) | `Scenario` rows | `AIProvider` port | Swapping the scenario strategy never touches Playwright generation — they share a workflow, not code |
-| **Playwright Generation**<br>`apps/workers/generation` (`PlaywrightGenerationActivity`) | Scenario → executable Playwright Test Asset | FR-17 | `Scenario` rows | `TestAsset` rows (code + `current` flag, AD-8) | `AIProvider` port | `[UPDATED 2026-07-27]` FR-18 (regeneration) cut in full — nothing regenerates today; the `current`-flag scaffold this module owns stays isolated here regardless, per Story 4.1/4.2's own idempotency needs |
-| **Discovery Decision Engine** `[NEW 2026-07-29]`<br>`apps/workers/discovery` (Exploration Planner, State Identity Engine, Safety Engine, Data Resolver) | Classify observed states (SAME/VARIANT/NEW), tag/order candidate actions by priority tier, classify action safety, resolve action input, decide EXECUTE/DEFER/SKIP | FR-36–FR-42, FR-46 | Observed page/action signal from `DiscoveryActivity` | Execution decisions; `BlockedTask`/`ExplorationStep`/`SyntheticDataEntry` rows on DEFER | `packages/domain` (AD-16, AD-19, AD-20) | A new safety verb, comparison threshold, or resolution rule is isolated here — never touches the crawl-walk mechanics (page traversal, form-filling primitives) `DiscoveryActivity` itself owns. |
-| **Test Suite Export** `[NEW 2026-07-27]`<br>`apps/api` (new download endpoint) | Assemble all current `TestSuite`/`TestAsset` rows for an Application into a runnable, suite-folder-organized **TypeScript** (`@playwright/test`) project and return it as a zip | FR-34 | `TestSuite`/`TestAsset` rows (`current=true` only) | Zip archive returned synchronously to the client — no new Postgres rows, no workflow | `packages/domain` (read-only) | Same isolation shape as Analytics — read-only over existing rows, no write path into the Trusted Knowledge Model, so a packaging/template change here can never corrupt generation state. A new project-scaffold file (e.g. a different `playwright.config.ts` default) never touches `PlaywrightGenerationActivity` or `TestAsset.code` generation itself — export is a pure downstream read. `[CORRECTED 2026-07-29]` Scaffold language is TypeScript, matching `TestAsset.code`'s actual generated language (reversing the 2026-07-27 Python correction — see Deferred). |
-| **CI Delivery** `[REMOVED 2026-07-15]`<br>`apps/workers/generation` (`CIDeliveryActivity`), `packages/delivery_adapters` | Push a Test Asset into the customer's repo (PR or direct commit) | — (previously FR-19–20, removed) | `TestAsset` + Application's configured Git host | PR/commit on the customer's Git host | `DeliveryAdapter` port (AD-4), AD-9 | Port contract retained as a forward-compatible seam (no harm keeping it ready); no story builds against it in current scope — see Deferred section |
-| **CI Instructions** `[REMOVED 2026-07-15]`<br>`packages/ci_instructions` | Produce the manual pipeline-wiring template for the Application's CI system | — (previously FR-21, removed) | Application's configured CI system | Instructions/template surfaced in `apps/web` | none — pure function of CI system | Port contract retained as a forward-compatible seam; not scheduled for V1 build — see Deferred section |
-| **Analytics** `[TRIMMED 2026-07-15]`<br>`apps/api` analytics endpoints, `apps/web` | Journey step/evidence detail, retained, served inline from the discovery-review flow, not a standalone screen | FR-23 | `current=true` Journey/Capability/TestAsset rows, Organization scope | Read views only | `packages/domain` (read-only) | A new dashboard view can never corrupt Trusted Knowledge Model state — Analytics has no write path into `packages/domain`. (Capability Map, coverage analytics, executive dashboard — previously FR-22/24/25 — removed in full, no supporting screen.) |
-| **Tenancy**<br>`packages/domain` (`Organization`), `apps/api` scoping | Owns the Organization boundary every other module's queries run through | platform auth (the tenant boundary is foundational, independent of any specific feature) | Authenticated user session | Query-layer filter applied platform-wide (AD-12) | none — foundational | A data-isolation bug is fixable in exactly one place — the central scoping mechanism — never in N separate endpoints |
-| **Deployment topology** `[INFRA QUESTION, STILL OPEN — feature removed 2026-07-15]` | Where Temporal/services run (SaaS-hosted vs. self-hosted); AI-provider-mode *configuration UI* is removed (Epic 7), but the underlying infra-hosting-location question is unrelated and still genuinely open | — (previously FR-26–27; the customer-facing feature those bound is removed, the infra question survives independently) | — | — | `AIProvider` port keeps a future customer-supplied-endpoint mode addable later | See Deferred section |
+| Queue (worker) | Workflows | Key activities | Concurrency (code default / k8s) |
+| --- | --- | --- | --- |
+| `explorer-task-queue` | `ExplorerRunWorkflow` (modes full/missions/tests/resume/send; signal `brief_confirmed`) | 18 `explorer_*` activities (AD-22); understand 2 h, pool items 45 min, hunt/breadth 40 min, plan_tests 20 min, promote 10 min, reel 20 min; all `maximum_attempts=1` | 8 / not deployed |
+| `discovery-task-queue` | `DiscoveryWorkflow`, `VerifyCredentialsWorkflow` (still used for every credential check, including Explorer apps) | `DiscoveryActivity` (6 h, 2 min heartbeat), `ApplicationModelBuilderActivity` (10 min), `InferenceActivity` (5 min, 3 attempts, sequential clustered batches), `MarkDiscoveryRunFailedActivity`, `VerifyCredentialsActivity` (single attempt, 150 s) | 5 / 3 |
+| `generation-task-queue` | `GenerationWorkflow`, `SuiteGenerationWorkflow`, `LiveExplorationTestWorkflow`, `RegenerateTestAssetWorkflow`, `AutofillScenarioTestDataWorkflow` | `ScenarioGenerationActivity`, `EnsureTestSuiteActivity`, `PlaywrightGenerationActivity`, `FinalizeSuiteGenerationActivity`, `RegenerateTestAssetActivity`, `AutofillScenarioTestDataActivity` (no AI), `AnalyzePromptActivity`, `MergeLiveJourneyActivity` | 5 / 20 |
+| `live-exploration-task-queue` (generation process) | — | `LiveExploreActivity`, `LiveHealActivity` (explore turn budget `max(30, min(150, 12 × actions))`; heal 10 turns) | 2 |
+| `execution-task-queue` | `ApplicationTestExecutionWorkflow`, `HealTestExecutionWorkflow`, `ScheduledExecutionWorkflow`, `CleanupWorkflow`, `ReconcileStaleTestRunsWorkflow` | Prepare, Execute, Heal, GenerateAllureReport, SendTestRunReportEmail, Finalize/ForceComplete, CleanupCancelled, FindPurgeCandidates/PurgeApplication, CheckScheduleGate, ReconcileStaleTestRuns, PrepareSingleTestRun/ReadTestResultStatus/DiscardTestRun | 20 / 6 |
 
-## Deferred
+### Key sequence — onboard → discover → generate → run
 
-- **`[NEW — 2026-07-27]` Test Suite Export is not CI Delivery**: FR-34's download endpoint (Module Map, above) reads already-generated `TestSuite`/`TestAsset` rows and returns a zip to the requesting browser — it has no git integration, no repository creation, and no customer Git host credential handling. This is a deliberately narrower capability than the removed CI Delivery module (below): the two should not be conflated if CI/CD delivery is ever redesigned from scratch, since Test Suite Export's assembly logic (suite → folder → zip) is independent of any delivery mechanism and survives regardless of that decision.
-- **`[CORRECTED 2026-07-29, reverses the 2026-07-27 entry below]` Test Suite Export is TypeScript, not Python**: `TestAsset.code` is now generated as TypeScript (`@playwright/test`, per `HostedAIProvider.generate_playwright`'s prompt) by explicit decision. The downloaded project (Story 4.3, unbuilt) is an npm-based `@playwright/test` project (`package.json`/`playwright.config.ts`); there is no Python output and no conversion step. The 2026-07-27 correction below (which itself reversed an original Node/TypeScript assumption back to Python) is superseded by this entry — kept for history, not as current guidance.
-- `[SUPERSEDED 2026-07-29 — see entry above]` **`[NEW — 2026-07-27]` No Python→TypeScript conversion for Test Suite Export**: `TestAsset.code` is generated as Python (`playwright.sync_api`, per `HostedAIProvider.generate_playwright`'s prompt) — confirmed during Story 4.3 creation, correcting an initial draft that assumed a Node/TypeScript output project. The downloaded project is Python (`pytest`/`pytest-playwright`); no conversion step to TypeScript exists or is planned. If a TS/npm-based export is ever wanted, it requires a genuinely new code-generation capability (an AI or mechanical Python→TS translation pass), not a packaging change to Test Suite Export — out of scope here.
-- **`[REMOVED 2026-07-27, was active]` FR-18 / Story 4.3 (Full regeneration on request)**: removed in full, not deferred — an explicit product decision that V1 ships with no customer-facing way to refresh a Journey's generated Scenarios/Test Assets once produced; deletion (FR-13) remains the sole reviewer lever, and it excludes rather than regenerates. No code existed to remove — the regenerate-trigger endpoint and UI control were never built, despite tracking suggesting otherwise (see `sprint-change-proposal-2026-07-27.md`). The `attempt`/`current`/`generation_run_id` versioning scaffold (AD-1, AD-8) is retained unchanged, since Stories 4.1/4.2's own idempotent re-trigger protection (AD-9) depends on it independent of this cut.
-- **`[RESOLVED — 2026-07-18]` Module vs. Capability relationship**: decided — no separate `Module` entity. The Application Model Builder's page-grouping concept is served by the existing `Capability` entity; `packages/domain` gains no new grouping entity for this. See `sprint-change-proposal-2026-07-18.md`.
-- **`[NEW — 2026-07-15]` Test-suite execution mechanism**: Generate Suite's `Run immediately`/`Schedule for later`/`Save without running` controls are a confirmed UI placeholder only (user-stated: "currently it is placeholder, we will tag the integration later"). **No architecture decision is made here.** Specifically: do not read "Run immediately" as authorizing the platform to execute generated tests itself — that would silently contradict the "no CI read-back channel" stance without a real decision ever having been made. Revisit once the mechanism is actually specified; it may turn out to be a revival of the removed CI Delivery module (below), a genuinely new test-runner capability, or something else entirely.
-- **`[REMOVED 2026-07-15, was "deferred"]` CI/CD delivery**: removed in full, not merely deferred — the Connect to CI/CD screen this depended on has no equivalent anywhere in the current UX (see `sprint-change-proposal-2026-07-15.md`). The `DeliveryAdapter`/`CIInstructionsGenerator` port contracts (AD-4) are unchanged and retained as a forward-compatible seam, ready to implement against if this feature is ever redesigned from scratch — but there is no scheduled path back to it.
-- **`[REMOVED 2026-07-15, was "deferred"]` Analytics surfaces**: Capability Map, coverage analytics, and the multi-application executive dashboard are removed in full — no screen in the current UX serves any of them. Journey detail (FR-23) is unaffected — it's retained, served inline from the discovery-review flow instead of a standalone screen.
-- **`[REMOVED 2026-07-15]` AI-provider-mode configuration UI**: the Settings screen — the only confirmed V1 entry point for this — has no equivalent in the current UX, and on-premises deployment as a customer-facing feature is confirmed parked for a later release — a settled scope decision, not a compliance NFR awaiting reconfirmation.
-- **Deployment infra topology (where Temporal/services run) — still genuinely open, independent of the removed feature above**: single deployable vs. divergent builds, infra/provider choice, self-hosted vs. Temporal Cloud. This is NOT the same question as "AI-provider-mode configuration UI" above (that's a removed customer-facing feature; this is an internal infra decision the platform needs regardless of whether on-prem is ever offered as a product option). AD-3's `AIProvider` port means a future hosted/on-prem split doesn't require rework of Activities — only a new port implementation, if and when that's decided. Note: the *tenant/organization data boundary* (AD-12) is decided regardless — even a single-tenant on-prem deployment has exactly one `Organization`.
-- **Object-storage backend for raw evidence blobs** (screenshots, DOM snapshots): the split itself — structured metadata in Postgres, binary artifacts referenced by object-storage key — is decided (AD-8); the specific object-storage provider is coupled to the infra-topology question above.
-- **SSO/MFA session-state capture mechanism** (PRD Open Question 8): how a customer actually hands off a reusable session state is unresolved in the PRD itself. **Blocks** detailed design of the Onboarding flow's auth step (FR-3) — must resolve before that slice is built.
-- **`[MOOT 2026-07-15]` Direct-commit regeneration conflict handling** (previously PRD Open Question 6): what happens when a direct-commit delivery path overwrites a customer's manually-edited test file is now moot — direct-commit export doesn't exist as a feature (CI Delivery removed, above). Would need to be re-raised if CI/CD delivery is ever redesigned.
-- **Non-production technical safeguard** (PRD Open Question 3): currently customer-responsibility only (PRD §11); no platform-side guardrail is designed against `DiscoveryActivity` targeting a production environment.
-- **`[CUT 2026-07-15]` Review-queue live-count indicator**: confirmed cut, not deferred — its only home, the nav rail, is retired, and no on-screen replacement is being built. See `sprint-change-proposal-2026-07-15.md` and Story 3.1.
-- **Confidence/risk scoring reintroduction path**: cut for V1 per PRD §5/addendum. Not designed against here; AD-8's evidence-pointer requirement leaves room for a future discovery-signal-only confidence score without restructuring the domain model.
-- **Reviewer prioritization/importance-marking**: out of V1 scope per PRD §5; no architecture accommodation made.
-- **Tenant billing/plan model**: AD-12 fixes the data-isolation boundary (every query is Organization-scoped); billing, plan tiers, and seat management are unaddressed and out of this spine's scope.
-- **V2 source-code correlation / V3 change-impact prediction**: out of this spine's altitude entirely. AD-3's port boundary is the intentional seam — a future code-analysis/retrieval capability can be added as a new worker or service behind the existing `AIProvider`/`domain` boundaries rather than requiring a V1 rewrite.
-- **`[NEW — 2026-07-29]` Redis/distributed runtime cache**: deliberately not built now (AD-16) — an in-process cache scoped to one `DiscoveryActivity` execution is the V1 default. Revisit only if profiling shows a single-process cache is the actual bottleneck.
-- **`[NEW — 2026-07-29]` Save-as-Project dashboard UX & Blocked-item review/resume UI**: FR-44's Confirmed/Blocked/Remaining dashboard and FR-42/43's "supply missing data / authorize action" surface have no equivalent in the current 6-screen IA (`DESIGN.md`/`EXPERIENCE.md`). Flagged on Story 1.2 (dashboard) and new Story 2.17 (review/resume) — not designed in this architecture pass; needs a UX design pass before implementation.
-- **`[NEW — 2026-07-29]` Non-idempotent-replay generalization**: AD-21's "skip a step that already caused an irreversible effect" rule cannot be fully generalized across arbitrary target applications from architecture alone — flagged as an app-specific judgment call at implementation time, per the source document's own acknowledged gap (its Section 15.4).
+```mermaid
+sequenceDiagram
+    actor U as User
+    participant W as Web
+    participant A as API
+    participant T as Temporal
+    participant D as Discovery worker
+    participant X as Explorer worker
+    participant G as Generation worker
+    participant E as Execution worker
+    participant V as Vault
+    participant S as S3
+    U->>W: Add application (URL, sign-in method)
+    W->>A: POST /applications/test-connection, /verify-credentials
+    A->>T: VerifyCredentialsWorkflow
+    T->>D: VerifyCredentialsActivity (real login)
+    W->>A: POST /applications
+    A->>V: store credentials (secret_ref)
+    alt discovery_required and EXPLORER_REPLACES_DISCOVERY (default)
+        A->>T: ExplorerRunWorkflow (explorer-run-{id})
+        T->>X: understand → App Summary
+        U->>W: edit / confirm summary
+        W->>A: PUT /explorer/runs/{id}/brief, POST /confirm
+        A->>T: signal brief_confirmed
+        T->>X: missions → hunt → breadth → plan + prove tests → promote → reel
+        X->>A: (via DB) proven Scenarios + Journeys, DiscoveryRun stage=analyzed
+    else discovery_required, flag off (classic crawler)
+        A->>T: DiscoveryWorkflow
+        T->>D: Discovery → ModelBuilder → Inference
+        D->>S: screenshots
+        D->>A: (via DB) candidate journeys, stage=analyzed
+    end
+    U->>W: Continue to scenarios / Generate suite (Explorer apps: Generate tests on Test cases)
+    W->>A: POST /generate-scenarios, /generate-suite
+    A->>T: GenerationWorkflow / SuiteGenerationWorkflow per journey
+    T->>G: scenarios → TS spec → tsc gate → linter
+    U->>W: Run tests (all or named selection) or schedule
+    W->>A: POST /test-runs
+    A->>T: ApplicationTestExecutionWorkflow
+    T->>E: prepare → npx playwright test → heal → Allure → finalize → email
+    E->>V: credentials into subprocess env
+    E->>S: artifacts, single-file Allure report
+```
+
+## Security model
+
+- **Platform users:** invite-only, bcrypt, signed httpOnly cookie with 1 h sliding idle expiry (AD-21); org scoping (AD-12); viewer deny-by-default on writes plus report/download reads.
+- **Target-app secrets:** Vault only (AD-5); temporary verify-credentials secrets can be orphaned if a worker dies (`ponytail:` in `main.py`).
+- **Explorer authorization gap:** `/explorer/*` is org-scoped and covered by the global viewer write block, but has no admin or `NotViewerDep` checks (AD-12): members manage role test accounts in Vault and knowledge; viewers can download the tests zip, report, recordings and reel. No Explorer action reaches the Activity feed.
+- **Explorer data at rest:** screenshots and webm recordings live as bytes in Postgres (`explorer_shot`, `explorer_recording`), outside the S3 lifecycle; uploaded knowledge documents are stored as extracted text in `explorer_knowledge`.
+- **Crawler safety:** destructive actions always refused; ambiguous per application posture (AD-15). Explorer applies its own risk gating while walking missions (`pursue.py`). Test execution has no safety/ExecutionPolicy gate (removed on request).
+- **CORS:** `CORS_ALLOWED_ORIGINS`, credentialed, exposes `Content-Disposition`.
+
+## Deployment topology
+
+- **AWS EKS**, AWS Load Balancer Controller ALB ingresses (`group.name: ps-team-app-stage-alb`): `vantage.omnewave.com` (web), `vantage-api.omnewave.com` (api), `vantage-recording.omnewave.com` (recording), `aitestgen-temporal.onwavemaker.com` (Temporal UI).
+- Every Deployment is `replicas: 1`. Temporal runs `start-dev` (in-memory) as one pod. Vault runs file storage with auto init/unseal. Postgres is externally hosted. S3 bucket `wmps-ai-testgen` (us-east-1). SMTP via smtp.gmail.com. LiteLLM proxy `wmps-litellm.onwavemaker.com`.
+- Probes: API `/health` (startup/readiness/lenient liveness; 100m/256Mi → 1 CPU/512Mi), web `/` readiness, recording `/health`, Vault `/v1/sys/health`; workers have no Service or probe.
+- Worker resources (request → limit): discovery 500m/1Gi → 4/4Gi; generation 250m/512Mi → 2/6Gi; execution 500m/1Gi → 2/4Gi; recording 1/2Gi → 4/8Gi.
+- **Explorer worker is not deployable yet:** there is no Explorer worker Dockerfile, no `ops/k8s/*explorer*` manifest, no `ops/jenkins/Jenkinsfile-explorer-worker`, no `EXPLORER_*` in the configmap and no docker-compose service. Because `EXPLORER_REPLACES_DISCOVERY` defaults to on, a deployed API answers every add-with-discovery with `DiscoveryRun failed / worker_unavailable` until the worker ships (Dockerfile with Playwright Chromium, k8s Deployment, Jenkinsfile, configmap entries, SMTP) or the configmap sets `EXPLORER_REPLACES_DISCOVERY=0`. The discovery worker must stay deployed either way: it serves `VerifyCredentialsWorkflow`.
+- **CI/CD:** GitHub Actions CI (Python: uv sync `--all-packages` → ruff → pyright → alembic upgrade → pytest over `apps` and `packages`, which picks up the Explorer worker and `explorer_core` tests, with a Temporal dev server; Web: oxlint → `tsc -b` → vitest → vite build; API-types drift check). Jenkins per-service CD: docker build → ECR (`<svc>-stage.<BUILD_NUMBER>`) → `kubectl set image`; API pipeline also migrates. Separate SonarQube pipeline.
+- **Local dev:** `docker-compose.yml` for Postgres/Temporal/Vault/recording; `scripts/dev-start.*` runs API, workers (including the Explorer worker via `scripts/run-explorer-worker.{sh,cmd}`, which reloads with watchfiles on `apps/workers/explorer/src` and `packages/explorer_core`) and web, logging to `logs/*.log` (`explorer-worker.log`); `dev-stop.sh` stops it. The other workers' `.cmd` scripts call `.venv/Scripts/python.exe` directly. On Windows, watchfiles reloads can leave orphaned workers polling the queue. Real AWS S3 (no MinIO).
+
+## Observability
+
+- Plain stdout logging per service; no OpenTelemetry, Sentry, Prometheus or structured JSON logs.
+- Workflow-level view: Temporal Web UI.
+- Discovery: `diagnostic_record`, `discovery_error`, coverage report (`/discovery-runs/{id}/report`: reached/blocked/skipped/errored/unreached + diagnostics).
+- Explorer: `explorer_event` stream (thoughts, actions, screens, health, phases, questions) drives the live view; `explorer_worker/llm.py` logs a gist of each LLM request and reply; `/explorer/runs/{id}/report` and `/report/download` give a run report (no UI yet).
+- Product-level: admin Activity feed (`activity_event`, `GET /activity`, cursor-paginated with facets). Explorer actions are not recorded there.
+
+## Known risks and deliberate shortcuts
+
+| Risk / shortcut | Impact | Upgrade path |
+| --- | --- | --- |
+| Temporal `start-dev` in prod | Workflow history and Temporal Schedules lost on pod restart; schedule scripts must be re-run | Persistent Temporal (Postgres-backed) or Temporal Cloud |
+| All deployables single-replica; Allure needs the run's local dir | No HA; execution can't scale out | Upload project to S3 or pin runs to a host before adding replicas |
+| `COOKIE_SECURE=false`, ALB cert ARN commented out | Session cookie can travel over HTTP | Enable TLS cert + `COOKIE_SECURE=true` |
+| `SESSION_SECRET_KEY` insecure code default | Forgeable sessions if env unset | Fail fast when unset |
+| SignIn dev-credential autofill on clicking the "Welcome back" heading ships in prod (`DEV_LOGIN_ENABLED = true`) | Exposes dev credentials | Gate behind a dev build flag |
+| Vault unseal key + root token on the same volume | Volume access = full Vault access | Cloud KMS auto-unseal, scoped tokens |
+| Raw Postgres host IP in prod ConfigMap | Infra detail in config | Move to Secret / DNS name |
+| No metrics/tracing/alerting | Stuck runs noticed only by users or the 15 min reconciler | OpenTelemetry + alerting |
+| Run report built before Finalize | Stuck-pending tests missing from the report | Reorder after Finalize |
+| No email on failure/reconcile/manual-heal paths; claim may drop | Some runs send no email | Outbox table |
+| Fixed caps: auto-heal 2, 3 generation waves/30 s, one stale cutoff, ~150 s credential check | Not tunable per app | Move to `discovery_settings` |
+| English-only rules (credential-check errors, failure explainer) | Non-English apps fall to `unknown`/LLM | Localized rules or LLM-first |
+| Inference batches sequential | Slow inference on large apps | Parallel batches |
+| `resume.py` and AI safety consult built but unwired | Dead code paths | Wire or delete |
+| `execution_policy` table/endpoints and test_run columns vestigial | Confusing surface | Drop in a migration |
+| `LIVE_EXPLORATION_UNAVAILABLE`, `SCHEDULE_BACKEND_UNAVAILABLE` not mapped in web | Generic error copy | Add to `errorCodes.ts` |
+| Generated-type hand patches in `api.ts` | Contract drift (AD-6) | Regenerate types |
+| `docs/archify-docs` architecture JSON stale | Misleading diagram | Regenerate from this spine |
+| **Explorer worker has no Dockerfile/k8s/Jenkins while `EXPLORER_REPLACES_DISCOVERY` defaults on** (high) | Every deployed add-with-discovery fails with `worker_unavailable` | Ship the worker, or set the flag to `0` in the configmap |
+| No admin/`NotViewerDep` checks on `/explorer`; no Activity events | Members manage role credentials; viewers download tests/report/media; no audit trail | Add `require_admin` to roles/knowledge, `NotViewerDep` to downloads, log to `activity_event` |
+| Explorer media as Postgres bytes (`explorer_shot`, `explorer_recording` 1–6 MB per mission, reel) | Database bloat, slow backups | Move to the object store (`ponytail:` in `models.py`) |
+| `discovery_engine` flips to `explorer` once any `explorer_run` exists | A crawler app that runs Explorer once loses its Journeys/Scenarios pages and classic Pause/Resume; its crawler journeys stay `candidate`, so generate-suite may cover both sets (not confirmed) | Store the engine on the application |
+| `one_at_a_time` from a keyword guess (`sense.py` `keeps_state`) | Wrong guess slows runs or lets parallel tests clobber shared state | Per-app answer from the user |
+| Per-process Explorer caches (screen readings, signed-in sessions, static assets, network log) | Worker restart costs time; a deploy mid-run is seen only on cache expiry | Shared cache if restarts become common |
+| Known-bug tests never reach Test cases but are in the tests zip (`test.fixme`) | Two different "test sets" for one run | Document or align |
+| Any `begin_run` HTTPException (including 409 already running) is recorded as `worker_unavailable` | Misleading failure reason | Map 409 separately |
+| Explorer API features with no UI: add mission, recordings, reel, report, tests zip, regenerate, insights, health score; `MISSIONS_ADDED_SIGNAL` and `explorerApi.screens` unused | Dead or hidden surface | Build the screens or remove |
+| Explorer bypasses `AIProvider` (AD-3) and `packages/mailer` | Two LLM clients, two email paths | Fold into the ports when Explorer stabilizes |
+| Stale text in code: `explorer_core/models.py` docstring ("never reads or writes" classic tables), ReviewScenarios comment, StartCard "Your current Journeys are not affected", CLAUDE.md "Questions tab" (it is a dialog) | Misleads readers | Fix the text |
+| `logs/dev-start.out`, `logs/fnol-missions.txt` committed | Dev artifacts in the repo | Remove and ignore `logs/` |
+
+Full list: 82 `ponytail:` comments in tracked source. Explorer's 16: screenshots and recordings in Postgres, keyword knowledge recall (`models.py`); log-instead-of-send email (`notify.py`); in-memory static cache, English-only calendar months, in-memory network log (`browser.py`); per-process screen-reading cache (`mind.py`) and session reuse (`session.py`); repeat passes for task missions only and a duplicate follow-up race fixable by a unique `(run_id, title)` (`missions.py`); file upload described but not generated (`promote.py`); hash routes must start with `/` and `keeps_state` keyword guess (`sense.py`); "found nothing new" treated as a variant and the sign-in landing page can't be proven (`tests_stage.py`).
+
+## Not built / deferred
+
+- Platform SSO / OAuth for Vantage users.
+- CI/CD delivery to customer repos (`packages/delivery_adapters`, `packages/ci_instructions` are empty seams).
+- Regenerating a journey's scenarios on request (the `attempt`/`current` scaffold exists with no second caller); targeted per-scenario regeneration after test-data edits *is* built.
+- Scheduling discovery (only test runs schedule).
+- Per-application permissions (roles are org-wide).
+- Data resolver "page scan" step.
+- Redis/distributed cache; horizontal scaling of any service.
+- On-prem / customer-supplied LLM endpoint (the `AIProvider` port keeps it cheap to add).
+
+## Decisions retired
+
+| Original decision (July draft) | Status today |
+| --- | --- |
+| AD-1: Inference auto-starts `GenerationWorkflow` per candidate journey | Reversed 2026-07-21 — generation is an explicit user trigger |
+| Approval gate (approve/reject journeys) | Cut — only rename/delete |
+| AD-4 `DeliveryAdapter` / CI instructions | Feature removed 2026-07-15; packages kept as empty seams |
+| Full regeneration of a journey (FR-18) | Cut 2026-07-27 |
+| Generated tests / download in Python | Superseded — TypeScript `@playwright/test` |
+| Generic `Evidence` table | Replaced by typed capture tables (AD-8) |
+| "No time budget; exhaustive traversal is the only stop" | Superseded by `max_pages` / max-duration caps with recorded `stop_reason` |
+| Resume replays stored exploration steps | Superseded by re-crawl-from-entry design; that code is unwired; run pause/resume is what ships |
+| Structured JSON logs + OpenTelemetry correlated by `workflow_id` | Never built — plain stdout logging |
+| RFC 7807 error envelope; camelCase API JSON | Never built — FastAPI `detail`, snake_case |
+| MinIO for local/CI object storage | Dropped — real S3 everywhere |
+| Execution/safety policy gating test runs | Removed on request; table vestigial |
+| TypeScript 7.0 for the web | Pinned at 5.9.3 (codegen/tooling compatibility) |
+| Analytics dashboards, AI-provider-mode settings UI | Removed; Overview dashboard and Settings page exist with different scope |
+| The crawler (AD-14/15) is the discovery engine | Superseded 2026-10-27 — Explorer (AD-22) is the default; the crawler runs only with `EXPLORER_REPLACES_DISCOVERY=0` or for existing crawler runs |
+| Every LLM call goes through `AIProvider` (AD-3) | Relaxed — Explorer has its own LiteLLM client |

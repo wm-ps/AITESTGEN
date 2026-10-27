@@ -7,10 +7,23 @@ research_type: 'market'
 research_topic: 'Application Intelligence Platform — AI-powered application discovery + integration test/Playwright generation (V1: runtime-only discovery, no source code access)'
 research_goals: 'Discover competitors and identify differentiation/edge; market sizing (TAM/SAM/SOM); competitive positioning; pricing/packaging benchmarks; ICP buyer validation (CTOs, Engineering Leaders, QA Directors, Product Owners, Architects, Test Teams)'
 user_name: 'Harsha'
-date: '2026-07-12'
+date: '2026-10-27'
+research_conducted: '2026-07-12'
 web_research_enabled: true
 source_verification: true
 ---
+
+> **Note (2026-10-27): this is dated research.** The market study below was carried out on 2026-07-12, before the product was built. Its market figures, competitor details and recommendations reflect that date and have not been refreshed. It describes the planned "Application Intelligence Platform"; the product that shipped is **Vantage (AITestGen)**.
+>
+> **How Vantage as built today positions against this research:**
+> - **Where it matches.** Onboarding needs only a URL and an optional test login, and the login is proven in a real browser before any exploration. That is the low-friction entry point this research identified. Output is Playwright tests, in line with the framework trend noted here.
+> - **Where the product went further than this research assumed.** The study treated test generation as heading toward commodity, especially with Playwright's free Test Agents. Vantage answers that with the complete, trustworthy loop rather than with generation alone:
+>   - Three ways to create tests: autonomous Discovery, plain-English authoring and record-and-play.
+>   - Self-healing that is never allowed to change or heal an assertion.
+>   - Plain-language failure explanations and flaky-test flags. These match the explainability and flaky-detection capabilities named in the Gartner category.
+>   - A branded test report, run-completed emails, scheduled runs, roles (admin, member, viewer), an org-wide Overview and an admin Activity history.
+> - **Where it does not yet match.** The "application intelligence layer" this research recommended leading with is not built: business capability maps, risk scorecards, executive dashboards and change-impact analysis. The closest thing today is per-application health tiers and coverage figures, plus an org-wide pass-rate Overview. Two other items are also not built: CI/CD delivery, which the research named as a buying factor, and on-premise deployment.
+> - **Implication.** Vantage today competes as a trustworthy, low-maintenance test coverage product. The intelligence-layer positioning this research recommended remains the next step, not the current pitch.
 
 # Owning "Application Intelligence": Comprehensive Market Research for an AI-Powered Application Discovery & Test Generation Platform
 

@@ -4,7 +4,21 @@ reviewed_document: ../ARCHITECTURE-SPINE.md
 reviewed_against: ../../../prds/prd-AITestGen-2026-07-13/prd.md
 date: 2026-07-13
 verdict: Conditional pass — strong port/boundary discipline, but the operational/environmental envelope and the tenant/user data model are silent gaps that will let independently-built units diverge in ways that matter for V1.
+updated: 2026-10-27
 ---
+
+> **Status note (2026-10-27):** This rubric reviewed the **July 2026 draft** of the spine. The original text below is kept as history. Against the architecture as built today (spine updated 2026-10-27):
+>
+> | # | Finding | Today |
+> | --- | --- | --- |
+> | 1 | Operational envelope silent | **Resolved (decided), with open risks.** Deployment is AWS EKS with ALB ingresses and single-replica Deployments. CI runs on GitHub Actions (ruff, pyright, pytest, oxlint, vitest, API-types drift check). CD is Jenkins → ECR → `kubectl set image`, and the API pipeline runs migrations. Temporal is self-hosted but runs `start-dev`. **Still open:** observability beyond stdout logs (no metrics, tracing or alerting), Temporal persistence, and HA. |
+> | 2 | No tenant/user model | **Resolved.** `organization`, `platform_user` with org-wide roles admin/member/viewer, `invite`, `password_reset`, a single `CurrentOrgIdDep` scoping dependency, and a global viewer write-block. |
+> | 3 | Raw discovery signal has no home | **Resolved.** Typed capture tables in Postgres. Screenshots and test artifacts go to AWS S3 (`discovery-runs/`, `test-runs/`), with keys in Postgres. |
+> | 4 | Secrets backend undecided | **Resolved.** HashiCorp Vault KV v2 via hvac. **Open:** the unseal key and root token sit on the same volume, and Vault 1.18 is out of support. |
+> | 5 | Patch-level version pins | **Superseded.** The spine now lists exact locked versions, checked in `review-version-currency.md` (2026-10-27). |
+> | §8 | Migration strategy partial | **Resolved.** Jenkins runs `alembic upgrade head` via `kubectl exec` on API deploy. CI runs it before pytest. |
+>
+> **Obsolete dimensions:** the delivery-adapter and SaaS/on-prem toggle discussion, because both features were removed. The "logging format decided (structured JSON)" row was never implemented, and logging is plain stdout.
 
 # Architecture Spine Review — Rubric Findings
 
