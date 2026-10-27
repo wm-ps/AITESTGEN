@@ -134,7 +134,12 @@ from api.auth import (
 )
 from api.coverage_report import build_coverage_report
 from api.db import engine, get_session
-from api.discovery import pause_discovery_run, resume_discovery_run, start_discovery_run
+from api.discovery import (
+    discovery_workers_available,
+    pause_discovery_run,
+    resume_discovery_run,
+    start_discovery_run,
+)
 from api.explorer import router as explorer_router
 from api.invites import InviteAcceptError, accept_invite, create_invite, send_invite_email
 from api.password_reset import (
@@ -833,6 +838,13 @@ async def create_application(
     async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
         await _check_reachable(client, payload.url)
 
+    # Before any write: if discovery can't start (no worker), the application
+    # is not added at all — the form shows a retry message instead of leaving
+    # an app behind with a failed run. Skipped when discovery is off.
+    if payload.discovery_required and not await discovery_workers_available():
+        logger.warning("create_application blocked: discovery workers unavailable")
+        raise HTTPException(status_code=503, detail="DISCOVERY_UNAVAILABLE")
+
     # Credentials are written via SecretsClient immediately; the Application
     # row below stores only the returned opaque SecretRef.path (AD-5/NFR-1).
     # Exactly one of the two credential shapes is stored, matching the
@@ -947,7 +959,8 @@ def _verify_credentials_workflow_id(organization_id: uuid.UUID, check_id: uuid.U
 # credentials, run by the discovery worker (the only process with Chromium).
 # Start + poll like the Scenarios tab's regenerate/auto-fill — the login can
 # take over a minute, too long for one blocking request. `create_application`
-# itself is deliberately unchanged, so direct API callers aren't gated.
+# doesn't run this check, so direct API callers aren't gated on credentials
+# (it does refuse to save an app when no discovery worker is available).
 @app.post("/applications/verify-credentials", response_model=CredentialCheckStarted, status_code=202)
 async def start_credential_check(
     payload: CredentialCheckPayload,

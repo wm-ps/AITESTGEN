@@ -636,15 +636,12 @@ def test_discovery_actions_return_409_when_discovery_not_enabled() -> None:
         assert response.json()["detail"] == "DISCOVERY_NOT_ENABLED"
 
 
-def test_create_application_reports_worker_unavailable_when_discovery_queue_has_no_worker(
+def test_create_application_refuses_to_save_when_no_discovery_worker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """API up + Temporal up + zero discovery workers polling the queue must
-    not look identical to a normal in-progress discovery run (starting a
-    workflow succeeds either way) — it should fail fast with a
-    `failure_reason` the frontend can recognize and show distinctly, instead
-    of the DiscoveryRun sitting at "running" forever with nothing to explain
-    why."""
+    """API up + Temporal up + zero workers polling the queue: the application
+    must not be saved at all (the form shows a retry message) — checked before
+    any write, so nothing is left behind to clean up."""
     monkeypatch.setattr("api.discovery.EXPLORER_REPLACES_DISCOVERY", False)  # classic crawler path
     from api import discovery as api_discovery
 
@@ -657,6 +654,90 @@ def test_create_application_reports_worker_unavailable_when_discovery_queue_has_
     client = _signed_in_client("Org Discovery Worker Down")
 
     response = _post_application(client, "No Worker App")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "DISCOVERY_UNAVAILABLE"
+    with Session(engine) as session:
+        saved = session.exec(select(Application).where(Application.name == "No Worker App")).first()
+        assert saved is None
+
+
+def test_create_application_treats_a_temporal_error_as_discovery_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from api import discovery as api_discovery
+
+    async def _temporal_down(client: object, task_queue: str) -> bool:
+        raise RuntimeError("temporal unreachable")
+
+    monkeypatch.setattr(api_discovery, "has_pollers", _temporal_down)
+
+    init_db()
+    client = _signed_in_client("Org Temporal Down")
+
+    response = _post_application(client, "Temporal Down App")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "DISCOVERY_UNAVAILABLE"
+    with Session(engine) as session:
+        saved = session.exec(
+            select(Application).where(Application.name == "Temporal Down App")
+        ).first()
+        assert saved is None
+
+
+def test_create_application_without_discovery_skips_the_worker_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from api import discovery as api_discovery
+
+    async def _no_pollers(client: object, task_queue: str) -> bool:
+        return False
+
+    monkeypatch.setattr(api_discovery, "has_pollers", _no_pollers)
+
+    init_db()
+    client = _signed_in_client("Org No Discovery No Check")
+
+    response = client.post(
+        "/applications",
+        json={
+            "name": "No Discovery App",
+            "url": "https://app.example.com",
+            "environment": "staging",
+            "username": "qa-test-account",
+            "password": "irrelevant",
+            "discovery_required": False,
+        },
+    )
+
+    assert response.status_code == 201
+
+
+def test_create_application_reports_worker_unavailable_when_worker_drops_after_the_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pre-save check is a snapshot: a worker that disappears between it
+    and `start_discovery_run` still yields a failed run with a recognizable
+    `failure_reason` (the Journeys failed banner) instead of a run stuck at
+    "running" forever."""
+    monkeypatch.setattr("api.discovery.EXPLORER_REPLACES_DISCOVERY", False)  # classic crawler path
+    from api import discovery as api_discovery
+    from api import main as api_main
+
+    async def _available(*args: object, **kwargs: object) -> bool:
+        return True
+
+    async def _no_pollers(client: object, task_queue: str) -> bool:
+        return False
+
+    monkeypatch.setattr(api_main, "discovery_workers_available", _available)
+    monkeypatch.setattr(api_discovery, "has_pollers", _no_pollers)
+
+    init_db()
+    client = _signed_in_client("Org Discovery Worker Drops")
+
+    response = _post_application(client, "Dropped Worker App")
 
     assert response.status_code == 201
     body = response.json()
