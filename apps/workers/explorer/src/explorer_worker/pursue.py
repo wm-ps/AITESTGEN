@@ -17,6 +17,7 @@ from sqlmodel import Session, col, select
 from explorer_worker import brain
 from explorer_worker.browser import Eyes
 from explorer_worker.db import engine
+from explorer_worker.goal import stops_walk
 from explorer_worker.journal import Journal
 from explorer_worker.mind import Mind
 from explorer_worker.samples import sample_file
@@ -57,6 +58,12 @@ def path_to(run_id: uuid.UUID, screen: str | None) -> list[dict[str, str]] | Non
         ).all()
     routes = [r for r in routes if r]
     return [dict(step) for step in min(routes, key=len)] if routes else None
+
+
+def edge_reached(fit: str | None, obey_goal: bool) -> bool:
+    """Does reaching a screen with this place against the run's Goal end the
+    walk? A mission the user added themselves (obey_goal=False) goes on."""
+    return obey_goal and stops_walk(fit)
 
 
 def is_shorter(path: list[dict[str, Any]], known: list[dict[str, Any]] | None) -> bool:
@@ -122,6 +129,7 @@ async def pursue(
     ask: Asker | None = None,
     lead_in: list[dict[str, str]] | None = None,
     stay_signed_out: bool = False,
+    obey_goal: bool = True,
 ) -> Pursuit:
     """`non_production` lets a mission press final Save/Submit/Create so it
     can make its own test data (PLAN.md Step 5); actions that need a human's
@@ -164,6 +172,14 @@ async def pursue(
         heartbeat()
         if stop_requested():
             result.ended = "stopped"
+            break
+        if edge_reached(getattr(mind, "last_goal_fit", None), obey_goal):
+            # Past the goal's stop point, or outside the goal: never act here.
+            # "done", so a scenario that landed on the screen after its stop
+            # point still uses that screen as its proof.
+            result.ended = "done"
+            result.outcome = f"Reached the edge of your goal: {step_name}"
+            journal.event("phase", result.outcome, None, journal.shot(visit.shot))
             break
         if eyes.starts_fresh and await eyes.start_fresh_if_asked():
             # A "resume your saved progress?" prompt left by an earlier run:

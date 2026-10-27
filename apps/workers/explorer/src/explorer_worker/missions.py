@@ -24,6 +24,7 @@ from sqlmodel import Session, col, select
 from explorer_worker import brain
 from explorer_worker.browser import Eyes
 from explorer_worker.db import engine
+from explorer_worker.goal import ensure_scope, screens_in_goal
 from explorer_worker.journal import Journal
 from explorer_worker.memory import ask, remember_record
 from explorer_worker.mind import Mind
@@ -189,6 +190,7 @@ async def run_mission(
         if mission is None or mission.status != "queued":
             return "not-queued"
         title, goal, kind = mission.title, mission.goal, mission.kind
+        added_by = mission.added_by
         instructions, condition, expected = (
             mission.instructions,
             mission.condition,
@@ -231,7 +233,12 @@ async def run_mission(
             if start_screen and start_screen in known:
                 await eyes.goto(known[start_screen])
             mind = Mind(
-                journal, target.notes, heartbeat, condition=condition, home_url=target.app_url
+                journal,
+                target.notes,
+                heartbeat,
+                condition=condition,
+                home_url=target.app_url,
+                goal_rule=(await ensure_scope(run_id) or {}).get("rule"),
             )
 
             def stop_requested() -> bool:
@@ -278,6 +285,8 @@ async def run_mission(
                     non_production=target.non_production,
                     ask=asker,
                     lead_in=lead_in,
+                    # A mission you added yourself is carried out even outside the goal.
+                    obey_goal=added_by != "user",
                 )
                 steps_taken += result.steps
                 ends.append(result.ended)

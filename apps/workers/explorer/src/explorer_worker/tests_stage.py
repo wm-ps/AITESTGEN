@@ -38,6 +38,7 @@ from sqlmodel import Session, col, select
 from explorer_worker import brain, quality
 from explorer_worker.browser import Visit
 from explorer_worker.db import engine
+from explorer_worker.goal import ensure_scope, screens_in_goal
 from explorer_worker.journal import Journal
 from explorer_worker.mind import Mind
 from explorer_worker.missions import fast_forward, one_at_a_time
@@ -175,6 +176,13 @@ def reached_screen(screens: list[ExplorerScreen], name: str | None, visited: set
     if not own or any(pattern not in unique for pattern in own):
         return True
     return any(pattern in visited for pattern in own)
+
+
+def goal_fits_by_address(screens: list[ExplorerScreen]) -> dict[str, str]:
+    """Address pattern -> that screen's place against the run's Goal, for the
+    addresses that show exactly one screen (like `route_screens`)."""
+    fits = {s.id: s.goal_fit for s in screens if s.goal_fit}
+    return {pattern: fits[sid] for pattern, sid in route_screens(screens).items() if sid in fits}
 
 
 def route_screens(screens: list[ExplorerScreen]) -> dict[str, uuid.UUID]:
@@ -648,6 +656,8 @@ async def build_and_prove(
                 start_url_now = eyes.page.url
             eyes.mark_calls()  # an API proof counts only what the test itself caused
             mind = QuietMind(journal, target.notes, heartbeat)
+        if await ensure_scope(run_id):
+            mind.goal_fits = goal_fits_by_address(journal.screen_rows())
             if not signed_out and eyes.starts_fresh:
                 # A clean walk in (not signed out, not continuing a draft) is a
                 # route the next scenario on the same screen can replay.
