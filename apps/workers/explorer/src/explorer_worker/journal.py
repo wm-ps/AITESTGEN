@@ -157,6 +157,8 @@ class Journal:
                 ).first()
             if existing is not None:
                 existing.visits += 1
+                if existing.goal_fit is None and values.get("goal_fit"):
+                    existing.goal_fit = values["goal_fit"]  # the first verdict wins
                 if values.get("reached_by") == "Start page":
                     # a screen copied from an earlier run may be this run's start
                     existing.reached_by = "Start page"
@@ -173,6 +175,17 @@ class Journal:
             session.add(row)
             session.commit()
             return row.id, True
+
+    def set_goal_fit(self, fits: dict[str, str]) -> None:
+        """Each named screen's place against the run's Goal (explorer_core.GOAL_FITS)."""
+        with Session(engine) as session:
+            for screen in session.exec(
+                select(ExplorerScreen).where(ExplorerScreen.run_id == self.run_id)
+            ).all():
+                if screen.name in fits:
+                    screen.goal_fit = fits[screen.name]
+                    session.add(screen)
+            session.commit()
 
     def transition(self, from_id: uuid.UUID, to_id: uuid.UUID, action: str) -> None:
         """One App Map edge per (from, to, action) — repeats aren't stored."""
