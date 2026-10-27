@@ -657,8 +657,8 @@ async def build_and_prove(
                 start_url_now = eyes.page.url
             eyes.mark_calls()  # an API proof counts only what the test itself caused
             mind = QuietMind(journal, target.notes, heartbeat)
-        if await ensure_scope(run_id):
-            mind.goal_fits = goal_fits_by_address(journal.screen_rows())
+            if await ensure_scope(run_id):
+                mind.goal_fits = goal_fits_by_address(journal.screen_rows())
             if not signed_out and eyes.starts_fresh:
                 # A clean walk in (not signed out, not continuing a draft) is a
                 # route the next scenario on the same screen can replay.

@@ -7,6 +7,7 @@ placed while they are read (brain.perceive). An empty goal changes nothing:
 no scope, every screen counts as inside."""
 
 import uuid
+from collections.abc import Iterable
 from typing import Any
 
 from explorer_core import GOAL_FITS
@@ -48,7 +49,7 @@ def stops_walk(fit: str | None) -> bool:
     return fit in ("past_stop", "outside")
 
 
-def screens_in_goal(screens: list[Any]) -> list[Any]:
+def screens_in_goal(screens: Iterable[Any]) -> list[Any]:
     return [s for s in screens if in_goal(getattr(s, "goal_fit", None))]
 
 
