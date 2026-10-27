@@ -61,6 +61,11 @@ class Journal:
                 _fail_discovery(session, run.application_id, run.error or run.headline)
             session.commit()
 
+    def run_brief(self) -> dict[str, Any]:
+        with Session(engine) as session:
+            run = session.get(ExplorerRun, self.run_id)
+            return dict(run.brief or {}) if run else {}
+
     def status(self) -> str | None:
         with Session(engine) as session:
             run = session.get(ExplorerRun, self.run_id)

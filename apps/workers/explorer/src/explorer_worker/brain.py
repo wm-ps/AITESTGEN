@@ -264,12 +264,53 @@ async def decide_step(
 def scope(brief: dict[str, Any]) -> str:
     """What the user chose to cover at review — it overrides everything else."""
     focus = str(brief.get("focus") or "").strip()
+    rule = str((brief.get("scope") or {}).get("rule") or "").strip()
     skip = [str(n) for n in brief.get("skip_screens") or []]
-    return (f"The user's goal for this run (follow it first): {focus}\n" if focus else "") + (
+    goal = (
+        f"The user's goal for this run is a STRICT rule: {rule} Plan nothing outside it.\n"
+        if rule
+        else f"The user's goal for this run (follow it first): {focus}\n"
+        if focus
+        else ""
+    )
+    return goal + (
         f"The user left these screens out — never plan anything on or for them: {', '.join(skip)}\n"
         if skip
         else ""
     )
+
+
+_GOAL_SYSTEM = (
+    STANCE
+    + """
+
+The user wrote a goal for this run that limits what Explorer may explore and test. \
+Restate it as a strict rule, and place every known screen against it. Reply with ONLY:
+{"rule": "the goal as a strict rule in one or two plain sentences, naming the stop \
+screen if there is one", "fits": {"<exact screen name>": "inside | on_the_way | past_stop | outside"}}
+- inside: part of what the goal covers (the stop screen itself is inside, and is tested fully).
+- on_the_way: outside the goal but must be passed through to reach it (e.g. a home page).
+- past_stop: comes after the goal's stop point.
+- outside: anything else the goal does not cover.
+Match by meaning, not wording ("policy search" is the screen where a policy is found). \
+Read the goal literally: "only/just X up to Y" — everything outside flow X is outside, \
+screens after Y are past_stop; a stop point without "only" cuts just that path and the \
+rest stays inside; branches inside the named flow before the stop are inside; "leave \
+out Z" makes Z outside and everything else inside."""
+)
+
+
+async def read_goal(goal: str, screens: list[dict[str, Any]]) -> dict[str, Any]:
+    user = (
+        f"The user's goal: {goal}\n"
+        f"Known screens: {json.dumps(screens, ensure_ascii=False)[:30000]}"
+    )
+    reply = await ask_json(_GOAL_SYSTEM, user, model=THINKING_MODEL)
+    fits = reply.get("fits")
+    return {
+        "rule": str(reply.get("rule") or goal).strip()[:600],
+        "fits": fits if isinstance(fits, dict) else {},
+    }
 
 
 _MISSIONS_SYSTEM = (
