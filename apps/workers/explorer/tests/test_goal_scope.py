@@ -132,3 +132,38 @@ def test_follow_ups_only_on_screens_inside_the_goal() -> None:
     planned = [{"title": "a", "start_screen": "S0"}, {"title": "b", "start_screen": "S1"}, {"title": "c"}]
     fits = {"S0": "inside", "S1": "outside"}
     assert [m["title"] for m in goal.follow_ups_in_goal(planned, fits)] == ["a", "c"]
+
+
+def test_hunt_only_probes_screens_inside_the_goal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from explorer_worker import hunt
+
+    probed: list[str] = []
+    forms = [
+        SimpleNamespace(name="Find your policy", view_kind="form", condition=None, goal_fit="inside"),
+        SimpleNamespace(name="Contact details", view_kind="form", condition=None, goal_fit="past_stop"),
+    ]
+
+    class _J:
+        def __init__(self, run_id: object) -> None: ...
+        def status(self) -> str: return "hunting"
+        def screen_rows(self) -> list[object]: return forms
+        def update_run(self, **c: object) -> None: ...
+        def event(self, *a: object) -> None: ...
+
+    class _Eyes:
+        async def close(self) -> None: ...
+
+    async def opened(*a: object) -> _Eyes:
+        return _Eyes()
+
+    async def probe(eyes: object, journal: object, screen: SimpleNamespace, *rest: object) -> int:
+        probed.append(screen.name)
+        return 0
+
+    monkeypatch.setattr(hunt, "Journal", _J)
+    monkeypatch.setattr(hunt, "load_target", lambda run_id: None)
+    monkeypatch.setattr(hunt, "open_signed_in", opened)
+    monkeypatch.setattr(hunt, "_probe_choices", probe)
+    monkeypatch.setattr(hunt, "_probe_amounts", probe)
+    asyncio.run(hunt.hunt(RUN, lambda: None))
+    assert set(probed) == {"Find your policy"}

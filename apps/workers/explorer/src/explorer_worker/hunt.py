@@ -26,6 +26,7 @@ from playwright.async_api import Route
 
 from explorer_worker.browser import Eyes
 from explorer_worker.journal import Journal
+from explorer_worker.goal import screens_in_goal
 from explorer_worker.session import load_target, open_signed_in
 
 HUNT_MINUTES = 25
@@ -166,7 +167,7 @@ async def hunt(run_id: uuid.UUID, heartbeat: Callable[[], None]) -> int:
     if journal.status() == "stopped":
         return 0
     target = load_target(run_id)
-    screens = journal.screen_rows()
+    screens = screens_in_goal(journal.screen_rows())  # with a goal, only screens inside it
     forms = [s for s in screens if s.view_kind in ("form", "wizard") and not s.condition][
         :MAX_FORM_SCREENS
     ]

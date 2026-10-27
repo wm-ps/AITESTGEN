@@ -25,6 +25,7 @@ from explorer_worker.db import engine
 from explorer_worker.journal import Journal
 from explorer_worker.mind import Mind
 from explorer_worker.sense import url_pattern
+from explorer_worker.goal import ensure_scope, screens_in_goal
 from explorer_worker.session import Target, load_target, open_signed_in
 
 MAX_SCREENS_PER_ROLE = 40
@@ -56,10 +57,15 @@ async def breadth(run_id: uuid.UUID, heartbeat: Callable[[], None]) -> None:
         status="hunting", headline="Checking access, unlinked pages and code coverage"
     )
     insights: dict[str, Any] = {}
+    # With a goal, pages found only in the app's code can't be placed against
+    # it before opening them, so they aren't opened.
+    scoped = await ensure_scope(run_id) is not None
     eyes = await open_signed_in(target, journal)
     if eyes is not None:
         try:
-            insights["unlinked"] = await _unlinked_pages(eyes, journal, target, heartbeat)
+            insights["unlinked"] = (
+                [] if scoped else await _unlinked_pages(eyes, journal, target, heartbeat)
+            )
             insights["coverage"] = await _coverage_radar(eyes, journal, heartbeat)
         except PlaywrightError as exc:
             journal.event(
@@ -89,7 +95,9 @@ async def _roles_sweep(
     roles = _roles(target)
     if not roles:
         return []
-    screens = [s for s in journal.screen_rows() if not s.condition][:MAX_SCREENS_PER_ROLE]
+    screens = [s for s in screens_in_goal(journal.screen_rows()) if not s.condition][
+        :MAX_SCREENS_PER_ROLE
+    ]
     summary: list[dict[str, Any]] = []
     for role in roles:
         heartbeat()
@@ -240,7 +248,7 @@ async def _coverage_radar(
     cdp = await page.context.new_cdp_session(page)
     await cdp.send("Profiler.enable")
     await cdp.send("Profiler.startPreciseCoverage", {"callCount": True, "detailed": False})
-    for screen in [s for s in journal.screen_rows() if not s.condition][:40]:
+    for screen in [s for s in screens_in_goal(journal.screen_rows()) if not s.condition][:40]:
         heartbeat()
         try:
             await eyes.goto(screen.url)
