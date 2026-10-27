@@ -584,13 +584,26 @@ def _prepare_test_run_sync(
                 )
             )
 
+        # An app that keeps progress per login (saved drafts, a cart) can't
+        # take several tests at once on its one test account: they overwrite
+        # each other's state and fail for reasons that aren't bugs. Explorer
+        # detects this and marks the scenarios it hands over.
+        scenario_ids = [a.scenario_id for a in pending_assets]
+        one_at_a_time = any(
+            (s.grounding or {}).get("one_at_a_time")
+            for s in session.exec(select(Scenario).where(Scenario.id.in_(scenario_ids))).all()  # pyright: ignore[reportAttributeAccessIssue]
+        )
         logger.info(
-            "PrepareTestRunActivity: test_run_id=%s prepared with %d executable tests",
+            "PrepareTestRunActivity: test_run_id=%s prepared with %d executable tests%s",
             test_run.external_id,
             len(executable),
+            " (one at a time)" if one_at_a_time else "",
         )
         return PrepareTestRunActivityResult(
-            test_run_id=str(test_run.external_id), blocked=False, executable=executable
+            test_run_id=str(test_run.external_id),
+            blocked=False,
+            executable=executable,
+            one_at_a_time=one_at_a_time,
         )
 
 
@@ -621,9 +634,10 @@ def _run_auth_setup_once(dest_dir: Path, application: Application) -> None:
             [_resolve_bin("npx"), "playwright", "test", "--project=setup", "--reporter=list"],
             cwd=str(dest_dir),
             env=_build_subprocess_env(application),
+            # A busy machine (browsers starting, slow app logins) took over 60 s.
             timeout=_AUTH_SETUP_TIMEOUT_NO_DISCOVERY_S
             if application.discovery_required is False
-            else 60,
+            else 180,
         )
     except subprocess.CalledProcessError as exc:
         # `[FIXED]` `logger.exception` on the caller side only ever logged
@@ -988,6 +1002,15 @@ async def _run_playwright_test(
     return result
 
 
+def _skip_reason(test: dict, result: dict) -> str:
+    """Why Playwright skipped a test: the `test.fixme(true, '...')` /
+    `test.skip(true, '...')` description when there is one."""
+    for note in [*(result.get("annotations") or []), *(test.get("annotations") or [])]:
+        if isinstance(note, dict) and note.get("type") in ("fixme", "skip") and note.get("description"):
+            return str(note["description"])
+    return "Marked as a known bug in the test (test.fixme), so it was not run"
+
+
 def _parse_playwright_report(stdout: bytes, stderr: bytes, spec_path: str) -> dict:
     console_output = _strip_ansi(stderr.decode("utf-8", errors="replace")[-4000:]) or None
     try:
@@ -1017,6 +1040,18 @@ def _parse_playwright_report(stdout: bytes, stderr: bytes, spec_path: str) -> di
                 results = test.get("results") or []
                 if results:
                     result = results[-1]
+                    if result.get("status") == "skipped":
+                        # Deliberately not run (`test.fixme` / `test.skip`, e.g. a
+                        # known bug Explorer parked): "blocked" with its reason,
+                        # never "errored" — nothing broke.
+                        return {
+                            "status": "blocked",
+                            "blocked_reason": _skip_reason(test, result),
+                            "duration_ms": result.get("duration"),
+                            "error_message": None,
+                            "stack_trace": None,
+                            "console_output": console_output,
+                        }
                     status = {
                         "passed": "passed",
                         "failed": "failed",
@@ -1134,6 +1169,8 @@ def _persist_test_result_sync(
             )
             return
         test_result.status = outcome["status"]
+        if outcome.get("blocked_reason"):
+            test_result.blocked_reason = outcome["blocked_reason"]
         test_result.duration_ms = outcome.get("duration_ms")
         test_result.error_message = outcome.get("error_message")
         test_result.stack_trace = outcome.get("stack_trace")
@@ -1428,6 +1465,10 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
         ).one()
         journey = session.exec(select(Journey).where(Journey.id == test_suite.journey_id)).one()
         scenario = session.exec(select(Scenario).where(Scenario.id == test_asset.scenario_id)).one()
+        if "test.fixme(true" in str((scenario.grounding or {}).get("proven_code") or ""):
+            # An Explorer known-bug test fails on purpose until the app is
+            # fixed; healing would rewrite away the bug it records.
+            return None
         known_pages, known_locators, _, known_page_ids = resolve_known_application_model_sync(
             session, journey.id, scenario
         )
@@ -1598,6 +1639,13 @@ def _record_heal_supersede_sync(
         session.commit()
 
 
+# Automatic healing after a failed run (up to AUTO_HEAL_ATTEMPT_CAP tries).
+# A heal rewrites the test, so the failure then shown is the rewrite's, not
+# the original's: set AUTO_HEAL_ENABLED=0 while investigating real causes.
+# The manual "Retry with self-healing" button heals either way.
+AUTO_HEAL_ENABLED = os.environ.get("AUTO_HEAL_ENABLED", "1") == "1"
+
+
 @activity.defn(name="HealTestActivity")
 async def heal_test_activity(input: HealTestActivityInput) -> None:
     async with cancel_watch(
@@ -1634,6 +1682,13 @@ async def _heal_test(input: HealTestActivityInput) -> None:
       failure evidence -> (pass | no-progress stop | loop again), bounded by
       this invocation's own attempt_cap.
     """
+    if not input.triggered_manually and not AUTO_HEAL_ENABLED:
+        logger.info(
+            "HealTestActivity: test_result_id=%s automatic healing is off (AUTO_HEAL_ENABLED=0), "
+            "skipping",
+            input.test_result_id,
+        )
+        return
     claimed = await asyncio.to_thread(_claim_heal_sync, input.test_result_id)
     if not claimed:
         logger.info(

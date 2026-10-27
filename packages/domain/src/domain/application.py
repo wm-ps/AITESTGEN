@@ -106,6 +106,14 @@ class Application(SQLModel, table=True):
         default=True,
         sa_column=Column(Boolean, nullable=False, server_default=text("true")),
     )
+    # Add Application's "This application requires sign-in" switch. `False`
+    # means the app has no login: no username/password is asked for, and
+    # Explorer opens it directly instead of looking for a sign-in form.
+    # Defaults true so every pre-existing Application keeps today's behavior.
+    requires_login: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default=text("true")),
+    )
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),

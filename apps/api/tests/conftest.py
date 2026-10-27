@@ -98,3 +98,50 @@ def _terminate_discovery_workflows_started_by_test(monkeypatch: pytest.MonkeyPat
                 pass
 
     asyncio.run(_terminate_all())
+
+
+@pytest.fixture(autouse=True)
+def _terminate_explorer_workflows_started_by_test(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explorer is the default discovery (`EXPLORER_REPLACES_DISCOVERY`), so
+    creating an application in a test starts a real Explorer run. A locally
+    running Explorer worker would pick it up and try to sign in to the test's
+    fake URL — so test runs go to a task queue no worker polls, and every
+    Explorer run a test created (onboarding, Start, Resume all use the run's
+    one workflow id) is ended right after it."""
+    from datetime import UTC, datetime
+
+    from api import explorer as api_explorer
+
+    monkeypatch.setattr(api_explorer, "EXPLORER_TASK_QUEUE", "pytest-explorer-task-queue")
+    monkeypatch.setattr(api_explorer, "has_pollers", _always_has_pollers)
+
+    from api.db import engine
+    from explorer_core import ACTIVE_RUN_STATUSES, ExplorerRun, explorer_workflow_id
+    from sqlmodel import Session, col, select
+
+    started = datetime.now(UTC)
+    yield
+
+    async def _terminate_all() -> None:
+        with Session(engine) as session:
+            runs = session.exec(
+                select(ExplorerRun).where(col(ExplorerRun.created_at) >= started)
+            ).all()
+            ids = [run.external_id for run in runs]
+            for run in runs:  # nothing will ever finish them: don't leave them "running"
+                if run.status in ACTIVE_RUN_STATUSES:
+                    run.status, run.headline = "stopped", "Stopped (pytest cleanup)"
+                    session.add(run)
+            session.commit()
+        if not ids:
+            return
+        client = await get_temporal_client()
+        for external_id in ids:
+            try:
+                await client.get_workflow_handle(explorer_workflow_id(external_id)).terminate(
+                    reason="pytest cleanup: a test's Explorer run must not reach a real worker"
+                )
+            except Exception:
+                pass
+
+    asyncio.run(_terminate_all())

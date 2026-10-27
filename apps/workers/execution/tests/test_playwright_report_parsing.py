@@ -192,3 +192,35 @@ def test_find_artifacts_only_matches_png_and_zip(tmp_path) -> None:
 
 def test_find_artifacts_on_missing_dir_returns_empty(tmp_path) -> None:
     assert _find_artifacts(tmp_path / "does-not-exist") == []
+
+
+def test_fixme_test_is_blocked_with_its_reason_not_errored() -> None:
+    # A known bug parked with `test.fixme(true, reason)` is deliberately not
+    # run: Playwright reports it "skipped" with a fixme annotation.
+    report = _report(
+        [
+            {
+                "file": "safety/known-bug.spec.ts",
+                "specs": [
+                    {
+                        "title": "Safety answers require an active choice",
+                        "tests": [
+                            {
+                                **_test_entry(
+                                    "skipped",
+                                    results=[{"status": "skipped", "duration": 0}],
+                                ),
+                                "annotations": [
+                                    {"type": "fixme", "description": "Known bug — should: ask"}
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+    )
+    result = _parse_playwright_report(report, b"", "tests/safety/known-bug.spec.ts")
+    assert result["status"] == "blocked"
+    assert result["blocked_reason"] == "Known bug — should: ask"
+    assert result["error_message"] is None

@@ -20,6 +20,8 @@ export type AppShellTab = {
   key: string
   label: string
   icon: () => React.JSX.Element
+  // Small pill after the label (e.g. "Beta" on Explorer).
+  badge?: string
 }
 
 export type AppShellAppContext = {
@@ -209,6 +211,11 @@ export function AppShell({
                   <div key={tab.key} style={navItemStyle(active)} onClick={() => app.onSelectTab(tab.key)}>
                     <Icon />
                     <span style={{ flex: 1 }}>{tab.label}</span>
+                    {tab.badge && (
+                      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.02em', padding: '1px 6px', borderRadius: 1000, color: 'var(--accent-2)', background: 'var(--accent-wash)', border: '1px solid color-mix(in srgb, var(--accent-2) 22%, transparent)' }}>
+                        {tab.badge}
+                      </span>
+                    )}
                   </div>
                 )
               })}

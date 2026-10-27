@@ -38,11 +38,6 @@ function specFileName(assetName: string): string {
 
 // Editor-style modal (dark, line-numbered, copy-to-clipboard) matching the
 // prototype's codeModalOpen dialog — replaces the old inline <pre> expand.
-// Exported for TestSuiteResults.tsx (the legacy pre-Workspace screen) to
-// reuse — that screen used to carry its own near-duplicate dialog that
-// never got any of this one's fixes (portal, real dialog sizing, line
-// numbers, footer bar, Copy/Close polish), so the same "View code" surface
-// silently looked different depending which screen you opened it from.
 export function CodeModal({ specFile, code, onClose }: { specFile: string; code: string; onClose: () => void }) {
   useEscapeToClose(onClose)
   const [copied, setCopied] = useState(false)

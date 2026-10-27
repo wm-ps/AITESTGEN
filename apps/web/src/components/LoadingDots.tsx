@@ -32,3 +32,23 @@ export function BouncingDots({ size = 4 }: { size?: number }) {
     </span>
   )
 }
+
+// Ring spinner — same currentColor + border-top-color trick and `aitg-spin`
+// keyframe StatusPill's own in-motion dot uses. Explorer's screens use it.
+export function Spinner({ size = 12 }: { size?: number }) {
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        display: 'inline-block',
+        width: size,
+        height: size,
+        borderRadius: 'var(--radius-full)',
+        border: '1.5px solid color-mix(in srgb, currentColor 25%, transparent)',
+        borderTopColor: 'currentColor',
+        animation: 'aitg-spin 0.7s linear infinite',
+        flexShrink: 0,
+      }}
+    />
+  )
+}

@@ -33,6 +33,7 @@ export type ApplicationRead = Omit<
   components['schemas']['ApplicationRead'],
   'discovery_run_id' | 'discovery_status'
 > & {
+  discovery_engine: 'explorer' | 'crawler'
   discovery_required?: boolean
   discovery_run_id: string | null
   discovery_status: string | null
@@ -85,7 +86,7 @@ export type ScenarioRead = components['schemas']['ScenarioRead'] & { test_case_n
 // browser through the real `playwright codegen` CLI). Mirrors
 // `Scenario.source`/`TestCaseRead.source` (apps/api/src/api/main.py).
 export type TestCaseSource = 'discovery' | 'nl' | 'recorded'
-export type TestCaseRead = components['schemas']['TestCaseRead'] & {
+export type TestCaseRead = components['schemas']['api__main__TestCaseRead'] & {
   description: string
   source: TestCaseSource
   // Test Case Number feature — see ScenarioRead's own comment.
@@ -449,7 +450,7 @@ export type ScheduleCreate = {
 }
 export type ScheduleUpdate = Partial<ScheduleCreate>
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
+export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
 class ApiError extends Error {
   status: number
@@ -460,7 +461,7 @@ class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -537,6 +538,11 @@ export const api = {
         totp_seed: mfa?.totpSeed,
       }),
     }),
+  setRequiresLogin: (applicationId: string, requiresLogin: boolean) =>
+    request<ApplicationRead>(`/applications/${applicationId}/requires-login`, {
+      method: 'PATCH',
+      body: JSON.stringify({ requires_login: requiresLogin }),
+    }),
   deleteApplication: (applicationId: string) =>
     request<undefined>(`/applications/${applicationId}`, { method: 'DELETE' }),
   listTeam: () => request<TeamMemberRead[]>('/team'),
@@ -550,7 +556,14 @@ export const api = {
     }),
   listCredentials: () =>
     request<
-      { application_id: string; application_name: string; environment: string; username: string; has_password: boolean }[]
+      {
+        application_id: string
+        application_name: string
+        environment: string
+        username: string
+        has_password: boolean
+        requires_login: boolean
+      }[]
     >('/credentials'),
   revealCredential: (applicationId: string) =>
     request<{ password: string }>(`/credentials/${applicationId}/reveal`, { method: 'POST' }),

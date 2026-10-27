@@ -192,6 +192,50 @@ async def test_fans_out_one_execute_call_per_test_and_bounds_concurrency() -> No
 
 
 @pytest.mark.asyncio
+async def test_app_with_per_login_state_runs_one_test_at_a_time() -> None:
+    executable = [
+        ExecutableTest(test_result_id=f"result-{i}", test_asset_id=f"asset-{i}") for i in range(4)
+    ]
+    in_flight = 0
+    max_observed_in_flight = 0
+
+    @activity.defn(name=PREPARE_TEST_RUN_ACTIVITY_NAME)
+    async def _fake_prepare(input: PrepareTestRunActivityInput) -> PrepareTestRunActivityResult:
+        return PrepareTestRunActivityResult(
+            test_run_id="run-1", blocked=False, executable=executable, one_at_a_time=True
+        )
+
+    @activity.defn(name=EXECUTE_TEST_ACTIVITY_NAME)
+    async def _fake_execute(input: ExecuteTestActivityInput) -> str:
+        nonlocal in_flight, max_observed_in_flight
+        in_flight += 1
+        max_observed_in_flight = max(max_observed_in_flight, in_flight)
+        await asyncio.sleep(0.05)
+        in_flight -= 1
+        return input.test_result_id
+
+    @activity.defn(name=FINALIZE_TEST_RUN_ACTIVITY_NAME)
+    async def _fake_finalize(input: FinalizeTestRunActivityInput) -> None:
+        return None
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=EXECUTION_TASK_QUEUE,
+            workflows=[ApplicationTestExecutionWorkflow],
+            activities=[_fake_prepare, _fake_execute, _fake_finalize, _fake_heal([])],
+        ):
+            await env.client.execute_workflow(
+                ApplicationTestExecutionWorkflow.run,
+                ExecutionWorkflowInput(application_id="app-1", max_concurrency=5),
+                id=f"execution-test-{uuid.uuid4()}",
+                task_queue=EXECUTION_TASK_QUEUE,
+            )
+
+    assert max_observed_in_flight == 1
+
+
+@pytest.mark.asyncio
 async def test_one_execute_failure_does_not_block_finalize_or_siblings() -> None:
     executable = [
         ExecutableTest(test_result_id="result-1", test_asset_id="asset-1"),

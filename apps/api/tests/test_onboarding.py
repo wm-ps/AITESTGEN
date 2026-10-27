@@ -551,9 +551,13 @@ def test_test_connection_never_checks_login_url(monkeypatch: pytest.MonkeyPatch)
     assert response.json()["reachable"] is True
 
 
-def test_create_application_sets_discovery_stage_initializing() -> None:
+def test_create_application_sets_discovery_stage_initializing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Story 2.1 (CR-2): DiscoveryRun.stage is set to "initializing" in the
     same request, round-tripping through ApplicationRead.discovery_stage."""
+    # The classic crawler path (Explorer replaces it by default).
+    monkeypatch.setattr("api.discovery.EXPLORER_REPLACES_DISCOVERY", False)
     init_db()
     client = _signed_in_client("Org Discovery Stage")
 
@@ -641,6 +645,7 @@ def test_create_application_reports_worker_unavailable_when_discovery_queue_has_
     `failure_reason` the frontend can recognize and show distinctly, instead
     of the DiscoveryRun sitting at "running" forever with nothing to explain
     why."""
+    monkeypatch.setattr("api.discovery.EXPLORER_REPLACES_DISCOVERY", False)  # classic crawler path
     from api import discovery as api_discovery
 
     async def _no_pollers(client: object, task_queue: str) -> bool:
@@ -888,3 +893,42 @@ def test_verify_credential_reports_unreachable(monkeypatch: pytest.MonkeyPatch) 
     body = response.json()
     assert body["reachable"] is False
     assert "did not respond" in body["detail"]
+
+
+# --- "This application requires sign-in" switch (requires_login) ---
+
+
+def test_settings_sign_in_switch_follows_the_no_sign_in_auth_method() -> None:
+    init_db()
+    client = _signed_in_client("Org No Login App")
+    created = client.post(
+        "/applications",
+        json={
+            "name": "Public App",
+            "url": "https://app.example.com",
+            "environment": "staging",
+            "discovery_required": False,
+            "auth_method": "none",
+        },
+    )
+    assert created.status_code == 201, created.text
+    application_id = created.json()["id"]
+
+    def row() -> dict:
+        return next(e for e in client.get("/credentials").json() if e["application_id"] == application_id)
+
+    assert row()["requires_login"] is False and row()["username"] == ""
+    # Turning sign-in on needs a saved login first.
+    switched = client.patch(f"/applications/{application_id}/requires-login", json={"requires_login": True})
+    assert switched.status_code == 422
+    # Saving a login turns it on (the app now signs in).
+    saved = client.patch(
+        f"/applications/{application_id}/credentials",
+        json={"username": "qa-test-account", "password": "pw"},
+    )
+    assert saved.status_code == 200 and saved.json()["auth_method"] == "standard_login"
+    assert row()["requires_login"] is True
+    # Switching it off makes it a no-sign-in app again.
+    off = client.patch(f"/applications/{application_id}/requires-login", json={"requires_login": False})
+    assert off.status_code == 200 and off.json()["auth_method"] == "none"
+    assert row()["requires_login"] is False

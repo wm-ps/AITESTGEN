@@ -170,6 +170,7 @@ export function ReviewScenarios({
   generationJustStarted,
   onContinueToGenerate,
   onGoToJourneys,
+  fromExplorer = false,
 }: {
   applicationId: string
   applicationName: string
@@ -180,6 +181,9 @@ export function ReviewScenarios({
   generationJustStarted: boolean
   onContinueToGenerate: () => void
   onGoToJourneys: () => void
+  // Stage 8: Explorer already turned its proven tests into Scenarios *and*
+  // Test cases, so there is nothing to generate here.
+  fromExplorer?: boolean
 }) {
   const [scenarios, setScenarios] = useState<ScenarioRead[]>([])
   const [journeys, setJourneys] = useState<JourneyRead[]>([])
@@ -221,7 +225,7 @@ export function ReviewScenarios({
 
   // GenerationWorkflow runs one per Journey but each writes a variable
   // number of Scenarios (happy/negative/edge) — so a raw scenario count
-  // can't signal "done" the way TestSuiteResults' test-case count does.
+  // can't signal "done" on its own.
   // Distinct Journeys covered vs total candidate Journeys is the signal
   // that's actually stable: every Journey gets exactly one generation run.
   // `[FIXED]` A Journey whose generation genuinely failed (caught by
@@ -264,8 +268,8 @@ export function ReviewScenarios({
         // best-effort poll — a transient failure just skips this tick
       }
       // Scenario generation and Suite generation share one worker/task queue
-      // (GENERATION_TASK_QUEUE) — this is the same dead-worker check
-      // TestSuiteResults uses, catching a worker that crashes mid-run rather
+      // (GENERATION_TASK_QUEUE) — this dead-worker check catches a worker
+      // that crashes mid-run rather
       // than being down at submit time (already guarded separately).
       try {
         const { available } = await api.getGenerationStatus(applicationId)
@@ -420,6 +424,11 @@ export function ReviewScenarios({
             )}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)', flexShrink: 0 }}>
+            {fromExplorer && (
+              <span className="caption" style={{ fontSize: 13, maxWidth: 280 }}>
+                Explorer worked these out by using the app. Generate test cases to turn them into tests.
+              </span>
+            )}
               {canEdit && (
               <button
                 type="button"
@@ -475,7 +484,7 @@ export function ReviewScenarios({
           </div>
         )}
 
-        {scenarios.length === 0 && !generationStarted ? (
+        {scenarios.length === 0 && (!generationStarted || fromExplorer) ? (
           <EmptyState
             illustration={<ScenariosIllustration />}
             variant="scene"
@@ -483,7 +492,9 @@ export function ReviewScenarios({
             subtitle={
               hadScenariosRef.current
                 ? 'Add journeys back to generate new scenarios.'
-                : 'Scenarios appear here once discovered journeys are turned into drafted test scenarios.'
+                : fromExplorer
+                  ? 'Scenarios appear here once Explorer has proven its tests.'
+                  : 'Scenarios appear here once discovered journeys are turned into drafted test scenarios.'
             }
           />
         ) : !isComplete && generationUnavailable ? (
@@ -514,9 +525,8 @@ export function ReviewScenarios({
           // Gated on `isComplete` (every Journey covered), not `scenarios.length
           // > 0` — otherwise this flips to the interactive list the instant the
           // first Scenario lands, showing a partial set while generation is
-          // still running in the background. TestSuiteResults gates its results
-          // screen the same way, so both "something is generating" flows read
-          // consistently: stay on the loader until the whole batch is done.
+          // still running in the background: stay on the loader until the
+          // whole batch is done.
           <div
             style={{
               background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',

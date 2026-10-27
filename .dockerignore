@@ -15,3 +15,7 @@ docs
 *.log
 .env
 .env.*
+**/node_modules
+**/.venv
+brag-output*
+logs

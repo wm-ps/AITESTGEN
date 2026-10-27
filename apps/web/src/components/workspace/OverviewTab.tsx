@@ -134,22 +134,30 @@ function ChevronRightIcon() {
 // Fixed 3-per-row (not auto-fit) — a wide viewport would otherwise pack 4+
 // of these ~240px-minimum cards onto one row; the prototype's grid is
 // strictly 3 wide, wrapping to further rows instead of stretching wider.
+// An Explorer app has no Journeys / Scenarios pages (Explorer's own
+// Scenarios tab replaces both — App.tsx routes those targets there), so one
+// honest "Open Explorer" tile stands in for the two.
+const EXPLORER_ACTION = { target: 'scenarios' as const, label: 'Open Explorer', hint: 'See what it learned and the scenarios it proved.', icon: DiscoveryIcon }
+
 function QuickActionsGrid({
   onNavigate,
   discoveryEnabled,
+  byExplorer,
 }: {
   onNavigate: (target: QuickActionTarget) => void
   discoveryEnabled: boolean
+  byExplorer: boolean
 }) {
   // Without discovery there are no Journeys/Scenarios tabs to jump to, and
   // Schedules only ever automates suite runs.
   const canEdit = useCanEdit()
+  const withoutDiscovery = QUICK_ACTIONS.filter((a) => a.target !== 'journeys' && a.target !== 'scenarios')
   const actions = (
-    discoveryEnabled
-      ? QUICK_ACTIONS
-      : QUICK_ACTIONS.filter((a) => a.target !== 'journeys' && a.target !== 'scenarios').map((a) =>
-          a.target === 'schedules' ? { ...a, hint: 'Automate test runs on a cadence.' } : a,
-        )
+    !discoveryEnabled
+      ? withoutDiscovery.map((a) => (a.target === 'schedules' ? { ...a, hint: 'Automate test runs on a cadence.' } : a))
+      : byExplorer
+        ? [EXPLORER_ACTION, ...withoutDiscovery]
+        : QUICK_ACTIONS
   ).filter((a) => canEdit || (a.target !== 'record' && a.target !== 'export'))
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 14 }}>
@@ -201,12 +209,14 @@ export function OverviewTab({
   applicationId,
   onNavigateTab,
   discoveryEnabled = true,
+  byExplorer = false,
 }: {
   applicationId: string
   onNavigateTab: (target: QuickActionTarget) => void
   // false for an application added without discovery: hides the Journeys/
   // Scenarios shortcuts and the "Journeys mapped" tile.
   discoveryEnabled?: boolean
+  byExplorer?: boolean
 }) {
   const [overview, setOverview] = useState<OverviewRead | null>(null)
 
@@ -258,7 +268,7 @@ export function OverviewTab({
           title="No test runs yet"
           subtitle="Health, pass rate, and trend will show up here once your first run finishes."
         />
-        <QuickActionsGrid onNavigate={onNavigateTab} discoveryEnabled={discoveryEnabled} />
+        <QuickActionsGrid onNavigate={onNavigateTab} discoveryEnabled={discoveryEnabled} byExplorer={byExplorer} />
       </div>
     )
   }
@@ -364,7 +374,7 @@ export function OverviewTab({
         </div>
       </div>
 
-      <QuickActionsGrid onNavigate={onNavigateTab} discoveryEnabled={discoveryEnabled} />
+      <QuickActionsGrid onNavigate={onNavigateTab} discoveryEnabled={discoveryEnabled} byExplorer={byExplorer} />
     </div>
   )
 }

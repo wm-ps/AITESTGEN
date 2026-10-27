@@ -1,0 +1,517 @@
+<!doctype html>
+<!--
+  Source for every picture in the Explorer docs.
+  Each <section class="fig" id="..."> becomes img/<id>.png via render.py.
+  Edit here, then run:  .venv/Scripts/python.exe docs/vantage-explorer/architecture/diagrams/render.py
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Explorer Figures</title>
+<style>
+  :root {
+    --you: #2563eb; --you-bg: #eff6ff;
+    --exp: #0f766e; --exp-bg: #ecfdf5;
+    --ai: #7c3aed; --ai-bg: #f5f3ff;
+    --store: #475569; --store-bg: #f1f5f9;
+    --warn: #b45309; --warn-bg: #fffbeb;
+    --bad: #dc2626; --bad-bg: #fef2f2;
+    --good: #15803d; --good-bg: #f0fdf4;
+    --ink: #0f172a; --muted: #475569; --line: #cbd5e1;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #e2e8f0; font-family: "Segoe UI", system-ui, sans-serif; color: var(--ink); }
+  .fig { width: 1200px; margin: 24px auto; padding: 36px 44px 30px; background: #fff; }
+  .q { font-size: 30px; font-weight: 700; margin: 0 0 6px; }
+  .sub { font-size: 17px; color: var(--muted); margin: 0 0 26px; }
+  .row { display: flex; align-items: stretch; gap: 0; }
+  .row.center { align-items: center; }
+  .col { display: flex; flex-direction: column; gap: 14px; }
+  .card { border: 2px solid var(--line); border-radius: 14px; padding: 14px 16px; background: #fff; flex: 1; }
+  .card h4 { margin: 0 0 4px; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+  .card p { margin: 0; font-size: 15px; line-height: 1.4; color: #1e293b; }
+  .card .tech { overflow-wrap: anywhere; margin-top: 6px; font-size: 12.5px; color: var(--muted); font-family: Consolas, monospace; }
+  .ic { font-size: 26px; line-height: 1; }
+  .you { border-color: var(--you); background: var(--you-bg); }
+  .exp { border-color: var(--exp); background: var(--exp-bg); }
+  .ai { border-color: var(--ai); background: var(--ai-bg); }
+  .store { border-color: var(--store); background: var(--store-bg); }
+  .warn { border-color: var(--warn); background: var(--warn-bg); }
+  .bad { border-color: var(--bad); background: var(--bad-bg); }
+  .good { border-color: var(--good); background: var(--good-bg); }
+  .arrow { display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 74px; padding: 0 6px; color: var(--muted); flex: none; }
+  .spokes .arrow { width: 120px; }
+  .flow5 > .card { flex: 1 1 0; min-width: 0; }
+  .flow5.narrow > .arrow { min-width: 34px; padding: 0 2px; }
+  .arrow b { font-size: 30px; line-height: 1; color: #64748b; }
+  .arrow span { font-size: 13px; text-align: center; max-width: 120px; line-height: 1.25; }
+  .down { text-align: center; font-size: 28px; color: #64748b; line-height: 1; margin: 6px 0; }
+  .down span { display: block; font-size: 13px; color: var(--muted); }
+  .num { display: inline-flex; width: 28px; height: 28px; border-radius: 50%; background: var(--ink); color: #fff; font-size: 15px; font-weight: 700; align-items: center; justify-content: center; flex: none; }
+  .badge { display: inline-block; font-size: 12.5px; font-weight: 600; padding: 2px 9px; border-radius: 999px; margin-top: 8px; background: #fff; border: 1px solid var(--line); color: var(--muted); }
+  .key { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 22px; font-size: 14px; color: var(--muted); }
+  .key i { display: inline-block; width: 16px; height: 16px; border-radius: 4px; border: 2px solid; vertical-align: -3px; margin-right: 6px; }
+  .take { margin-top: 22px; padding: 12px 16px; border-left: 5px solid var(--exp); background: #f8fafc; font-size: 16.5px; }
+  .take b { color: var(--exp); }
+  .bubble { position: relative; border: 2px solid var(--ai); background: var(--ai-bg); border-radius: 16px; padding: 14px 16px; font-size: 15.5px; line-height: 1.45; }
+  .mock { border: 2px solid #94a3b8; border-radius: 10px; overflow: hidden; background: #fff; font-size: 13px; }
+  .mock .bar { background: #e2e8f0; padding: 6px 10px; font-family: Consolas, monospace; color: #334155; font-size: 12px; }
+  .mock .body { padding: 10px 12px; }
+  .mock .h { font-weight: 700; font-size: 15px; margin-bottom: 8px; }
+  .mock .f { font-size: 12px; color: #475569; margin-top: 6px; }
+  .mock .in { border: 1px solid #94a3b8; border-radius: 4px; height: 22px; margin-top: 2px; }
+  .mock .btns { display: flex; gap: 8px; margin-top: 10px; }
+  .mock .btn { padding: 4px 12px; border-radius: 5px; background: var(--exp); color: #fff; font-size: 12px; }
+  .mock .btn.alt { background: #e2e8f0; color: #334155; }
+  .mock .new { background: #fef9c3; outline: 2px dashed #ca8a04; padding: 4px 6px; border-radius: 4px; margin-top: 8px; font-size: 12px; }
+  ul.tight { margin: 6px 0 0; padding-left: 18px; font-size: 14.5px; line-height: 1.45; }
+  .strike { text-decoration: line-through; color: #94a3b8; }
+  .stars { color: #d97706; letter-spacing: 1px; }
+  table.t { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  table.t td:first-child, table.t td:nth-child(3) { white-space: nowrap; }
+  table.t td, table.t th { border-bottom: 1px solid #e2e8f0; padding: 7px 8px; text-align: left; vertical-align: top; }
+  table.t th { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .pill { display: inline-block; font-family: Consolas, monospace; font-size: 13px; padding: 3px 9px; border-radius: 6px; border: 1.5px solid var(--line); background: #fff; margin: 3px 4px 3px 0; }
+  .lane { display: flex; align-items: center; gap: 10px; margin: 8px 0; font-size: 14.5px; }
+  .lane .name { width: 110px; font-weight: 600; }
+  .seg { padding: 8px 12px; border-radius: 8px; border: 2px solid; }
+  .gate { text-align: center; }
+  .seq { position: relative; }
+</style>
+</head>
+<body>
+
+<!-- ============================ PLAIN-WORDS FIGURES ============================ -->
+
+<section class="fig" id="p1-team">
+  <p class="q">Who is inside Explorer?</p>
+  <p class="sub">Explorer is not one big AI. It is a small team, and each member does one job. Explorer is the coordinator in the middle.</p>
+  <div class="row center">
+    <div class="col" style="width:230px">
+      <div class="card you"><h4><span class="ic">👤</span> You</h4><p>Press <b>Start</b>, check the summary, and answer the occasional question.</p></div>
+    </div>
+    <div class="arrow"><b>→</b><span>you give instructions on the Explorer tab</span></div>
+    <div class="col" style="width:250px">
+      <div class="card exp" style="padding:22px 18px"><h4><span class="ic">🧭</span> Explorer</h4><p>The coordinator. It decides the next step and uses the helpers on the right to do it.</p></div>
+    </div>
+    <div class="col spokes" style="flex:1; gap:10px">
+      <div class="row center"><div class="arrow"><b>→</b><span>drives</span></div><div class="card exp"><h4><span class="ic">🤖</span> Robot browser — the hands</h4><p>A real web browser with nobody in front of it. It opens <b>your app</b>, clicks, types and takes photos of each screen.</p></div></div>
+      <div class="row center"><div class="arrow"><b>→</b><span>asks</span></div><div class="card ai"><h4><span class="ic">🧠</span> AI brain — the judgement</h4><p>Looks at a photo of a screen and says what it means and what to try next.</p></div></div>
+      <div class="row center"><div class="arrow"><b>→</b><span>writes into</span></div><div class="card store"><h4><span class="ic">📒</span> Notebook — the memory</h4><p>Everything is written down the moment it happens: screens, answers, tests.</p></div></div>
+      <div class="row center"><div class="arrow"><b>→</b><span>follows</span></div><div class="card store"><h4><span class="ic">📋</span> Checklist — the plan</h4><p>Remembers which stage the run is in, even if a computer restarts.</p></div></div>
+      <div class="row center"><div class="arrow"><b>→</b><span>takes login from</span></div><div class="card warn"><h4><span class="ic">🔒</span> Safe — your logins</h4><p>The AI never sees your password. Plain code types it in.</p></div></div>
+    </div>
+  </div>
+  <div class="key"><span><i style="border-color:var(--you);background:var(--you-bg)"></i>You</span><span><i style="border-color:var(--exp);background:var(--exp-bg)"></i>Explorer and its hands</span><span><i style="border-color:var(--ai);background:var(--ai-bg)"></i>The AI</span><span><i style="border-color:var(--store);background:var(--store-bg)"></i>Memory and plan</span><span><i style="border-color:var(--warn);background:var(--warn-bg)"></i>Security</span></div>
+  <div class="take"><b>In one line:</b> the AI decides what things <i>mean</i>; plain code does everything that must be exact or safe.</div>
+</section>
+
+<section class="fig" id="p2-journey">
+  <p class="q">The whole journey at a glance</p>
+  <p class="sub">Example: an insurance app where agents report claims. Blue steps are yours, green steps Explorer does for you.</p>
+  <div class="row">
+    <div class="card you"><h4><span class="num">1</span> You press Start</h4><p>On the app's <b>Explorer</b> tab. New apps start on their own.</p></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card exp"><h4><span class="num">2</span> It looks around</h4><p>Signs in, reads each screen, and tries tasks like <i>Report a claim</i>, stopping before anything real.</p><span class="badge">about 25 minutes</span></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card exp"><h4><span class="num">3</span> It writes a summary</h4><p>One page: what the app is, the key tasks it will test, and a few questions for you.</p></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card you"><h4><span class="num">4</span> You check it</h4><p>Fix anything wrong, answer the questions, press <b>Confirm</b>. <b>Nothing else happens until you do.</b></p><span class="badge">about 2 minutes</span></div>
+  </div>
+  <div class="down" style="text-align:right;padding-right:110px">↓<span>then Explorer carries on by itself</span></div>
+  <div class="row">
+    <div class="card good"><h4><span class="num">8</span> You get results</h4><ul class="tight"><li>Tests that are proven to work</li><li>A list of things that look wrong</li><li>The tests, ready in Vantage</li></ul></div>
+    <div class="arrow"><b>←</b></div>
+    <div class="card exp"><h4><span class="num">7</span> It proves tests</h4><p>Each test is replayed until it is reliable and can catch a real problem. Weak tests are thrown away.</p></div>
+    <div class="arrow"><b>←</b></div>
+    <div class="card exp"><h4><span class="num">6</span> It hunts hidden screens</h4><p>Tries every option and amount to reveal parts that only appear sometimes.</p></div>
+    <div class="arrow"><b>←</b></div>
+    <div class="card exp"><h4><span class="num">5</span> It tries every path</h4><p>Works through 6–15 goals, 3 at a time, each one video-recorded. Asks you only if it must.</p></div>
+  </div>
+  <div class="key"><span><i style="border-color:var(--you);background:var(--you-bg)"></i>You do this</span><span><i style="border-color:var(--exp);background:var(--exp-bg)"></i>Explorer does it for you</span><span><i style="border-color:var(--good);background:var(--good-bg)"></i>What you get</span></div>
+  <div class="take"><b>In one line:</b> you spend a few minutes; Explorer does the rest, and you can pause and resume at any time.</div>
+</section>
+
+<section class="fig" id="p3-seeing">
+  <p class="q">How does Explorer understand a screen?</p>
+  <p class="sub">The same way a new colleague would: look at it, notice what's on it, and say what it is for.</p>
+  <div class="row center">
+    <div style="width:260px">
+      <div class="mock"><div class="bar">insurance-app.example/claims/new</div><div class="body">
+        <div class="h">Report a claim</div>
+        <div class="f">Policy number</div><div class="in"></div>
+        <div class="f">Date of loss</div><div class="in"></div>
+        <div class="f">What happened?</div><div class="in" style="height:36px"></div>
+        <div class="btns"><span class="btn">Next</span><span class="btn alt">Cancel</span></div>
+      </div></div>
+      <p style="text-align:center;font-size:14px;color:var(--muted);margin:8px 0 0">The screen in your app</p>
+    </div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card exp" style="flex:none;width:250px"><h4><span class="ic">🤖</span> The robot browser</h4><ul class="tight"><li><b>Takes a photo</b> of the screen</li><li><b>Lists</b> every button, box, heading and message on it</li></ul></div>
+    <div class="arrow"><b>→</b><span>photo + list</span></div>
+    <div class="card ai" style="flex:none;width:120px;text-align:center"><div class="ic" style="font-size:40px">🧠</div><p><b>AI brain</b></p></div>
+    <div class="arrow"><b>→</b><span>answers</span></div>
+    <div class="bubble" style="flex:1">
+      “This is the <b>New claim form</b>.<br>
+      You fill in <b>Policy number</b>, <b>Date of loss</b> and <b>What happened</b>.<br>
+      <b>Next</b> moves on. <b>Cancel</b> throws the claim away — don't press it.<br>
+      Worth trying: <b>report a claim</b> from start to finish.”
+    </div>
+  </div>
+  <div class="take"><b>In one line:</b> the robot gathers the facts, the AI explains what they mean, and Explorer writes it in the notebook.</div>
+</section>
+
+<section class="fig" id="p4-same-screen">
+  <p class="q">Why do 1,000 customer pages count as one screen?</p>
+  <p class="sub">Explorer cares about the <i>kind</i> of screen, not each individual record. Otherwise it would visit customers forever.</p>
+  <div class="row center">
+    <div class="col" style="width:330px">
+      <div class="card store"><p><b>Customer: Asha</b></p><div class="tech">…/customers/1001</div></div>
+      <div class="card store"><p><b>Customer: Ben</b></p><div class="tech">…/customers/1002</div></div>
+      <div class="card store"><p><b>Customer: Chen</b></p><div class="tech">…/customers/1003</div></div>
+      <p style="text-align:center;margin:0;color:var(--muted)">… and 997 more</p>
+    </div>
+    <div class="arrow" style="min-width:300px"><b>→</b><span style="max-width:280px">Explorer compares three things:<br>① the address with the numbers removed (<code>/customers/…</code>)<br>② what the AI calls it (“Customer details”)<br>③ the kind of screen (a details page)</span></div>
+    <div class="card exp" style="flex:none;width:330px;padding:22px"><h4><span class="ic">🖼️</span> Customer details</h4><p><b>One screen</b> in Explorer's map, visited 1,000 times.</p><span class="badge">read by the AI only once</span></div>
+  </div>
+  <div class="take"><b>In one line:</b> same address pattern + same meaning + same kind = same screen, so Explorer never gets lost.</div>
+</section>
+
+<section class="fig" id="p5-where-next">
+  <p class="q">How does Explorer decide where to go next?</p>
+  <p class="sub">It keeps a to-do list of places to visit and always picks the most important one, like a tester working through priorities.</p>
+  <div class="row center">
+    <div class="card store" style="flex:none;width:470px"><h4><span class="ic">📝</span> To-do list (importance 1–5)</h4>
+      <table class="t">
+        <tr><td class="stars">★★★★★</td><td><b>Report a claim</b> — starts a business task</td></tr>
+        <tr><td class="stars">★★★★☆</td><td><b>Claims</b> menu — the AI says it's central</td></tr>
+        <tr><td class="stars">★★☆☆☆</td><td>Help page</td></tr>
+        <tr><td class="stars">★☆☆☆☆</td><td>A plain link in the footer</td></tr>
+        <tr><td>never</td><td><span class="strike">Sign out</span> · <span class="strike">Download PDF</span> · <span class="strike">another website</span> · <span class="strike">Delete</span></td></tr>
+      </table>
+    </div>
+    <div class="arrow"><b>→</b><span>a quick AI picks from the top 20</span></div>
+    <div class="card exp" style="flex:none;width:260px"><h4><span class="ic">👉</span> Next: Report a claim</h4><p>Explorer opens it, reads the new screen, and adds whatever new places it finds to the list.</p></div>
+    <div class="arrow"><b>↻</b><span>repeat</span></div>
+  </div>
+  <div class="take"><b>In one line:</b> most important first, risky things never — and it stops after about <b>24 new screens</b> or <b>25 minutes</b>.</div>
+</section>
+
+<section class="fig" id="p6-safety">
+  <p class="q">What is Explorer allowed to press?</p>
+  <p class="sub">This is decided by fixed rules in the code, never by the AI's judgement.</p>
+  <div class="row" style="gap:18px">
+    <div class="card good"><h4><span class="ic">🟢</span> Presses freely</h4><p>Buttons that only move around or look things up.</p><ul class="tight"><li>Next, Back, Continue</li><li>Search, Filter</li><li>Menu links and tabs</li></ul></div>
+    <div class="card warn"><h4><span class="ic">🟠</span> Depends on the app</h4><p>Buttons that save something for real.</p><ul class="tight"><li>Save, Submit, Send, Create</li></ul><p style="margin-top:8px"><b>Test copy of your app:</b> allowed, so Explorer can create its own test data.<br><b>Live app:</b> it always asks you first.</p></div>
+    <div class="card bad"><h4><span class="ic">🔴</span> Always asks you first</h4><p>Anything that can't be undone or costs money, on every app.</p><ul class="tight"><li>Delete, Remove, Cancel a policy</li><li>Pay, Buy, Transfer, Refund</li><li>Approve, Reject</li><li>Change password, Sign out</li></ul></div>
+  </div>
+  <div class="take"><b>In one line:</b> when Explorer must ask, it stops just before the button and asks <i>“May I press Delete?”</i> — without your yes, it never presses it. It also never presses the same final button twice.</div>
+</section>
+
+<section class="fig" id="p7-trust">
+  <p class="q">How does Explorer know what is “correct”?</p>
+  <p class="sub">The app might have bugs. So Explorer never assumes that whatever the app does is right.</p>
+  <div class="row center">
+    <div class="col" style="width:520px;gap:8px">
+      <div class="card good"><h4><span class="num">1</span> You and your team <span class="badge" style="margin:0 0 0 auto">most trusted</span></h4><p>Your answers to its questions — remembered forever for this app.</p></div>
+      <div class="card good"><h4><span class="num">2</span> Your documents</h4><p>Requirement documents or manuals you upload (PDF, Word, text).</p></div>
+      <div class="card you"><h4><span class="num">3</span> Common sense</h4><p>“An end date can't be before the start date.” “An email needs an @.”</p></div>
+      <div class="card bad"><h4><span class="num">4</span> What the app actually did <span class="badge" style="margin:0 0 0 auto">never proof</span></h4><p>Just a fact about the app — it could be a bug.</p></div>
+    </div>
+    <div class="arrow"><b>→</b></div>
+    <div class="col" style="flex:1">
+      <div class="card exp"><h4>Step A — decide first</h4><p>Before acting, Explorer writes down what <b>should</b> happen, using sources 1–3 only.</p></div>
+      <div class="card exp"><h4>Step B — then look</h4><p>It does the task and notes what <b>did</b> happen (source 4).</p></div>
+      <div class="card warn"><h4>Step C — compare</h4><p><b>Same?</b> Good — it becomes a test.<br><b>Different?</b> A possible bug. Explorer keeps the <i>correct</i> test, marks it “known bug”, and asks you.</p></div>
+    </div>
+  </div>
+  <div class="take"><b>In one line:</b> Explorer decides what <i>should</i> happen before it looks at what <i>does</i> happen — so it finds bugs instead of copying them into tests.</div>
+</section>
+
+<section class="fig" id="p8-mission">
+  <p class="q">How does one mission work?</p>
+  <p class="sub">A mission is one goal, for example <i>“Report a claim where someone was hurt.”</i> Explorer plans 6–15 of them after you confirm the summary.</p>
+  <div class="row">
+    <div class="card exp"><h4><span class="num">1</span> Write the expectation</h4><p>“The claim should be sent for <b>urgent review</b>.” Written <b>before</b> touching the app.</p></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card exp"><h4><span class="num">2</span> Open a recorded browser</h4><p>Each mission gets its own robot browser, and the screen is <b>video-recorded</b>.</p></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card exp"><h4><span class="num">3</span> Work through it</h4><p>Screen by screen: the AI decides what to type and press; safety rules are checked before every press.</p></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card ai"><h4><span class="num">4</span> Compare</h4><p>The AI compares the final screen with the expectation from step 1.</p></div>
+  </div>
+  <div class="row" style="margin-top:16px;gap:18px">
+    <div class="card good"><h4>✅ Matches</h4><p>Marked as checked. New screens it found on the way are added to the map.</p></div>
+    <div class="card warn"><h4>⚠️ Different</h4><p>Saved as a <b>possible bug</b> with the screenshot and video, plus a quiet question for you: <i>“Is this a bug, or is it correct?”</i> It never holds anything up.</p></div>
+    <div class="card store"><h4>✨ New screens</h4><p>Screens that only appeared because of this mission's choice are saved as <b>hidden screens</b>, with a note like “appears when someone was hurt”.</p></div>
+  </div>
+  <div class="take"><b>In one line:</b> up to <b>3 missions run at the same time</b>, each in its own browser — and you can watch every one back as a video.</div>
+</section>
+
+<section class="fig" id="p9-asking">
+  <p class="q">When does Explorer ask you something — and who waits?</p>
+  <p class="sub">It asks only when it truly can't continue on its own. Even then, only the one mission that asked waits.</p>
+  <div class="row center">
+    <div class="card store" style="flex:none;width:300px"><h4><span class="ic">📒</span> First: check the notebook</h4><p>Has anyone answered a <b>similar</b> question for this app before — in this run or any earlier one?</p><p style="margin-top:6px"><b>Yes →</b> use that answer, don't ask.<br><b>No →</b> ask you.</p></div>
+    <div class="arrow"><b>→</b></div>
+    <div style="flex:1">
+      <div class="lane"><span class="name">Mission A</span><span class="seg exp" style="flex:3">working…</span><span class="seg exp" style="flex:3">working…</span><span class="seg good" style="flex:1">done ✅</span></div>
+      <div class="lane"><span class="name">Mission B</span><span class="seg exp" style="flex:2">working…</span><span class="seg warn" style="flex:3">⏸ needs a policy number — waiting for you (you get an email)</span><span class="seg exp" style="flex:2">continues ▶</span></div>
+      <div class="lane"><span class="name">Mission C</span><span class="seg exp" style="flex:4">working…</span><span class="seg good" style="flex:1">done ✅</span><span style="flex:2"></span></div>
+      <div class="lane"><span class="name" style="color:var(--you)">You</span><span style="flex:4"></span><span class="seg you" style="flex:3">answer in the <b>Questions</b> tab</span></div>
+    </div>
+  </div>
+  <div class="row" style="margin-top:16px;gap:18px">
+    <div class="card you"><h4>📄 It asks for…</h4><p>Test data it can't make up (a real policy number) · your OK before a risky button · whether something odd is a bug.</p></div>
+    <div class="card store"><h4>⏱️ How long it waits</h4><p>Mission B keeps its browser open on the exact screen and checks for your answer every 5 seconds for up to 10 minutes, then carries on without it.</p></div>
+    <div class="card good"><h4>🧠 It never forgets</h4><p>Every answer is saved for this app and used in every future run. You're never asked the same thing twice.</p></div>
+  </div>
+</section>
+
+<section class="fig" id="p10-hidden">
+  <p class="q">How does Explorer find screens that only appear sometimes?</p>
+  <p class="sub">Some parts of an app only show up for certain choices. Explorer pokes each screen on purpose to make them appear.</p>
+  <div class="row" style="gap:18px">
+    <div class="card exp"><h4>① Try every choice</h4><p>Picks each option of every dropdown and watches what changes.</p>
+      <div class="row" style="gap:8px;margin-top:10px">
+        <div class="mock" style="flex:1"><div class="body"><div class="f">Marital status</div><div class="in" style="padding:2px 6px">Single</div><div class="f" style="color:#94a3b8">no change</div></div></div>
+        <div class="mock" style="flex:1"><div class="body"><div class="f">Marital status</div><div class="in" style="padding:2px 6px">Married</div><div class="new">✨ Spouse details appears</div></div></div>
+      </div></div>
+    <div class="card exp"><h4>② Try different amounts</h4><p>Types small and very large numbers into amount boxes.</p>
+      <div class="row" style="gap:8px;margin-top:10px">
+        <div class="mock" style="flex:1"><div class="body"><div class="f">Claim amount</div><div class="in" style="padding:2px 6px">500</div><div class="f" style="color:#94a3b8">no change</div></div></div>
+        <div class="mock" style="flex:1"><div class="body"><div class="f">Claim amount</div><div class="in" style="padding:2px 6px">1,000,000</div><div class="new">✨ Manager approval appears</div></div></div>
+      </div></div>
+    <div class="card warn"><h4>③ Pretend things go wrong</h4><p>Inside <b>its own browser only</b>, it pretends that:</p><ul class="tight"><li>there are no records</li><li>the server had an error</li><li>extra features are switched on</li><li>it is a year from now</li></ul><p style="margin-top:6px"><b>Your real server never sees any of this.</b></p></div>
+  </div>
+  <div class="take"><b>In one line:</b> each new part found is saved as a <b>hidden screen</b> with a note saying when it appears — e.g. <i>“appears when Married is chosen”</i>.</div>
+</section>
+
+<section class="fig" id="p11-proving">
+  <p class="q">How does a test earn its place?</p>
+  <p class="sub">Every test must pass four checks. Fail any one, and it is thrown away — you only ever see tests you can rely on.</p>
+  <div class="row">
+    <div class="card exp gate"><div class="ic">🎥</div><h4 style="justify-content:center"><span class="num">1</span> Do it once</h4><p>The AI performs the test while Explorer <b>records every exact click and word typed</b>.</p></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card ai gate"><div class="ic">🔎</div><h4 style="justify-content:center"><span class="num">2</span> Pick a proof</h4><p>Something on screen that shows it worked, e.g. <b>“Claim submitted”</b>. It must <b>not</b> have been there before.</p></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card exp gate"><div class="ic">🔁</div><h4 style="justify-content:center"><span class="num">3</span> Replay 3 times</h4><p>A plain replay robot repeats the clicks, <b>with no AI</b>. The proof must appear every time.</p></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card bad gate"><div class="ic">✂️</div><h4 style="justify-content:center"><span class="num">4</span> Break it on purpose</h4><p>Replay with the key click removed. The proof must now <b>disappear</b> — so the test can catch a real problem.</p></div>
+  </div>
+  <div class="row" style="margin-top:16px;gap:18px">
+    <div class="card good"><h4>✅ Proven test</h4><p>Passed all four, and the app behaved as it should.</p></div>
+    <div class="card warn"><h4>🐞 Known-bug test</h4><p>Passed all four, but the app did something it <i>shouldn't</i>. The correct test is kept and marked “expected to fail until fixed”.</p></div>
+    <div class="card store"><h4>🗑️ Thrown away</h4><p>Failed a check — unreliable, or couldn't tell working from broken. The reason is recorded.</p></div>
+  </div>
+  <div class="take"><b>In one line:</b> every kept test comes with a video of it running and code Vantage can run straight away.</div>
+</section>
+
+<!-- ============================ TECHNICAL FIGURES ============================ -->
+
+<section class="fig" id="t1-system">
+  <p class="q">System architecture — the parts and how they connect</p>
+  <p class="sub">Each box: <b>what it is</b> · what it does · <span style="font-family:Consolas">the technology / code location</span>. Numbers follow one run from Start to finished tests.</p>
+  <div class="row flow5">
+    <div class="card you"><h4>👤 You</h4><p>In a web browser</p></div>
+    <div class="arrow"><b>→</b><span>①</span></div>
+    <div class="card you"><h4>Explorer tab</h4><p>Start / pause, live view, questions, results. Checks for news every 1.5 s.</p><div class="tech">React · apps/web/src/explorer</div></div>
+    <div class="arrow"><b>→</b><span>② REST</span></div>
+    <div class="card exp"><h4>Vantage API</h4><p>34 <code>/explorer</code> endpoints. Starts, signals and stops runs.</p><div class="tech">FastAPI · apps/api/…/explorer.py</div></div>
+    <div class="arrow"><b>→</b><span>③ start · signal · cancel</span></div>
+    <div class="card store"><h4>Temporal</h4><p>Keeps the run's checklist; survives restarts; waits for you for free.</p><div class="tech">explorer-task-queue</div></div>
+    <div class="arrow"><b>→</b><span>④ next job</span></div>
+    <div class="card exp"><h4>Explorer worker</h4><p>Does all the real work: browsing, AI calls, judging, proving.</p><div class="tech">Python · apps/workers/explorer</div></div>
+  </div>
+  <div class="row" style="margin-top:14px">
+    <div style="flex:1"></div>
+    <div class="col" style="width:660px">
+      <div class="down" style="text-align:right;padding-right:70px">↓<span>the Explorer worker uses all of these</span></div>
+      <div class="row" style="gap:12px">
+        <div class="card exp"><h4>⑤ Chromium</h4><p>Headless browser that drives <b>your app</b>; records video.</p><div class="tech">Playwright 1440×900</div></div>
+        <div class="card ai"><h4>⑥ GPT-5.6</h4><p>Reads screens, decides steps, judges. Replies in JSON.</p><div class="tech">via LiteLLM · sol + luna</div></div>
+        <div class="card warn"><h4>⑦ Vault</h4><p>App and role logins. Only a reference is stored.</p><div class="tech">secrets_client</div></div>
+      </div>
+      <div class="row" style="gap:12px;margin-top:12px">
+        <div class="card store"><h4>⑧ PostgreSQL</h4><p>Everything Explorer learns, incl. screenshots and videos.</p><div class="tech">explorer_* tables</div></div>
+        <div class="card store"><h4>⑨ Email</h4><p>Tells the starter when the run needs them.</p><div class="tech">SMTP</div></div>
+        <div class="card good"><h4>⑩ Classic Vantage</h4><p>Receives proven tests as Journeys and Scenarios.</p><div class="tech">promote.py</div></div>
+      </div>
+    </div>
+  </div>
+  <table class="t" style="margin-top:20px">
+    <tr><td><b>①–②</b></td><td>You press Start; the tab calls <code>POST /explorer/applications/{id}/runs</code>.</td><td><b>⑤–⑥</b></td><td>The worker drives Chromium and asks GPT-5.6 what each screen means and what to do.</td></tr>
+    <tr><td><b>③</b></td><td>The API saves the run and starts <code>ExplorerRunWorkflow</code> on Temporal.</td><td><b>⑦</b></td><td>Sign-in uses the login from Vault; the AI never sees it.</td></tr>
+    <tr><td><b>④</b></td><td>Temporal hands each step to the Explorer worker as an activity.</td><td><b>⑧–⑩</b></td><td>Everything is saved as it happens; the tab reads it back; proven tests go to Vantage.</td></tr>
+  </table>
+</section>
+
+<section class="fig" id="t2-run-steps">
+  <p class="q">What a run does, step by step</p>
+  <p class="sub">The Temporal workflow <code>ExplorerRunWorkflow</code> runs these steps in order. Each green box is one activity on the Explorer worker.</p>
+  <div class="row flow5 narrow">
+    <div class="card exp"><h4><span class="num">1</span> Understand</h4><p>Sign in, look around (≤ 24 screens / 25 min), health score, App Summary.</p><div class="tech">explorer_understand_app · 2 h</div></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card you"><h4><span class="num">2</span> Wait for you</h4><p>Paused until you confirm the summary. Costs nothing while waiting.</p><div class="tech">signal brief_confirmed · ≤ 14 days</div><span class="badge">needs a person</span></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card exp"><h4><span class="num">3</span> Plan missions</h4><p>Turns the summary into 6–15 goals, each with what should happen.</p><div class="tech">explorer_plan_missions · 15 min</div></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card exp"><h4><span class="num">4</span> Run missions</h4><p>Recorded browser per mission; judge each outcome.</p><div class="tech">explorer_run_mission · 45 min each</div><span class="badge">3 at once</span></div>
+  </div>
+  <div class="down" style="text-align:right;padding-right:110px">↓</div>
+  <div class="row flow5 narrow">
+    <div class="card good"><h4><span class="num">9</span> Highlight video</h4><p>Best moments as one MP4.</p><div class="tech">explorer_highlight_video</div><span class="badge">optional</span></div>
+    <div class="arrow"><b>←</b></div>
+    <div class="card good"><h4><span class="num">8</span> Send to Vantage</h4><p>Proven tests become Journeys and Scenarios.</p><div class="tech">explorer_send_to_vantage</div><span class="badge">optional</span></div>
+    <div class="arrow"><b>←</b></div>
+    <div class="card exp"><h4><span class="num">7</span> Build &amp; prove tests</h4><p>Do once, replay 3×, break on purpose.</p><div class="tech">explorer_build_test · 45 min each</div><span class="badge">3 at once</span></div>
+    <div class="arrow"><b>←</b></div>
+    <div class="card exp"><h4><span class="num">6</span> Plan tests</h4><p>Up to 60 tests in 5 kinds, from what was really seen.</p><div class="tech">explorer_plan_tests</div><span class="badge">optional</span></div>
+    <div class="arrow"><b>←</b></div>
+    <div class="card exp"><h4><span class="num">5</span> Hunt &amp; breadth</h4><p>Hidden screens, roles, unlinked pages, code coverage.</p><div class="tech">hunt + breadth · 40 min each</div><span class="badge">optional</span></div>
+  </div>
+  <table class="t" style="margin-top:20px">
+    <tr><th>Badge</th><th>Meaning</th></tr>
+    <tr><td><span class="badge" style="margin:0">needs a person</span></td><td>The workflow sleeps on a Temporal signal; nothing runs and nothing is charged while it waits.</td></tr>
+    <tr><td><span class="badge" style="margin:0">3 at once</span></td><td>A pool keeps up to 3 missions/tests running; one that dies (worker restart) gets one more try.</td></tr>
+    <tr><td><span class="badge" style="margin:0">optional</span></td><td>If this step fails, it is logged and the run continues. Only Stop/Pause ends the run here.</td></tr>
+  </table>
+</section>
+
+<section class="fig" id="t3-statuses">
+  <p class="q">Run statuses — what the run is doing right now</p>
+  <p class="sub">The value of <code>explorer_run.status</code>, grouped under the four stages the Live tab shows.</p>
+  <div class="row flow5 narrow" style="gap:6px">
+    <div class="card exp"><h4>Learning the app</h4><span class="pill">queued</span><span class="pill">signing_in</span><span class="pill">understanding</span><span class="pill">summarizing</span><p style="margin-top:8px">Explorer is signing in, looking around and writing the summary.</p></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card you"><h4>Your check</h4><span class="pill">awaiting_confirmation</span><span class="pill">confirmed</span><p style="margin-top:8px">Waiting for you to review and confirm the App Summary.</p></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card exp"><h4>Trying every path</h4><span class="pill">planning</span><span class="pill">exploring</span><span class="pill">explored</span><span class="pill">hunting</span><p style="margin-top:8px">Missions, then hidden screens, roles and coverage.</p></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card exp"><h4>Writing scenarios</h4><span class="pill">testing</span><p style="margin-top:8px">Planning, building and proving tests.</p></div>
+    <div class="arrow"><b>→</b></div>
+    <div class="card good" style="flex:none;width:130px"><h4>Done</h4><span class="pill">tested</span></div>
+  </div>
+  <div class="row" style="margin-top:18px;gap:18px">
+    <div class="card warn"><h4>⏸ paused</h4><p>You pressed <b>Pause</b>. <b>Resume</b> carries on from where it stopped; nothing finished is redone.</p></div>
+    <div class="card bad"><h4>⏹ stopped</h4><p>You pressed <b>Stop</b>. It can still be resumed.</p></div>
+    <div class="card bad"><h4>✖ failed</h4><p>Something broke (e.g. couldn't sign in). The reason is shown; Resume is possible.</p></div>
+  </div>
+  <div class="take"><b>Rule:</b> only one run per app can be in an active status (queued → testing, including waiting for you). Starting another returns “already running”.</div>
+</section>
+
+<section class="fig" id="t4-sequence">
+  <p class="q">Who calls whom during a run</p>
+  <p class="sub">Read top to bottom. Each arrow is one call; the numbers on the left group them into the five phases.</p>
+  <div class="seq" id="seq"></div>
+</section>
+
+<section class="fig" id="t5-data">
+  <p class="q">What Explorer stores</p>
+  <p class="sub">Explorer's own tables all start with <code>explorer_</code>. They are grouped by how long the data lives.</p>
+  <div class="row" style="gap:18px">
+    <div class="card exp" style="flex:2"><h4>📁 One set per run</h4><p>Deleted together with the run.</p>
+      <table class="t" style="margin-top:8px">
+        <tr><td><code>explorer_run</code></td><td>The run: status, App Summary, health score, insights</td></tr>
+        <tr><td><code>explorer_event</code></td><td>The live activity log</td></tr>
+        <tr><td><code>explorer_screen</code></td><td>Each screen as Explorer understands it (+ “appears when…”)</td></tr>
+        <tr><td><code>explorer_transition</code></td><td>“Press X on screen A → screen B”</td></tr>
+        <tr><td><code>explorer_shot</code></td><td>Screenshots (JPEG)</td></tr>
+        <tr><td><code>explorer_health_issue</code></td><td>Crashes, errors, slow pages, possible bugs</td></tr>
+        <tr><td><code>explorer_mission</code></td><td>Each goal, its expectation and its result</td></tr>
+        <tr><td><code>explorer_recording</code></td><td>Videos: missions, test proofs, highlight reel</td></tr>
+        <tr><td><code>explorer_test_case</code></td><td>Each test: steps, exact script, proof, code</td></tr>
+        <tr><td><code>explorer_question</code></td><td>Questions for you and your answers</td></tr>
+        <tr><td><code>explorer_access</code></td><td>Could this user type open this screen?</td></tr>
+      </table></div>
+    <div class="col" style="flex:1">
+      <div class="card good"><h4>🧠 Kept per app, across runs</h4>
+        <table class="t"><tr><td><code>explorer_knowledge</code></td><td>Your answers, facts, document passages</td></tr><tr><td><code>explorer_role</code></td><td>Other user types (login in Vault)</td></tr></table></div>
+      <div class="card store"><h4>🏛️ Written into classic Vantage</h4><p>After testing, proven tests are copied into the tables the rest of Vantage uses:</p><p style="margin-top:6px"><span class="pill">journey</span><span class="pill">journey_step</span><span class="pill">page</span><span class="pill">scenario</span><span class="pill">test_suite</span><span class="pill">test_asset</span></p></div>
+    </div>
+  </div>
+</section>
+
+<section class="fig" id="t6-handoff">
+  <p class="q">How Explorer's results reach the rest of Vantage (and healing)</p>
+  <p class="sub">Explorer's proven tests flow into the same tables the old discovery used, so generation, runs and healing keep working.</p>
+  <div class="row flow5 narrow">
+    <div class="card exp"><h4>Explorer's proven tests</h4><p>Exact clicks, proof check and Playwright code.</p><div class="tech">explorer_test_case</div></div>
+    <div class="arrow"><b>→</b><span>promote.py</span></div>
+    <div class="card store"><h4>Journeys &amp; Scenarios</h4><p>One <b>journey per start screen</b>, one <b>scenario per test</b>. Old ones are retired, not deleted.</p><div class="tech">grounding: proven_code, captured_flow, check</div></div>
+    <div class="arrow"><b>→</b><span>you press Generate tests</span></div>
+    <div class="card good"><h4>Test suite</h4><p>Uses Explorer's <b>already-proven code as is</b> if it type-checks; otherwise AI writes it.</p></div>
+    <div class="arrow"><b>→</b><span>run</span></div>
+    <div class="card warn"><h4>Auto-heal (on failure)</h4><p>What it can use for an Explorer test:</p><ul class="tight"><li>✅ pages and step names</li><li>✅ a live look at the page</li><li>❌ saved locators (Explorer doesn't write them)</li><li>❌ field types (not written either)</li><li>⛔ known-bug tests are never healed</li></ul></div>
+  </div>
+  <div class="take"><b>Gap:</b> Explorer collects richer data (fields, buttons, exact scripts) than healing currently reads. See document 6, “Healing”.</div>
+</section>
+
+<section class="fig" id="t7-modules">
+  <p class="q">Which code does what</p>
+  <p class="sub">Python modules in <code>apps/workers/explorer/src/explorer_worker/</code>, grouped by stage.</p>
+  <table class="t">
+    <tr><th style="width:250px">Stage</th><th>Modules</th><th>In plain words</th></tr>
+    <tr><td><b>Plumbing</b></td><td><span class="pill">worker</span><span class="pill">workflow</span><span class="pill">activities</span><span class="pill">db</span><span class="pill">llm</span></td><td>Start the process, follow the checklist, talk to the database and the AI</td></tr>
+    <tr><td><b>Shared foundations</b></td><td><span class="pill">browser</span><span class="pill">session</span><span class="pill">mind</span><span class="pill">brain</span><span class="pill">sense</span><span class="pill">journal</span><span class="pill">memory</span></td><td>The hands, signing in, reading a screen, the AI prompts, fixed rules, the notebook, memory</td></tr>
+    <tr><td><b>1 · Get to know the app</b></td><td><span class="pill">understand</span></td><td>Look around, health score, App Summary</td></tr>
+    <tr><td><b>2 · Missions</b></td><td><span class="pill">missions</span><span class="pill">pursue</span></td><td>Plan goals, walk them step by step, judge the outcome</td></tr>
+    <tr><td><b>3 · Hidden screens</b></td><td><span class="pill">hunt</span></td><td>Try every choice, every amount, pretend server trouble</td></tr>
+    <tr><td><b>4 · Questions &amp; memory</b></td><td><span class="pill">memory</span></td><td>Ask once, remember forever</td></tr>
+    <tr><td><b>5 · Proven tests</b></td><td><span class="pill">tests_stage</span><span class="pill">testkit</span><span class="pill">quality</span><span class="pill">samples</span></td><td>Plan, build, replay, prove, write Playwright code</td></tr>
+    <tr><td><b>6 · Breadth</b></td><td><span class="pill">breadth</span></td><td>Who can see what, pages nothing links to, code coverage</td></tr>
+    <tr><td><b>7 · Highlight video</b></td><td><span class="pill">reel</span></td><td>Best moments as one MP4</td></tr>
+    <tr><td><b>8 · Hand-off</b></td><td><span class="pill">promote</span></td><td>Copy proven tests into Vantage</td></tr>
+    <tr><td><b>Resume</b></td><td><span class="pill">resume</span></td><td>Work out where a paused run left off</td></tr>
+  </table>
+</section>
+
+<section class="fig" id="t8-ui">
+  <p class="q">The Explorer tab — what each view is for</p>
+  <p class="sub">Five views, left to right. Anything waiting for you pulses and links straight to <b>Questions</b>.</p>
+  <div class="row" style="gap:12px">
+    <div class="card exp"><h4>1 · Live</h4><p>Opens here. What the browser sees right now, the activity log, and progress through the 4 stages. Pause / Resume / Stop.</p></div>
+    <div class="card you"><h4>2 · Questions</h4><p>“Waiting on you” first, then “Bug or correct?”, then answered ones. Click an option or type an answer.</p></div>
+    <div class="card store"><h4>3 · Screens</h4><p>A grid of screenshots. Click one to see its actions and where each one leads.</p></div>
+    <div class="card good"><h4>4 · Scenarios</h4><p>Proven and known-bug tests with steps, expected result, and a video. <b>Generate tests</b> when done.</p></div>
+    <div class="card store"><h4>5 · What it learned</h4><p>The App Summary to confirm, what you've taught it (answers, documents, facts), and things that look wrong.</p></div>
+  </div>
+</section>
+
+<script>
+  // Sequence diagram: participants are columns, each message an arrow between two of them.
+  const P = [["👤 You",""],["Explorer tab","React"],["API","FastAPI"],["Postgres","database"],["Temporal","checklist"],["Worker","Explorer"],["GPT-5.6","AI"],["Your app","via Chromium"]];
+  const ix = n => P.findIndex(p => p[0].includes(n));
+  const M = [
+    ["01 Start"],
+    ["You","Explorer tab","press Start exploring"],["Explorer tab","API","POST /runs"],["API","Postgres","save the run"],["API","Temporal","start the workflow"],["Temporal","Worker","step 1: understand"],
+    ["02 Learn"],
+    ["Worker","Your app","sign in, open screens"],["Worker","GPT-5.6","what is this screen?"],["Worker","Postgres","screens, events, photos"],["Worker","GPT-5.6","write the summary"],["Worker","Postgres","summary ready, waiting"],
+    ["03 Confirm"],
+    ["Explorer tab","API","any news? (every 1.5 s)"],["You","Explorer tab","Looks right — confirm"],["Explorer tab","API","POST /confirm"],["API","Temporal","signal: confirmed"],
+    ["04 Missions"],
+    ["Temporal","Worker","plan + run missions (3 at once)"],["Worker","Your app","work through each goal"],["Worker","Postgres","question — this mission waits"],["You","Explorer tab","answer"],["Explorer tab","API","POST /answer"],["API","Postgres","save answer + memory"],["Postgres","Worker","mission sees the answer (checks every 5 s)", "ret"],
+    ["05 Tests"],
+    ["Temporal","Worker","hunt, then build tests"],["Worker","Your app","replay 3× + broken copy"],["Worker","Postgres","proven tests → Vantage"],
+  ];
+  const W = 1112 / P.length, firstRow = 70, rowH = 34;
+  const el = document.getElementById("seq");
+  let y = firstRow, html = "";
+  P.forEach((p, i) => {
+    html += `<div style="position:absolute;left:${i*W+6}px;top:0;width:${W-12}px;text-align:center;border:2px solid #94a3b8;border-radius:10px;padding:6px 2px;background:#f8fafc;font-weight:600;font-size:14px">${p[0]}<div style="font-weight:400;font-size:11.5px;color:#64748b">${p[1]}</div></div>`;
+  });
+  M.forEach(m => {
+    if (m.length === 1) { html += `<div style="position:absolute;left:0;top:${y+4}px;font-size:12.5px;font-weight:700;color:#0f766e;background:#fff;padding:0 4px">${m[0]}</div><div style="position:absolute;left:0;right:0;top:${y+12}px;border-top:1px dashed #cbd5e1"></div>`; y += 26; return; }
+    const a = ix(m[0]), b = ix(m[1]), x1 = Math.min(a,b)*W + W/2, x2 = Math.max(a,b)*W + W/2, left = a < b;
+    const col = m[3] ? "#94a3b8" : (m[0]==="You" ? "#2563eb" : "#0f766e"), dash = m[3] ? "dashed" : "solid";
+    html += `<div style="position:absolute;left:${x1}px;width:${x2-x1}px;top:${y}px;text-align:center;font-size:13px;color:#1e293b;white-space:nowrap">${m[2]}</div>`;
+    html += `<div style="position:absolute;left:${x1}px;width:${x2-x1}px;top:${y+19}px;border-top:2px ${dash} ${col}"></div>`;
+    html += `<div style="position:absolute;top:${y+13}px;left:${left ? x2-9 : x1-1}px;font-size:13px;color:${col}">${left ? "▶" : "◀"}</div>`;
+    y += rowH;
+  });
+  P.forEach((p, i) => { html = `<div style="position:absolute;left:${i*W+W/2}px;top:52px;height:${y-40}px;border-left:1.5px dotted #cbd5e1"></div>` + html; });
+  el.style.height = (y + 10) + "px";
+  el.innerHTML = html;
+</script>
+</body>
+</html>

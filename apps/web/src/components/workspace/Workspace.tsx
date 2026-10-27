@@ -60,6 +60,7 @@ export function Workspace({
   onActiveTabChange,
   onTabsChange,
   autoTriggerRun = false,
+  byExplorer = false,
   highlightScenarioId = null,
   onHighlightConsumed,
   openRunId = null,
@@ -77,13 +78,13 @@ export function Workspace({
   // `appTab` state, not this component's own `activeTab`. The caller
   // (App.tsx) already handles every value in that broader union.
   onActiveTabChange: (tab: WorkspaceTab | 'journeys' | 'scenarios' | 'record') => void
+  // An Explorer-discovered app (no Journeys / Scenarios pages).
+  byExplorer?: boolean
   // Reports the currently-visible tab list up to the caller (AppShell's
   // sidebar renders it) whenever it changes.
   onTabsChange?: (tabs: typeof WORKSPACE_TABS) => void
-  // Set by App.tsx's "Run All Tests" wiring (TestSuiteResults's celebratory
-  // banner) — Workspace owns the actual trigger call so the resulting error
-  // (if any) has somewhere to surface, mirroring what the old standalone
-  // TestExecutionResults.tsx screen used to show.
+  // Starts a run once on mount — Workspace owns the actual trigger call so
+  // the resulting error (if any) has somewhere to surface.
   autoTriggerRun?: boolean
   // A just-recorded test case's scenario for the Test cases tab to bring
   // into view and flash once — passed straight through to TestSuiteTab.
@@ -299,7 +300,7 @@ export function Workspace({
         )}
 
         {activeTab === 'overview' && (
-          <OverviewTab applicationId={applicationId} onNavigateTab={onActiveTabChange} discoveryEnabled={discoveryEnabled} />
+          <OverviewTab applicationId={applicationId} onNavigateTab={onActiveTabChange} discoveryEnabled={discoveryEnabled} byExplorer={byExplorer} />
         )}
         {activeTab === 'suite' && (
           <TestSuiteTab

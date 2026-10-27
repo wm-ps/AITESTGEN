@@ -40,8 +40,8 @@ from domain import (
     PlatformUser,
     RetentionPeriod,
     Scenario,
-    ScreenshotCapture,
     Schedule,
+    ScreenshotCapture,
     TestAsset,
     TestDataEntry,
     TestResult,
@@ -53,6 +53,7 @@ from domain import (
     lock_test_run,
 )
 import hvac.exceptions
+from explorer_core import ExplorerRun
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from object_store import ObjectStore
@@ -61,7 +62,7 @@ from secrets_client import SecretRef, VaultSecretsClient
 from sqlalchemy import func, or_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 from temporalio.api.enums.v1 import TaskQueueType
 from temporalio.client import Client as TemporalClient
 from temporalio.client import Schedule as TemporalSchedule
@@ -69,9 +70,9 @@ from temporalio.client import (
     ScheduleActionStartWorkflow,
     ScheduleState,
     ScheduleUpdateInput,
+    WorkflowExecutionStatus,
 )
 from temporalio.client import ScheduleUpdate as TemporalScheduleUpdate
-from temporalio.client import WorkflowExecutionStatus
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
 from temporalio.service import RPCError, RPCStatusCode
@@ -134,6 +135,7 @@ from api.auth import (
 from api.coverage_report import build_coverage_report
 from api.db import engine, get_session
 from api.discovery import pause_discovery_run, resume_discovery_run, start_discovery_run
+from api.explorer import router as explorer_router
 from api.invites import InviteAcceptError, accept_invite, create_invite, send_invite_email
 from api.password_reset import (
     PasswordResetError,
@@ -207,6 +209,8 @@ app.add_middleware(
 SessionDep = Annotated[Session, Depends(get_session)]
 
 app.include_router(activity_router)
+# Vantage Explorer (docs/vantage-explorer/PLAN.md) — standalone module.
+app.include_router(explorer_router)
 
 
 @app.get("/health")
@@ -639,6 +643,8 @@ class ApplicationRead(BaseModel):
     discovery_status: str | None
     discovery_stage: str | None
     discovery_failure_reason: str | None
+    # "explorer" | "crawler" — which discovery filled this app's Journeys.
+    discovery_engine: str = "crawler"
     # Story 2.22 AC 2: `status` never travels alone — whenever it's
     # "complete", these counts ride along in the same response so a bare
     # "Complete" can't be misread as "the whole application was covered"
@@ -757,6 +763,16 @@ def _to_application_read(
         discovery_status=discovery_run.status if discovery_run else None,
         discovery_stage=discovery_run.stage if discovery_run else None,
         discovery_failure_reason=discovery_run.failure_reason if discovery_run else None,
+        # Stage 8 (docs/vantage-explorer/PLAN.md): apps discovered by Explorer
+        # get Explorer-aware Journeys/Scenarios screens.
+        discovery_engine=(
+            "explorer"
+            if session.exec(
+                select(ExplorerRun.id).where(ExplorerRun.application_id == application.id)
+            ).first()
+            is not None
+            else "crawler"
+        ),
         discovery_coverage_summary=(
             _coverage_counts(session, discovery_run)
             if discovery_run and discovery_run.status == "complete"
@@ -822,6 +838,8 @@ async def create_application(
     # Exactly one of the two credential shapes is stored, matching the
     # Authentication method select's "one selected at a time" rule (Story 1.4).
     if payload.auth_method == "standard_login":
+        # No login: an empty credential is still stored, so every reader of
+        # `secret_ref` keeps working (and credentials can be added later).
         creds = {"username": payload.username, "password": payload.password}
         credential = json.dumps(creds).encode()
     elif payload.auth_method == "none":
@@ -837,6 +855,8 @@ async def create_application(
         login_url=payload.login_url,
         environment=payload.environment,
         auth_method=payload.auth_method,
+        # Kept in step with auth_method ("none" = no login) for older readers.
+        requires_login=payload.auth_method != "none",
         discovery_required=payload.discovery_required,
         secret_ref=secret_ref.path,
     )
@@ -852,7 +872,9 @@ async def create_application(
     # Skipped when the user unchecked "Autonomous discovery": no crawler
     # DiscoveryRun or workflow exists for such an Application.
     discovery_run = (
-        await start_discovery_run(session, application) if application.discovery_required else None
+        await start_discovery_run(session, application, started_by=user.id)
+        if application.discovery_required
+        else None
     )
 
     # Three ready-made-but-disabled schedules so a team can flip one on
@@ -1427,7 +1449,7 @@ def update_application_credentials(
     apps aren't supported here (a session_state blob, not a username/
     password, isn't what this form collects)."""
     application = _get_org_application(session, organization_id, external_id)
-    if application.auth_method != "standard_login":
+    if application.auth_method not in ("standard_login", "none"):
         raise HTTPException(
             status_code=422, detail="credential update is only supported for standard_login"
         )
@@ -1436,6 +1458,10 @@ def update_application_credentials(
         creds["mfa_enabled"] = True
         creds["totp_seed"] = payload.totp_seed
     VaultSecretsClient().update(SecretRef(path=application.secret_ref), json.dumps(creds).encode())
+    if application.auth_method == "none":
+        # Saving a login means the app has one now.
+        application.auth_method, application.requires_login = "standard_login", True
+        session.add(application)
     # Never the values — only that they changed.
     record_activity(
         session, admin, "settings", f"Updated login credentials for {application.name}", application=application
@@ -1452,6 +1478,44 @@ class CredentialListEntry(BaseModel):
     environment: str
     username: str
     has_password: bool
+    requires_login: bool = True
+
+
+class RequiresLoginPayload(BaseModel):
+    requires_login: bool
+
+
+@app.patch("/applications/{external_id}/requires-login", response_model=ApplicationRead)
+def update_requires_login(
+    external_id: uuid.UUID,
+    payload: RequiresLoginPayload,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> ApplicationRead:
+    """Settings' "Requires sign-in" switch, the same choice as the Add
+    application form's: off makes the app `auth_method="none"` (discovery,
+    Explorer and test runs open it directly; its saved login is replaced by
+    the empty session every "none" app holds). On needs a username and
+    password, saved with "Add credentials", which turns sign-in on itself."""
+    application = _get_org_application(session, organization_id, external_id)
+    if application.auth_method not in ("standard_login", "none"):
+        raise HTTPException(status_code=422, detail="Only username-and-password apps have this switch")
+    if payload.requires_login and application.auth_method == "none":
+        raise HTTPException(
+            status_code=422,
+            detail="Add this application's username and password below to turn sign-in on.",
+        )
+    if not payload.requires_login and application.auth_method != "none":
+        VaultSecretsClient().update(
+            SecretRef(path=application.secret_ref), b'{"cookies": [], "origins": []}'
+        )
+        application.auth_method = "none"
+    application.requires_login = payload.requires_login
+    session.add(application)
+    session.commit()
+    discovery_run = _latest_discovery_run(session, application.id)
+    return _to_application_read(session, application, discovery_run)
 
 
 # Vantage V2 Settings' cross-application "Saved credentials" table.
@@ -1471,7 +1535,7 @@ def list_credentials(
         .where(
             Application.organization_id == organization_id,
             Application.deleted_at.is_(None),  # type: ignore[attr-defined]
-            Application.auth_method == "standard_login",
+            col(Application.auth_method).in_(("standard_login", "none")),
         )
         .order_by(Application.created_at.desc())  # type: ignore[arg-type]
     ).all()
@@ -1492,6 +1556,7 @@ def list_credentials(
                 environment=application.environment,
                 username=creds.get("username", ""),
                 has_password=bool(creds.get("password")),
+                requires_login=application.auth_method != "none",
             )
         )
     return result

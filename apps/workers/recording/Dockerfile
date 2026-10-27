@@ -29,11 +29,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY . .
+ENV UV_LINK_MODE=copy
 
-RUN uv sync --frozen --no-dev --package recording-worker
-RUN cd packages/playwright_typecheck/typecheck && npm install
+# Heavy, rarely-changing layers first (third-party deps, Chromium, npm) so
+# dev-start's rebuild on every launch only redoes the cheap source COPY +
+# workspace install below. Previously `COPY . .` came first, so any source
+# edit re-ran all of these (~5 min per start).
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --frozen --no-dev --package recording-worker --no-install-workspace
 RUN /app/.venv/bin/playwright install --with-deps chromium
+COPY packages/playwright_typecheck/typecheck/package.json packages/playwright_typecheck/typecheck/package-lock.json packages/playwright_typecheck/typecheck/
+RUN cd packages/playwright_typecheck/typecheck && npm install
+
+# node_modules/.venv are .dockerignore'd, so this COPY doesn't clobber them.
+COPY . .
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --package recording-worker
 
 EXPOSE 8100
 CMD ["/app/.venv/bin/uvicorn", "recording_worker.app:app", "--host", "0.0.0.0", "--port", "8100"]

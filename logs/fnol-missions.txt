@@ -1,0 +1,15 @@
+done | area | f | 1 | 2 | Check roadside danger guidance | After the policyholder said they were still at the roadside, the portal moved directly to the routine policy lookup screen.
+done | area |  | 1 | 2 | Explore a property damage claim | The property claim path stopped at “Which ones were involved?” because no properties or choices were shown. It did not reach the property questions or final review.
+done | area | f | 1 | 3 | Explore a combined auto and property claim | The portal accepted both vehicle and property claim types but stopped at the next step.
+blocked | task |  | 1 | 10 | Complete a standard auto claim up to final review | The claim reached the incident date and time step, where “Other” was selected but the required date and time remained empty. It did not reach the final review or send the
+done | area | f | 2 | 16 | Check the response when someone needs urgent medical he | The portal allowed the claim to continue after the person reported that someone needed urgent help, eventually returning to the policy search screen.
+done | rule |  | 1 | 2 | Protect saved work when starting over | The unfinished report was started over, and the portal returned to the beginning of the claim questions.
+done | task |  | 1 | 3 | Check an existing claim by reference | The unknown reference was rejected with clear guidance and no claim information was revealed. No valid reference was tested, so the claim status, key dates, and next step
+done | task | f | 4 | 15 | Resume the saved report for POL-10001 | The saved policy, incident time, location, claim category, photo choice, and contact details appeared on the review screen, and the report could continue to the send stag
+done | area | f | 1 | 4 | Handle a possible duplicate claim safely | The portal allowed the user to identify the report as a separate event and continue, rather than automatically merging or discarding it. However, the next page asks which
+done | rule | f | 11 | 20 | Validate contact details and the final review | The invalid contact details were not accepted, and corrected details allowed the claim to reach review. After using the review edit option, the journey returned to earlie
+blocked | task |  | 1 | 4 | Find a policy without its number | The portal correctly blocked the search because the required date of birth was missing and clearly marked that field as required.
+queued | rule |  | 0 | 0 | Reject an incident time in the future | 
+running | area |  | 0 | 0 | Record other people and emergency services | 
+running | area |  | 0 | 0 | Check vehicle selection and non-driveable support | 
+running | rule |  | 0 | 0 | Check photo upload choices and warnings | 

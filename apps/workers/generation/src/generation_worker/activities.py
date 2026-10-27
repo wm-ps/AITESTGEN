@@ -984,6 +984,24 @@ async def _generate_and_typecheck(
     raise ValueError("Generated Playwright spec failed typecheck:\n" + "\n".join(typecheck_errors))
 
 
+async def _proven_explorer_code(scenario: Scenario, scenario_id: object) -> str | None:
+    """The proven test Explorer handed over with this scenario, if it
+    compiles; None means generate normally."""
+    proven = (scenario.grounding or {}).get("proven_code")
+    if not isinstance(proven, str) or not proven.strip():
+        return None
+    errors = await typecheck_playwright_code(proven)
+    if errors:
+        logger.warning(
+            "PlaywrightGenerationActivity: scenario_id=%s Explorer's proven code failed "
+            "typecheck, generating instead: %s",
+            scenario_id,
+            errors[:3],
+        )
+        return None
+    return proven
+
+
 @activity.defn(name="PlaywrightGenerationActivity")
 async def playwright_generation_activity(input: PlaywrightGenerationActivityInput) -> str:
     """Converts one Scenario into one TestAsset. Idempotent under Temporal's
@@ -1062,20 +1080,30 @@ async def playwright_generation_activity(input: PlaywrightGenerationActivityInpu
     # feedback here first (up to 2 repair turns), and only let it fall
     # through to Temporal's outer retry (genuine infra failures) if the
     # model still can't fix it.
-    code = await _generate_and_typecheck(
-        scenario,
-        known_pages,
-        known_locators,
-        requires_auth=requires_auth,
-        field_input_types=field_input_types,
-        log_label=f"PlaywrightGenerationActivity: scenario_id={input.scenario_id}",
-        live_action_sequence=live_action_sequence,
-    )
+    #
+    # Vantage Explorer scenarios arrive with the test Explorer already wrote
+    # in this same house style and proved in the app (replayed several
+    # times; a deliberately broken run failed). Use it as-is when it passes
+    # the same typecheck gate — an AI rewrite from the description would
+    # only lose what was proven. Anything else (or proven code that no
+    # longer compiles) goes through normal generation.
+    code_text = await _proven_explorer_code(scenario, input.scenario_id)
+    if code_text is None:
+        code = await _generate_and_typecheck(
+            scenario,
+            known_pages,
+            known_locators,
+            requires_auth=requires_auth,
+            field_input_types=field_input_types,
+            log_label=f"PlaywrightGenerationActivity: scenario_id={input.scenario_id}",
+            live_action_sequence=live_action_sequence,
+        )
+        code_text = code.code
 
     # Ground truth beats an LLM guess for the auth tag the same way it does
     # for locators (Story: generation pipeline hardening) — rewritten
     # deterministically here rather than trusted from the prompt alone.
-    tagged_code = spec_linter.apply_auth_tag(code.code, requires_auth)
+    tagged_code = spec_linter.apply_auth_tag(code_text, requires_auth)
 
     test_asset_id = await asyncio.to_thread(
         _persist_test_asset_sync,

@@ -23,6 +23,7 @@ const CREDENTIAL_ENTRY = {
   environment: 'staging',
   username: 'qa-account',
   has_password: true,
+  requires_login: true,
 }
 
 function stubFetch() {
@@ -71,5 +72,22 @@ describe('Settings', () => {
 
     fireEvent.click(screen.getByTitle('Reveal'))
     expect(await screen.findByText('super-secret')).toBeTruthy()
+  })
+
+  it('turns sign-in off for an app with no login', async () => {
+    stubFetch()
+    render(<Settings user={ADMIN} onCancel={vi.fn()} />)
+    const toggle = await screen.findByRole('switch', { name: 'Checkout App requires sign-in' })
+    expect(toggle.getAttribute('aria-checked')).toBe('true')
+
+    fireEvent.click(toggle)
+
+    const fetchMock = vi.mocked(fetch)
+    await vi.waitFor(() =>
+      expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/applications/app-1/requires-login'))).toBe(true),
+    )
+    const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/applications/app-1/requires-login'))!
+    expect(call[1]?.method).toBe('PATCH')
+    expect(JSON.parse(String(call[1]?.body))).toEqual({ requires_login: false })
   })
 })

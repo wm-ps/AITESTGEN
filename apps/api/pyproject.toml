@@ -23,6 +23,8 @@ dependencies = [
     "bcrypt>=5.0.0",
     "itsdangerous>=2.2.0",
     "httpx>=0.28",
+    "explorer-core",
+    "pypdf>=5.0",
 ]
 
 [dependency-groups]
@@ -39,6 +41,7 @@ mailer = { workspace = true }
 test-suite-assembler = { workspace = true }
 safety-classifier = { workspace = true }
 ai-provider = { workspace = true }
+explorer-core = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]

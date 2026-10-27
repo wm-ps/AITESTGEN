@@ -111,3 +111,13 @@ def test_no_sign_in_setup_writes_an_empty_session_without_credentials() -> None:
     assert "cookies: [], origins: []" in script
     assert "AITESTGEN_LOGIN" not in script
     assert "AITESTGEN_STORAGE_STATE" not in script
+
+
+def test_auth_setup_waits_for_the_page_to_settle_before_deciding() -> None:
+    # FNOL: the home page needs no login, and right after goto() the address is
+    # still the bare login address — its `#/ReportClaim` route lands ~1 s later.
+    script = _build_auth_setup_script("standard_login", login_evidence=EVIDENCE)
+    settle = script.index("await Promise.race([")
+    assert "passwordField.waitFor({ state: 'visible'" in script[settle:]
+    assert "page.waitForURL(" in script[settle:]
+    assert settle < script.index("if (await isAuthenticated(page, loginUrl))")

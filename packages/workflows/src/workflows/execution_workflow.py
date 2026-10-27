@@ -133,6 +133,9 @@ class PrepareTestRunActivityResult:
     test_run_id: str
     blocked: bool
     executable: list[ExecutableTest] = field(default_factory=list)
+    # The app keeps per-login state (see PrepareTestRunActivity): run its
+    # tests one after another instead of `max_concurrency` at once.
+    one_at_a_time: bool = False
 
 
 @dataclass
@@ -249,7 +252,7 @@ class ApplicationTestExecutionWorkflow:
             return prep.test_run_id
 
         if prep.executable:
-            semaphore = asyncio.Semaphore(max(1, input.max_concurrency))
+            semaphore = asyncio.Semaphore(1 if prep.one_at_a_time else max(1, input.max_concurrency))
 
             async def run_one(item: ExecutableTest) -> str:
                 async with semaphore:
