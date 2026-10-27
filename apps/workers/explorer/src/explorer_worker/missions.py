@@ -24,7 +24,7 @@ from sqlmodel import Session, col, select
 from explorer_worker import brain
 from explorer_worker.browser import Eyes
 from explorer_worker.db import engine
-from explorer_worker.goal import ensure_scope, follow_ups_in_goal, screens_in_goal
+from explorer_worker.goal import ensure_scope, missions_in_goal, screens_in_goal
 from explorer_worker.journal import Journal
 from explorer_worker.memory import ask, remember_record
 from explorer_worker.mind import Mind
@@ -103,9 +103,10 @@ async def plan_missions(run_id: uuid.UUID) -> int:
     allowed = {s.name for s in screens_in_goal(journal.screen_rows())} - skip
     screens = [s for s in _screens_payload(journal) if s.get("name") in allowed]
     planned = await brain.plan_missions(brief, branch_points, screens, notes)
-    planned = [
-        m for m in planned if not m.get("start_screen") or m.get("start_screen") in allowed
-    ]
+    planned = missions_in_goal(
+        [m for m in planned if m.get("start_screen") not in skip],
+        {s.name: s.goal_fit for s in journal.screen_rows()},
+    )
     # Most important first, then only as many as the app's size warrants.
     planned.sort(key=lambda m: -(m.get("priority") if isinstance(m.get("priority"), int) else 3))
     cap = mission_cap(len(screens))
@@ -487,7 +488,7 @@ def _queue_follow_ups(
             planned_from,
             {m.title for m in missions},
         )
-        new = follow_ups_in_goal(new, {s.name: s.goal_fit for s in screens})
+        new = missions_in_goal(new, {s.name: s.goal_fit for s in screens})
         # ponytail: two missions finishing at the same moment may both add the
         # same follow-up; a unique (run_id, title) constraint if that shows up.
         room = max(0, MAX_MISSIONS - len(missions))

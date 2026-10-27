@@ -131,7 +131,7 @@ def test_without_a_goal_every_screen_is_planned() -> None:
 def test_follow_ups_only_on_screens_inside_the_goal() -> None:
     planned = [{"title": "a", "start_screen": "S0"}, {"title": "b", "start_screen": "S1"}, {"title": "c"}]
     fits = {"S0": "inside", "S1": "outside"}
-    assert [m["title"] for m in goal.follow_ups_in_goal(planned, fits)] == ["a", "c"]
+    assert [m["title"] for m in goal.missions_in_goal(planned, fits)] == ["a", "c"]
 
 
 def test_hunt_only_probes_screens_inside_the_goal(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -167,3 +167,13 @@ def test_hunt_only_probes_screens_inside_the_goal(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(hunt, "_probe_amounts", probe)
     asyncio.run(hunt.hunt(RUN, lambda: None))
     assert set(probed) == {"Find your policy"}
+
+
+def test_a_mission_naming_an_unknown_screen_still_runs() -> None:
+    # No goal: a planned mission whose start screen matches no stored name
+    # ("Policy search" vs "Policy Search") is kept, as before goals existed.
+    planned = [{"title": "a", "start_screen": "Policy search"}, {"title": "b", "start_screen": "Check a claim"}]
+    assert [m["title"] for m in goal.missions_in_goal(planned, {"Check a claim": None})] == ["a", "b"]
+    # With a goal, only a known screen outside it drops a mission.
+    fits = {"Check a claim": "outside"}
+    assert [m["title"] for m in goal.missions_in_goal(planned, fits)] == ["a"]

@@ -53,6 +53,10 @@ def screens_in_goal(screens: Iterable[Any]) -> list[Any]:
     return [s for s in screens if in_goal(getattr(s, "goal_fit", None))]
 
 
-def follow_ups_in_goal(missions: list[dict[str, Any]], fits: dict[str, str | None]) -> list[dict[str, Any]]:
-    """Follow-up missions that start on a screen inside the goal (or on none)."""
+def missions_in_goal(
+    missions: list[dict[str, Any]], fits: dict[str, str | None]
+) -> list[dict[str, Any]]:
+    """Missions (planned or follow-up) that don't start on a known screen
+    outside the goal. A start screen that matches no stored name is kept: it
+    runs from the start, as it always did."""
     return [m for m in missions if not m.get("start_screen") or in_goal(fits.get(m["start_screen"]))]
