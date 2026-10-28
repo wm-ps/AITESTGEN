@@ -152,6 +152,49 @@ export function SummaryView({
         )}
       </div>
 
+      <div style={{ ...glassCard, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <SectionTitle
+          icon={faBullseye}
+          aside={tiles.length > 0 ? <span style={{ fontSize: 12, color: 'var(--fg-5)' }}>{tiles.length - tiles.filter((t) => skipped.has(t.name)).length} of {tiles.length} screens included</span> : undefined}
+        >
+          Goal
+        </SectionTitle>
+        {editable ? (
+          <>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label htmlFor="explorer-focus" style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>
+                Goal for this run <span style={{ fontWeight: 400, color: 'var(--fg-5)' }}>(optional)</span>
+              </label>
+              <textarea
+                id="explorer-focus"
+                rows={2}
+                value={b.focus ?? ''}
+                onChange={(e) => set('focus', e.target.value)}
+                onBlur={() => { if (!editing && (b.focus ?? '') !== (run.brief?.focus ?? '')) void onSave(draft) }}
+                placeholder="Describe what Explorer should focus on, or leave empty to cover the whole app"
+                style={{ ...inputStyle, resize: 'vertical' }}
+              />
+            </div>
+            {tiles.length > 0 && (
+              <PagesToLeaveOut
+                pages={tiles.map((t) => t.name)}
+                selected={[...skipped]}
+                onChange={(names) => {
+                  const next = { ...draft, skip_screens: names }
+                  setDraft(next)
+                  if (!editing) void onSave(next)
+                }}
+              />
+            )}
+          </>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13.5, color: 'var(--fg-2)' }}>
+            <div><span style={{ fontWeight: 600 }}>Goal:</span> {b.focus?.trim() || 'The whole app'}</div>
+            <div><span style={{ fontWeight: 600 }}>Left out:</span> {skipped.size ? [...skipped].join(', ') : 'Nothing'}</div>
+          </div>
+        )}
+      </div>
+
       {questions.length > 0 && (
         <div
           ref={questionsRef}
@@ -209,49 +252,6 @@ export function SummaryView({
             </div>
           ))}
         </div>
-      </div>
-
-      <div style={{ ...glassCard, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <SectionTitle
-          icon={faBullseye}
-          aside={tiles.length > 0 ? <span style={{ fontSize: 12, color: 'var(--fg-5)' }}>{tiles.length - tiles.filter((t) => skipped.has(t.name)).length} of {tiles.length} screens included</span> : undefined}
-        >
-          Goal
-        </SectionTitle>
-        {editable ? (
-          <>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label htmlFor="explorer-focus" style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>
-                Goal for this run <span style={{ fontWeight: 400, color: 'var(--fg-5)' }}>(optional)</span>
-              </label>
-              <textarea
-                id="explorer-focus"
-                rows={2}
-                value={b.focus ?? ''}
-                onChange={(e) => set('focus', e.target.value)}
-                onBlur={() => { if (!editing && (b.focus ?? '') !== (run.brief?.focus ?? '')) void onSave(draft) }}
-                placeholder="Describe what Explorer should focus on, or leave empty to cover the whole app"
-                style={{ ...inputStyle, resize: 'vertical' }}
-              />
-            </div>
-            {tiles.length > 0 && (
-              <PagesToLeaveOut
-                pages={tiles.map((t) => t.name)}
-                selected={[...skipped]}
-                onChange={(names) => {
-                  const next = { ...draft, skip_screens: names }
-                  setDraft(next)
-                  if (!editing) void onSave(next)
-                }}
-              />
-            )}
-          </>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13.5, color: 'var(--fg-2)' }}>
-            <div><span style={{ fontWeight: 600 }}>Goal:</span> {b.focus?.trim() || 'The whole app'}</div>
-            <div><span style={{ fontWeight: 600 }}>Left out:</span> {skipped.size ? [...skipped].join(', ') : 'Nothing'}</div>
-          </div>
-        )}
       </div>
     </div>
   )
