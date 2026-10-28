@@ -8,6 +8,7 @@ import {
   faDiagramProject,
   faLayerGroup,
   faPlus,
+  faShuffle,
   faTableList,
   faTriangleExclamation,
   faWandMagicSparkles,
@@ -114,6 +115,10 @@ export function Overview({
   // "No tests have run yet", not "tests are failing"), so counting every
   // never-run app as needing attention here would overstate real failures.
   const needsAttentionCount = ranApps.filter((a) => a.last_test_run_health.tier !== 'healthy').length
+  // Backend already scopes each app's count to its latest *completed* Full
+  // Suite run, so summing over every app is safe (an in-progress run adds 0).
+  const totalFlaky = apps.reduce((sum, a) => sum + (a.last_test_run_flaky_count ?? 0), 0)
+  const flakyAppCount = apps.filter((a) => (a.last_test_run_flaky_count ?? 0) > 0).length
 
   // Average of each app's own recent-pass-rate history, aligned from the
   // most-recent run backwards — the only cross-app time series the API
@@ -493,16 +498,36 @@ export function Overview({
                 value: lastDiscoveryAt == null ? '—' : relativeTime(lastDiscoveryAt),
                 sub: `${appsDiscoveredUnderAWeek} of ${apps.length} apps under 7 days`,
               },
+              {
+                id: 'flaky',
+                icon: faShuffle,
+                label: 'Flaky tests',
+                value: String(totalFlaky),
+                // Quiet at 0 — only colour it when there is something to look at.
+                valueColor: totalFlaky > 0 ? 'var(--flaky-strong)' : undefined,
+                // Hover on the count: one "App : n" line per affected app.
+                valueTitle:
+                  totalFlaky > 0
+                    ? apps
+                        .filter((a) => (a.last_test_run_flaky_count ?? 0) > 0)
+                        .map((a) => `${a.name} : ${a.last_test_run_flaky_count}`)
+                        .join('\n')
+                    : undefined,
+                sub:
+                  totalFlaky === 0
+                    ? 'None in latest runs'
+                    : `Across ${flakyAppCount} application${flakyAppCount === 1 ? '' : 's'}`,
+              },
             ]
 
-            function MiniTile({ icon, label, value, sub, flex }: { icon: typeof faCompass; label: string; value: string; sub: string; flex?: number }) {
+            function MiniTile({ icon, label, value, sub, flex, valueColor, valueTitle }: { icon: typeof faCompass; label: string; value: string; sub: string; flex?: number; valueColor?: string; valueTitle?: string }) {
               return (
                 <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, padding: '16px 18px', flex, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <FontAwesomeIcon icon={icon} style={{ fontSize: 12, color: 'var(--accent-hi)' }} />
                     <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>{label}</span>
                   </div>
-                  <div style={{ fontSize: 22, lineHeight: '28px', color: 'var(--fg)', marginTop: 8, fontWeight: 600 }}>{value}</div>
+                  <div title={valueTitle} style={{ fontSize: 22, lineHeight: '28px', color: valueColor ?? 'var(--fg)', marginTop: 8, fontWeight: 600, ...(valueTitle ? { cursor: 'help', width: 'fit-content' } : {}) }}>{value}</div>
                   <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 2 }}>{sub}</div>
                 </div>
               )
@@ -530,9 +555,10 @@ export function Overview({
                   {testCasesCard}
                   <MiniTile {...miniTiles[0]} />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(330px,1fr))', gap: 14 }}>
-                  <MiniTile {...miniTiles[1]} />
-                  <MiniTile {...miniTiles[2]} />
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 14 }}>
+                  {miniTiles.slice(1).map((t) => (
+                    <MiniTile key={t.id} {...t} />
+                  ))}
                 </div>
               </>
             )

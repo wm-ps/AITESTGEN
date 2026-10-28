@@ -395,14 +395,54 @@ class TestGetTestRun:
         assert body["results"][0]["scenario_name"] == "Guest checkout"
 
 
-class TestFlakyDetection:
-    """`TestResultRead.is_flaky`: one Scenario's outcomes across its recent
-    runs (this one included) contain both a pass and a fail."""
+class TestFlakySequenceRule:
+    """`_is_flaky_sequence`: >= 2 pass<->fail flips, latest within the last 5."""
 
-    def _latest_is_flaky(self, org: str, runs: list[tuple[str, dict]]) -> bool:
+    @staticmethod
+    def _flaky(pattern: str) -> bool:
+        from api.main import _is_flaky_sequence
+
+        return _is_flaky_sequence([c == "P" for c in pattern])
+
+    def test_flip_flopping_is_flaky(self) -> None:
+        assert self._flaky("PFP")
+        assert self._flaky("FPF")
+        assert self._flaky("PFPP")
+
+    def test_a_single_change_is_a_regression_not_flaky(self) -> None:
+        assert not self._flaky("PPPFF")
+        assert not self._flaky("FP")
+        assert not self._flaky("PF")
+
+    def test_consistent_outcomes_are_not_flaky(self) -> None:
+        assert not self._flaky("P")
+        assert not self._flaky("PPPP")
+        assert not self._flaky("FFFF")
+
+    def test_flips_that_have_settled_stop_flagging(self) -> None:
+        assert not self._flaky("PFPFPPPPPP")
+
+    def test_recent_flips_flag_again(self) -> None:
+        assert self._flaky("PPPPPFP")
+
+    def test_latest_flip_at_the_recency_boundary(self) -> None:
+        # Of 10 results the last 5 are indexes 5..9: latest flip at index 5
+        # still counts, at index 4 it does not.
+        assert self._flaky("PPPPFPPPPP")
+        assert not self._flaky("PPPFPPPPPP")
+
+
+class TestFlakyDetection:
+    """`TestResultRead.is_flaky` / `flaky_history`: one Scenario's outcomes
+    across its recent runs (this one included) flip-flop pass<->fail."""
+
+    def _latest_result(
+        self, org: str, runs: list[tuple[str, dict]], *, heal_asset: bool = False
+    ) -> dict:
         """Seeds one completed-by-default run per `(result status, run
         overrides)` entry, oldest first, all for one Scenario, and returns
-        `is_flaky` of the last run's only result."""
+        the last run's only result. With `heal_asset`, every `passed` result
+        is a self-healed one (`healed_test_asset_id` set)."""
         init_db()
         client, _ = _signed_in_client(org)
         application = _create_application(client, f"{org} App")
@@ -417,6 +457,9 @@ class TestFlakyDetection:
                         test_asset_id=asset.id,
                         scenario_id=asset.scenario_id,
                         status=status,
+                        healed_test_asset_id=asset.id
+                        if heal_asset and status == "passed"
+                        else None,
                     )
                 )
                 session.commit()
@@ -426,17 +469,22 @@ class TestFlakyDetection:
         )
         assert response.status_code == 200
         [result] = response.json()["results"]
-        return result["is_flaky"]
+        return result
+
+    def _latest_is_flaky(self, org: str, runs: list[tuple[str, dict]]) -> bool:
+        return self._latest_result(org, runs)["is_flaky"]
 
     def test_first_run_is_never_flaky(self) -> None:
         assert not self._latest_is_flaky("Org Flaky First", [("failed", {})])
 
-    def test_mixed_outcomes_across_runs_are_flaky(self) -> None:
-        statuses = ["failed", "failed", "passed", "failed", "passed"]
+    def test_flip_flopping_across_runs_is_flaky(self) -> None:
+        statuses = ["failed", "passed", "failed", "passed"]
         assert self._latest_is_flaky("Org Flaky Mixed", [(s, {}) for s in statuses])
 
-    def test_a_pass_to_fail_flip_is_flaky(self) -> None:
-        assert self._latest_is_flaky("Org Flaky Flip", [("passed", {}), ("failed", {})])
+    def test_a_single_pass_to_fail_change_is_not_flaky(self) -> None:
+        assert not self._latest_is_flaky("Org Flaky Flip", [("passed", {}), ("failed", {})])
+        runs = [("passed", {})] * 3 + [("failed", {})] * 2
+        assert not self._latest_is_flaky("Org Flaky Regression", runs)
 
     def test_consistent_outcomes_are_not_flaky(self) -> None:
         assert not self._latest_is_flaky("Org Flaky All Pass", [("passed", {})] * 3)
@@ -446,12 +494,34 @@ class TestFlakyDetection:
         runs = [("passed", {}), ("timed_out", {}), ("errored", {}), ("passed", {})]
         assert self._latest_is_flaky("Org Flaky Timeout", runs)
 
-    def test_a_failure_older_than_the_window_stops_flagging(self) -> None:
-        # 10 results = this run + the 9 before it; the lone failure is the 11th.
-        runs = [("failed", {})] + [("passed", {})] * 10
+    def test_flips_older_than_the_window_stop_flagging(self) -> None:
+        # 10 results = this run + the 9 before it: the early P F pair falls
+        # outside it, so the window holds only passes.
+        runs = [("passed", {}), ("failed", {})] + [("passed", {})] * 10
         assert not self._latest_is_flaky("Org Flaky Aged Out", runs)
-        runs = [("failed", {})] + [("passed", {})] * 9
-        assert self._latest_is_flaky("Org Flaky In Window", runs)
+
+    def test_settled_flip_flops_stop_flagging(self) -> None:
+        statuses = ["passed", "failed", "passed", "failed"] + ["passed"] * 6
+        assert not self._latest_is_flaky("Org Flaky Settled", [(s, {}) for s in statuses])
+
+    def test_returns_the_outcome_trail_when_flaky(self) -> None:
+        runs = [(s, {}) for s in ["passed", "failed", "passed"]]
+        result = self._latest_result("Org Flaky Trail", runs)
+        assert result["is_flaky"] is True
+        assert result["flaky_history"] == [True, False, True]
+
+    def test_no_outcome_trail_when_not_flaky(self) -> None:
+        result = self._latest_result("Org Flaky No Trail", [("passed", {}), ("passed", {})])
+        assert result["is_flaky"] is False
+        assert result["flaky_history"] is None
+
+    def test_self_healed_passes_carry_no_flakiness_signal(self) -> None:
+        # A heal overwrites the failure it repaired, so healed passes are
+        # skipped: F P(healed) F is two failures, not a flip-flop.
+        runs = [("failed", {}), ("passed", {}), ("failed", {})]
+        assert not self._latest_result("Org Flaky Healed", runs, heal_asset=True)["is_flaky"]
+        runs = [("passed", {}), ("failed", {}), ("passed", {})]
+        assert not self._latest_result("Org Flaky Healed Now", runs, heal_asset=True)["is_flaky"]
 
     def test_cancelled_and_verification_runs_carry_no_signal(self) -> None:
         runs = [
@@ -463,8 +533,37 @@ class TestFlakyDetection:
         assert not self._latest_is_flaky("Org Flaky Skipped Runs", runs)
 
     def test_a_result_still_pending_is_not_flaky(self) -> None:
-        runs = [("passed", {}), ("failed", {}), ("pending", {"status": "running"})]
+        runs = [("passed", {}), ("failed", {}), ("passed", {}), ("pending", {"status": "running"})]
         assert not self._latest_is_flaky("Org Flaky Pending", runs)
+
+    def test_viewing_an_older_run_ignores_newer_runs(self) -> None:
+        init_db()
+        client, _ = _signed_in_client("Org Flaky As Of")
+        application = _create_application(client, "Org Flaky As Of App")
+        app_id, asset = _seed_test_asset(application)
+        runs = []
+        for status in ["passed", "passed", "failed", "passed"]:
+            run = _seed_test_run(app_id)
+            runs.append(run)
+            with Session(engine) as session:
+                session.add(
+                    TestResult(
+                        test_run_id=run.id,
+                        test_asset_id=asset.id,
+                        scenario_id=asset.scenario_id,
+                        status=status,
+                    )
+                )
+                session.commit()
+
+        def flaky(run) -> bool:
+            body = client.get(
+                f"/applications/{application['id']}/test-runs/{run.external_id}"
+            ).json()
+            return body["results"][0]["is_flaky"]
+
+        assert flaky(runs[3])  # P P F P
+        assert not flaky(runs[2])  # P P F: one change, as of that run
 
 
 class _FakeObjectStore:
@@ -816,6 +915,66 @@ class TestGetOverview:
         # The bar and the tile must agree: both are `passed / total_count`
         # for the exact same run.
         assert body["trend"][0]["pass_rate"] == 54 / 108
+        assert body["latest_run"]["flaky_count"] == 0
+
+    def test_latest_run_flaky_count_matches_run_details(self) -> None:
+        """A scenario that flip-flops (pass, fail, pass) is counted in the
+        latest Full Suite run's `flaky_count`, same as Run details."""
+        init_db()
+        client, _ = _signed_in_client("Org Overview Flaky")
+        application = _create_application(client, "Overview Flaky App")
+        app_id, asset = _seed_test_asset(application)
+        latest = None
+        for status in ("passed", "failed", "passed"):
+            latest = _seed_test_run(app_id)
+            with Session(engine) as session:
+                session.add(
+                    TestResult(
+                        test_run_id=latest.id,
+                        test_asset_id=asset.id,
+                        scenario_id=asset.scenario_id,
+                        status=status,
+                    )
+                )
+                session.commit()
+        assert latest is not None
+
+        body = client.get(f"/applications/{application['id']}/overview").json()
+        details = client.get(
+            f"/applications/{application['id']}/test-runs/{latest.external_id}"
+        ).json()
+
+        assert body["latest_run"]["flaky_count"] == 1
+        assert body["latest_run"]["flaky_count"] == sum(r["is_flaky"] for r in details["results"])
+
+        home = next(a for a in client.get("/home").json() if a["id"] == application["id"])
+        assert home["last_test_run_flaky_count"] == 1
+
+    def test_in_progress_run_does_not_change_flaky_count(self) -> None:
+        """Pass, fail is not flaky; an in-progress run that passes would make
+        it pass, fail, pass (flaky) — it must not count until it completes."""
+        init_db()
+        client, _ = _signed_in_client("Org Overview Flaky Running")
+        application = _create_application(client, "Overview Flaky Running App")
+        app_id, asset = _seed_test_asset(application)
+        for status, run_status in (("passed", "completed"), ("failed", "completed"), ("passed", "running")):
+            run = _seed_test_run(app_id, status=run_status)
+            with Session(engine) as session:
+                session.add(
+                    TestResult(
+                        test_run_id=run.id,
+                        test_asset_id=asset.id,
+                        scenario_id=asset.scenario_id,
+                        status=status,
+                    )
+                )
+                session.commit()
+
+        body = client.get(f"/applications/{application['id']}/overview").json()
+        home = next(a for a in client.get("/home").json() if a["id"] == application["id"])
+
+        assert body["latest_run"]["flaky_count"] == 0
+        assert home["last_test_run_flaky_count"] == 0
 
 
 class TestCancelTestRun:

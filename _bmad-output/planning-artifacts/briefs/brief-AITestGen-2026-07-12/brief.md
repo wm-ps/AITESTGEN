@@ -1,93 +1,121 @@
 ---
-title: "Product Brief: Application Intelligence Platform"
+title: "Product Brief: Vantage (AITestGen)"
 status: approved
 created: 2026-07-12
-updated: 2026-07-13
+updated: 2026-10-27
 ---
 
-# Product Brief: Application Intelligence Platform
+# Product Brief: Vantage (AITestGen)
 
 ## Executive Summary
 
-The Application Intelligence Platform is an AI-powered enterprise product that discovers, understands, and documents the business journeys inside a running web application — and generates Playwright-based automated tests as one output of that understanding, not the point of it. Where testing tools execute journeys someone has already told them about, this platform answers the question that comes before: what does this application actually do, right now, as built? It turns runtime signals — pages, actions, APIs, workflows, state transitions — into a business-language map of capabilities and journeys that an organization can trust, review, and act on.
+Vantage is a web app for QA and engineering teams. It turns a deployed web application into a working, maintained Playwright test suite, with very little hand-writing of tests.
 
-The problem it solves is a knowledge problem more than a testing problem. In complex, long-lived enterprise applications, shared logic and cross-team dependencies accumulate faster than documentation keeps up; a change to one workflow can quietly break another that nobody knew was connected. The result isn't flaky tests; it's production incidents — claims stuck in a queue, a workflow silently broken, an engineering leader who can't say with confidence what a release will affect. Existing test-automation tools, even the newer autonomous ones, don't close this gap because they still depend on someone already knowing a journey exists before they can test it.
+A team adds an application: its URL and, if it needs one, a test login. Vantage can then explore the application by itself in a real browser ("Discovery"). The default discovery engine, **Explorer**, learns the application the way a new QA engineer would: it writes a one-page App Summary for a person to confirm, asks questions when it is unsure, works through goals ("missions"), and writes and proves test scenarios. Only proven scenarios are handed on, and Vantage writes Playwright tests for them. Teams run those tests on demand or on a schedule. When a test fails, AI can repair it ("self-healing"), but the AI is never allowed to change what a test checks. Results show the pass rate, flaky tests and plain-language explanations of each failure. A branded HTML report and a "run finished" email go with every completed run.
 
-V1 targets exactly this gap and nothing more: given only a URL and credentials, it discovers an application's journeys, puts them in front of a human for review and approval, and turns approved journeys into running regression coverage wired into the customer's own CI/CD pipeline — within hours, not weeks. What it offers is a different shape of product — business understanding as the deliverable, tests as a byproduct — not a unique discovery algorithm (see **What Makes This Different**). Built as an internal enterprise initiative aimed at an external market, the platform's long-term ambition is to become the system of record for application intelligence — a destination earned through V1 proving itself in real pilots, not a claim made in advance of it.
+Discovery is optional. Teams can add tests in two other ways. They can describe a test in plain English and let an AI agent explore the live application and write it, or they can click through a flow once in a remote browser and save it as a test. The whole generated project can be downloaded and run outside Vantage.
+
+The longer-term ambition is still to be the place a team goes to understand what its application does and what a release puts at risk. That ambition has to be earned through real use; the product today is a test-coverage and test-maintenance product built on runtime discovery.
 
 ## The Problem
 
-At a large insurance company, a small change to a policy approval component quietly breaks the claims approval workflow — the two share underlying logic that isn't visible from either team's vantage point. QA tests the intended feature. The release passes. Days later, hundreds of claims are stuck in production, and the retro lands on a question asked at nearly every enterprise running complex, long-lived applications: **nobody knew this change touched that journey, because nobody had a map of which business journeys exist or how they connect.**
+Enterprise web applications build up years of shared logic and cross-team dependencies. The people who built a journey move on, and documentation goes stale within a release or two. A small change in one place can quietly break a workflow nobody knew was connected, and the cost shows up as a production incident, not as a failed test.
 
-This is not primarily a testing-coverage problem — it's a knowledge problem. Enterprise applications accumulate years of shared logic and cross-team dependencies. The engineers who built a given journey move on; documentation goes stale within a release or two; the only living record of what an application actually does is the application itself, and nobody has time to read it end-to-end before every release.
+QA teams carry most of this. They discover journeys by hand, through tribal knowledge and exploratory testing, then write and maintain tests for what they find. They are always one step behind an application that keeps changing. Even once tests exist, maintenance is a treadmill: a renamed button or a moved field breaks tests that were testing the right thing, and someone has to fix them by hand.
 
-Existing testing tools don't close this gap — they execute journeys someone has already told them about. Test-automation platforms are built to run and maintain tests once a journey is defined, but they depend on a human already knowing that journey exists. None of them answer the prior question: *what are all the business journeys this application actually supports, right now, as built?* That gap is what leaves teams exposed to exactly the kind of blind-side break described above — and it's why the cost shows up not as "flaky tests" but as production incidents, stuck workflows, and engineering leaders who cannot say with confidence what would break if a given release shipped.
+Most test-automation tools help once someone already knows a journey exists. They do not answer the question that comes first, "what does this application actually do, as built?", and they do not take the maintenance burden off the team without risking tests that quietly stop checking anything.
 
 ## The Solution
 
-An Engineering Leader or QA Director points the platform at a running application: a URL and a set of credentials. Nothing else to integrate, no repository access, no agents to install — that's the entire setup for V1. The target is a first map within hours, not days or weeks.
+A team member adds an application to Vantage: a name, an environment, the URL and, if the application needs it, a test username and password. Vantage checks that the URL is reachable and, before it explores anything, logs in once in a real browser to prove the credentials work. No source code access, repository access or installed agent is needed.
 
-From there, the platform explores the application the way a very thorough tester would — navigating pages, exercising actions, calling APIs, following state transitions — and turns what it observes into a structured map of business journeys and capabilities: not "43 pages crawled," but "Claims Approval," "Policy Issuance," "Agent Onboarding," each with the screens, actions, and API calls that make it up.
+**Discovery with Explorer (the default).** Adding an application with Autonomous discovery on starts Explorer. It signs in, reads each screen and names it by what it means, and notes health problems such as broken screens, server errors, slow pages and wording mistakes. It then writes an **App Summary** and waits for a person to check and confirm it. After that it plans missions (goals such as "file a claim") and works through up to three at a time. It also hunts for screens that only appear sometimes. When it is unsure, needs test data, or is about to do something risky, it asks a question; only the mission that asked waits, and every answer becomes knowledge it keeps for that application. Explorer never deletes data, moves money, makes a business decision or signs out on its own. It finally writes scenarios in seven kinds and **proves** each one: a proven scenario replays the same way every time and fails when its key step is removed. When the application behaves differently from what should happen, the scenario is kept as a "possible bug" for a person to judge rather than passed off as correct. Explorer has its own tab with a live view, what it learned, the screens it found, and its scenarios, plus a Questions panel. Explorer can be paused, stopped and resumed from that tab.
 
-That map is never presented as finished truth. A human — the QA Director, an architect, whoever owns the domain — reviews it: confirms journeys, renames what the AI labeled awkwardly, merges duplicates, marks what matters most to the business. This review step is not a nice-to-have bolted on for trust; it is the mechanism by which an AI-inferred map becomes an organization's accepted source of truth. Once confirmed, the platform generates integration test scenarios for each journey and compiles them into executable Playwright tests — so the day-one output isn't just a diagram; it's a running regression suite covering journeys nobody had to remember to write tests for.
+**Classic discovery.** The earlier discovery engine still runs for applications discovered before Explorer became the default, and for new applications if operations switch Explorer off. It explores the application like a thorough tester. It moves through pages breadth-first, opens tabs inside pages, re-logs in if the session expires and avoids clicking the same thing forever or taking risky, destructive actions. It stops when nothing new is left, or when it reaches the page limit (500 by default) or the time limit (30 minutes by default). Admins can change both limits. The result is a set of business journeys, each with a screenshot and its page-by-page steps. Discovery can be paused and resumed, and it survives a restart of its own service.
 
-Above the map and the tests sits a set of views built for how each audience actually works: a **Journey Explorer** for anyone who needs to see how a specific workflow behaves end to end, a **Capability Map** for the business-language view of what the application does, **coverage analytics** showing which journeys are and aren't backed by automated tests, a **risk/confidence scorecard** ranking journeys by runtime signals — complexity, usage, error rates, coverage gaps — and an **executive dashboard** that rolls all of it into the view an Engineering Leader brings to a release-readiness conversation.
+**From journeys to tests.** With Explorer, only proven scenarios are handed on; the user presses **Generate tests**, and a test Explorer already proved is reused as-is when it compiles. With classic discovery, finishing Discovery does not start generation by itself. The team reviews the journeys, renames or deletes any that are wrong, then asks Vantage for scenarios. Each scenario has test steps, test data and an expected result. The team edits or auto-fills the test data, then asks Vantage to write the Playwright tests. A progress screen shows each journey's status and lets the team stop or retry generation.
+
+**Other ways to add tests.** Without any Discovery, a team member can:
+- describe a test in plain English and let an AI agent explore the live application and write it, or
+- record a flow by clicking through it in a remote browser streamed into the page, then save it as a test.
+
+Every test, whatever its source, lands in one test case library with filters by source.
+
+**Running and maintaining tests.** Tests run all at once or as a named selection of journeys and test cases. Runs can be cancelled. A failing test is repaired automatically within limits. The repair may fix how a test finds the page, but it never touches what the test asserts. Each run shows passed, self-healed, flaky and failed tests, a plain-language explanation of every failure with a screenshot and trace, a branded HTML report and an email to the person who started it. Schedules run the tests daily, weekly, monthly or on a custom cron expression.
+
+**Running the workspace.** An org-wide Overview shows pass rate over time, the latest run outcomes and what is running right now. Admins manage team members and their roles (admin, member, viewer), adjust settings such as discovery limits and screenshot retention, manage saved credentials and see an Activity history of everything that happened.
 
 ## What Makes This Different
 
-**V1 does not win on a unique technical edge.** Autonomous, URL-only discovery that generates tests without source code access is already claimed by several players in this market — Virtuoso QA, QA.tech, and Autonoma AI among them. Any V1 pitch that leans on "we can discover your app from just a URL" as the differentiator is making a claim the market has already heard, and enterprise buyers evaluating this category will have heard it too.
+URL-only autonomous discovery is not unique; several vendors claim it, and Playwright now ships free agents that explore an app and write tests. Vantage does not sell on a proprietary discovery algorithm.
 
-What V1 actually offers instead is a different *shape* of product. Competitors that discover autonomously still frame themselves as test-automation tools — the discovery serves the tests. This platform inverts that: the business capability map and journey understanding are the product, and generated Playwright tests are one output of many. No competitor identified in market research combines business-capability language, journey-level understanding, coverage analytics, and risk scoring into a single intelligence layer the way this platform intends to. That framing, plus a human-in-the-loop review step that treats AI-discovered journeys as a draft rather than ground truth, is what V1 has to sell on — not a proprietary discovery algorithm.
-
-The real technical moat arrives later. V2's source-code correlation gives the platform something autonomous-discovery competitors don't have: the ability to trace a journey back to the code and structure that implements it. V3's predictive release-impact analysis — telling a team which journeys and tests a specific code change puts at risk — is, as far as this brief's research found, entirely unclaimed territory in the market. That is the capability the team wants in front of customers as the platform matures, and it is the strongest, most defensible part of the vision.
-
-The implication for V1 is worth stating plainly rather than glossing over: V1 has to earn early customers on execution quality, the strength of the business-journey framing, and buyer conviction in the roadmap — not on a moat that doesn't yet exist. Pilots and early design partners are likely to be sold on where this is going (the V3 promise) as much as what V1 delivers today, which makes an honest, credible roadmap story part of the V1 sales motion itself.
+What Vantage offers is the complete loop in one place, with guardrails a QA team can trust:
+- **Three ways in, one library.** Discovery, plain-English authoring and record-and-play all produce the same kind of test, using the same locators, the same self-healing and the same reporting.
+- **Self-healing that never cheats.** Healing repairs how a test finds things on the page. It refuses any fix that changes an assertion and never heals a failed assertion, so a healed test still checks what it checked before.
+- **Plain-language results.** Failures are explained in plain words. Known errors are explained by fixed rules, unknown ones by AI with a clear "may not be exact" label. Flaky tests are flagged from their recent history.
+- **Low-friction start.** A URL and a test login are enough. The credentials are proven to work before any exploration starts.
+- **An exit door.** The whole project downloads as a runnable Playwright project, so the team is never locked in.
 
 ## Who This Serves
 
-**Engineering Leaders** are the economic buyer. They own release risk without owning full visibility into what their applications actually do — especially in organizations where systems have accreted shared logic and cross-team dependencies over years, and where a change in one place can quietly break something in another. What they need is not more tests; it's the ability to walk into a release conversation and say, with evidence, what could break and what's covered. Success for them looks like fewer blind-side production incidents, less time spent firefighting after release, and a faster answer to "what does this application actually do" when a new engineer, auditor, or executive asks.
+**QA leads and QA teams** are the daily users. They add applications, curate journeys and scenarios, author and record tests, run suites, read failures and keep schedules running.
 
-**QA Directors** are the primary daily user and champion. Today they carry the burden of discovering journeys manually, through tribal knowledge and exploratory testing, then writing and maintaining tests for what they find — always one step behind an application that keeps changing underneath them. What they need is a trustworthy, living map of the application's journeys and a running test suite they didn't have to author from scratch, with the authority to review, correct, and approve what the platform discovers rather than take it on faith. Success for them looks like spending less time on manual discovery and test-writing, and more credible data to bring to a release-readiness decision.
+**Engineering leaders** use the Overview and the Applications list to see health across applications (Healthy, Needs attention, Critical), pass rate over time and what is running now.
 
-Secondary audiences — **CTOs** (portfolio-level visibility and reporting), **Product Owners** (a factual inventory of what the application does versus what was specified), **Architects** (structural and dependency understanding, more relevant once V2 adds source-code correlation), and **Test Teams** (the people who live with the generated suite day to day) — are real future users of the platform, but V1 is built and sold around the Engineering Leader and QA Director relationship first.
+**Workspace admins** manage the team, roles, settings, saved credentials and the Activity history.
+
+Accounts are invite-only and belong to one organization. There are three roles:
+- **Admin** can do everything, including team management, settings, saved credentials, the Activity page and renaming or deleting applications.
+- **Member** can add applications, run discovery, curate, generate, author, record, run and schedule tests, and download the project.
+- **Viewer** can see everything in the organization but cannot change anything, open reports or download the project.
 
 ## Success Criteria
 
-Business success for V1 is not a customer-count or revenue target — it's proving the core thesis (runtime discovery → journey mapping → generated tests) holds up well enough in real pilots to justify building V2. (What threshold counts as "proven enough" is not yet defined — see **Open Questions**.)
+Success is measured by real use, not by a customer-count or revenue target. No numeric coverage or time-saved target is set yet. Inventing one before there is real usage data would be a made-up claim, not a criterion.
 
-For the Engineering Leader and QA Director using it, two directional signals matter most: **coverage** (how many discovered business journeys end up backed by automated tests) and **time saved** (versus manual journey discovery and test authoring). No numeric target is set for either, deliberately — a percentage invented now would be a fabricated claim, not a real success criterion. The honest position: if the product performs as envisioned, meaningful time and cost savings for the client are the expected outcome, and real pilot data should set concrete thresholds once it exists — not before.
-
-In the meantime, the qualitative signals worth watching are: an Engineering Leader or QA Director who, having tried V1, keeps using it into a second and third release cycle without being asked to; discovered journeys that need light correction rather than heavy rework during human review (a proxy for discovery accuracy); and generated tests a QA team trusts enough to fold into their real regression process rather than treat as a novelty.
+The signals that matter:
+- **Coverage.** How many of an application's journeys end up backed by running tests.
+- **Time saved.** Compared with finding journeys and writing tests by hand.
+- **Trust.** Teams keep using Vantage into a second and third release cycle without being pushed to. Discovered journeys need light correction rather than heavy rework. Generated tests are trusted enough to go into the team's real regression process.
+- **Maintenance relief.** Failures are healed or clearly explained, and flaky tests are visible rather than ignored.
 
 ## Scope
 
-**In V1:**
-- Runtime discovery of a running web application from a URL and credentials alone — no source code or repository access *for discovery purposes*.
-- Automatic mapping of pages, actions, APIs, workflows, state transitions, and business journeys into a Capability Map and Journey Explorer.
-- Human-in-the-loop review, correction, and approval of discovered journeys and capabilities before they're treated as trustworthy.
-- Generation of integration test scenarios and executable Playwright tests from approved journeys.
-- Packaging and exporting generated tests to the customer's repository, with integration into their existing CI/CD system (GitHub Actions, GitLab CI, Jenkins, Azure DevOps) so tests run automatically as part of standard regression. This is repository *write* access for test delivery — a different thing from the *read* access explicitly excluded below.
-- Coverage analytics and a risk/confidence scorecard based on runtime signals only — journey complexity, usage, error rates, and test-coverage gaps. Not code-change risk.
-- An executive dashboard rolling up capability, coverage, and risk views — across multiple applications from day one, not limited to a single application.
-- Two deployment models: hosted SaaS and on-prem/VPN-based deployment for clients who need their application to stay inside their own network.
+**Built today:**
+- Invite-only sign-in, password reset, organization-scoped workspaces and three roles.
+- Adding an application with a URL check, an optional login that is proven in a real browser before Discovery, and optional Discovery.
+- Explorer as the default discovery engine: a live view, an App Summary the user confirms, questions and answers that become app knowledge, missions, a screens gallery, health findings, proven scenarios with proof videos, and hand-off of proven scenarios to test generation.
+- Classic autonomous Discovery of journeys (for earlier applications), with pause and resume, recovery after a restart, limits set by admins and safe handling of risky actions.
+- Journey curation (rename, delete), scenario review with editable test data, and Playwright test generation with per-journey progress, stop and retry.
+- Plain-English test authoring and record-and-play.
+- A test case library with source filters, a code view and test data editing.
+- Test runs (all or selective), cancel, automatic and manual self-healing, flaky flags, failure explanations with screenshots and traces, a branded HTML report and a run-completed email.
+- Scheduled test runs.
+- Download of the whole project as a runnable Playwright project.
+- An org-wide Overview dashboard, team management, settings and an Activity history.
 
-**Explicitly out of V1:**
-- Reading or analyzing source code for discovery purposes, and anything that depends on it — route/component/permission/feature-flag structure, dependency mapping, code-to-journey traceability. That's V2.
-- Change intelligence: predicting which journeys or tests a specific code change affects, or recommending a targeted test subset for a release. That's V3.
-- Any claim of technical discovery superiority over competitors, per **What Makes This Different**.
-- Non-web applications — mobile and native apps are not addressed by V1's discovery approach as currently defined.
-- Test frameworks other than Playwright.
-- Numeric coverage or time-saved targets — deliberately undefined until real pilot data exists, per **Success Criteria**.
+**Not built / deferred:**
+- Delivery into a customer's CI/CD pipeline or repository.
+- Bring-your-own or on-premise AI models, and an on-premise deployment option.
+- A business capability map, risk scorecard or change-impact analysis.
+- Reading source code to inform discovery.
+- Scheduling Discovery. Only test runs can be scheduled.
+- Single sign-on session reuse and MFA codes for the application under test, which work on the server but have no screen. API-key and OAuth sign-in for the application under test.
+- For classic discovery: a screen for the coverage report, and a way to answer its "I need data to continue" requests. (Explorer asks and takes answers.)
+- Explorer features that work behind the scenes but have no screen yet: adding your own mission, per-mission recordings, a shareable highlight video, the run report, downloading Explorer's proven tests, and re-writing scenarios without exploring again.
+- Tighter roles in Explorer: viewers can't change anything there, but any member can manage its other user types and knowledge, and viewers can download its results.
+- Re-generating a journey's scenarios from scratch.
+- Mobile and native applications, and test frameworks other than Playwright.
+- Dark mode, which was explicitly dropped.
 
 ## Open Questions
 
-- **Time-to-first-map validation.** Hours, not days or weeks, is the internal target (see **The Solution**) — not yet validated against real-world application complexity. Confirm before this appears in any external-facing claim.
-- **V2 greenlight threshold.** What counts as V1 having "proven the thesis enough" to justify building V2 — a number of design partners, retention through a full release cycle, something else? Not yet defined (see **Success Criteria**); worth pinning down before V1 pilots begin.
+- **Time to first map.** How long Discovery takes on a typical enterprise application has not been measured across real customers. Confirm before quoting it externally.
+- **Proof threshold.** What usage evidence counts as "the product has proven itself" is still not defined.
+- **Production safety.** Whether Vantage should technically stop someone pointing Discovery at a production environment. Today that is the customer's responsibility, softened by the safe handling of risky actions.
 
 ## Vision
 
-The platform grows along the same arc it was designed with: **coverage intelligence → application intelligence → change intelligence.** V1 proves that an application's business journeys can be discovered and turned into working regression coverage without anyone having to remember they exist. V2 adds source-code correlation, so every journey traces back to the routes, components, and dependencies that implement it — turning the map from a picture of behavior into a picture of structure and behavior together. V3 closes the loop: given a code change, the platform tells a team which business journeys are at risk and which tests to run before shipping — the release-readiness answer no one else in the market currently gives (see **What Makes This Different**).
+The arc is unchanged: **coverage intelligence → application intelligence → change intelligence.** Vantage today proves that an application's journeys can be found and turned into running, self-maintaining regression coverage. The next steps are to connect journeys to the code that implements them, and then to tell a team which journeys and tests a given change puts at risk before it ships.
 
-If that arc plays out, the platform becomes what an enterprise reaches for before it reaches for a wiki, a runbook, or a Slack thread to answer "what does this application do, and what happens if we change it." Not a testing tool that happens to know about the business, but the system of record for application intelligence — the place engineering leaders, QA directors, architects, and product owners go to understand what's built, what's changed, and what's at risk before every release.
-
-That is the destination, not a V1 promise. Getting there depends on V1 actually holding up in real pilots and V2's technical differentiation proving out — this vision is worth building toward, not worth overselling before either is true.
+That is the destination, not a promise about the product as it stands.

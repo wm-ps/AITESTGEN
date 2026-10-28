@@ -1,438 +1,601 @@
 ---
-title: "Application Intelligence Platform — V1 PRD"
+title: "Vantage (AITestGen) — Product Requirements"
 status: final
 created: 2026-07-13
-updated: 2026-07-21
+updated: 2026-10-27
 ---
 
-# PRD: Application Intelligence Platform (V1)
-*Working title — confirm.*
+# PRD: Vantage (AITestGen)
 
 ## 0. Document Purpose
 
-This PRD scopes **V1** of the Application Intelligence Platform for engineering, design, and QA stakeholders building and validating the first release. It builds on the approved [Product Brief](../../briefs/brief-AITestGen-2026-07-12/brief.md) — this PRD does not restate the market/competitive rationale in full; deeper competitive positioning, the V2/V3 vision arc, and rejected-alternative reasoning live in `addendum.md` alongside this document. Functional Requirements are grouped by feature and numbered globally (FR-1 … FR-N) for stable downstream reference. Inline `[ASSUMPTION]` tags mark inferences made during drafting that need explicit confirmation; §9 indexes any that remain open, plus `[NOTE FOR PM]` callouts flagging deliberate deviations from the approved brief. As of this draft, all inline assumptions raised during discovery have been resolved into explicit decisions — §9 currently holds disclosure notes, not open assumptions.
+This PRD describes Vantage as it is built today, 2026-10-27. It is written for the people who build, test, sell and support it. It builds on the [Product Brief](../../briefs/brief-AITestGen-2026-07-12/brief.md). Competitive positioning and the longer-term vision are in `addendum.md` next to this file.
 
-**This PRD deliberately deviates from the approved brief in four places** — all flagged inline with `[NOTE FOR PM]` and indexed in §9: cutting all AI confidence/risk scoring (§5), cutting the reviewer's "merge duplicates" action (§4.4 FR-13), cutting reviewer prioritization/importance-marking (§5), and cutting CI/CD delivery of any kind, automated or manual (§5, removed 2026-07-15 — originally a manual-process compromise, now removed in full). None are silent — each needs explicit sign-off from whoever owns the brief before this PRD is treated as final.
+Functional requirements are grouped by the eight epics and their stories. Each requirement is numbered `FR-<epic>.<story>.<n>` so it can be referenced from the story files. Every requirement describes behaviour that exists today unless it is marked **Partly built** or appears in §7, *Not built / deferred*.
 
 ## 1. Vision
 
-The Application Intelligence Platform turns a running web application into a business-language map of what it actually does — discovered automatically, confirmed by a human, and converted into running regression coverage. Where existing test-automation tools execute journeys someone already told them about, V1 answers the prior question: *what are all the business journeys this application supports, right now, as built?*
+Vantage turns a deployed web application into a working, maintained Playwright test suite with very little hand-writing of tests.
 
-Given only a URL and dedicated test credentials — no source code or repository access — V1 explores a non-production instance of a customer's application the way a thorough tester would, infers candidate business capabilities and journeys from what it observes, and immediately compiles every discovered Journey into generated integration test scenarios and executable Playwright tests — there is no approval gate between discovery and generation. `[RESOLVED 2026-07-15]` A human reviewer (typically a QA Director or Engineering Leader) curates the result afterward: renaming what's mislabeled and deleting what doesn't belong (§4.4) — V1's curation toolset doesn't support merging, splitting, or editing what makes up a Journey. Deleting a Journey excludes it, and anything already generated for it, from downstream compilation. A per-Journey detail view lets a reviewer inspect the screens, actions, and API calls behind any candidate. `[NOTE FOR PM — 2026-07-15]` The Capability Map, coverage analytics, multi-application executive dashboard, and CI/CD delivery views described in earlier planning are **deferred post-V1** as of this revision — see §6, §9, and `sprint-change-proposal-2026-07-15.md` for the full rationale.
+A team adds an application with its URL and, if needed, a test login. Vantage can explore the application by itself. Its default discovery engine, Explorer, learns the application, has a person confirm what it learned, asks when it is unsure, and writes and proves scenarios; Vantage then writes tests for the proven ones. Teams can also describe a test in plain English, or record one by clicking through it. They run tests on demand or on a schedule. AI repairs failing tests without ever changing what they check. Results come with plain-language explanations, flaky flags, a branded report and an email.
 
-V1 does not claim technical discovery superiority (see brief's *What Makes This Different*); it wins pilots on the strength of the business-journey framing, a fast time-to-coverage with retroactive human curation rather than an approval bottleneck, and a credible roadmap. `[NOTE FOR PM — 2026-07-15]` This is a deliberate repositioning from "human-in-the-loop trust gate" (the original brief's framing) to "immediate generation, human curates after" — see §9 and §12 Risk item 2 for the tradeoff this accepts. The deeper technical moat — source-code correlation and change-impact prediction — arrives in V2 and V3.
+The longer-term direction runs from coverage, to understanding the application, to predicting the impact of a change. It is described in `addendum.md` and is not part of the product today.
 
-## 2. Target User
+## 2. Users and Roles
 
-### 2.1 Jobs To Be Done
+### 2.1 Who uses it
 
-- **Engineering Leader** (economic buyer): "I need to walk into a release conversation and say, with evidence, what could break and what's covered — not just hope nothing does."
-- **QA Director** (primary daily user, champion): "I need a trustworthy, living map of this application's journeys and a running test suite I didn't have to author from scratch — and the authority to correct what the AI got wrong."
-- **Secondary (real users, not V1 design targets):** CTO (portfolio-level visibility), Product Owner (factual inventory vs. spec), Architect (structural/dependency understanding, grows in relevance at V2), Test Teams (live with the generated suite day to day).
+- **QA leads and QA teams.** The main daily users. They add applications, curate journeys and scenarios, author and record tests, run and schedule suites, and read failures.
+- **Engineering leaders.** They watch health across applications on the Overview and the Applications list.
+- **Workspace admins.** They manage the team, roles, settings, saved credentials and the Activity history.
 
-V1 is built and sold around the **Engineering Leader + QA Director** relationship first; the other three are real users but not the primary design target for this release.
+Accounts are invite-only and belong to exactly one organization. Nobody can sign themselves up.
 
-### 2.2 Non-Users (V1)
+### 2.2 Roles and permissions
 
-- Teams building **mobile or native** applications — V1's discovery approach is web-only.
-- Teams that cannot provide a **non-production environment** and **dedicated test credentials** — this is a hard onboarding precondition, not a nice-to-have.
-- Teams that cannot provide **either** a standard username/password login **or** a reusable authenticated session state for SSO/MFA-protected apps (FR-3) — V1 does not implement SAML/OAuth/OIDC handshakes or MFA-code retrieval itself.
+There are three roles. The server enforces each permission, and the screens hide controls a role cannot use. **Explorer is the exception:** it refuses viewers' changes like everywhere else, but it does not limit admin-only actions to admins or refuse its downloads to viewers, and its buttons are not hidden from viewers.
 
-### 2.3 Key User Journeys
+| Capability | Admin | Member | Viewer |
+|---|---|---|---|
+| See every application, journey, scenario, test case, run and result in the organization | yes | yes | yes |
+| Add an application; start, pause or resume Discovery | yes | yes | no |
+| Use Explorer: start, pause, stop or resume a run, confirm the App Summary, answer questions, judge possible bugs | yes | yes | no (buttons shown, but refused) |
+| Explorer: add or forget knowledge and documents, add other user types with their passwords | yes | **yes (gap: should be admin only)** | no |
+| Download Explorer's tests, run report, mission recordings and highlight video | yes | yes | **yes (gap: refused to viewers elsewhere)** |
+| Rename or delete an application | yes | no | no |
+| Rename or delete journeys and scenarios, edit test data, generate scenarios and test cases, stop generation | yes | yes | no |
+| Author a test case in plain English; Record and play | yes | yes | no |
+| Run tests (all or selective), cancel a run, retry a failure with self-healing | yes | yes | no |
+| Create, edit, turn on or off, delete and "run now" schedules | yes | yes | no |
+| Open a run's HTML report | yes | yes | no |
+| Download the project | yes | yes | no |
+| Team members: invite, change a role, remove someone (revoking a pending invite works behind the scenes but has no screen) | yes | no | no |
+| Activity history | yes | no | no |
+| Settings, including saved credentials and each application's Sign-in switch | yes | no (sees the link, gets "Access denied") | no (link hidden) |
 
-- **UJ-1. Maria reviews her application's first discovered map.** `[UPDATED 2026-07-15]` Approve/Reject no longer exist as steps in this journey — see §4.4 and `sprint-change-proposal-2026-07-15.md`.
-  - **Persona + context:** Maria, a QA Director at a mid-size insurer, has just had V1 finish its first discovery run against the claims-processing staging environment. Scenario and Playwright generation has already started for every discovered Journey — she isn't gating that, she's curating it.
-  - **Entry state:** Authenticated in the platform, viewing the Discover Journeys screen for the first time for this application.
-  - **Path:** She sees a list of candidate Journeys — "Claims Approval," "Policy Issuance," a few oddly-split duplicates. She renames one the AI labeled generically, and deletes two low-value duplicates (excluding them, and whatever was already generated for them, from downstream compilation). She leaves the rest as-is — there's nothing to individually approve; at this application's scale, requiring a decision on every one of dozens or hundreds of candidates isn't realistic.
-  - **Climax:** She moves on to Review Scenarios, where generated test scenarios for every Journey she didn't delete are already waiting.
-  - **Resolution:** `[UPDATED 2026-07-15]` She continues to Generate Suite, where the curated set of Journeys' generated tests are compiled into a named suite she can show her Engineering Leader — there is no Capability Map to open (removed, no supporting screen in current UX).
-  - *(Edge case removed 2026-07-15: "discovery hits its time budget mid-application" no longer applies — FR-5 is removed, and FR-7's only stop condition is now exhaustive traversal.)*
-
-*(UJ-2 "Devon checks release readiness before a Friday deploy" removed in full 2026-07-15 — it depended entirely on the multi-application executive dashboard, which has no supporting screen in the current UX and is removed from scope. See `sprint-change-proposal-2026-07-15.md` for the original history.)*
+Rules:
+- A viewer cannot change anything, Explorer included. Known gaps: viewers can download Explorer's results, and members can manage Explorer's user types and knowledge (see the table).
+- Admins cannot remove themselves or change their own role. The last admin cannot be demoted.
+- A role change takes effect on the user's next action.
 
 ## 3. Glossary
-*"Capability" and "Journey" are used as shorthand for "Business Capability" and "Business Journey" throughout the rest of this document.*
 
-- **Application** — A single running web application onboarded for discovery. A customer may onboard multiple Applications from V1 launch.
-- **Discovery Run** — One execution of the Runtime Discovery engine against an Application. `[UPDATED 2026-07-15]` Always covers the full Application, with no configurable scope or time-budget cap (both removed) — bounded only by exhaustive traversal.
-- **Business Capability** — A named, business-language grouping of related functionality the AI infers from discovery signals (e.g., "Claims Processing").
-- **Business Journey** — A named, business-language sequence of pages/actions/API calls representing an end-to-end user workflow (e.g., "Claims Approval"), nested under a Capability.
-- **Trusted Knowledge Model** — `[REDEFINED 2026-07-15]` The set of Capabilities and Journeys that have been discovered and not deleted by a human reviewer; these feed Scenario Generation and Analytics automatically upon discovery. No longer "human-approved" — see §4.4 and `sprint-change-proposal-2026-07-15.md`.
-- **Scenario** — A generated integration test scenario (happy-path or negative/edge-case) derived from a discovered Journey.
-- **Test Asset** — An executable Playwright test generated from a Scenario.
-- **Dedicated Test Account** — Customer-provisioned credentials used solely for discovery, distinct from a real end-user identity.
-- **Non-Production Environment** — A staging/UAT/test instance of the Application, as distinct from the live production system. V1 must never run discovery against a production-facing environment.
-
-## 4. Features
-
-### 4.1 Application Onboarding & Connection
-
-**Description:** The entry point to the platform — a customer connects an Application by supplying its URL, environment designation, access credentials, and discovery configuration. This is the entirety of V1 setup: no repository access, no agents to install.
-
-**Functional Requirements:**
-
-#### FR-1: Application onboarding
-User can onboard an Application by providing its URL, environment designation, and access credentials.
-
-**Consequences (testable):**
-- An Application record is created and available for Discovery Run configuration once these three fields are supplied.
-
-#### FR-2: Dedicated credentials only
-Access credentials must correspond to a Dedicated Test Account provisioned by the customer, not a real end-user identity.
-
-#### FR-3: Authentication via storage-state reuse
-Platform establishes a session prior to discovery either by (a) performing a standard/manual username-password login flow itself, or (b) reusing a pre-authenticated session (storage state: cookies, localStorage, sessionStorage) supplied by the customer for SSO/MFA-protected Applications. In case (b), the customer authenticates once through their own SSO/MFA flow — ideally using a Dedicated Test Account with MFA exempted/disabled at the identity-provider level — and hands the platform the resulting session state to reuse across Discovery Runs.
-
-**Consequences (testable):**
-- Platform never implements a SAML/OAuth/OIDC handshake or MFA-code retrieval itself in V1.
-- A Discovery Run that finds its session has expired (redirected to login) fails gracefully and surfaces a re-authentication prompt rather than silently producing an empty/partial map.
-
-*(FR-4 "Configurable discovery scope" and FR-5 "Discovery time budget" removed in full 2026-07-15 — no supporting fields exist anywhere in the current Connect App form, and product confirmed this isn't a UI gap but a removed concept entirely: Discovery Runs always cover the full Application, with no configurable time-budget safety cap. See §9 for the accepted-risk tradeoff this creates.)*
-
-**Notes:** Onboarding does not technically verify that the target is a Non-Production Environment — see §11 Constraints and Guardrails.
-
-#### FR-31: Application reachability validation `[ADDED 2026-07-21]`
-Platform validates that the submitted Base URL is reachable before creating an Application record or starting discovery. An unreachable URL fails fast with a clear message rather than proceeding.
-
-**Consequences (testable):**
-- A Base URL that returns a network/DNS error, or a 4xx/5xx response, blocks Application creation and DiscoveryWorkflow start; the user sees a specific, factual validation message.
-- A reachable Base URL (2xx/3xx) proceeds exactly as onboarding did before this change.
-
-**Notes:** Reuses the same reachability tolerance FR-6(f) already established for a live discovery-time destination (2xx/3xx = reachable) — no new concept, applied one step earlier in the pipeline. See `sprint-change-proposal-2026-07-21.md`.
-
-#### FR-32: Dynamic browser tab branding `[ADDED 2026-07-21]`
-Platform auto-fetches the target Application's favicon during onboarding (best-effort, non-blocking) and reflects the Application's name and favicon in the browser tab throughout the pipeline screens.
-
-**Consequences (testable):**
-- On successful reachability validation (FR-31), the platform attempts to fetch the target's favicon; a failed or missing fetch does not block onboarding and simply leaves `Application.favicon_url` null.
-- Every pipeline-step screen (Connect App, Discover Journeys, Review Scenarios, Generate Suite) shows the current Application's name and favicon (or the platform default, if none was fetched) in the browser tab; Home and Sign In show the platform default, consistent with their existing breadcrumb-suppression treatment (UX-DR16).
-
-**Notes:** No manual upload field — auto-fetch only, per explicit product decision. See `sprint-change-proposal-2026-07-21.md`.
-
-### 4.2 Runtime Discovery
-
-**Description:** The exploration engine — navigates the Application the way a thorough tester would, capturing everything it encounters as raw signal for the intelligence layer.
-
-**Functional Requirements:**
-
-#### FR-6: Autonomous exploration
-Platform autonomously navigates pages, exercises UI actions and forms, and invokes APIs across the entire Application, capturing each page, action, form, and API call directly as a typed record (Page/Action/Form/ApiEndpoint — FR-30) — not a generic, undifferentiated log. `[UPDATED 2026-07-15]` No configurable scope restriction exists (FR-4 removed) — always the full Application. `[UPDATED 2026-07-18]` Crawling applies three deliberate optimization rules: (a) **page-fingerprint deduplication** — a logical page reached via multiple navigation paths is processed once; (b) **navigation-first prioritization** — unexplored navigation paths are exercised before repeating interactions on an already-visited page; (c) **representative-action sampling** — a repeated identical action pattern (e.g., an "Edit" button repeated per row of a grid) is exercised once, not once per instance. See `sprint-change-proposal-2026-07-18.md`. `[UPDATED 2026-07-19]` Four further crawl-engine refinements, all within FR-6's existing scope (no new FR): (d) a page reached only via a non-link action (e.g. an "Add to Cart" button) is now followed onward for further exploration — previously this dead-ended at the click itself, so any flow reachable only that way was invisible past the first click; (e) **representative-form sampling** — a form with an identical shape and starting field values (hidden fields included) reachable identically from more than one page is captured once, mirroring representative-action sampling for forms; (f) a destination that fails to load (network/DNS error) or responds with a 4xx/5xx status is skipped rather than persisted as a Page or explored further — it is not a real business page to build a Journey/Scenario against; (g) representative-action sampling is bounded to a small number of distinct action labels per page (page content prioritized over shared nav/header/footer chrome), so a site-wide button no longer crowds out every page-specific call-to-action.
-
-#### FR-7: Discovery stop conditions
-`[UPDATED 2026-07-15]` A Discovery Run terminates when no new pages, actions, or state transitions are found (exhaustive traversal). There is no time-budget stop condition (FR-5 removed) — a Discovery Run has no safety cap against unbounded exploration (e.g., infinite pagination or calendar "next" links); see §12 Risk Register for this accepted tradeoff. `[CLARIFIED 2026-07-18]` "Exhaustive" is evaluated at the level of distinct pages and distinct action *patterns* — FR-6's representative-action sampling means a repeated identical action is intentionally exercised once, not individually per DOM instance; this is a deliberate sampling decision, not incomplete coverage. `[CLARIFIED 2026-07-19]` This also excludes destinations that never resolve to a real page (a broken link or a 4xx/5xx response, FR-6(f)) — those are not "unexplored" in any actionable sense — and is bounded by FR-6(g)'s per-page action-label cap, consistent with AD-15.
-
-#### FR-30: Application Model Builder `[ADDED 2026-07-18]` `[REVISED 2026-07-18]`
-Platform normalizes the typed records captured during discovery (FR-6) — Pages, Forms, Actions, APIs, Page Transitions — into a structured, **reusable** Application Model: duplicate captures of the same logical page/form/API (whether from the same run or a later re-discovery run) are merged into one canonical record per Application, and repeated interactions **and form fields alike** are synthesized into Components with automation metadata (a preferred locator, alternative/fallback locators, and target page where applicable) — every automatable element (a button, a link, or a form field) gets the same locator treatment, not just clickable ones. There is no separate generic capture record — discovery writes these typed records directly; the Application Model Builder's job is merging and synthesis, not transformation from a flat format.
-
-**Consequences (testable):**
-- A page visited in two different Discovery Runs against the same Application (e.g., on re-discovery) resolves to the *same* canonical Page record, not a duplicate.
-- Both AI journey/capability inference (FR-8) and Playwright generation (FR-17) consume canonical Application Model records, never a superseded/duplicate one.
-
-**Notes:** This does not change what a reviewer sees or does (§4.4 is unaffected) — it is an internal data-model deepening. See `sprint-change-proposal-2026-07-18.md`.
-
-#### FR-33: Business-oriented import progress `[ADDED 2026-07-21]`
-Platform surfaces Discovery Run progress via four business-language stages (Initialization, Authentication, Discovery, Analysis) with fixed percentages. No crawl-specific or otherwise technical terminology is exposed in this view.
-
-**Consequences (testable):**
-- The Discover Journeys pipeline step's in-progress view shows exactly one of four labels — Initialization, Authentication, Discovery, Analysis — never a raw route/page/API string, and never words like "crawling" or "crawl queue." `[UPDATED 2026-07-21, live UX correction]` The paired percentage reflects the stage that just *finished*, not the in-progress stage's own target — Initialization 0%, Authentication 10%, Discovery 25%, Analysis 75% while each is in progress; 100% is never rendered, since Journeys appearing (the view's exit condition) already means the pipeline is done.
-- FR-6's underlying typed-row capture (the former live-feed content) is unaffected as a data-capture behavior — it continues in real time; only its live, user-facing display is removed. `[NOTE]` This is a deliberate walk-back of a previously-built AC (Story 2.2's live-feed), not a new capability layered on top — see `sprint-change-proposal-2026-07-21.md`.
-- The Application Model Builder step (FR-30) is presented as part of the "Discovery" stage, not "Analysis" — "Analysis" maps to AI inference (FR-8) only.
-
-**Notes:** Progress reaches the browser via polling (frontend polls the existing `DiscoveryRun` read endpoint) — no new streaming infrastructure. See `sprint-change-proposal-2026-07-21.md`.
-
-#### FR-35: Page Readiness & configurable page load timeout `[ADDED 2026-07-29]`
-Before the Runtime Observer captures a snapshot, the platform waits for a page to reach a "ready" state — DOM-mutation quiescence plus network settling (application-relevant requests only; polling/analytics patterns recognized and ignored) — up to a configurable maximum wait ceiling (Page Load Timeout). Reaching the ceiling without settling logs a DISC-004 event (FR-45) and proceeds with a best-effort snapshot rather than blocking the run.
-
-**Consequences (testable):**
-- A configurable Page Load Timeout exists at both a project (Application) default and a per-run override; V1 exposes it as a backend/config-level setting only — no UI control is built this pass (a future UI can read/write the same setting without further backend change).
-- Every infinite-scroll/pagination iteration (FR-36) also gates on this same readiness check.
-
-#### FR-36: Infinite scroll & pagination sampling `[ADDED 2026-07-29]`
-After a scroll or "Load More" action, the platform samples a bounded number of iterations (2-3), validates via the State Identity Engine (FR-37) that newly revealed items fingerprint as SAME as items already seen in that region, then stops and marks the region "sampled" — handing control back to the Planner — rather than scrolling/paginating indefinitely. A hard per-page scroll/pagination budget applies regardless of validation outcome.
-
-**Consequences (testable):**
-- A genuinely repeating list (e.g. a claims grid) is sampled, not exhaustively paginated.
-- A list whose structure changes every few items still terminates at the hard budget.
-
-#### FR-37: State Identity Engine — SAME / VARIANT / NEW classification `[ADDED 2026-07-29]`
-`[SUPERSEDES the page-fingerprint-dedup clause of FR-6 and extends FR-30's Application Model Builder]` Every observed state (page, dialog, or scrolled-in item) is classified against previously-seen states via a weighted comparison (route template, heading, action-set overlap, form-set overlap, nav breadcrumb match, structural similarity) against two configurable thresholds, yielding SAME (discarded — different data, identical behavior), VARIANT (a new Page row written, sibling of the route's existing state, via a new `variant_of_page_id` self-reference — distinct from `merged_into_id`'s "duplicate" meaning), or NEW (a full new Page/state/actions/transitions written). Ambiguous cases (score between the two thresholds) may consult the AI provider for a supporting, non-authoritative opinion (mirrors FR-8's existing AI-assists-deterministic-reasoning pattern).
-
-**Consequences (testable):**
-- `/claims/1001` and `/claims/1002`, both status=Pending, classify SAME and are not separately explored.
-- `/claims/1001` (Draft, Actions: Edit/Submit) and `/claims/1002` (Pending, Actions: Approve/Reject) classify VARIANT despite the shared route template, and both remain available to Inference (FR-8) as separate testable journeys.
-- Comparison thresholds are stored as configuration, not hardcoded, and are tunable per Application.
-
-**Notes:** Comparison happens against an in-process runtime cache scoped to one `DiscoveryActivity` execution (rebuilt from canonical `Page` rows on Activity start) — not a new persistent cache tier. See Architecture AD-16.
-
-#### FR-38: Action Priority Model `[ADDED 2026-07-29]`
-`[SUPERSEDES the "navigation-first" clause of FR-6]` Every candidate action is tagged Tier 1 (in-page: buttons, forms, expand/collapse, filters, in-page tab switches, scroll/"Load More" triggers) or Tier 2 (navigation-intent: primary nav links, sidebar/menu items, breadcrumb links). For a given state, all untried Tier 1 actions — including finishing any infinite-scroll sampling (FR-36) — are processed before any Tier 2 action, so a page is never abandoned before its own actions are explored. Tiering is decided deterministically (ARIA/landmark role, route-changing href vs. same-page anchor, layout position) with AI as a fallback for genuinely ambiguous cases only (mirrors FR-8's pattern).
-
-**Consequences (testable):**
-- A page with 3 untried buttons and 1 untried nav link processes all 3 buttons before the nav link, even though the previous "navigation-first" rule would have preferred an unvisited navigation target.
-
-**Notes:** This is a genuine priority-order reversal from the current AD-15 rule for the untried-in-page-action-vs-unvisited-nav case specifically — see Architecture note.
-
-#### FR-39: Safety Engine — action classification & post-action verification `[ADDED 2026-07-29]`
-`[REVERSES PRD §12 Risk item 6's "no guardrail, accepted risk" decision — flagged for explicit sign-off, see §12 below]` Every candidate action is classified Safe (View/Expand/Navigate/Filter/Search/Pagination — executed automatically), Clearly Destructive (Delete/Terminate/Payment/Transfer — never executed), or Ambiguous/state-changing (Submit/Approve/Reject/Save/Confirm — deferred to the Blocked Frontier, FR-42, not guessed). Classification is verb/pattern-based with an AI-assisted opinion for ambiguous language, but the Safety Engine owns the final verdict; the conservative default under genuine uncertainty is DEFER. After a Safe action executes, a lightweight before/after indicator comparison (record count, status field) flags an unexpected change as a safety-classification anomaly in the end-of-run report — visibility only, does not block the crawl.
-
-**Consequences (testable):**
-- A "Delete" button is never clicked by the crawler in V1, regardless of page context.
-- A "Submit"/"Approve" action is deferred (Blocked Frontier, "approval" reason) rather than executed speculatively.
-
-#### FR-40: Data Resolver — structured input resolution `[ADDED 2026-07-29]`
-`[Formalizes and extends the existing generic-value-filling behavior built in Story 2.2]` When an action needs input, resolution is attempted in strict order: (1) a usable value already visible on the current page, (2) a value observed earlier in this Discovery Run, (3) safe synthetic data for generic fields or a placeholder file for a file-upload widget, (4) business-specific data that can't be synthesized — the action is deferred to the Blocked Frontier ("data" reason, FR-42) rather than guessed. Every resolved value (including synthetic ones) is logged against the run for later traceability (FR-45's error/synthetic-data report).
-
-**Consequences (testable):**
-- A visible claim number on the current page is reused rather than re-synthesized.
-- A field requiring a real Policy Number blocks rather than receiving a fabricated value.
-
-#### FR-41: Widget coverage — tabs, dialogs, multi-window, file upload `[ADDED 2026-07-29]`
-The platform detects and handles, via ARIA/accessibility-tree signals first (structural heuristics as a lower-confidence fallback for non-standard markup): tab groups (each tab a Tier-1 candidate, FR-38), dialogs/modals/popups (contents observed as a nested state per FR-37, with reliable detection of the dialog's own close action), new browser tabs/windows (followed if same-origin/in-scope, deferred with focus returned to the original tab otherwise), and file upload inputs (routed to the Data Resolver, FR-40, using safe generated placeholder files).
-
-**Consequences (testable):**
-- Switching a tab reveals content that gets fingerprinted as its own state, not silently ignored.
-- A modal's Escape/Cancel/"X" is exercised to safely return to the underlying page rather than stranding the crawl inside the dialog.
-
-#### FR-42: Blocked Frontier `[ADDED 2026-07-29]`
-An action the Safety Engine (FR-39) defers, or a field the Data Resolver (FR-40) can't resolve, does not stop the run — it's parked, and the Planner continues elsewhere. Requirements with identical content (e.g. four pages all needing "Active Policy Number") are aggregated into one consolidated ask, presented to the user only after autonomous exploration is otherwise exhausted and the area is meaningful enough — the user may always choose to finish without supplying it.
-
-**Consequences (testable):**
-- Four pages needing the same missing field surface as one request, not four.
-- A blocked action never halts exploration of the rest of the Application.
-
-#### FR-43: Blocked mid-exploration — persistence & resume `[ADDED 2026-07-29]`
-When a block occurs after several steps have already succeeded, the platform persists the full step-by-step path from the start of the run to the block point — not just the blocking step — as an ordered `ExplorationStep` sequence referencing already-confirmed `Page` rows (not duplicating their content), including the exact input values used at each step (synthetic values included, verbatim, not "regenerate here"). On resume: the supplied value is validated first (staleness check), a new browser session is started (no assumption the old one survived), every already-succeeded step is replayed exactly as stored (or, where a step already caused an irreversible server-side effect, skipped in favor of navigating directly to its resulting state, to avoid a non-idempotent replay creating a duplicate record), the new value is supplied at the blocked step, and exploration continues downstream.
-
-**Consequences (testable):**
-- A 7-step path that blocks at step 7 stores all 7 steps; resuming replays 1–6 before attempting 7 again.
-- A step that already created a real record is not blindly re-executed on replay.
-
-#### FR-44: Save-as-Project — cross-session persistence `[ADDED 2026-07-29]`
-`["Project" maps onto the existing Application entity — no new entity]` A user may pause an entire discovery effort and resume it later, from any session, without re-exploring anything already confirmed. `DiscoveryRun.status` gains a `paused` value. On resume: the confirmed Application Model, the list of open Blocked items (FR-42/43), and the remaining exploration queue are loaded; the platform re-authenticates fresh (no live session assumed); already-confirmed states are never re-explored.
-
-**Consequences (testable):**
-- Pausing and resuming a project days later does not re-crawl already-confirmed pages.
-- The dashboard shows Confirmed/Blocked/Remaining counts for a paused project. `[GAP — no supporting screen in current UX; see Story 1.2 note]`
-
-#### FR-45: Crash recovery & error handling `[ADDED 2026-07-29]`
-Engine-side crashes (process/container restart mid-run) recover automatically via the same continuous checkpointing Save-as-Project (FR-44) already requires — no separate mechanism. Target-application-side failures (5xx, broken render, repeated timeouts past the Page Load Timeout, FR-35) are retried a small bounded number of times, then marked `Errored` (a new, explicit state category, not silently misclassified as NEW) and the crawl continues elsewhere. Every error surfaces both a fixed, documented machine-readable code (a starter taxonomy: DISC-001 engine crash, DISC-002 auth expired, DISC-003 app unresponsive, DISC-004 page load timeout, DISC-005 navigation lost, DISC-006 blocked-data, informational) and a human-readable message with a suggested next action.
-
-**Consequences (testable):**
-- A worker restart mid-crawl resumes from the last checkpoint rather than restarting the run.
-- A page that 500s twice is marked Errored and excluded from the exploration queue, not retried forever.
-
-#### FR-46: Loop prevention safeguards `[ADDED 2026-07-29]`
-`[Consolidates existing state-dedup/route-normalization behavior with new backstops]` Before any action executes: state dedup (FR-37), action-history check (already executed this exact action from this state?), transition-cycle detection (would this recreate A→B→A→B?), route normalization (parameterized-duplicate sampling), infinite-scroll/pagination budget (FR-36), and a final depth/action/scroll budget ceiling — in that order — are all deliberate, configured safeguards, not the primary anti-loop mechanism (FR-36/FR-37 are).
-
-#### FR-47: Test data carry-forward into Scenario Generation `[ADDED 2026-07-29]`
-`[Extends FR-16, Epic 4]` Any test data value used to unblock an exploration path during discovery (FR-43) — a user-supplied unblocking value or a Data-Resolver-synthesized value (FR-40), including placeholder upload files — is retained and surfaced as the default test-data value for that same input at Scenario Generation time, when a generated Scenario recreates a path through that step, rather than regenerated or left blank.
-
-**Consequences (testable):**
-- A Scenario recreating a Policy Search step defaults to the same Policy Number value used to unblock discovery, not a blank field.
-
-### 4.3 Journey & Capability Intelligence
-
-**Description:** The AI layer that turns raw discovery signal into business understanding — the core of what makes this a "map," not a crawl log.
-
-**Functional Requirements:**
-
-#### FR-8: AI journey/capability inference
-Platform uses AI to transform captured discovery signals into candidate Business Capabilities and Journeys expressed in business language, not raw technical labels (e.g., page/route names). `[UPDATED 2026-07-18]` Inference reads canonical Application Model records (FR-30) — never a superseded/duplicate one — rather than raw per-page capture directly.
-
-**Consequences (testable):**
-- Every candidate Journey presented in the Review queue (FR-9) has a business-language name, not a raw route/page identifier.
-- Every candidate Journey is associated with the specific pages, actions, and API calls (captured per FR-6) that produced it, so a reviewer can trace the inference back to raw evidence.
-
-**Notes:** No AI-generated confidence or risk score is attached to candidates in V1 — see §5 Non-Goals and §9 for the reasoning behind this cut.
-
-### 4.4 Human Curation `[RENAMED 2026-07-15, was "Human Review & Approval"]`
-
-**Description:** `[REWRITTEN 2026-07-15]` AI-inferred Journeys are compiled into generated test coverage immediately, with no approval gate — at the scale a single Application's discovery run can produce (dozens to hundreds of candidates), requiring a human decision on every one before anything downstream can happen isn't realistic. Instead, a human reviewer curates the result: renaming what's mislabeled and deleting what doesn't belong. Deletion is retroactive — it excludes a Journey, and anything already generated for it, from downstream compilation, rather than gating that generation from happening in the first place. See §9 and `sprint-change-proposal-2026-07-15.md` for the full rationale and the tradeoff this accepts (§12 Risk item 2).
-
-**Functional Requirements:**
-
-#### FR-9: Discover Journeys screen
-Discovered Journeys and Capabilities are presented to a human reviewer for curation (rename, delete). Presentation is not a gate — a Journey is already part of the Trusted Knowledge Model and feeding Scenario Generation (FR-14) before a reviewer ever looks at it.
-
-#### FR-10: Approve `[CUT 2026-07-15]`
-Previously: reviewer can approve a discovered Journey/Capability, adding it to the Trusted Knowledge Model. Cut because there is no gate to approve past — every discovered Journey is in the Trusted Knowledge Model immediately (FR-14). Retained here, per this document's convention, as a record of intent rather than silently deleted.
-
-#### FR-11: Reject `[CUT 2026-07-15]`
-Previously: reviewer can reject a discovered Journey/Capability, excluding it from the Trusted Knowledge Model. Cut as redundant with Delete (FR-13), which is now the sole exclusion mechanism. Retained here as a record of intent.
-
-#### FR-12: Rename
-Reviewer can rename a discovered Journey/Capability.
-
-#### FR-13: Delete
-Reviewer can delete a discovered Journey/Capability. `[UPDATED 2026-07-15]` This is now the only way a Journey/Capability is excluded from the Trusted Knowledge Model — deleting one also excludes any Scenarios/Test Assets already generated for it from Generate Suite compilation and Analytics (§4.5, §4.7), though it does not retroactively cancel a `GenerationWorkflow` already running/completed. `[UPDATED 2026-07-27]` There is no way to redo generation for a kept Journey — FR-18 (regeneration) is cut in full; deletion only excludes, it never triggers anything new.
-
-**Out of Scope:** `[NON-GOAL for MVP]` Merging two discovered Journeys, splitting one into two, or editing a discovered Journey are not supported in V1. The brief's Solution narrative describes a reviewer who "merges duplicates" — that specific capability is cut for V1 to keep the review workflow free of composition-combining actions; a reviewer facing duplicate Journeys must instead delete the redundant one(s) rather than merge or edit them.
-
-#### FR-28: Edit a discovered Journey `[CUT 2026-07-15]`
-Briefly added 2026-07-15 per the UX ripple proposal (reviewer edits a Journey via a per-row action menu), then cut the same day once it became clear the exact edit surface (name/description vs. constituent steps) was never confirmed in the UX review and product decided not to build it. Retained here, per this document's convention, as a record of intent rather than silently deleted.
-
-#### FR-14: Discovery gates downstream use `[REWRITTEN 2026-07-15, was "Approval gates downstream use"]`
-Every discovered, non-deleted Journey/Capability automatically enters the Trusted Knowledge Model and feeds Scenario Generation and Analytics (§4.5, §4.7) immediately upon discovery — deletion (FR-13) is the only exclusion mechanism. There is no separate approval step.
-
-#### FR-15: New-journey flagging on re-discovery
-Re-running discovery on a previously discovered Application flags only newly-discovered Journeys/Capabilities (not seen in a prior run) for human review; already-known Journeys are not automatically re-surfaced. This is a simple **existence check** (does this Journey's identity already exist in the Trusted Knowledge Model?) — a materially smaller capability than detecting *what changed* inside an existing Journey.
-
-**Out of Scope:** V1 cannot detect that a previously-discovered Journey's underlying runtime behavior has changed — only that a Journey it has never seen before now exists. See §5 Non-Goals.
-
-### 4.5 Scenario & Test Generation
-
-**Description:** Converts a discovered Journey into executable regression coverage immediately upon discovery — the day-one deliverable that makes the map actionable, not just informative.
-
-**Functional Requirements:**
-
-#### FR-16: Scenario generation
-Platform generates integration test Scenarios for each discovered Journey, covering both happy-path and negative/edge-case scenarios. `[UPDATED 2026-07-15]` Generation starts immediately upon discovery (FR-14), not gated on human approval.
-
-#### FR-17: Playwright generation
-Platform converts generated Scenarios into executable Playwright Test Assets.
-
-#### FR-18: Full regeneration on request `[CUT 2026-07-27]`
-Previously: when a customer triggers regeneration of Test Assets for a Journey, platform regenerates Scenarios and Test Assets from scratch. Cut in full — an explicit product decision that V1 ships with no customer-facing way to refresh a Journey's generated coverage once produced; a reviewer's only lever over generated content remains deletion (FR-13), which excludes rather than regenerates. Retained here, per this document's convention, as a record of intent rather than silently deleted.
-
-#### FR-29: Edit or remove an individual Scenario `[ADDED 2026-07-15]`
-Reviewer can rename, edit, or remove a generated Scenario before Playwright generation, via a per-row action menu on the scenario review screen.
-
-#### FR-34: Download generated Test Suite as a Playwright project `[ADDED 2026-07-27]` `[CORRECTED 2026-07-27]`
-Once test generation is complete, platform lets a reviewer download all current Test Suites for an Application as a single, complete, ready-to-run Playwright project archive (zip). Generated tests are organized by **suite-level folders** — each current Test Suite becomes its own folder under `tests/`, named after its Journey, containing that suite's generated test files — so the downloaded project retains the same logical grouping shown in the product (Generate Suite / Test Suites Generated). `[CORRECTED 2026-07-29, reverses the 2026-07-27 entry]` The project is **TypeScript** (`@playwright/test`), not Python — `TestAsset.code` is generated as TypeScript code (see `HostedAIProvider.generate_playwright`'s prompt), and no code-language conversion step exists or is being added. The archive includes a generated `package.json` (`@playwright/test`), a `playwright.config.ts`, empty `fixtures/` and `utils/` scaffold folders, and a `README.md` explaining setup, so it is runnable standalone after `npm install && npx playwright install`, either as a whole (`npx playwright test`) or per suite (`npx playwright test tests/<suite-folder>`).
-
-This is an export of already-generated code, not a delivery mechanism — no runtime/cloud execution, git integration, repository creation, or CI/CD pipeline wiring is implied (see §5 Non-Goals; distinct from the removed CI/CD delivery module, FR-19–21, which pushed to a customer's Git host).
-
-**Out of Scope:** No incremental/per-suite download as a separate action — always the full project containing all current suites for the Application in one archive. No server-side or cloud test execution. No delivery to a customer's Git host or CI system. No authentication handling for the downloaded project against the target Application (fixtures/utils are empty scaffolding, not credential wiring). No Python output — `[CORRECTED 2026-07-29]` the generated project is TypeScript/Node (`@playwright/test`); a Python export would require a second, unbuilt code-generation step (see Architecture Deferred).
-
-**Notes:** `[GAP]` Whether an edited Scenario's test data/steps actually feed Playwright generation, or the edit is display-only, is unconfirmed against the current reference prototype. Needs a follow-up UX/engineering pass before implementation.
-
-*(§4.6 "CI/CD Delivery" [FR-19–21] and §4.8 "Deployment" [FR-26/27] removed in full 2026-07-15 — no supporting screen exists in the current reference prototype's IA for either, and on-prem deployment is confirmed parked for a later release. See `sprint-change-proposal-2026-07-15.md` for the original history.)*
-
-### 4.7 Analytics `[TRIMMED 2026-07-15, was "Analytics & Dashboards"]`
-
-**Description:** The view that makes a discovered Journey's evidence legible to a reviewer. `[REMOVED 2026-07-15]` Capability Map (FR-22), coverage analytics (FR-24), and the multi-application executive dashboard (FR-25) are removed in full — no screen in the current reference prototype's IA serves any of them, and UJ-2 (§2.3, the journey they served) is removed alongside.
-
-**Functional Requirements:**
-
-#### FR-23: Journey Explorer `[RETAINED, RELOCATED]`
-Platform provides Journey-explorer detail — a view of a Journey's screens, actions, and API calls. As of 2026-07-15 this is satisfied inline: selecting a candidate on the discovery-review screen loads its step-by-step detail (route, method, stage) in a detail panel, rather than via a standalone explorer screen.
-
-**Consequences (testable):**
-- Selecting any candidate Journey shows the specific pages, actions, and API calls captured for it during discovery (FR-6).
-
-## 5. Non-Goals (Explicit)
-
-- **No merging, splitting, or editing of Journeys** — the brief named merging duplicates as a V1 outcome; V1 doesn't support combining two Journeys into one, splitting one into two, or editing one (FR-28, added then cut same day 2026-07-15 — see §4.4). A reviewer facing duplicates deletes the redundant one(s).
-- **No source code or repository read access** for discovery, and nothing that depends on it (route/component/permission/feature-flag structure, dependency mapping, code-to-journey traceability). That's V2.
-- **No change intelligence** — predicting which Journeys/tests a specific *code* change affects. That's V3.
-- **No AI confidence or risk scoring of any kind** — neither a per-Journey discovery confidence score nor a risk/confidence scorecard. Cut during PRD discovery: meaningful usage/error-rate signals require a real telemetry feed V1 doesn't have, and the unresolved questions weren't worth V1's complexity budget. `[NOTE FOR PM: the approved brief named risk/confidence scoring as a V1 outcome — this is a deliberate scope deviation, see §9 and memlog.]`
-- **No runtime drift/change detection** on previously-discovered Journeys, and (as of 2026-07-27) no regeneration mechanism at all — V1 cannot tell what changed inside a Journey, and has no way to refresh its Scenarios/Test Assets short of deleting the Journey outright (FR-13, which excludes rather than regenerates).
-- **No CI/CD delivery of any kind** — `[UPDATED 2026-07-15]` V1 originally planned manual/template-based pipeline wiring as a compromise on "automated"; as of 2026-07-15 CI/CD delivery (automated or manual) is removed in full, not merely simplified — no supporting screen exists in the current UX. See §9.
-- **No native SSO/SAML/OAuth/OIDC protocol implementation or automated MFA-code retrieval** — V1 handles SSO/MFA-protected apps only via customer-supplied reusable session state (FR-3), not by performing the identity-provider handshake itself.
-- **No claim of superior discovery technology** in product messaging — V1's differentiation is the business-journey framing and fast time-to-coverage with retroactive curation, not a proprietary discovery algorithm (per brief). `[UPDATED 2026-07-15]` No longer "human-in-the-loop trust model" — see §1 Vision and §12 Risk item 2 for the repositioning.
-- **No non-web applications** — mobile/native apps are not addressed by V1.
-- **No test frameworks other than Playwright.**
-- **No numeric coverage or time-saved targets** — deliberately undefined until real pilot data exists (per brief).
-- **No system-enforced non-production safeguard** — determining and declaring a Non-Production target is entirely the customer's responsibility in V1; the platform does not technically verify or block discovery against production.
-- **No reviewer prioritization/importance-marking** — the brief's Solution narrative describes a reviewer who "marks what matters most to the business" when reviewing discovered Journeys. V1's curation toolset (FR-12–FR-13) has no way to flag business importance; every discovered Journey is treated equally. `[NOTE FOR PM: this gap is also why §12 Risk item 3 (no reviewer triage aid) exists — the two are the same underlying capability the brief implied but V1 doesn't build.]`
-
-## 6. MVP Scope
-
-*Revised 2026-07-15 — see `sprint-change-proposal-2026-07-15.md` for the full rationale behind this narrowing.*
-
-### 6.1 In Scope
-- Application onboarding via a single connect form: URL + Dedicated Test Account credentials, environment, authentication method (FR-1–FR-3). `[UPDATED 2026-07-15]` FR-4/FR-5 (discovery scope, time budget) confirmed removed, not a UI gap — no fields for either exist or are planned.
-- Runtime discovery, always full-Application, exhaustive-traversal only — no configurable scope, no time-budget safety cap (FR-6–FR-7, updated 2026-07-15).
-- AI-driven Journey/Capability inference (FR-8), with per-candidate step/evidence detail shown inline (FR-23).
-- Human curation: rename/delete workflow (FR-9, FR-12, FR-13, FR-15). `[UPDATED 2026-07-15]` FR-10/FR-11 (approve/reject) and FR-28 (edit) cut — generation is no longer gated on review; deletion is the sole exclusion mechanism.
-- Scenario generation (happy-path + negative), with per-scenario rename/**edit**/remove (FR-16, FR-29), and Playwright test generation (FR-17) surfaced via a named Test Suite generation step. Generation starts immediately per discovered Journey, not on approval. `[UPDATED 2026-07-27]` FR-18 (full regeneration) cut — no regeneration mechanism exists. `[UPDATED 2026-07-27]` Once generated, the full set of current Test Suites can be downloaded as a runnable, suite-organized Playwright project (FR-34).
-- `[ADDED 2026-07-21]` Application-URL reachability validation at onboarding (FR-31), dynamic browser-tab branding reflecting the connected Application (FR-32), and business-language staged import progress replacing raw crawl detail (FR-33).
-- `[ADDED 2026-07-29]` The discovery engine's crawl-decision internals gain: page-readiness gating with a configurable load timeout, bounded infinite-scroll/pagination sampling, a three-way SAME/VARIANT/NEW state classification (FR-37, superseding the simpler page-fingerprint dedup), Tier-1-before-Tier-2 action ordering (FR-38, superseding navigation-first), a Safe/Destructive/Ambiguous Safety Engine (FR-39), a structured Data Resolver with deferral (FR-40), first-class tab/dialog/multi-window/file-upload handling (FR-41), a Blocked Frontier with mid-exploration persistence and resume (FR-42/43), cross-session Save-as-Project pause/resume (FR-44), crash recovery and a machine-readable error taxonomy (FR-45), and consolidated loop-prevention safeguards (FR-46). Test data used to unblock discovery carries forward into Scenario Generation defaults (FR-47).
-
-### 6.2 Removed From Scope (2026-07-15)
-`[UPDATED 2026-07-15]` These moved from "moved out of MVP, deferred" to "removed in full" the same day, once it was confirmed none has any path back without a fresh product/UX decision:
-- CI/CD delivery via PR or direct commit, provider support, and manual pipeline-wiring instructions (previously FR-19–21) — no supporting screen in current UX.
-- Capability Map, coverage analytics, multi-application executive dashboard (previously FR-22/24/25) — no supporting screen in current UX. (Journey Explorer, previously FR-23's Epic 6 sibling, is unaffected — retained and relocated, see §4.7.)
-- UJ-2 (Devon's release-readiness journey, §2.3) — depended entirely on the removed executive dashboard.
-- Two deployment models / on-prem data locality (previously FR-26/27) — Settings, the only UI entry point, is cut; **this one is a deliberate parked-for-later-release product decision**, not merely an orphaned/unsupported item like the rest of this list — worth revisiting on its own timeline rather than treating as dead.
-
-### 6.3 Out of Scope for MVP
-See §5 Non-Goals — all items there apply to MVP scope directly, in addition to §6.2's deferrals above.
-
-## 7. Success Metrics
-
-Per the approved brief, V1 business success is **not** a customer-count or revenue target — it's proving the core thesis (runtime discovery → journey mapping → generated tests) holds up in real pilots well enough to justify building V2. No numeric coverage or time-saved target is set for V1 by design; inventing one now would be a fabricated claim rather than a real criterion.
-
-**Directional signals (qualitative, tracked per pilot):**
-- **SM-1**: An Engineering Leader or QA Director who, having tried V1, keeps using it into a second and third release cycle without being asked to. Validates FR-9, FR-12–FR-18, FR-23 (the full curation-to-generation loop delivering ongoing value). `[UPDATED 2026-07-15]` No longer "review-to-dashboard" — the dashboard is removed.
-- **SM-2**: Discovered Journeys need light correction rather than heavy rework during human review — a proxy for discovery accuracy. Validates FR-8, FR-9, FR-12, FR-13.
-- **SM-3**: Generated Test Assets a QA team trusts enough to fold into their real regression process, not treat as a novelty. Validates FR-16–FR-18. `[UPDATED 2026-07-15]` No longer references FR-19–21 (CI/CD delivery, removed) — "fold into their real regression process" now means the customer does that manually, entirely outside V1.
-
-**Counter-metrics (do not optimize)**
-- **SM-C1**: `[UPDATED 2026-07-15]` Journey retention rate (candidates not deleted) should not be optimized by inflating Journey granularity or over-splitting Capabilities to look more thorough — that would game SM-2 without reflecting real discovery quality.
-
-## 8. Open Questions
-
-1. **Time-to-first-map validation.** "Hours, not days or weeks" is the internal target — not yet validated against real-world application complexity. Confirm before this appears in any external-facing claim. *(from brief)*
-2. **V2 greenlight threshold.** What counts as V1 having "proven the thesis enough" to justify building V2 — number of design partners, retention through a full release cycle, something else? *(from brief)*
-3. Should V1 add a technical safeguard against accidentally running discovery against a production environment, beyond customer responsibility — given how severe that failure mode is (live side effects on a production system)?
-4. What are the hosted SaaS data residency/retention specifics?
-5. Is cutting all confidence/risk scoring the right long-term call, or should a lightweight, discovery-signal-only version (no external feed required) be reconsidered before V1 ships? *(Reaffirmed as fully cut during Finalize review, after confirming 2 of the brief's 4 scorecard inputs — complexity, coverage-gap — don't strictly need a telemetry feed. Kept simple by explicit decision; see `addendum.md` for how to reintroduce cheaply later.)*
-6. `[MOOT 2026-07-15]` Previously: what happens when a direct-commit regeneration overwrites a customer's manually-edited test file? Moot — direct-commit export (previously FR-19) is removed; there is no delivery mechanism to overwrite anything with. Would need to be re-asked if CI/CD delivery is ever redesigned.
-7. What page/action volume must V1 handle for a "typical" enterprise pilot application — is there a performance/scale ceiling to design against?
-8. For SSO/MFA-protected apps (FR-3), how does the customer actually capture and hand off the reusable session state — a manual export process, a small helper tool the platform provides, or something else? Mechanism isn't yet specified; deliberately deferred to engineering during technical design rather than resolved in this PRD. **Deferred with a condition, not ignored:** this must be resolved before UX/architecture work on the Application Onboarding flow (§4.1) proceeds — the onboarding screen design and any helper-tool UX depend directly on the answer.
-
-## 9. Assumptions Index
-
-- **§4.1 Notes / §11**: The non-production-only rule is enforced entirely by customer responsibility, not by the platform, in V1. (Confirmed decision, not an open assumption — flagged here because it's a real residual risk; see §12 item 1.)
-- **§5 [NOTE FOR PM]**: Removing all confidence/risk scoring is a deliberate deviation from the approved brief's stated V1 outcomes — flagged for explicit sign-off, not a quiet scope cut.
-- **§4.4 FR-13 [NON-GOAL for MVP]**: The brief's "merges duplicates" reviewer action is cut for V1 — reviewers delete redundant Journeys instead of merging them.
-- **§5 [NOTE FOR PM]**: The brief's "marks what matters most to the business" reviewer capability has no V1 equivalent — every discovered Journey is treated with equal weight.
-- **[NOTE FOR PM]**: The brief commits to tests running "automatically as part of standard regression" once delivered. V1's original plan (manual pipeline-wiring, previously §4.6/FR-21) was already a deviation from that; as of 2026-07-15 CI/CD delivery is removed in full, a larger deviation still — the customer must integrate generated tests into their regression process entirely outside the platform.
-
-*(SSO/MFA handling and Scenario-editing granularity were open assumptions in an earlier draft; both are now resolved decisions — see FR-3 and FR-29. FR-18, cited here in earlier drafts, is cut in full as of 2026-07-27 — see below.)*
-
-- **2026-07-15 [Sprint Change Proposal]**: A new reference prototype triggered a confirmed, user-directed MVP narrowing — full detail in `sprint-change-proposal-2026-07-15.md`. Summary: FR-19–FR-22, FR-24–FR-27 moved to deferred post-V1; UJ-2 deferred alongside FR-25; FR-13's Out-of-Scope note narrowed (editing now allowed) and FR-28/FR-29 added for Journey/Scenario edit; FR-23 retained but relocated from a standalone Journey Explorer screen into the discovery-review flow. `DESIGN.md`/`EXPERIENCE.md` (both updated 2026-07-15) are the source of truth for the new IA this revision aligns to.
-- **2026-07-15 [Follow-up]**: FR-26/27 (on-prem deployment) confirmed parked for a later release — not a compliance-NFR item awaiting separate sign-off. §4.8 and §6.2 updated to remove the "confirm before final" flag accordingly.
-- **2026-07-15 [Follow-up]**: FR-28 (Edit a Journey, added earlier the same day) cut — its exact editable surface was never confirmed in the UX review, and product decided not to build it. §4.4, §5, §6.1 updated.
-- **2026-07-15 [Follow-up]**: FR-10 (Approve) and FR-11 (Reject) cut, and FR-14 rewritten — every discovered, non-deleted Journey/Capability now enters the Trusted Knowledge Model and starts generation immediately, with no human approval gate. Rationale: per-item approval doesn't scale to a real discovery run's candidate volume (dozens to hundreds per Application); a reviewer's only lever is now retroactive deletion (FR-13). This matches `EXPERIENCE.md`'s own Flow-1 walkthrough, which already showed the reviewer renaming/removing candidates and continuing to Review Scenarios without ever depicting an approve/reject click — the PRD text had simply never caught up to that flow. Accepted tradeoff: §12 Risk item 2's mitigation is weaker as a result (see that entry). §1 Vision, §3 Glossary, §4.4, §4.5 FR-16/18, §5, §6.1, UJ-1 all updated; Architecture AD-1/AD-7/AD-9 and Epic 2/3/4 updated to match.
-- **2026-07-15 [Final follow-up]**: FR-19–22 and FR-24–27 removed in full (not merely deferred) — confirmed none has any supporting screen in the current UX, and on-prem deployment (FR-26/27) is additionally a deliberate parked-for-later-release decision. §4.6 and §4.8 deleted; §4.7 trimmed to FR-23 only; UJ-2 removed; §5, §6.2, §8 (Open Question 6), §10, §12 (Risk item 4), §13 updated to match. Epics 5, 6 (partially), and 7 removed from `epics.md`; Stories 3.2, 3.3, 5.1-5.3, 6.1 files deleted; Architecture Module Map/Deferred section updated to match.
-- **2026-07-15 [Cleanup follow-up]**: FR-4 (discovery scope) and FR-5 (time budget) removed in full — the earlier `[GAP]` note treating their missing UI as unconfirmed was resolved: the whole concept is gone, not just the config fields. FR-6 always covers the full Application; FR-7's only stop condition is exhaustive traversal, with no time-budget branch. This is an accepted-risk tradeoff (§12 Risk item 7, new) — Discovery Runs have no safety cap against unbounded exploration. §1 UJ-1, §3 Glossary, §6.1, §10 updated to match; Story 1.5 removed in full; Story 2.3 ("Discovery Stop Conditions & Completeness Status") simplified to drop the `incomplete` status entirely; Architecture AD-10/AD-11 updated to match.
-- **2026-07-18 [Sprint Change Proposal]**: Application Model Builder introduced — full detail in `sprint-change-proposal-2026-07-18.md`. New **FR-30** (Application Model Builder) normalizes discovery signal into structured Pages/Components/Forms/Actions/APIs/Assertions/Page Transitions with per-component locator metadata; FR-6 gains explicit crawl-optimization rules (page-fingerprint dedup, navigation-first, representative-action sampling); FR-7 and §12 Risk item 7 gain clarifying notes that "exhaustive" means distinct pages/action patterns, not every DOM instance; FR-8 updated to read the Application Model rather than raw Evidence. No FR is removed, no MVP scope or reviewer-facing behavior changes (§4.4 unaffected). Epic 2 Story 2.2 reworked, new Story 2.5 (Application Model Builder) added, and the AI Journey/Capability Inference story renumbered 2.5 → 2.6 in `epics.md` (it depends on Story 2.5's output and can't be numbered ahead of it); Architecture AD-1/AD-8 updated and AD-14/AD-15 added to match.
-- **2026-07-18 [Follow-up, same day]**: The generic `Evidence` table concept is removed — a flat capture record duplicating what typed records already hold added no value. FR-6/FR-30 revised: discovery writes Page/Form/Action/ApiEndpoint/PageTransition records directly (typed, scoped to both `application_id` and the capturing `discovery_run_id`); duplicates within and across Discovery Runs against the same Application are merged into one canonical record per logical page/form/API (this is what makes the model genuinely "reusable" across re-discovery, not merely per-run); Component/ComponentLocator/Assertion remain purely derived, never directly captured. Architecture AD-8/AD-13/AD-14 rewritten to match — see `sprint-change-proposal-2026-07-18.md`.
-- **2026-07-19 [Crawl engine follow-up]**: Implementation of Story 2.2's crawl-optimization ACs surfaced four further refinements, all within FR-6's existing scope (no new FR, no MVP/reviewer-facing change): a page reached only via a non-link action (e.g. an "Add to Cart" button) is now followed onward instead of dead-ending at the click; a form with an identical shape/starting values (hidden fields included) reachable from more than one page is captured once (representative-form sampling, mirrors representative-action sampling); a destination that errors (network failure or 4xx/5xx) is skipped rather than persisted as a Page; and representative-action sampling is bounded to a small number of distinct action labels per page, prioritizing page-body content over shared nav/header/footer chrome. FR-6, FR-7, and §12 Risk item 7 updated to match; Architecture AD-15 updated; Story 2.2 gains ACs 7-9.
-- **2026-07-21 [Sprint Change Proposal — Import Experience & Progress UX]**: Three new FRs added — full detail in `sprint-change-proposal-2026-07-21.md`. **FR-31** (reachability validation) and **FR-32** (browser tab branding) added to §4.1 Onboarding; new Story 1.6 added to `epics.md`, Story 1.3 gains two ACs. **FR-33** (business-oriented import progress) added to §4.2; this walks back Story 2.2's AC3 (the raw crawl live-feed is no longer user-facing, though the underlying typed-row capture is unchanged) and adds stage-tracking ACs to Stories 2.1, 2.2, 2.6; new Story 2.7 added to `epics.md`. Architecture AD-10 extended with a `DiscoveryRun.stage` field; domain model gains `Application.favicon_url`. `EXPERIENCE.md`'s long-standing `[GAP]` on the "Discovery running" state (open since 2026-07-15) is resolved by FR-33's four-stage design. No MVP redefinition, no rollback — Stories 1.3, 2.1, 2.2, 2.6 revert to `in-progress` for rework per `sprint-status.yaml`.
-- **2026-07-27**: FR-18 (Full regeneration on request) cut in full — explicit product decision, not deferred. V1 ships with no customer-facing way to refresh a Journey's generated Scenarios/Test Assets once produced; deletion (FR-13) remains the sole reviewer lever, and it excludes rather than regenerates. No code existed to remove — despite `sprint-status.yaml`/commit history suggesting Story 4.3 was "completed," it was never actually built (that work was Story 4.2's, mislabeled in the commit message by the developer). Story 4.3 deleted from `epics.md` and its story file removed; `epics.md#Epic 4` description updated to drop the "regenerable from scratch on request" claim. Architecture AD-1/AD-8/Module Map updated to match — see `sprint-change-proposal-2026-07-27.md`.
-- **2026-07-27 [Follow-up]**: FR-34 (Download generated Test Suite as a Playwright project) added — reviewer-triggered export of all current Test Suites for an Application into a runnable, suite-folder-organized Playwright project zip. Explicitly scoped as an export, not a CI/CD delivery mechanism (that remains cut, see FR-19–21/§6.2) — reuses the Story 4.3 slot vacated by the regeneration cut above. §4.5, §6.1, §9 updated; new Story 4.3 ("Download a Generated Test Suite") added to `epics.md`; Architecture gains a new Module Map row (Test Suite Export) and a Deferred-section note distinguishing it from CI Delivery. See `sprint-change-proposal-2026-07-27-2.md`.
-- **2026-07-27 [Correction, during story creation]**: FR-34's project type corrected from Node/TypeScript (`package.json`/`playwright.config.ts`/`tsconfig.json`, as originally drafted from the requesting brief) to **Python** (`requirements.txt`/`pytest`/`pytest-playwright`) — discovered during `bmad-create-story` that `TestAsset.code` is generated as Python `playwright.sync_api` code (`HostedAIProvider.generate_playwright`'s prompt explicitly requests it, confirmed in `apps/workers/generation/tests/test_playwright_generation_activity.py`), and no Python→TypeScript conversion step exists anywhere in the pipeline. A TS/npm scaffold wrapping Python function bodies would not run. §4.5 FR-34 updated to match; Story 4.3 in `epics.md` updated to match.
-- **2026-07-29 [Correction, reverses the entry above]**: `HostedAIProvider.generate_playwright` now generates TypeScript (`@playwright/test`) by explicit decision. FR-34's project type reverts to Node/TypeScript (`package.json`/`playwright.config.ts`) — the opposite of the 2026-07-27 correction. §4.5 FR-34, `epics.md` Story 4.3, and Architecture Module Map/Deferred updated to match.
-- **2026-07-29 [Sprint Change Proposal — Discovery Engine Redesign]**: A user-authored Discovery Engine design document triggered FR-35 through FR-47 (page readiness, infinite scroll, State Identity Engine, Action Priority Model, Safety Engine, Data Resolver, widget coverage, Blocked Frontier + resume, Save-as-Project, crash recovery/error taxonomy, loop prevention, test-data carry-forward). This **reverses** §12 Risk item 6's prior "accepted risk, no guardrail" decision (now mitigated by the Safety Engine) — flagged for explicit sign-off, not a quiet change. Two items are flagged, not resolved, by this pass: (a) a naming collision between the document's "Journey" (crawl-time exploration path) and the existing `Journey` domain entity (AI-inferred business journey) — resolved here by naming the new concept `ExplorationPath`/`ExplorationStep`; (b) Save-as-Project's dashboard (Confirmed/Blocked/Remaining counts) and the Blocked-item review/resume surface have no home in the current 6-screen UX — flagged as `[GAP]`s on Story 1.2 and new Story 2.17, not designed in this pass. No epic added/removed/resequenced; all new scope lives in 11 new Epic 2 stories (2.9–2.19) plus AC amendments to Stories 1.2, 2.2, 2.3, 2.5, 4.1. See `sprint-change-proposal-2026-07-29.md`.
-
-## 10. Cross-Cutting NFRs
-
-- **Security**: Standard enterprise-grade secret handling for stored discovery credentials (encryption at rest and in transit, least-privilege service accounts). No bespoke certification requirement specified for V1.
-- **Reliability**: `[UPDATED 2026-07-15]` A Discovery Run must complete (exhaustive traversal) or fail gracefully (e.g., session expiry) — there is no time-budget timeout state, since no time budget exists (FR-5 removed).
-- *(NFR-3 "Data locality (on-prem)" removed 2026-07-15 — tied to FR-27, removed alongside on-prem deployment being parked for a later release. See §6.2.)*
-
-## 11. Constraints and Guardrails
-
-**Safety**
-- V1 must never be run against a customer's production-facing environment. In V1, this is a **customer responsibility**, not a platform-enforced constraint. See §12 Risk Register item 1 for exposure and mitigation status.
-
-**Privacy**
-- Discovery credentials must be a Dedicated Test Account, never a real end-user identity (FR-2). Standard enterprise-grade secret handling applies (§10).
-
-## 12. Risk and Mitigations
-
-1. **Risk**: Discovery engine triggers real side effects (payments, emails, data changes) if accidentally pointed at a production environment. **Mitigation**: Customer contractually/operationally designates a Non-Production target; prominently documented at onboarding. **Unresolved**: whether V1 needs a technical safeguard (Open Question 3).
-2. **Risk**: AI misclassifies or over-fragments Business Journeys, eroding trust in the map. `[UPDATED 2026-07-15]` **Mitigation**: Weakened as of this revision — there is no longer a mandatory approval gate before a Journey enters the Trusted Knowledge Model and generates coverage (FR-9–FR-14); a reviewer's only lever is retroactive deletion. This means a misclassified or over-fragmented Journey may already have consumed AI-generation cost, and produced a Scenario/Test Asset, before a human ever sees it — the risk isn't eliminated, it's shifted from "bad output never gets generated" to "bad output gets deleted after the fact." Accepted tradeoff, made explicitly because per-item approval doesn't scale to a discovery run's realistic candidate volume (dozens to hundreds per Application) — see §1 Vision and `sprint-change-proposal-2026-07-15.md`.
-3. **Risk**: Without any AI confidence signal, reviewers triaging a large discovery output have no prioritization aid, which could slow review at scale. **Mitigation**: None built into V1 — flagged for revisit if pilot feedback shows this is a real bottleneck (Open Question 5).
-4. `[MOOT 2026-07-15]` Previously: full-regeneration-on-request combined with direct-commit export could silently overwrite a customer's manually-edited test file. Moot — direct-commit export (previously FR-19) is removed; there is no delivery mechanism to carry this risk. Would need to be re-assessed if CI/CD delivery is ever redesigned.
-5. **Risk**: V1 has no differentiated technical moat (per brief); pilots may be won or lost on roadmap credibility rather than delivered capability. **Mitigation**: Sales motion leans on an honest, credible V2/V3 roadmap story — see `addendum.md`.
-6. **Risk**: `[UPDATED 2026-07-29]` `FR-6`'s autonomous form/API exercising previously had no destructive-action guardrail — even in a Non-Production environment, the discovery engine could trigger irreversible side effects (real emails sent, shared test data deleted, fraud-detection tripwires) if that environment isn't fully isolated from real-world systems. **Mitigation**: `[REVERSED 2026-07-29]` No longer an accepted risk — the Safety Engine (FR-39) classifies every candidate action Safe/Destructive/Ambiguous and never executes a Clearly Destructive action; Ambiguous/state-changing actions defer to the Blocked Frontier (FR-42) rather than executing speculatively. **Residual risk**: a genuinely production-facing environment is still not technically verified as non-production (Open Question 3, unchanged) — the Safety Engine narrows *what* the crawler is willing to do, it does not verify *where* it's running.
-7. **`[NEW 2026-07-15]` Risk**: A Discovery Run has no time-budget safety cap (FR-5 removed) — an Application with infinite pagination, calendar "next" links, or another unbounded-traversal pattern could cause a Discovery Run to run indefinitely, consuming AI-generation cost and compute with no automatic stop other than genuine exhaustion. **Mitigation**: **Accepted risk**, by explicit product decision — no time-budget cap or other platform-side runaway-discovery guardrail is built in V1. `[UPDATED 2026-07-18]` FR-6's representative-action sampling (see `sprint-change-proposal-2026-07-18.md`) partially narrows this risk — a page with many repeated identical actions (e.g., a large grid of "Edit" buttons) no longer multiplies crawl work per instance. Unbounded *page* growth (infinite pagination, calendar next-links) is unaffected and remains a fully accepted risk. `[UPDATED 2026-07-19]` FR-6(g)'s explicit per-page action-label cap further narrows this risk beyond repeated-instance dedup — a page with many genuinely *distinct* action labels is now also bounded, not just one with a repeated pattern. Unbounded page growth remains the fully accepted part of this risk.
-
-## 13. Integration and Dependencies
-
-- *(CI/CD providers integration removed 2026-07-15 — CI/CD delivery is out of scope; see §6.2.)*
-- **AI/LLM provider**: Hosted SaaS mode uses vendor-hosted AI processing. `[UPDATED 2026-07-15]` On-prem mode (previously FR-27) is removed — parked for a later release, see §6.2.
+- **Application.** A deployed web application a team adds to Vantage, with a name, environment, URL and optional login.
+- **Discovery.** Vantage exploring an application by itself in a real browser to find its journeys. Discovery is optional per application. It has two engines: **Explorer** (the default) and **classic discovery** (Epic 2), which now runs only for applications discovered before Explorer became the default, or when operations switch Explorer off.
+- **Explorer.** The default discovery engine (Epic 8). It learns the application, has a person confirm an App Summary, asks questions, works through missions and writes and proves scenarios.
+- **App Summary.** Explorer's one-page description of the application (name, one-liner, key tasks, its questions, screens to leave out), which a person checks and confirms before Explorer goes further.
+- **Mission.** A goal Explorer works towards, such as "file a claim" or "try the 'someone hurt' branch".
+- **Proven scenario.** An Explorer scenario that replays the same way every time and fails when its key step is removed on purpose. Only proven scenarios are handed on to test generation.
+- **Possible bug.** An Explorer scenario where the application did something different from what should happen. It is kept for a person to judge, never handed on as a passing test.
+- **Journey.** A named, business-language user flow found by Discovery, or named by a user when they author a test. It has a screenshot and page-by-page steps.
+- **Scenario.** A test idea for a journey, made up of test steps, test data and an expected result.
+- **Test case.** A runnable Playwright test. It can come from a scenario ("From discovery"), from a plain-English description ("Authored by prompt") or from a recording ("Recorded"). Every test case has a number.
+- **Run.** One execution of all or some of an application's test cases. Every run has a number.
+- **Self-healing.** AI repair of a failing test. It may change how the test finds things on the page, never what it asserts.
+- **Flaky.** A test whose last 10 finished results include at least one pass and at least one failure.
+
+## 4. Functional Requirements
+
+### Epic 1 — Foundation, Sign-in & Application Onboarding
+
+#### 1.1 Platform foundation
+- **FR-1.1.1** Vantage runs as a web app backed by a server and separate background services for classic Discovery, Explorer, generation, test execution and recording. Each one can be deployed and restarted on its own. **Partly built:** Explorer's service has no deployment setup yet (see §10).
+- **FR-1.1.2** When a background service needed for an action isn't running, the user sees a clear "service unavailable" message instead of a silent failure. When the server itself can't be reached, a "service unavailable" screen with a Retry button replaces the sign-in page.
+
+#### 1.2 Sign in, password reset & organization-scoped workspace
+- **FR-1.2.1** Users sign in with email and password.
+- **FR-1.2.2** A session ends after 1 hour without activity, and any activity extends it. When it ends, the user returns to Sign in with "Your session expired from inactivity".
+- **FR-1.2.3** "Forgot password?" sends a reset link that expires after 1 hour. The screen always says "Check your email", so it never reveals whether an account exists. A new password must be at least 8 characters and is entered twice.
+- **FR-1.2.4** An invite link opens "Set up your account". The invitee enters a full name and a password, joins the inviting admin's organization and is signed in straight away. An invalid, expired or already-used link shows one generic error.
+- **FR-1.2.5** Every piece of data belongs to one organization. Users only ever see their own organization's data.
+
+#### 1.3 Add an application: basic details and connection test
+- **FR-1.3.1** The form asks for an application name, an environment (staging, production, qa, or "other" with a custom name) and a URL.
+- **FR-1.3.2** The URL must pass **Test connection** before the form submits. Trying to submit without it shows a reminder, and the server checks reachability again on submit.
+- **FR-1.3.3** An "Autonomous discovery" checkbox, on by default, decides whether Discovery runs. With it on, the new application is discovered by Explorer (unless operations have switched Explorer off, in which case classic discovery runs). The submit button reads "Start discovery" or "Add application" to match.
+- **FR-1.3.4** Once submitted, the form becomes a read-only record of what was submitted. The stored username and password are never shown there again.
+- **FR-1.3.5** Each new application gets three schedules, all turned off: Nightly, Weekly and Monthly Regression.
+- **FR-1.3.6** There is no limit on the number of applications.
+
+#### 1.4 Application sign-in method
+- **FR-1.4.1** A toggle, "This application requires sign-in", asks for an optional login URL, a username and a password or token. When it is off, the application is treated as needing no login.
+- **FR-1.4.2** Credentials are stored encrypted and used only while Discovery or a run is happening. They are never shown again, except when an admin reveals one in Settings, and that reveal is logged.
+- **FR-1.4.3** **Partly built.** Reusing a saved single sign-on browser session, and storing an MFA code seed when credentials are rotated, work on the server but have no screen.
+
+#### 1.6 Dynamic browser tab branding
+- **FR-1.6.1** **Superseded.** The browser tab always shows "Vantage" with the platform icon. The planned behaviour, where the tab showed each application's own name and icon, is not in the product.
+
+#### 1.7 App shell, sidebar navigation & Overview dashboard
+- **FR-1.7.1** A left sidebar has Overview; Applications, with a count; and Add application, which viewers don't see. When no application is open it also has a Configuration group: Team members and Activity for admins only, and Settings.
+- **FR-1.7.2** When an application is open, the sidebar shows its name, an Exit link and these tabs in order: Overview, Journeys, Explorer, Scenarios, Test cases, Test runs, Record and play, Schedules, Download project.
+  - Journeys, Explorer and Scenarios appear only when Discovery is on for the application.
+  - For an application Explorer has discovered, Journeys and Scenarios are hidden; Explorer's own Scenarios sub-tab replaces them, and any link to them opens Explorer. Applications discovered by classic discovery keep Journeys and Scenarios and also get the Explorer tab. Once Explorer is started on such an application, it counts as an Explorer application from then on.
+  - Record and play and Download project are hidden from viewers.
+  - Tabs can be opened in any order.
+- **FR-1.7.3** A top bar shows a breadcrumb, an Add application button and an account menu with Log out.
+- **FR-1.7.4** The org-wide **Overview** shows:
+  - Headline figures: applications tested, test cases generated, pass rate, failure rate, average run duration, self-healed locators and last discovery. Some figures cover the last 7 days.
+  - Three charts: pass rate over time, latest run outcome and test cases per application.
+  - An **Active pipelines** list of what is running now. Clicking an item opens that application.
+  - Empty states when there are no applications or no runs yet.
+- **FR-1.7.5** The **Applications list** has columns Application, Journeys, Tests, Pass rate, Last activity and Status, and is paginated.
+  - Status shows the current stage: discovery, generation, "Ready to run" or "Running". After the first completed run it shows a health tier: Healthy, Needs attention or Critical.
+  - A tooltip shows the percentage of journeys covered by scenarios.
+  - Opening an application lands on its most useful tab: Test cases while tests are first being generated or when the application has no Discovery; Overview once a test suite exists; otherwise **Explorer** for an Explorer application, or Scenarios or Journeys for a classic one. Right after an application is added with Discovery on, it opens on Explorer.
+- **FR-1.7.6** Admins have a ⋮ menu on each application:
+  - Rename, done inline.
+  - Delete, after a confirmation. Delete is blocked, with the reason shown, while Discovery, generation or a run is in progress.
+  - Deletion hides the application at once and permanently removes its data after the retention period set in Settings. Its schedules stop.
+- **FR-1.7.7** An application's own **Overview** tab is always listed; it shows "No test runs yet" until the first run finishes, then shows:
+  - The health tier, the last run's pass rate with a link to that run, and a pass-rate trend.
+  - Counts: journeys, test cases, open failures, and passed, failed and not run.
+  - Quick-action cards for the other tabs. For an Explorer application, the Journeys and Scenarios cards are replaced by one **Open Explorer** card ("See what it learned and the scenarios it proved").
+
+### Epic 2 — Runtime Discovery & AI Journey Inference
+
+*Scope: everything in Epic 2 describes the **classic discovery engine**. It now runs only for applications discovered before Explorer became the default, or for new applications when operations switch Explorer off. Explorer is described in Epic 8. The login check (2.23) and optional discovery (2.24) apply to both engines.*
+
+#### 2.1 Start a discovery run
+- **FR-2.1.1** When classic discovery is in use, adding an application with Discovery on starts it straight away, after the login check in 2.23 has passed. Otherwise Explorer starts (FR-8.1.1).
+- **FR-2.1.2** Discovery runs in the background. The Journeys tab fills in live without the user staying on the page.
+
+#### 2.2 Autonomous exploration captures evidence
+- **FR-2.2.1** Discovery explores in a real browser and records what it finds: pages, forms and their fields, actions, the application's own network calls and page-to-page transitions. It takes a screenshot of each page.
+- **FR-2.2.2** It explores breadth-first and handles content inside frames, nested components, pop-ups and new tabs (new tabs are recorded, not explored further).
+
+#### 2.3 Discovery stop conditions & completeness status
+- **FR-2.3.1** Discovery stops when no new pages remain, or when it reaches the admin limit for maximum pages (500 by default) or maximum discovery time (30 minutes by default).
+- **FR-2.3.3** Finishing Discovery does not start scenario or test generation by itself. The user starts each step (FR-3.1.3, FR-4.2.1).
+- **FR-2.3.2** A run ends as finished, paused or failed, and the Journeys tab shows which.
+
+#### 2.4 Session expiry handling
+- **FR-2.4.1** If the application logs Discovery out partway through, Discovery logs in again and carries on. It gives up after a few attempts in a row.
+- **FR-2.4.2** When it can't recover, the Journeys tab shows a "session expired" banner. The run does not silently produce an empty or partial result.
+
+#### 2.5 Application model builder
+- **FR-2.5.1** After exploring, Vantage merges duplicate captures of the same page, form or network call, within a run and across runs, into one record per application.
+- **FR-2.5.2** Every element that can be automated gets a preferred way to find it and fallback ways. Expected outcomes are derived for use in tests.
+
+#### 2.6 AI journey and capability inference
+- **FR-2.6.1** AI groups the explored pages into business-language journeys with descriptions, not raw page addresses.
+- **FR-2.6.2** Each journey has a stable identity, so running Discovery again does not create duplicates of journeys already found.
+
+#### 2.7 Business-oriented progress display
+- **FR-2.7.1** While Discovery runs, the Journeys tab shows plain-language stages: Exploring pages, Capturing screenshots, Grouping flows, Mapping journeys. It adds the note "Discovery runs in the background — this list updates automatically". No technical crawl terms appear.
+
+#### 2.8 Cloud storage for screenshots and evidence
+- **FR-2.8.1** Discovery screenshots and run evidence (screenshots, traces) are kept in durable cloud storage and survive restarts and redeployments.
+
+#### 2.9 Page readiness, infinite scroll & pagination
+- **FR-2.9.1** Before capturing a page, Discovery waits for it to settle: network activity quiet, ignoring analytics and polling, the layout stable and content present.
+  - The wait is capped by the admin's navigation timeout. A per-application override exists, but it has no screen.
+  - A page that never settles is noted, and Discovery moves on.
+- **FR-2.9.2** For infinite scroll and "load more", Discovery samples a few rounds and then stops, rather than paging forever.
+
+#### 2.10 State identity engine
+- **FR-2.10.1** Each new view is judged as the same as one already seen, a variant of one, or new. A record page that differs only by its data (for example, two claims in the same status) is explored once. A record page that offers different actions is kept as a separate variant.
+
+#### 2.11 Exploration planner & action priority
+- **FR-2.11.1** On each page, Discovery tries the actions inside the page, including tabs, before following navigation links elsewhere. It tries one action per distinct button label, with no per-page cap.
+- **FR-2.11.2** When it loses its place, Discovery returns to the application's start page and continues.
+
+#### 2.12 Safety engine
+- **FR-2.12.1** Every action is classed as safe, clearly destructive or ambiguous. Clearly destructive actions, such as delete, payment or transfer, are never performed. Ambiguous actions, such as submit or approve, are skipped or deferred according to the application's safety setting.
+- **FR-2.12.2** The admin's interaction level (Passive, Normal or Aggressive) controls how far Discovery goes in interacting with the application.
+- **FR-2.12.3** Classification is rule-based. AI-assisted classification is built but switched off; see §7.
+
+#### 2.13 Data resolver
+- **FR-2.13.1** When a form needs input, Discovery tries these sources in order:
+  - the application's test data pool,
+  - a value it already used earlier in the run,
+  - safe made-up data for generic fields.
+  If none fits, it defers that form rather than guessing. Every value used is recorded.
+- **FR-2.13.2** **Partly built.** Reusing a value visible on the current page is not built.
+
+#### 2.14 Widget coverage
+- **FR-2.14.1** Discovery recognizes tab groups and dialogs from their accessibility roles, explores each tab and closes dialogs safely to get back to the page underneath. New tabs and pop-ups that open from the application are recorded as linked pages (address and title) but not explored further.
+
+#### 2.15 Blocked frontier
+- **FR-2.15.1** A deferred action or form never stops the run. Requests that need the same missing data are merged into one.
+- **FR-2.15.2** **Partly built.** There is no screen to see or answer these requests.
+
+#### 2.16 Blocked mid-exploration persistence & resume
+- **FR-2.16.1** **Partly built.** Vantage records the path that led to a blocked point. Resuming from that point once the data is supplied is built but not connected to any screen.
+
+#### 2.17 Pause and resume a discovery effort
+- **FR-2.17.1** For classic applications, **Pause Discovery** and **Resume Discovery** buttons are on the Journeys tab. For any application that has ever had an Explorer run they are refused with "Explorer discovers this application: pause or resume it from the Explorer tab." (FR-8.1.4). Resume continues from where Discovery stopped and does not re-explore what was already captured. A "Paused" banner shows the state.
+- **FR-2.17.2** **Partly built.** There is no summary of confirmed, blocked and remaining work for a paused run.
+
+#### 2.18 Crash recovery & error taxonomy
+- **FR-2.18.1** If the Discovery service restarts mid-run, the run recovers by itself, and a "recovered and resuming" banner says so.
+- **FR-2.18.2** Problems are recorded as one of a small fixed set:
+  - restarted after a crash,
+  - session expired,
+  - application unreachable after retries,
+  - page did not settle in time,
+  - lost its place after a form submit,
+  - form field lookup timed out.
+  An unreachable page is retried a few times, then skipped.
+
+#### 2.19 Loop prevention
+- **FR-2.19.1** Before each action, Discovery checks for repeated views, actions it already performed from the same place and back-and-forth cycles, so it never clicks the same thing forever.
+
+#### 2.20 Test data pool
+- **FR-2.20.1** **Partly built.** Each application has a pool of test data values that Discovery uses first when filling forms. The pool can only be managed outside the screens; there is no screen for it.
+
+#### 2.21 Locator durability
+- **FR-2.21.1** Every captured element has a preferred locator and fallback locators, each rated for how likely it is to survive changes to the application. Generated tests use the most durable one. Locators that rely only on placeholder text are treated as fragile.
+
+#### 2.22 Coverage report & diagnostics
+- **FR-2.22.1** **Partly built.** For each run, Vantage builds a coverage report showing what was reached, blocked, skipped, errored or never reached, along with diagnostic detail. There is no screen for it.
+
+#### 2.23 Validate login before discovery starts
+- **FR-2.23.1** If Discovery is on and the application needs a login, Vantage first logs in with the given credentials in a real browser.
+  - Wrong credentials show "The username or password is incorrect…".
+  - A result it can't confirm, such as a timeout, shows "We couldn't confirm these credentials…".
+- **FR-2.23.2** Discovery never starts on a login that hasn't been proven to work.
+
+#### 2.24 Optional autonomous discovery
+- **FR-2.24.1** Clearing "Autonomous discovery" adds the application without exploring it. The Journeys, Explorer and Scenarios tabs are hidden, and the team builds tests by authoring or recording them.
+
+### Epic 3 — Journey Curation
+
+#### 3.1 Discover Journeys: candidate list and detail
+- **FR-3.1.1** Journeys appear as cards. Each card shows a screenshot, which can be clicked to enlarge, and the journey's page-by-page steps. Repeated steps on the same page are collapsed into one business step.
+- **FR-3.1.2** Journeys can be searched.
+- **FR-3.1.3** **Review scenarios** starts scenario generation and moves to the Scenarios tab. Journeys do not need approval first.
+- **FR-3.1.4** Banners cover a session expired during Discovery, a failed run, a paused run, and recovery after a restart.
+- **FR-3.1.5** For an Explorer application (where the tab is hidden from the sidebar), the Journeys page shows an **Open Explorer** button and "Explorer is finding this app's journeys. They appear here when it has finished." It has no Pause or Resume and no classic progress view.
+
+#### 3.4 Rename and delete a journey
+- **FR-3.4.1** Members and admins can rename a journey.
+- **FR-3.4.2** Deleting a journey excludes it, and anything generated from it, from later generation and from counts.
+- **FR-3.4.3** Merging, splitting or editing a journey's steps is not supported.
+
+### Epic 4 — Scenario & Test Case Generation
+
+#### 4.1 Generate scenarios for a journey
+- **FR-4.1.1** Scenarios are drafted for each journey and grouped by journey. Progress shows Reading journeys, Drafting scenarios and Deriving test data.
+- **FR-4.1.2** Each scenario shows its test steps, its test data fields and its expected result. Each field is marked "Required for this scenario" or "Optional — auto-filled if left blank".
+- **FR-4.1.3** Users can rename or delete a scenario, edit test data inline, **Auto-generate** test data and clear values.
+- **FR-4.1.4** If one journey's scenarios fail to generate, the others carry on. Failed journeys are listed with the reason; there is no way to retry them.
+- **FR-4.1.5** Admin limits cap the number of scenarios per journey and the number of test cases per application.
+- **FR-4.1.6** There is no approve or reject step for scenarios.
+- **FR-4.1.7** For an Explorer application, the Review scenarios page keeps **Generate test cases** and adds "Explorer worked these out by using the app. Generate test cases to turn them into tests.", with its own empty-state message. Explorer's scenarios are not drafted here; they arrive already proven (FR-8.5.1).
+
+#### 4.2 Generate Playwright test cases from scenarios
+- **FR-4.2.1** **Generate test cases** writes a TypeScript Playwright test for each scenario and opens a progress screen. The screen shows:
+  - Stages: Resolving locators, Writing test cases, Generating fixtures.
+  - Counts: test cases, journeys covered and estimated runtime.
+  - Each journey's status, including "Incomplete" when some scenarios could not be generated after retries, and "Terminated".
+- **FR-4.2.2** Users can **Terminate** generation for a journey, **Retry Generation**, **Download Test Cases** or **Run Test Cases** from that screen.
+- **FR-4.2.3** Every generated test is type-checked and automatically repaired if it does not compile. Tests with lint concerns are flagged for review rather than rejected.
+- **FR-4.2.4** For a scenario handed on by Explorer, the test Explorer already wrote and proved is used as-is if it compiles; the AI writes a new one only if it does not.
+
+#### 4.3 Download a generated test project
+- **FR-4.3.1** The Download project tab shows the project structure:
+  - one test file per test case, grouped in a folder per journey,
+  - shared fixtures and utilities,
+  - a Playwright configuration file and a README.
+- **FR-4.3.2** **Download project** produces a .zip of a runnable TypeScript Playwright project. The project reads the application's login from environment settings rather than containing it.
+- **FR-4.3.3** The tab appears only once at least one test exists, and never for viewers.
+
+#### 4.4 Author a test case in plain English
+- **FR-4.4.1** In the "Author a test case" panel on Test cases, the user picks an existing journey or names a new one, then describes in plain language what to do and what to check.
+- **FR-4.4.2** A live AI agent explores the running application, with no prior Discovery needed, then writes the test, checks it by running it and adds it to the list. Progress reads "Exploring the live application…" and then "Generating the test case…".
+- **FR-4.4.3** Any steps it could not perform are listed under "Not generated — Vantage couldn't do these in the application".
+- **FR-4.4.4** This works for applications with or without Discovery.
+
+#### 4.5 Test case library & source filters
+- **FR-4.5.1** Test cases has a paginated list of every test case. Each row shows a number, a name, a journey and a source badge: From discovery, Authored by prompt or Recorded.
+- **FR-4.5.2** Filter chips with counts (All, Author test cases, Record-and-play test cases) and a search by number, name or journey narrow the list.
+- **FR-4.5.3** Expanding a row offers **View code**, which shows the test's code, and **Test data**, an inline form. Saving the form updates that one test to match.
+- **FR-4.5.4** Scenario-type badges (happy path, negative, edge case) are hidden on request.
+
+### Epic 5 — Record and Play
+
+#### 5.1 Record a test in a remote browser
+- **FR-5.1.1** On the Record and play tab, the user enters a flow name and picks a mode:
+  - **Record a login flow** starts logged out, so the login becomes part of the test.
+  - **Record an authenticated flow** starts already signed in as the application's saved user.
+- **FR-5.1.2** **Record a flow** opens a separate browser tab streaming a real remote browser, and the user clicks through the flow there.
+  - A warning says "Anything you type — including passwords — is recorded into the generated test."
+  - If the browser blocks the pop-up, a link opens it manually. Dropped connections reconnect.
+- **FR-5.1.3** A recording link expires after 30 minutes. A recording can last up to 60 minutes. A limited number of recordings can run at once.
+
+#### 5.2 Save, cancel and replay recorded tests
+- **FR-5.2.1** **Stop and Save** turns the recording into a Playwright test. Vantage then moves to Test cases and highlights the new row. **Discard** throws the recording away. A failed save offers Try again.
+- **FR-5.2.2** Recorded tests are tidied up and type-checked. They then run, self-heal and report exactly like generated ones.
+
+### Epic 6 — Test Execution & Reporting
+
+#### 6.1 Run tests: all or a named selective run
+- **FR-6.1.1** **Run tests** offers two options:
+  - **All test cases.**
+  - **Selective run**: a required Run Name and a searchable journey list with Select all and Clear. Each journey can be expanded to pick individual test cases.
+- **FR-6.1.2** Every run gets its own Run number. Manual runs can overlap. Within a run, tests run 5 at a time, except that a run containing any test from an application that keeps progress per login (saved drafts, a cart, "resume where you left off") runs **all** its tests one at a time. Explorer marks such tests when it hands them on, based on a keyword guess from screen names and descriptions.
+- **FR-6.1.3** The runs list has summary tiles: latest pass rate, average pass rate, median duration and open failures. Each row shows the run number, who or what triggered it, the date, duration, results and pass rate. The list uses Prev and Next buttons.
+- **FR-6.1.4** A run's detail page shows:
+  - a status pill,
+  - a "Results by journey" chart,
+  - results grouped as Passed, Self-healed, Flaky and Failed,
+  - a row for each test case with its status. A test deliberately skipped in its code (for example one recording a known bug) shows as **Skipped** with its reason ("Known bug — should: … The app currently: …"), not as errored. This applies to every test, not only Explorer's.
+- **FR-6.1.5** A check every 15 minutes automatically closes out any run that has been stuck for more than 6 hours.
+
+#### 6.2 Cancel a run
+- **FR-6.2.1** **Cancel run** stops the running tests, marks unfinished ones as cancelled and keeps the finished results. No report and no email are produced for a cancelled run.
+
+#### 6.3 Self-healing of failing tests
+- **FR-6.3.1** After a failure, Vantage tries to heal the test automatically, up to 2 attempts. A **Retry** chip lets a user heal it again, up to the admin's "maximum self-heal attempts" (3 by default). Operations can turn automatic healing off with a server setting (it is on by default); the manual Retry works either way.
+- **FR-6.3.2** Each attempt runs the same steps:
+  - The AI diagnoses the failure from the error, the console and a screenshot.
+  - For locator problems, it may look at the live page.
+  - It makes a targeted fix, checks it compiles and runs the test again.
+  - It stops early if the same failure repeats.
+- **FR-6.3.3** A failed assertion is never healed, and any fix that changes an assertion is rejected. A failure caused by the environment or infrastructure gets one plain re-run with no AI. A test that records a known bug is never healed, because healing would rewrite away the bug it records.
+- **FR-6.3.4** Rows show chips for the outcome:
+  - **Self-healed**: "Failed on first run — automatically remediated by self-healing".
+  - **Heal exhausted**: no attempts left.
+  - A pulsing "Self-healing" status while a heal is in progress.
+
+#### 6.4 Flaky test flags
+- **FR-6.4.1** A test is marked **Flaky**, with the tooltip "Inconsistent results across this test", when its last 10 finished results, this run included, contain at least one pass and at least one failure.
+  - Cancelled runs and internal check runs don't count.
+  - A test is never flaky on its first run.
+
+#### 6.5 Failure explanations & evidence
+- **FR-6.5.1** Each failed test has a **Summary** tab with a plain-language explanation and a **Raw error** tab.
+  - Known errors are explained by fixed rules.
+  - Unknown ones are explained by AI, labelled "Explained by AI — may not be exact", and the explanation is reused for the same error.
+- **FR-6.5.2** Failed tests include a screenshot and a Playwright trace. Which screenshots are kept follows the Screenshot capture setting.
+- **FR-6.5.3** When most failures in a run share one cause, such as sign-in failing, a banner for the whole run names it.
+
+#### 6.6 HTML test report
+- **FR-6.6.1** **View report** opens a Vantage-branded HTML report built on Allure, at a stable link for each run.
+- **FR-6.6.2** Viewers can't open it. Very large runs don't get a report.
+
+#### 6.7 Run-completed email
+- **FR-6.7.1** When a run completes, the person who started it gets an email. For a scheduled run, including "Run now", it goes to the person who created the schedule.
+- **FR-6.7.2** The email shows the pass or fail outcome, up to 10 failures, a "View report" link and an "Open in Vantage" link that opens the run after sign-in.
+- **FR-6.7.3** The email is sent at most once per run. It is not sent for cancelled runs, or for runs closed out automatically.
+
+#### 6.8 Scheduled test runs
+- **FR-6.8.1** The Schedules tab lists each schedule's name, cadence, next run and an Enabled toggle. A ⋮ menu offers Run now, Edit and Delete.
+- **FR-6.8.2** A schedule's cadence can be:
+  - **Daily**, at a time chosen in 15-minute steps.
+  - **Weekly**, on chosen days at a time chosen in 15-minute steps.
+  - **Monthly**, on day 1 to 28 at a time chosen in 15-minute steps.
+  - **Custom**, a 5-part cron expression in the server's time zone.
+- **FR-6.8.3** Schedules run **tests only**. The dialog text "Run discovery or test cases automatically on a cadence" overstates this and needs correcting.
+- **FR-6.8.4** If a run is already in progress for the application, a scheduled run is skipped, not queued, and "Run now" shows "already in progress".
+
+### Epic 7 — Workspace Administration
+
+#### 7.1 Team members, roles & invites
+- **FR-7.1.1** The Team members page, for admins only, lists each member's name, email, role, and last active time or "Never signed in". A ⋮ menu offers Change role and Remove.
+- **FR-7.1.2** **Invite member** takes one email address and a role (Member, Admin or Viewer), and sends an email invitation. **Partly built:** revoking a pending invite works on the server, but pending invites are not listed on any screen.
+- **FR-7.1.3** Invites expire after **72 hours**. The screen's "Invitation expires in 7 days" text is wrong and needs correcting.
+- **FR-7.1.4** If email isn't configured, the invite link is written to the server log so an operator can pass it on.
+
+#### 7.2 Settings
+- **FR-7.2.1** Admins set these limits:
+  - Discovery: maximum discovery time, maximum pages, maximum journeys, navigation timeout, interaction level (Passive, Normal or Aggressive).
+  - Generation: maximum scenarios per journey, maximum test cases per application.
+  - Healing: maximum self-heal attempts.
+- **FR-7.2.2** **Screenshot capture** keeps screenshots for failed test cases (the default), for passed ones, or for all.
+- **FR-7.2.3** **Auto-clean up removed projects** is always on. The admin chooses when deleted applications are purged: after 1 day, 1 week or 1 month (the default).
+- **FR-7.2.4** **Saved credentials** lists applications that use a username and password, and applications with no login (shown as "No login"). An admin can reveal a password, which is logged in Activity, or add or rotate a username and password. Credentials saved here are not re-checked.
+- **FR-7.2.5** Settings apply across the whole deployment.
+- **FR-7.2.6** A **Sign-in** column in Saved credentials has an on/off switch per application, for admins only and only for username-and-password or no-login applications. **Off** means the application has no login: its saved login is cleared, and Discovery, Explorer and test runs open it directly. **On** cannot be set from the switch alone; saving a username and password with "Add credentials" turns sign-in back on.
+
+#### 7.3 Activity history
+- **FR-7.3.1** The Activity page, for admins only, is a timeline for the whole organization with Time, Event, By and Result columns. It covers:
+  - Discovery runs and test runs, each as one row that updates as it progresses,
+  - scenario and test case generation,
+  - changes to settings, credentials, the team, applications and schedules.
+- **FR-7.3.2** The list can be filtered by:
+  - type: Discovery, Scenarios, Test cases, Test runs, or Settings & team,
+  - application,
+  - result,
+  - time range: 24 hours, 7, 30 or 90 days.
+  It can also be searched and sorted newest or oldest first.
+- **FR-7.3.3** A detail drawer shows:
+  - what happened, why something could not run and a suggested next step,
+  - before and after values for settings changes, with credentials never shown,
+  - for failed tests, the screenshot, trace, exact error and error log.
+  **Open application** jumps to the related tab or run.
+- **FR-7.3.4** Activity history is kept for 90 days, then deleted automatically.
+- **FR-7.3.5** **Gap:** Explorer actions (starting, pausing or stopping a run, confirming the App Summary, answering questions, judging possible bugs, changing knowledge or other user types) are not recorded in Activity. An Explorer application's progress shows only through its single Discovery row.
+
+### Epic 8 — Explorer Discovery
+
+Explorer is the default discovery engine. It learns an application the way a new QA engineer would, has a person confirm what it learned, asks when it is unsure, and writes and proves scenarios. It does not treat the application as the source of truth: it judges what it sees against common sense, the user's answers and any documents the user uploads, and it never confirms or answers anything on the user's behalf.
+
+#### 8.1 Start Explorer and watch it live
+- **FR-8.1.1** Adding an application with Autonomous discovery on starts Explorer. This is the only place discovery starts automatically. If Explorer's background service is not running at that moment, the application's discovery is marked failed ("worker unavailable") and the user can start Explorer later from the Explorer tab. Operations can switch new applications back to classic discovery with a server setting; no user can change this.
+- **FR-8.1.2** Before the first run, or after **New run**, the Explorer tab shows a start card explaining what Explorer does, with an **"Other kinds of users"** panel where the user adds a user type with its username and password. **Start exploring** begins a run. Only one run can be active per application.
+- **FR-8.1.3** The tab header shows the application name and a one-line status of what Explorer is doing ("Reading the Quotes screen"), a **Questions** button with a count, and the run controls.
+- **FR-8.1.4** **Pause** and **Stop** are offered while a run is going. **Resume** continues a paused, stopped or failed run from the step it reached, without redoing finished work; otherwise **New run** is offered. The application's discovery status follows the run: running, paused, failed ("Explorer was stopped before it finished"), and complete after the hand-off.
+- **FR-8.1.5** The **Live** sub-tab (the default) shows:
+  - a pulsing **"Waiting for you"** box when Explorer needs the user: either a request to check and confirm the App Summary (**Check the summary**) or the first open blocking question (**Answer now**);
+  - a live frame with the latest screenshot and a trail of the last 6 screenshots, any of which can be pinned;
+  - an Activity log of the last 80 things Explorer did or thought;
+  - a Progress panel with four stages (Learning the app, Your check, Trying every path, Writing scenarios) and the missions list, where each mission can be **Skipped**.
+- **FR-8.1.6** Explorer never deletes data, moves money, makes a business decision or signs out on its own, in any environment; it asks first. It presses a final Save, Submit or Create by itself only when the application is marked as a non-production environment, and never presses Send twice.
+- **FR-8.1.7** **Gap:** viewers can't change anything in Explorer, but members (not just admins) can manage its other user types and knowledge, viewers can download its tests, run report, recordings and highlight video, and no Explorer action is recorded in Activity.
+
+#### 8.2 Review and confirm the App Summary
+- **FR-8.2.1** After a first pass through the application, Explorer writes an **App Summary**: the application name, a one-liner, key tasks, questions for the user with answer options, an optional "Goal for this run" and screens to leave out. It then stops and waits for a person.
+- **FR-8.2.2** On the **What it learned** sub-tab, while the summary is waiting, the user can **Edit**, **Save changes** and **"Looks right — confirm"**. Confirm stays disabled until every question in the summary is answered. Answers given there become knowledge for the application.
+- **FR-8.2.3** The person who started the run gets an email when the summary is ready. Without mail settings on the server, nothing is sent.
+- **FR-8.2.4** If the summary is not confirmed within 14 days, the run expires and cannot be resumed. A banner explains this, and **Start a new run** begins from what was already learned, keeping the user's answers.
+
+#### 8.3 Answer Explorer's questions
+- **FR-8.3.1** Explorer asks **blocking questions** when it needs something to continue (such as test data), before a risky action ("May I press Send?") or to clarify something. Only the mission that asked waits, for 10 minutes by default, and then carries on without the answer; everything else keeps running.
+- **FR-8.3.2** **"Is this a bug?"** questions never block. They do not count as "Waiting for you" and sit with the finding they are about.
+- **FR-8.3.3** The **Questions** header button opens a "Questions for you" panel. It pulses when Explorer is waiting on the user. The person who started the run is emailed when a blocking question is asked.
+- **FR-8.3.4** Every answer becomes trusted knowledge for that application, for this run and later ones. Explorer checks what it already knows before asking, so the same question is not asked twice, and similar open questions are merged.
+- **FR-8.3.5** A **Knowledge** panel on What it learned lets the user add a fact or test data, upload a document (PDF, Word, plain text, Markdown or CSV, up to 15 MB) or forget an item. Knowledge belongs to the application and carries over to every later run.
+
+#### 8.4 Missions, screens and findings
+- **FR-8.4.1** After the summary is confirmed, Explorer plans up to 15 missions (goals such as "file a claim" or "try a branch") and works through up to 3 at a time.
+- **FR-8.4.2** Explorer names each screen by what it means, so many records of the same kind count as one screen. It also hunts for screens that only appear sometimes: it tries each option in dropdowns and radio groups, tries small and large amounts, and fakes empty or failing server replies inside its own browser.
+- **FR-8.4.3** The **Screens** sub-tab is a searchable, paged screenshot grid. Choosing a screen shows its actions and where each one leads. There is no map view.
+- **FR-8.4.4** Along the way Explorer notes health problems: broken screens, server errors, broken links, slow pages, wording mistakes and things that "look wrong". They appear, folded, as **"Things that look wrong"** on What it learned, each with a thumbnail, a way to mark it a false alarm and its "is this a bug?" question, plus **Download CSV**.
+- **FR-8.4.5** **Partly built.** Explorer also works out which screens each extra user type can reach, finds pages nothing links to, measures how much of the application it exercised and computes an application health score. These, adding your own mission and per-mission screen recordings are stored but have no screen.
+
+#### 8.5 Proven scenarios and hand-off to test cases
+- **FR-8.5.1** Explorer writes scenarios in seven kinds: five it plans with AI (Getting around, Input rules, Error handling, Data shown, Saving a form) plus **Whole journey** (an end-to-end business flow from a completed mission, up to 8, built first) and **Page quality** (browser-measured checks on each screen, skipped for applications that keep progress per login). A run makes up to 150 scenarios, scaled to the application's size.
+- **FR-8.5.2** Each scenario is proven: it must replay the same way every time and fail when its key step is removed on purpose. Each is marked as working as it should (proven), a **possible bug**, or dropped with a reason (hidden). Each records where "what should happen" came from: the user or their documents, common sense, or the application itself.
+- **FR-8.5.3** The **Scenarios** sub-tab shows counts (work as they should, possible bugs to check, still being tried, from what you told Explorer), kind filter chips, and groups with whole journeys first and then one group per screen. Each scenario can open a **proof video**. A possible bug offers **"Not a bug, keep as a test"** or **Ignore**.
+- **FR-8.5.4** When a run finishes testing, only proven scenarios are handed on: each screen tested becomes a journey with its screenshot as the step, and each whole-journey scenario becomes its own journey. Possible bugs are never handed on; one marked "Not a bug" is handed on by itself, and "Ignore" leaves it out. Running Explorer again replaces its own earlier results, while older records stay for run history.
+- **FR-8.5.5** A pulsing **Generate tests** button appears once the run has finished testing and at least one scenario works. It uses the same generation as Epic 4 (FR-4.2.4).
+- **FR-8.5.6** **Partly built.** A shareable highlight video, the run report and its download, downloading Explorer's proven tests as a ready-to-run project, and re-writing the scenarios without exploring again are built behind the scenes with no screen.
+- **FR-8.5.7** **Unconfirmed.** On an application first discovered by classic discovery, starting Explorer retires only Explorer's own earlier journeys, so Generate tests may cover both the classic journeys and Explorer's.
+
+## 5. Non-Functional Requirements
+
+- **Security and privacy.**
+  - Logins for applications under test are stored encrypted in a dedicated secrets store. They are handed to a test only while it runs and never shown back, except through the logged admin reveal.
+  - Accounts are invite-only, and every organization's data is kept separate.
+  - The server enforces roles; hiding controls on screen is only a convenience. **Gap:** Explorer refuses viewers' changes, but lets members (not just admins) store other user types' passwords and change knowledge, and lets viewers download its results.
+  - Reset and invite links are single-use and short-lived.
+- **Reliability.**
+  - Discovery recovers by itself from a service restart, and failing pages are retried a bounded number of times. An Explorer run whose step stops responding is marked failed and can be resumed from where it reached.
+  - Stuck test runs are closed out automatically.
+  - A scheduled run never piles up behind one already running.
+  - The run email is sent at most once.
+- **Honesty of results.**
+  - Self-healing cannot weaken a test's assertions.
+  - AI-written explanations are labelled as such.
+  - Discovery never starts on an unproven login.
+  - Explorer never hands on a scenario it has not proven, and keeps behaviour that looks wrong as a possible bug for a person to judge.
+- **Performance and limits.**
+  - Within a run, tests run 5 at a time, or one at a time for applications that keep progress per login.
+  - Explorer runs up to 3 missions or scenario checks at a time, at most 15 missions and 150 scenarios per run.
+  - Discovery is bounded by the admin limits for time, pages and journeys, plus per-page sampling.
+  - Recording sessions are capped in number and length.
+- **Data retention.**
+  - Deleted applications are purged after the admin-chosen period.
+  - Activity history is kept for 90 days.
+  - Which test screenshots are kept follows the Screenshot capture setting.
+  - Explorer's screenshots and videos are kept in the main database, not in cloud file storage, and have no retention limit.
+- **Usability.**
+  - Plain language throughout: progress stages, error messages and failure summaries.
+  - Every in-progress state shows the label followed by bouncing dots. (The Explorer tab still uses ring spinners in a few places.)
+  - Anything Explorer is waiting on the user for pulses so it is not missed.
+  - Placeholders tell the user what to enter, not made-up examples.
+  - Light mode only.
+- **Availability feedback.** When a needed background service is down, the user is told so plainly. The app shows a Retry screen when the server can't be reached.
+
+## 6. End-to-End User Flow
+
+1. An admin, the first one set up by the operator, invites teammates with roles. Invitees accept by email and set a password.
+2. A user signs in and lands on **Overview**.
+3. **Add application**:
+   1. Enter the name, environment and URL, then run Test connection.
+   2. Turn on sign-in and enter the login, if the application needs one.
+   3. Choose whether to run Autonomous discovery.
+4. **With Discovery on (Explorer, the default):**
+   1. The login is proven in a real browser, then Explorer starts and the application opens on the Explorer tab.
+   2. The user watches Live, then checks the App Summary on What it learned, answers its questions and confirms it.
+   3. Explorer works through its missions and asks blocking questions, which the user answers from the Questions panel.
+   4. On Explorer's Scenarios sub-tab the user watches proof videos, judges possible bugs, then presses **Generate tests**.
+5. **With classic discovery** (applications discovered before Explorer, or with Explorer switched off):
+   1. The login is proven in a real browser, then Discovery starts.
+   2. Journeys fill in live; Discovery can be paused or resumed. The user renames or deletes journeys, then clicks **Review scenarios**.
+   3. The user renames or deletes scenarios and fills or auto-generates test data, then clicks **Generate test cases**.
+   4. Generation progress is tracked per journey and can be terminated or retried. The progress screen ends with Run and Download options.
+6. **With Discovery off:** the user goes straight to Test cases and adds tests with **Author a test case** or **Record and play**.
+7. **Run tests**, all or selectively. Failures are healed automatically within limits. The user then:
+   - reviews flaky flags and failure explanations, with screenshots and traces,
+   - retries with self-healing where needed,
+   - opens the report.
+   The run-completed email arrives.
+8. **Schedule** runs: daily, weekly, monthly or custom.
+9. **Download the project** to run the tests outside Vantage.
+10. Admins watch **Activity**, adjust **Settings** and manage **Team members**. Overview and the Applications list show health across applications.
+
+## 7. Not Built / Deferred
+
+| Item | State |
+|---|---|
+| Delivery into a customer's CI/CD pipeline or repository | Not built |
+| Bring-your-own or on-premise AI model; on-premise deployment | Not built |
+| Business capability map, risk or confidence scorecard, change-impact analysis | Not built |
+| Reading source code to inform Discovery | Not built |
+| Scheduling Discovery | Not built (only test runs can be scheduled) |
+| Single sign-on session reuse and MFA codes for the application under test | Works on the server only, no screen |
+| API-key and OAuth sign-in for the application under test | Not built |
+| Answering classic Discovery's "I need data to continue" requests, and resuming from a blocked point | Built on the server, not connected to any screen (Explorer asks and takes answers) |
+| Explorer: adding your own mission | Built behind the scenes, no screen |
+| Explorer: per-mission screen recordings and the shareable highlight video | Built behind the scenes, no screen |
+| Explorer: run report and its download | Built behind the scenes, no screen |
+| Explorer: downloading its proven tests as a ready-to-run project | Built behind the scenes, no screen |
+| Explorer: re-writing scenarios without exploring again ("Regenerate") | Built behind the scenes, no screen |
+| Explorer: other user types' access, unlinked pages, how much of the app was exercised, app health score | Computed and stored, no screen |
+| Admin-only Explorer user types and knowledge, viewer-refused Explorer downloads, and Activity entries for Explorer actions | Not built |
+| Choosing the discovery engine from the screens | Not built (a server setting only operations can change) |
+| Classic discovery coverage report and diagnostics screen | Not built (the server produces the report) |
+| Test data pool screen | Not built |
+| AI-assisted safety classification during Discovery | Built, switched off |
+| Blocking destructive actions during test runs | Removed so that "Run tests" needs no setup |
+| Regenerating a journey's scenarios from scratch | Removed from scope |
+| Per-application browser tab branding | Superseded; the tab always shows "Vantage" |
+| Scenario-type badges (happy, negative, edge) | Hidden on request |
+| Merging, splitting or editing journeys; marking business importance | Not built |
+| Mobile and native applications; frameworks other than Playwright | Out of scope |
+| Dark mode | Dropped |
+
+## 8. Success Metrics
+
+No numeric coverage or time-saved target is set yet. Thresholds should come from real usage data.
+
+- **SM-1.** Teams keep using Vantage into a second and third release cycle without being pushed to.
+- **SM-2.** Discovered journeys need light correction (renames, a few deletions) rather than heavy rework.
+- **SM-3.** Teams trust generated, authored and recorded tests enough to put them into their real regression process, scheduled and run regularly.
+- **SM-4.** A meaningful share of failures is either healed or explained in a way a user can act on, and flaky tests are visible rather than ignored.
+- **Counter-metric.** Healed-test counts must never be raised by loosening assertions. The product prevents this by design.
+
+## 9. Open Questions
+
+1. How long does Discovery take on a typical enterprise application? This needs measuring across real customers before it is quoted externally.
+2. Should Vantage technically prevent Discovery against a production environment? Today that is the customer's responsibility, softened by the safety rules.
+3. When should the server-only capabilities get screens: single sign-on session reuse, MFA, the test data pool, blocked-request answers and the coverage report?
+4. Should Discovery be schedulable, as the schedule dialog's wording suggests?
+5. What usage evidence counts as "proven" before the next phase of work (connecting journeys to code, change impact) is started?
+6. Which Explorer features built behind the scenes (own missions, recordings, highlight video, report, tests download, regenerate) should get screens, and which should be dropped?
+7. Should Explorer's user types and knowledge be admin only, should its downloads be refused to viewers, and should its actions appear in Activity?
+
+## 10. Risks and Mitigations
+
+1. **Discovery side effects.** Discovery could trigger real side effects if pointed at a production environment.
+   - *Mitigation:* clearly destructive actions are never taken, and ambiguous ones follow the application's safety setting.
+   - *Residual:* where Discovery runs is not verified.
+2. **Wrong or fragmented journeys.** AI may misjudge or over-split journeys.
+   - *Mitigation:* journeys can be renamed and deleted, and deletion removes their downstream tests from counts.
+   - *Residual:* generation work may already have been spent on them.
+3. **Healing hides real bugs.**
+   - *Mitigation:* assertions are protected, and failed assertions are never healed.
+4. **Single-instance operation.** Each service currently runs as a single instance. The background job engine keeps its history in memory, so a restart can lose in-flight history and may require schedules to be recreated.
+   - *Mitigation:* stuck runs are closed out automatically. Production-grade persistence is still to be added.
+5. **Production hardening gaps.**
+   - The sign-in page's development shortcut, which fills in a test login when the "Welcome back" heading is clicked, is enabled in production. It fills the form only and does not bypass sign-in.
+   - Secure-cookie and certificate settings in the hosted environment need tightening.
+6. **Explorer cannot be deployed yet.** Explorer is the default, but its background service has no deployment setup. In a deployed environment, adding an application with Discovery on would mark discovery failed.
+   - *Mitigation:* ship the Explorer service, or have operations switch new applications back to classic discovery until it is shipped.
+7. **Explorer's role rules are looser than the rest of the product.** Viewers can't change anything there, but any member can store other user types' passwords and change knowledge, and viewers can download Explorer's tests, run report, recordings and highlight video. None of Explorer's actions appear in Activity.
+   - *Mitigation:* none yet.
+8. **Explorer media in the main database.** Explorer keeps its screenshots and videos (1 to 6 MB per mission) in the main database, which will grow quickly.
+   - *Mitigation:* none yet; moving them to cloud file storage is the planned path.
+9. **Starting Explorer on a classic application is one-way.** Its Journeys and Scenarios pages disappear and the classic Pause and Resume are refused for good, although the start card says "Your current Journeys are not affected". Generate tests may then cover both sets of journeys (unconfirmed).
+10. **Guessed one-at-a-time runs.** Whether an application keeps progress per login is a keyword guess. A wrong guess either slows runs or lets parallel tests interfere with shared state.
+11. **Commoditization.** Free framework agents (see `addendum.md`) make "explore and generate tests" table stakes.
+   - *Mitigation:* compete on the complete, trustworthy loop rather than on generation alone.
+
+## 11. Integrations and Dependencies
+
+- **AI provider.** A hosted AI model, reached through the operator's AI gateway, is used for journey inference, scenario writing, test writing and repair, plain-English authoring and explaining unknown errors. Explorer uses its own connection to the same gateway, with a "thinking" model for understanding screens and writing the summary and a faster one for quick choices; operations choose both.
+- **Email.** An outgoing mail service sends invites, password resets, run-completed emails, and Explorer's "summary ready" and "question waiting" emails.
+- **Cloud file storage.** Holds screenshots, traces and reports.
+- **Secrets store.** Holds the logins for applications under test.
