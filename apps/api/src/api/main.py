@@ -52,6 +52,7 @@ from domain import (
     apply_test_run_cancel,
     lock_test_run,
 )
+from domain.recorded_test_data import RecordedFieldsChanged, apply_recorded_test_data
 import hvac.exceptions
 from explorer_core import ExplorerRun
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
@@ -2604,6 +2605,11 @@ def update_scenario_test_data(
 # singleton: only one regenerate can be in flight per Scenario at a time,
 # so there's no separate request_id to mint/track — this same id is both
 # started and polled.
+#
+# A recorded Scenario skips all of that: its fields are its own typed calls,
+# so the save is a direct literal swap done inline here
+# (`apply_recorded_test_data`) — no AI, no Temporal, and so no dependency on
+# the generation worker being up.
 
 
 class RegenerateTestAssetStatusRead(BaseModel):
@@ -2622,7 +2628,22 @@ async def regenerate_test_asset(
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
 ) -> dict[str, bool]:
-    _get_org_scenario(session, organization_id, external_id)
+    scenario, _journey = _get_org_scenario(session, organization_id, external_id)
+    if scenario.source == "recorded":
+        try:
+            apply_recorded_test_data(session, scenario)
+        except RecordedFieldsChanged as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="This test's code changed since it was recorded, so its test data "
+                "can't be matched to it — edit the code directly.",
+            ) from exc
+        except RuntimeError as exc:  # supersede_test_asset lost a race (e.g. a heal)
+            raise HTTPException(
+                status_code=409,
+                detail="This test was just updated by something else — reopen it and try again.",
+            ) from exc
+        return {"started": True}
 
     client = await get_temporal_client()
     if not await has_pollers(client, GENERATION_TASK_QUEUE):
@@ -2652,7 +2673,18 @@ async def get_regenerate_test_asset_status(
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
 ) -> RegenerateTestAssetStatusRead:
-    _get_org_scenario(session, organization_id, external_id)
+    scenario, _journey = _get_org_scenario(session, organization_id, external_id)
+    if scenario.source == "recorded":
+        # Saved synchronously by the POST above — there's nothing to poll.
+        current = session.exec(
+            select(TestAsset).where(
+                TestAsset.scenario_id == scenario.id,
+                TestAsset.current.is_(True),  # type: ignore[attr-defined]
+            )
+        ).one()
+        return RegenerateTestAssetStatusRead(
+            status="complete", test_asset_id=str(current.external_id)
+        )
     client = await get_temporal_client()
     handle = client.get_workflow_handle_for(
         RegenerateTestAssetWorkflow.run, _regenerate_test_asset_workflow_id(external_id)
