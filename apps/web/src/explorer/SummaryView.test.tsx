@@ -54,4 +54,21 @@ describe('SummaryView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove Change password' }))
     await waitFor(() => expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ skip_screens: [] })))
   })
+
+  it('picks with the arrow keys and Enter, and says when nothing matches', async () => {
+    const onSave = vi.fn(async () => {})
+    const screens = [{ name: 'Loans dashboard' }, { name: 'Loan calculator' }] as unknown as ExplorerScreen[]
+    render(<SummaryView run={runWith('POL-1')} screens={screens} onSave={onSave} onConfirm={vi.fn(async () => {})} />)
+    const field = screen.getByLabelText(/Pages to leave out/)
+
+    fireEvent.change(field, { target: { value: 'loan' } })
+    fireEvent.keyDown(field, { key: 'ArrowDown' })
+    expect(screen.getByRole('option', { name: 'Loan calculator' }).getAttribute('aria-selected')).toBe('true')
+    fireEvent.keyDown(field, { key: 'Enter' })
+    await waitFor(() => expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ skip_screens: ['Loan calculator'] })))
+
+    fireEvent.change(field, { target: { value: 'zzz' } })
+    expect(screen.getByText('No page matches “zzz”')).toBeTruthy()
+  })
 })
+

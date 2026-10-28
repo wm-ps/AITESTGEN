@@ -347,6 +347,8 @@ function SummaryQuestion({
 // "Pages to leave out": type a page's name, pick it from the suggestions, and
 // it becomes a chip. Explorer plans no missions or scenarios for those pages
 // (the same `skip_screens` list the old screenshot checkboxes set). Optional.
+// The suggestions sit in the page flow right under the field (never over the
+// content below); the shell carries the one focus ring (field-shell/data-bare).
 function PagesToLeaveOut({
   pages,
   selected,
@@ -357,26 +359,75 @@ function PagesToLeaveOut({
   onChange: (names: string[]) => void
 }) {
   const [query, setQuery] = useState('')
+  const [active, setActive] = useState(0)
   const q = query.trim().toLowerCase()
   const matches = q ? pages.filter((p) => !selected.includes(p) && p.toLowerCase().includes(q)).slice(0, 8) : []
   const add = (name: string) => {
     onChange([...selected, name])
     setQuery('')
+    setActive(0)
+  }
+  const highlight = (name: string) => {
+    const at = name.toLowerCase().indexOf(q)
+    if (at < 0) return name
+    return (
+      <>
+        {name.slice(0, at)}
+        <strong style={{ color: 'var(--accent)', fontWeight: 700 }}>{name.slice(at, at + q.length)}</strong>
+        {name.slice(at + q.length)}
+      </>
+    )
   }
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, position: 'relative' }}>
-      <label htmlFor="explorer-leave-out" style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>
-        Pages to leave out <span style={{ fontWeight: 400, color: 'var(--fg-5)' }}>(optional)</span>
-      </label>
-      <div style={{ ...inputStyle, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '6px 8px', minHeight: 40 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <label htmlFor="explorer-leave-out" style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>
+          Pages to leave out <span style={{ fontWeight: 400, color: 'var(--fg-5)' }}>(optional)</span>
+        </label>
+        {selected.length > 0 && (
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--fg-4)' }}>
+            {selected.length} page{selected.length === 1 ? '' : 's'} left out
+          </span>
+        )}
+      </div>
+      <div
+        className="field-shell"
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 6,
+          padding: '6px 8px',
+          minHeight: 40,
+          border: '1px solid var(--border-2)',
+          borderRadius: 8,
+          background: 'var(--panel)',
+          boxSizing: 'border-box',
+          transition: 'border-color 120ms ease, box-shadow 120ms ease',
+        }}
+      >
         {selected.map((name) => (
-          <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 6px 3px 10px', borderRadius: 1000, background: 'var(--bg-2)', border: '1px solid var(--line)', fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>
+          <span
+            key={name}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '3px 4px 3px 10px',
+              borderRadius: 1000,
+              background: 'var(--accent-wash)',
+              border: '1px solid color-mix(in srgb, var(--accent) 25%, transparent)',
+              fontSize: 12.5,
+              fontWeight: 600,
+              color: 'var(--accent-2)',
+            }}
+          >
             {name}
             <button
               type="button"
               aria-label={`Remove ${name}`}
               onClick={() => onChange(selected.filter((n) => n !== name))}
-              style={{ border: 'none', background: 'none', padding: '0 2px', cursor: 'pointer', color: 'var(--fg-4)', fontSize: 14, lineHeight: 1 }}
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, border: 'none', borderRadius: 1000, background: 'transparent', cursor: 'pointer', color: 'var(--accent-2)', fontSize: 14, lineHeight: 1, padding: 0 }}
             >
               ×
             </button>
@@ -384,37 +435,75 @@ function PagesToLeaveOut({
         ))}
         <input
           id="explorer-leave-out"
+          data-bare
           role="combobox"
-          aria-expanded={matches.length > 0}
+          aria-expanded={q.length > 0}
           aria-controls="explorer-leave-out-options"
+          aria-activedescendant={matches[active] ? `explorer-leave-out-${active}` : undefined}
+          autoComplete="off"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setActive(0)
+          }}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && matches.length) {
+            if (e.key === 'ArrowDown' && matches.length) {
               e.preventDefault()
-              add(matches[0])
+              setActive((i) => (i + 1) % matches.length)
+            } else if (e.key === 'ArrowUp' && matches.length) {
+              e.preventDefault()
+              setActive((i) => (i - 1 + matches.length) % matches.length)
+            } else if (e.key === 'Enter' && matches.length) {
+              e.preventDefault()
+              add(matches[Math.min(active, matches.length - 1)])
+            } else if (e.key === 'Escape') {
+              setQuery('')
             } else if (e.key === 'Backspace' && !query && selected.length) {
               onChange(selected.slice(0, -1))
             }
           }}
-          placeholder={selected.length ? '' : 'Type a page name to leave it out'}
-          style={{ flex: 1, minWidth: 180, border: 'none', outline: 'none', background: 'transparent', font: 'inherit', fontSize: 13.5, color: 'var(--fg-1)' }}
+          placeholder={selected.length ? 'Type to add another page' : 'Type a page name to leave it out'}
+          style={{ flex: 1, minWidth: 180, height: 26, border: 'none', outline: 'none', background: 'transparent', font: 'inherit', fontSize: 13.5, color: 'var(--fg-1)', padding: '0 4px' }}
         />
       </div>
-      {matches.length > 0 && (
-        <div id="explorer-leave-out-options" role="listbox" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 5, marginTop: 4, background: 'white', border: '1px solid var(--line)', borderRadius: 8, boxShadow: 'var(--shadow-dropdown)', overflow: 'hidden' }}>
-          {matches.map((name) => (
-            <div
-              key={name}
-              role="option"
-              aria-selected={false}
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => add(name)}
-              style={{ padding: '8px 12px', fontSize: 13, cursor: 'pointer', color: 'var(--fg-1)' }}
-            >
-              {name}
-            </div>
-          ))}
+      {q.length > 0 && (
+        <div
+          id="explorer-leave-out-options"
+          role="listbox"
+          style={{ border: '1px solid var(--line)', borderRadius: 10, background: 'var(--panel)', padding: 4, display: 'flex', flexDirection: 'column', gap: 2 }}
+        >
+          {matches.length === 0 ? (
+            <div style={{ padding: '8px 10px', fontSize: 12.5, color: 'var(--fg-4)' }}>No page matches “{query.trim()}”</div>
+          ) : (
+            matches.map((name, i) => (
+              <div
+                key={name}
+                id={`explorer-leave-out-${i}`}
+                role="option"
+                aria-label={name}
+                aria-selected={i === active}
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => add(name)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 10,
+                  padding: '8px 10px',
+                  borderRadius: 7,
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  color: 'var(--fg-1)',
+                  background: i === active ? 'var(--accent-wash)' : 'transparent',
+                  transition: 'background 100ms ease',
+                }}
+              >
+                <span>{highlight(name)}</span>
+                {i === active && <span aria-hidden="true" style={{ fontSize: 11.5, color: 'var(--accent-2)', fontWeight: 600 }}>Leave out ↵</span>}
+              </div>
+            ))
+          )}
         </div>
       )}
       <div style={{ fontSize: 12, color: 'var(--fg-4)' }}>Explorer won't plan missions or scenarios for these pages.</div>
