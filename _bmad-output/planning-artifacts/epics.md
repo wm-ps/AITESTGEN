@@ -1,778 +1,943 @@
 ---
 stepsCompleted: [1, 2, 3, 4]
-inputDocuments:
-  - "_bmad-output/planning-artifacts/prds/prd-AITestGen-2026-07-13/prd.md"
-  - "_bmad-output/planning-artifacts/architecture/architecture-AITestGen-2026-07-13/ARCHITECTURE-SPINE.md"
-  - "_bmad-output/planning-artifacts/ux-designs/ux-AITestGen-2026-07-13/DESIGN.md"
-  - "_bmad-output/planning-artifacts/ux-designs/ux-AITestGen-2026-07-13/EXPERIENCE.md"
-updated: "2026-07-15 — see sprint-change-proposal-2026-07-15.md: Story 6.2 relocated into Story 3.1. Follow-up same day: FR-28 (Journey edit) cut; FR-10/FR-11 (Approve/Reject) cut and FR-14 rewritten — generation now starts immediately on discovery, with no approval gate. Final follow-up same day: Epic 5 (CI/CD Delivery), Epic 6's cut stories (6.1/6.3/6.4), and Epic 7 (Deployment) removed in full — none had any supporting screen in the current UX, and Epic 7's on-prem deployment is confirmed parked for a later release, not a current-scope item. Stories 3.2/3.3, 5.1-5.3, 6.1 files deleted; Story 3.5 trimmed to re-discovery dedup only.
-  2026-07-18 — see sprint-change-proposal-2026-07-18.md: Application Model Builder introduced (new FR-30). Story 2.2 gains crawl-optimization ACs (page-fingerprint dedup, navigation-first, representative-action sampling); new Story 2.5 (Application Model Builder) added; AI Journey/Capability Inference renumbered 2.5 → 2.6 and rewired to read the new Application Model instead of raw Evidence. Stories 4.1/4.2 gain a one-line AI-context note, no AC rewrite. sprint-status.yaml: 2-2 reverted review → in-progress for rework; 2-5 renumbered/renamed to 2-6 and reverted to in-progress.
-  2026-07-18 [correction] — initial numbering had Application Model Builder as Story 2.6, after the AI Inference story (2.5) that depends on it, backwards from the actual pipeline order (Discovery → Model Builder → Inference). Corrected: Application Model Builder is Story 2.5, AI Inference is Story 2.6.
-  2026-07-18 [follow-up, same day] — the generic `Evidence` table concept is removed in full: Story 2.2 now writes typed rows directly (`Page`/`Form`/`FormField`/`ValidationRule`/`Action`/`ApiEndpoint`/`PageTransition`), each scoped by `application_id` (making the model genuinely reusable across re-discovery, not just per-run) plus `discovery_run_id` (provenance). Story 2.5 resolves duplicates via a self-referencing `merged_into_id` and derives `Component`/`ComponentLocator`/`Assertion`. PRD FR-6/FR-30, Architecture AD-8/AD-13/AD-14, and Stories 2.2/2.5/2.6 updated to match.
-  2026-07-19 [crawl engine follow-up] — Story 2.2 gains ACs 7-9, all within FR-6's existing scope: button-triggered navigation is now followed onward instead of dead-ending at the click; forms with an identical shape/starting values (hidden fields included) are sampled representatively across pages; a broken/error (network failure or 4xx/5xx) destination is skipped rather than captured; and AC 6's representative-action sampling is bounded to a small number of distinct labels per page, page-body content before nav/header/footer chrome. PRD FR-6/FR-7/§12 item 7 and Architecture AD-15 updated to match.
-  2026-07-21 [Sprint Change Proposal — Import Experience & Progress UX Improvements] — see sprint-change-proposal-2026-07-21.md: new FR-31 (reachability validation) and FR-32 (browser tab branding) added to Epic 1 — Story 1.3 gains two ACs, new Story 1.6 added. New FR-33 (business-oriented import progress) added to Epic 2 — Story 2.2's AC3 walked back (raw live-feed no longer user-facing, capture itself unchanged), Stories 2.1/2.6 gain stage-transition ACs, new Story 2.7 added. Architecture AD-10 extended with DiscoveryRun.stage; domain model gains Application.favicon_url. Stories 1.3, 2.1, 2.2, 2.6 reverted to in-progress for rework per sprint-status.yaml.
-  2026-07-27 — see sprint-change-proposal-2026-07-27.md: Story 4.3 (Full Regeneration of Test Assets on Request, FR-18) removed in full, not deferred — explicit product decision. No code existed to remove: despite sprint-status.yaml/commit history suggesting it was completed, it was never actually built (that work was Story 4.2's, mislabeled in the commit message). Story 4.3 section deleted, its story file removed, Epic 4 description and FR Coverage Map updated to drop FR-18; sprint-status.yaml entry removed; PRD FR-18/§5/§6.1/§9 and Architecture AD-1/AD-8/Module Map/Deferred updated to match.
-  2026-07-27 [follow-up, same day] — see sprint-change-proposal-2026-07-27-2.md: new Story 4.3 (Download a Generated Test Suite, FR-34) added to Epic 4, reusing the slot vacated above — a reviewer-triggered export of all current Test Suites for an Application into a single, suite-folder-organized, runnable Playwright project zip. Epic 4 description and FR Coverage Map updated to add FR-34; PRD §4.5/§6.1/§9 and Architecture Module Map (new Test Suite Export row)/Deferred updated to match.
-  2026-07-29 — see sprint-change-proposal-2026-07-29.md: Discovery Engine redesign — 11 new Epic 2 stories added (2.9 Page Readiness/Infinite Scroll, 2.10 State Identity Engine, 2.11 Exploration Planner/Action Priority, 2.12 Safety Engine, 2.13 Data Resolver, 2.14 Widget Coverage, 2.15 Blocked Frontier, 2.16 Blocked Mid-Exploration/Resume, 2.17 Save-as-Project, 2.18 Crash Recovery/Error Taxonomy, 2.19 Loop Prevention), new FR-35 through FR-47. Story 2.2's AC4/AC5/AC6 marked partially superseded (State Identity Engine, Action Priority Model); Story 2.3 gains a completion-reporting AC; Story 2.5 gains a clarifying note; Story 4.1 gains a test-data-carry-forward AC; Story 1.2 gains a flagged UX gap note (Save-as-Project dashboard). No epic added/removed/resequenced. Reverses PRD §12 Risk item 6's prior accepted-risk decision (destructive-action guardrail) — flagged for explicit PM sign-off. PRD FR-35-47/§12/§6.1/§9 and Architecture AD-16 through AD-23/Module Map/Deferred updated to match."
+date: 2026-10-27
+lastUpdated: 2026-10-27
+status: current-state
 ---
 
-# Application Intelligence Platform - Epic Breakdown
+# Vantage (AITestGen) - Epic Breakdown
 
 ## Overview
 
-This document provides the complete epic and story breakdown for the Application Intelligence Platform (AITestGen), decomposing the requirements from the PRD, UX Design contract, and Architecture Spine into implementable stories.
+This document lists every epic and story for Vantage (AITestGen) as the product stands on 2026-10-27, along with what each one does today and whether it is done, in progress or not started. It describes the current product, not its change history.
+
+Vantage is a web app for QA and engineering teams. It turns a deployed web application into a working, maintained Playwright test suite with very little hand-writing of tests. A team adds an application. Vantage can then explore it on its own in a real browser, find the real user journeys, draft test scenarios and write Playwright tests in TypeScript. By default that exploring is done by Explorer, which learns the application like a new QA engineer, has a person confirm its understanding, asks when unsure, and proves each scenario before it can become a test. Teams can also describe a test in plain English, or record one by clicking through a flow. Tests run on demand or on a schedule. Failing tests are repaired by AI without ever changing what they check. Results come with flaky-test flags, plain-language failure explanations, a branded HTML report and a "run finished" email.
+
+Status key:
+- **done**: fully built and working as described.
+- **in-progress**: partly built; the missing part is named under "Gaps".
+- **not-started**: not built in the current product.
+- **dropped (reversed)**: was built, then deliberately removed.
 
 ## Requirements Inventory
 
 ### Functional Requirements
 
-FR-1: User can onboard an Application by providing its URL, environment designation, and access credentials.
-FR-2: Access credentials must correspond to a Dedicated Test Account provisioned by the customer, not a real end-user identity.
-FR-3: Platform establishes a session prior to discovery either by (a) performing a standard/manual username-password login flow itself, or (b) reusing a pre-authenticated session (storage state) supplied by the customer for SSO/MFA-protected Applications; a Discovery Run whose session has expired fails gracefully and surfaces a re-authentication prompt.
-*(FR-4 "Configurable discovery scope" and FR-5 "Discovery time budget" removed 2026-07-15 — confirmed removed concepts, not a missing-UI gap. Discovery Runs always cover the full Application with no time-budget cap; accepted-risk tradeoff, see PRD §12 Risk item 7.)*
-FR-6: `[UPDATED 2026-07-15]` Platform autonomously navigates pages, exercises UI actions and forms, and invokes APIs across the entire Application (no configurable scope), capturing pages, navigation paths, actions, forms, API calls, and state transitions. `[UPDATED 2026-07-18]` Applies page-fingerprint dedup, navigation-first prioritization, and representative-action sampling (see FR-30).
-FR-7: `[UPDATED 2026-07-15]` A Discovery Run terminates when no new pages/actions/state transitions are found (exhaustive traversal) — no time-budget stop condition exists. `[CLARIFIED 2026-07-18]` "Exhaustive" is at the level of distinct pages/action patterns, not every repeated DOM instance (FR-6's representative-action sampling).
-FR-8: Platform uses AI to transform captured discovery signals into candidate Business Capabilities and Journeys expressed in business language; every candidate Journey is associated with the specific pages/actions/API calls that produced it. `[UPDATED 2026-07-18]` Reads canonical Application Model rows (FR-30) — never a superseded/duplicate one.
-FR-30 `[ADDED 2026-07-18]`: Platform normalizes captured discovery signal into a structured Application Model — Pages, Components, Forms, Actions, APIs, Assertions, Page Transitions — with per-component locator metadata (preferred + fallback locators, target page). Both AI inference (FR-8) and Playwright generation (FR-17) consume this model. See `sprint-change-proposal-2026-07-18.md`.
-FR-9: `[UPDATED 2026-07-15]` Discovered Journeys and Capabilities are presented to a human reviewer for curation (rename, delete) — presentation is not a gate; a Journey is already in the Trusted Knowledge Model and feeding Scenario Generation (FR-14) before a reviewer looks at it.
-FR-10: `[CUT 2026-07-15]` Previously: reviewer can approve a discovered Journey/Capability, adding it to the Trusted Knowledge Model. Cut — there is no gate to approve past; every discovered Journey is in the Trusted Knowledge Model immediately (FR-14).
-FR-11: `[CUT 2026-07-15]` Previously: reviewer can reject a discovered Journey/Capability, excluding it from the Trusted Knowledge Model. Cut as redundant with Delete (FR-13), now the sole exclusion mechanism.
-FR-12: Reviewer can rename a discovered Journey/Capability.
-FR-13: Reviewer can delete a discovered Journey/Capability — the sole way a Journey/Capability is excluded from the Trusted Knowledge Model as of 2026-07-15. Out-of-scope note: merging/splitting/editing remain unsupported (FR-28 cut same day it was added).
-FR-14: `[REWRITTEN 2026-07-15]` Every discovered, non-deleted Journey/Capability automatically enters the Trusted Knowledge Model and feeds Scenario Generation and Analytics immediately upon discovery — no separate approval step; deletion (FR-13) is the only exclusion mechanism.
-FR-15: Re-running discovery on a previously discovered Application flags only newly-discovered Journeys/Capabilities (existence check only, not change detection) for human review; already-known Journeys are not automatically re-surfaced.
-FR-16: Platform generates integration test Scenarios for each discovered Journey, covering both happy-path and negative/edge-case scenarios. `[UPDATED 2026-07-15]` Generation starts immediately upon discovery, not gated on approval.
-FR-17: Platform converts generated Scenarios into executable Playwright Test Assets.
-FR-18: `[CUT 2026-07-27]` Previously: when a customer triggers regeneration of Test Assets for a Journey, platform regenerates Scenarios and Test Assets from scratch (full regeneration only, not incremental). Cut in full — explicit product decision; V1 ships with no customer-facing way to refresh a Journey's generated coverage, deletion (FR-13) is the sole reviewer lever. Retained here as a record of intent. Scenarios remain editable/removable pre-generation (FR-29), unaffected by this cut.
-FR-28 `[ADDED then CUT 2026-07-15]`: Reviewer can edit a discovered Journey via a per-row action menu, in addition to rename/delete. Cut the same day it was added — its exact edit surface (name/description vs. constituent steps) was never confirmed in the UX review, and product decided not to build it.
-FR-29 `[ADDED 2026-07-15]`: Reviewer can rename, edit, or remove a generated Scenario before Playwright generation. `[GAP]` whether edits feed generation or are display-only is unconfirmed.
-FR-31 `[ADDED 2026-07-21]`: Platform validates that the submitted Base URL is reachable before creating an Application record or starting discovery; an unreachable URL fails fast with a clear message.
-FR-32 `[ADDED 2026-07-21]`: Platform auto-fetches the target Application's favicon during onboarding (best-effort, non-blocking) and reflects the Application's name and favicon in the browser tab throughout the pipeline screens.
-FR-33 `[ADDED 2026-07-21]`: Platform surfaces Discovery Run progress via four business-language stages (Initialization, Authentication, Discovery, Analysis) with fixed percentages; no crawl-specific or technical terminology is exposed. Walks back Story 2.2's prior raw live-feed AC (data capture itself is unaffected).
+**Accounts and workspace**
+- FR-1: Accounts are invite-only and belong to one organization. Nobody can sign up on their own, and no one ever sees another organization's data.
+- FR-2: A user signs in with email and password. The session ends after 1 hour without activity, and the user is told why they were signed out.
+- FR-3: A user who forgets their password can request a reset link by email. The link works once and expires after 1 hour. The screen never reveals whether an account exists.
+- FR-4: There are three roles: admin, member and viewer. Viewers can see everything but change nothing. Members can do all day-to-day work. Admins can also manage the team, settings, saved credentials, activity history and application rename/delete.
 
-**`[REMOVED 2026-07-15]`** FR-19–22 and FR-24–27 are removed in full — no supporting screen exists in the current reference prototype's IA for any of them, and (for FR-26/27) on-prem deployment is confirmed parked for a later release. See `sprint-change-proposal-2026-07-15.md` for the original history. FR-23 is the one exception: retained and relocated (see its entry).
+**Applications**
+- FR-5: A user can add an application by giving its name, environment and URL. The URL must pass a connection test before the application can be added.
+- FR-6: If the application needs a login, the user gives a username and a password or token. These are stored encrypted, used only while exploring and running tests, and never shown again on that screen.
+- FR-7: Before exploration starts, Vantage proves the login works by signing in for real. Exploration never starts on a login that hasn't been confirmed.
+- FR-8: Autonomous exploration ("Discovery") is optional for each application. Without it, the team builds tests by describing or recording them.
+- FR-9: An admin can rename or delete an application. Deleting is blocked while exploration, generation or a test run is still going. A deleted application's data is removed for good after the clean-up period chosen in Settings.
+- FR-10: The home Overview and the Applications list show, across every application, what is running now, recent pass rates and each application's health.
 
-FR-23: `[RETAINED, RELOCATED 2026-07-15]` Platform provides Journey-detail — a view of a Journey's screens, actions, and API calls captured during discovery. As of 2026-07-15, served inline in the discovery-review screen's detail panel (selecting a candidate), not a standalone Journey Explorer screen.
+**Discovery (classic engine; Explorer is covered by FR-35 to FR-39)**
+- FR-11: Vantage explores the application by itself in a real browser. It signs in, signs in again if the session runs out, and records pages, forms, actions and screenshots.
+- FR-12: Exploration stops when there is nothing new to find, or when it reaches the admin limits for pages (500 by default) or time (30 minutes by default). The reason it stopped is recorded. Finishing exploration doesn't start scenario or test generation; the user starts that.
+- FR-13: Exploration never performs clearly destructive actions, and it avoids getting stuck in loops.
+- FR-14: Exploration can be paused and resumed, and it picks up again on its own after a background restart.
+- FR-15: AI groups what was found into named business journeys. Each journey shows a screenshot and its steps.
+- FR-16: While exploring, Vantage shows progress in plain stages rather than technical detail.
 
-### NonFunctional Requirements
+**Journeys, scenarios and test cases**
+- FR-17: A user can search, rename and delete journeys. A deleted journey is left out of everything that follows.
+- FR-18: For each journey, Vantage drafts test scenarios. Each scenario has steps, test data and an expected result. Users can rename or delete scenarios, edit test data, or fill it in automatically.
+- FR-19: Vantage writes a TypeScript Playwright test for each scenario. It shows progress, and generation can be stopped or retried for each journey.
+- FR-20: A user can describe a test in plain English. An AI agent then works through the live application, writes the test and lists any steps it couldn't perform.
+- FR-21: A user can record a test by clicking through a flow in a remote browser, then save it as a test or throw it away.
+- FR-22: All test cases sit in one list. Each shows where it came from (discovery, plain-English prompt or recording) and can be filtered, searched, opened to view its code, or have its test data edited.
+- FR-23: A user can download every test as a ready-to-run Playwright project in a .zip file.
 
-NFR-1 (Security): Standard enterprise-grade secret handling for stored discovery credentials — encryption at rest and in transit, least-privilege service accounts. No bespoke certification requirement specified for V1.
-NFR-2 (Reliability): `[UPDATED 2026-07-15]` A Discovery Run must complete (exhaustive traversal) or fail gracefully (e.g., session expiry) — no time-budget timeout state exists.
-NFR-3: `[REMOVED 2026-07-15]` Previously "Data locality (on-prem)," tied to FR-27 (removed — on-prem deployment parked for a later release).
-NFR-4 (Accessibility): WCAG 2.1/2.2 AA is the accessibility floor across the entire desktop surface — behavioral commitments (focus visibility, keyboard operability, contrast), not a compliance badge.
-NFR-5 (Platform scope): Desktop web app only — no mobile or tablet form factor / responsive parity in V1.
+**Running tests and results**
+- FR-24: A user can run every test, or a named selection of journeys and test cases. Each run gets its own number.
+- FR-25: A user can cancel a run. Finished results are kept, and unfinished tests are marked cancelled.
+- FR-26: When a test fails, Vantage tries to repair it with AI within a set number of attempts. The repair may fix how the test finds things on the page, but it may never change or weaken what the test checks.
+- FR-27: A test is flagged flaky if its recent results include both a pass and a fail.
+- FR-28: Every failure has a plain-language explanation, the raw error, a screenshot and a step-by-step trace.
+- FR-29: Every finished run has a branded HTML test report.
+- FR-30: When a run finishes, the person who started it gets an email summary.
+- FR-31: Test runs can be scheduled daily, weekly, monthly or with a custom timetable.
 
-### Additional Requirements
+**Workspace administration**
+- FR-32: An admin can invite people by email with a role, change a person's role and remove people.
+- FR-33: An admin can set limits for exploration and test generation, the self-repair budget, which screenshots to keep, the clean-up period for deleted applications, the logins saved for each application, and whether each application needs sign-in at all.
+- FR-34: An admin can see one timeline of everything that happened in the organization. Records are kept for 90 days.
 
-- No starter/greenfield template is specified by Architecture; instead a structural seed (`apps/web`, `apps/api`, `apps/workers/discovery`, `apps/workers/generation`, `packages/domain`, `packages/workflows`, `packages/ai_provider`, `packages/delivery_adapters`, `packages/ci_instructions`, `packages/secrets_client`, `migrations/`) is fixed — Epic 1 Story 1 should scaffold this structure directly rather than starting from an external template.
-- Paradigm: Durable Orchestrated Pipeline with Ports & Adapters — Temporal Workflows carry coordination only (no I/O); Temporal Activities are the only place side effects (browser automation, LLM calls, DB writes, Git operations) happen (AD-1, AD-2).
-- `DiscoveryWorkflow` is bounded and terminates by writing candidate Journeys/Capabilities to Postgres with `status=candidate`; human review is ordinary CRUD via `apps/api`, never a Temporal Signal/Update on a long-lived workflow (AD-1).
-- `[UPDATED 2026-07-15]` `InferenceActivity` starting an independent `GenerationWorkflow` per candidate Journey it creates, with workflow ID `generation-{journey_id}-1` — immediately upon discovery, with no human approval gate (AD-1, AD-9).
-- All AI/LLM calls must go through one `AIProvider` port (`packages/ai_provider`); no Activity may import a vendor AI SDK directly (AD-3).
-- `[NOT CURRENTLY ACTIVE — 2026-07-15]` The `DeliveryAdapter`/`packages/ci_instructions` port design (AD-4) is retained in the Structural Seed as a forward-compatible architectural seam, but CI/CD Delivery (Epic 5) is removed — no story builds against this port in the current scope.
-- Discovery credentials and SSO/MFA session state must never touch primary storage in plaintext — read/written only via `packages/secrets_client`, backed by Vault or cloud KMS envelope encryption; `packages/domain` models store only a secret reference (AD-5).
-- The API's generated OpenAPI spec is the only contract between `apps/web` and `apps/api` — frontend TypeScript types are generated from the FastAPI/Pydantic OpenAPI spec; no hand-written duplicate request/response shape is permitted (AD-6).
-- `[UPDATED 2026-07-15]` The Trusted Knowledge Model has exactly one deletion path: only `apps/api`'s delete endpoint may transition a Journey/Capability's status to `deleted`; workers may only write `candidate` or downstream generation status (AD-7). There is no more `approved`/`rejected` state — every non-deleted Journey/Capability is part of the Trusted Knowledge Model from the moment it's discovered.
-- `[UPDATED 2026-07-18]` There is no generic `Evidence` table. `DiscoveryActivity` writes typed rows directly (`Page`, `Form`/`FormField`/`ValidationRule`, `Action`, `ApiEndpoint`, `PageTransition`), each tagged `application_id` + `discovery_run_id`; `ApplicationModelBuilderActivity` merges duplicates (within and across Discovery Runs) via a self-referencing `merged_into_id`, and derives `Component`/`ComponentLocator`/`Assertion` from canonical rows; `InferenceActivity` attributes `journey_id` only onto canonical rows. `Journey.discovery_run_id` is immutable; `Scenario`/`TestAsset` rows carry `generation_run_id` plus a `current: bool` flag, with prior attempts soft-superseded (never deleted) on regeneration (AD-8).
-- Large binary artifacts (screenshots) are never stored inline in Postgres — `Page.object_storage_key` holds an object-storage key/reference; structured metadata lives directly as typed columns in Postgres (AD-8). `[RESOLVED 2026-07-24]` Production object-storage backend: AWS S3; local-dev/CI: docker-compose MinIO (unchanged, S3-compatible) — see Story 2.8.
-- Every side-effecting Activity (form submission, PR/commit creation) must be idempotent under Temporal's at-least-once retry, using a deterministic check-before-acting key derived from its inputs. `[UPDATED 2026-07-15]` `InferenceActivity`'s candidate-creation step is keyed by the same `identity_key` used for re-discovery dedup (AD-13); its `GenerationWorkflow`-start is naturally idempotent via Temporal's duplicate-workflow-ID rejection, with no separate reconciliation sweep needed (AD-9).
-- `[UPDATED 2026-07-15]` `DiscoveryRun.status` must be a first-class, queryable field (`running | complete | failed`) — completeness is never inferred from presence/absence of other data (AD-10). No `incomplete` value exists — there is no time-budget stop condition to produce one (FR-7).
-- Session expiry mid-crawl must be detected as a distinct condition from a normal stop condition, terminating the run with `status=failed`, `failure_reason=session_expired`, surfaced by `apps/api` as a re-authentication prompt distinguishable from other `failed` causes (AD-11).
-- `Organization` is a first-class tenant-boundary entity; every `apps/api` query must be scoped by the authenticated user's Organization through one central mechanism, never left to individual endpoints (AD-12).
-- Each candidate Journey needs a deterministic `identity_key` computed from its underlying evidence shape (not its AI-generated display name); re-discovery dedup/suppression for FR-15 compares against this key and never alters existing attribution (AD-13).
-- Stack versions to build against: Python 3.14.6, FastAPI (current stable), SQLModel (current stable), Alembic (current stable), PostgreSQL 18.4, Temporal Python SDK (current GA), Playwright Python 1.57+, React 19.x, Vite 8.1.x, TypeScript 7.0 GA (verify AD-6's OpenAPI→TS codegen tooling supports it before adopting, else pin TypeScript 5.9 as fallback).
-- Platform's own CI (build/test/lint of this codebase) runs on GitHub Actions; every `apps/*` service ships as its own container image; traces/metrics use OpenTelemetry, correlated by Temporal `workflow_id` (matching structured-log correlation).
-- Deferred by explicit architecture decision (not to be designed against in V1 stories): SaaS vs. on-prem deployment topology and where Temporal itself runs; direct-commit regeneration conflict handling; a non-production technical safeguard; confidence/risk-scoring reintroduction; reviewer prioritization/importance-marking; tenant billing/plan model. `[RESOLVED 2026-07-24]` The object-storage backend provider (previously deferred here) is decided — AWS S3 in production, MinIO unchanged for local-dev/CI — see Story 2.8.
-- Blocking dependency: the SSO/MFA session-state capture mechanism (PRD Open Question 8) is unresolved and blocks detailed design/build of the Onboarding flow's auth step (FR-3) — stories touching this step must treat the mechanism as a placeholder pending that decision.
-- `[CUT 2026-07-15]` The live pending-review count indicator and New/Dupe candidate-row badges are confirmed cut — the nav rail they depended on is retired, and neither was confirmed present in the current reference prototype. See Story 3.1.
+**Explorer discovery**
+- FR-35: Adding an application with discovery on starts Explorer, unless operations have switched it off. Users can watch what it is doing live, and pause, stop, resume or start a new run.
+- FR-36: Explorer writes a one-page App Summary of what the application is for and waits for a person to check and confirm it before going further. An unconfirmed summary expires after 14 days.
+- FR-37: Explorer asks a person when it is unsure or about to do something risky. Every answer becomes knowledge for that application, and the same question is never asked twice.
+- FR-38: Explorer works through missions (real goals in the application), hunts for screens that only appear sometimes, lists every screen it found and flags things that look wrong.
+- FR-39: Explorer writes scenarios and proves each one. Only proven scenarios are handed on to test generation; a possible bug needs a person's verdict before it can become a test.
 
-### UX Design Requirements
+### Non-Functional Requirements
 
-UX-DR1: Implement the full design-token system (color, typography, spacing, radius) as CSS custom properties with true light/dark parity — `:root` sets light values + `color-scheme: light`, a `@media (prefers-color-scheme: dark)` block overrides for OS dark preference, and explicit `:root[data-theme="dark"]`/`[data-theme="light"]` attribute selectors let an in-app toggle override the OS preference. No component may hardcode a color outside the token layer.
-UX-DR2: `[SUPERSEDED 2026-07-15 — see Story 1.2]` Originally: build a persistent app shell — fixed-width (236px) nav rail plus fluid main column — with links grouped under five section labels, and Settings/sign-out pinned to the rail foot. No nav rail exists in the current IA; replaced by a top bar (brand mark, avatar menu) plus a pipeline stepper (Story 2.1). Settings itself is removed (Epic 7 cut).
-UX-DR3: `[CUT 2026-07-15]` Live pending-review count badge — was tied to the now-retired nav rail; no on-screen replacement is being built. See `sprint-change-proposal-2026-07-15.md` and Story 3.1.
-UX-DR4: Build the two-pane Review Journeys pattern — a scannable queue-row list plus a sticky (340px, sticky on scroll) evidence panel that loads the selected row's full evidence trail (pages/actions/API calls) rendered in monospace.
-UX-DR5: `[UPDATED 2026-07-15]` Build the Discover Journeys row component with two curation actions — Rename, Delete. `[CUT 2026-07-15]` Approve/Reject are cut (no gate — see epics.md Epic 3); there is no "decided row" state to mute/dim, since nothing requires a per-row decision anymore.
-UX-DR6: Build the badge component with variants `approved`, `rejected`, `type-happy`, `type-negative`, `generated` — every variant is a tinted-wash background plus saturated text of the same hue, never a solid fill. `[CUT 2026-07-15]` `new`/`dupe` variants are not built — see Story 3.1.
-UX-DR7: `[TRIMMED 2026-07-15]` Build the status-pill component with a pulsing dot for in-progress states. (Originally also specified an amber "Incomplete" transition on time-budget cutoff — removed, no time-budget concept exists; FR-7's only outcome is "Running" → "Complete." Also previously dropped an "Applications table row" variant — no Application-list view is confirmed in the current IA.)
-UX-DR8: `[REMOVED 2026-07-15]` Capability card component (App Overview) — the App Overview screen is cut (Epic 6 removed), no replacement.
-UX-DR9: `[REMOVED 2026-07-15]` KPI tile and hero-stat strip components (Dashboard, Applications) — both screens are cut (Epic 6/Applications-list removed), no replacement.
-UX-DR10: Build the Add Application stepper — only the active step renders its full form body; completed steps collapse to a one-line summary, pending steps show only their title; a completed step is not clickable to jump back to. `[GAP — flagged 2026-07-15, see Story 1.3]` This stepper pattern was itself superseded by a single consolidated Connect App form; re-verify whether any of this UX-DR still applies to a real screen.
-UX-DR11: `[REMOVED 2026-07-15]` Originally: option-card/provider-card selection control for Add Application's auth-method choice, and Connect to CI/CD's export-mode/provider choices. Both are gone — auth-method is now a plain `<select>` (Story 1.4's 2026-07-15 update), and Connect to CI/CD is cut (Epic 5 removed).
-UX-DR12: `[TRIMMED 2026-07-15]` Build the code-viewer + native `<details>`/`<summary>` disclosure component for generated Playwright code, with light syntax tinting (keywords/strings/comments) — closed by default for every block except the first/most-relevant one per screen; opening one disclosure never closes others. (Originally also covered CI/CD pipeline snippets — removed, Epic 5 cut.)
-UX-DR13: `[TRIMMED 2026-07-15]` Build the toggle-switch component for genuine binary settings only (e.g., notification preferences) — immediate on/off, no confirmation step, never repurposed as a selection control. (Originally cited AI-provider mode as an example use — removed, Epic 7 cut; no Settings screen exists for this control to live on regardless.)
-UX-DR14: `[SUPERSEDED 2026-07-15 — see Story 3.5]` Originally: build an empty-state component (dashed-border panel, circular check icon, one-line factual confirmation) shown only when a queue/list is fully triaged, with an Approved/Rejected count summary on Review Journeys specifically. No longer applicable to Discover Journeys — there is no forced per-row decision to "fully triage" (Approve/Reject cut), so no empty-state trigger condition exists there. Retained as a general-purpose component definition in case another screen needs a true empty state later.
-UX-DR15: `[SUPERSEDED 2026-07-15]` Originally: an 11-screen IA — Login; Applications, Add Application, Discovery Progress, App Overview, Review Journeys, Generated Scenarios, Generated Tests, Connect to CI/CD, Dashboard, Settings — linear flow through all of them. Replaced by the current 6-screen IA: Sign In → Home (3 action cards) → Connect App → Discover Journeys → Review Scenarios → Generate Suite (a single-Application 4-step guided pipeline, per Story 1.2/2.1's 2026-07-15 updates). Applications, App Overview, Generated Tests (as a standalone screen), Connect to CI/CD, Dashboard, and Settings have no current-IA equivalent.
-UX-DR16: `[UPDATED 2026-07-15]` Implement the breadcrumb/app-name context rule — show the current Application's name (plus environment badge) in the top bar on all four pipeline-step screens (Connect App, Discover Journeys, Review Scenarios, Generate Suite), since each is inherently scoped to a single Application; suppress it on Sign In and Home, the only pre-/cross-Application screens. (Originally listed Discovery Progress, App Overview, Generated Tests, Connect to CI/CD, Settings, Applications, and Dashboard — most of those screens no longer exist; see UX-DR15.)
-UX-DR17: `[TRIMMED 2026-07-15]` Implement state-pattern behavior for: Discovery running (live-feed list, newest first) vs. complete; review-queue in-progress vs. resolved-row (muted, badge-only) vs. cleared (empty state) `[largely superseded, see UX-DR14/Story 3.5]`. (Originally also covered time-budget-incomplete — removed, no time-budget concept exists, see Story 2.3 — and CI/CD provider "Connected" label and Dashboard coverage-gap flag — both removed, Epic 5/6 cut.)
-UX-DR18: `[UPDATED 2026-07-15]` Enforce the accessibility floor across every new screen/component — WCAG 2.1/2.2 AA; visible focus ring on every interactive element (buttons, top-bar/pipeline-stepper links, inputs, selects, textareas, `<summary>` triggers); tab order matches visual order (list before detail panel on Discover Journeys). (Originally also cited nav-rail links and option/provider cards — both removed; see UX-DR2, UX-DR11.)
-UX-DR19: Enforce the label/caption contrast rule everywhere new text is added — all real label/caption/metadata text routes through the `ink-muted` token (~5:1 AA contrast); the `ink-faint` token is reserved exclusively for decorative, non-text marks (disabled affordances, placeholder dashes) and must never carry real copy.
-UX-DR20: Enforce voice-and-tone constraints in all authored UI copy — no exclamation points, emoji, or celebratory language anywhere; capitalize Application, Capability, Journey, Scenario, Test Asset, and Trusted Knowledge Model as proper nouns consistently; state errors/hints/constraints as fact + why, never apology-only or unexplained.
-UX-DR21: Enforce the hard product constraint that no AI confidence, risk, or importance signal (score, percentage, star rating, priority flag) may appear anywhere near discovered/inferred content (Journeys, Capabilities, Scenarios) — this applies to every new screen, not just the ones in the approved prototype.
-UX-DR22: Enforce the "no merge/split/composition-edit" constraint — no future Journey-review screen or component may offer a merge, split, or inline edit of what pages/actions/API calls compose a Journey; a reviewer resolves a duplicate candidate by deleting it, never by merging or editing it (no `dupe` badge is built — see Story 3.1; edit is cut — see Story 3.4).
-UX-DR23: `[SUPERSEDED — see Story 4.1's 2026-07-15 update]` Originally: Generated Scenarios remain view-only, no checkbox selection, per-scenario approval, or action buttons on a scenario row, since the only approval gate was at the Journey level. No longer holds: per-scenario rename/edit/remove is supported (FR-29), and there is no more Journey-level approval gate at all (FR-10/FR-11 cut) — generation starts immediately on discovery.
-UX-DR24: Reserve monospace typography (`font-mono`) exclusively for raw captured evidence and generated code (routes, API call signatures, timestamps, file paths, Playwright code) — never for authored UI copy (labels, headings, hints, empty-state text), even where a technical look might seem appropriate.
+- NFR-1 (Security): Logins for the applications under test are kept in a dedicated encrypted secrets store, never in plain text. Only an admin can reveal a saved password, and every reveal is recorded in the activity history.
+- NFR-2 (Roles enforced on the server): The server checks every role rule, not just the screen. A viewer is refused every kind of change, in Explorer too. Epic 8 gaps: Explorer's other user types and knowledge are not limited to admins, and viewers can download Explorer's tests, run report, recordings and highlight video.
+- NFR-3 (Organization isolation): Every request is limited to the signed-in user's organization through one shared check.
+- NFR-4 (Reliability): Long-running work (exploration, generation, test runs) runs in the background and survives individual worker restarts. A check every 15 minutes automatically closes off any test run that has been stuck for more than 6 hours.
+- NFR-5 (Test integrity): Automatic repair must never change a test's checks. Any repair that would change one is rejected.
+- NFR-6 (Plain language): Errors and progress are written in plain product language. AI-written failure explanations are labelled as such.
+- NFR-7 (Retention): A deleted application is purged after 1 day, 1 week or 1 month (admin's choice). Activity history is kept for 90 days.
+- NFR-8 (Platform): Vantage is a desktop web app in light mode only.
+- NFR-9 (Accessibility target): Every interactive element has a visible focus state and can be used with the keyboard.
+
+### Design Requirements
+
+- DR-1: There is one set of colour, type and spacing values (teal accent, Instrument Sans for interface text, IBM Plex Mono for code). Screens never use their own one-off colours.
+- DR-2: Anything that is working shows its label followed by three bouncing dots. There is never a spinning ring or a static "…".
+- DR-3: "More options" menus always use the vertical three-dot icon.
+- DR-4: Input placeholders tell the user what to enter. They never show made-up example values. The one exception is the custom schedule field, where a real example of the format is shown.
+- DR-5: Discovered and AI-generated content never shows a confidence, risk or importance score.
 
 ### FR Coverage Map
 
-FR-1: Epic 1 - Application onboarding (URL, environment, credentials)
-FR-2: Epic 1 - Dedicated Test Account credential requirement
-FR-3: Epic 1 - Authentication via login flow or storage-state reuse
-*(FR-4 and FR-5 — removed 2026-07-15, confirmed removed concepts, not deferred. See Story 1.5's removal below.)*
-FR-6: Epic 2 - Autonomous exploration capturing pages/actions/APIs/state, always full-Application, with crawl-optimization rules (2026-07-18)
-FR-7: Epic 2 - Discovery stop condition (exhaustive traversal only, no time-budget branch)
-FR-8: Epic 2 - AI journey/capability inference with evidence association, now via the Application Model (FR-30)
-FR-30: Epic 2 - Application Model Builder `[ADDED 2026-07-18]` — Story 2.5
-FR-9: Epic 3 - Discover Journeys curation presentation
-FR-10: `[CUT 2026-07-15]` Approve action — no longer built
-FR-11: `[CUT 2026-07-15]` Reject action — no longer built
-FR-12: Epic 3 - Rename action
-FR-13: Epic 3 - Delete action (sole exclusion mechanism as of 2026-07-15)
-FR-14: Epic 2 - Discovery gates downstream use (Trusted Knowledge Model) — `GenerationWorkflow` starts immediately per candidate (moved from Epic 3's former Approve action)
-FR-15: Epic 3 - New-journey flagging on re-discovery
-FR-16: Epic 4 - Scenario generation (happy-path + negative), starts immediately on discovery
-FR-17: Epic 4 - Playwright Test Asset generation
-FR-18: `[CUT 2026-07-27]` Full regeneration on request — no longer built; no customer-facing way to refresh generated coverage, deletion (FR-13) is the sole lever
-FR-28: `[ADDED then CUT 2026-07-15]` Edit a discovered Journey — no longer built
-FR-29: Epic 4 - Edit/remove a generated Scenario `[ADDED 2026-07-15]`
-FR-34: Epic 4 - Download all current Test Suites as a runnable, suite-folder-organized Playwright project `[ADDED 2026-07-27]`
-FR-23: Epic 3 `[RETAINED, RELOCATED]` - Journey step/evidence detail, now inline in the discovery-review screen (was Epic 6 - Journey Explorer)
+| Requirement | Epic | Stories |
+|---|---|---|
+| FR-1 | Epic 1 | 1.2 |
+| FR-2 | Epic 1 | 1.2 |
+| FR-3 | Epic 1 | 1.2 |
+| FR-4 | Epic 7 | 7.1 (rules enforced throughout) |
+| FR-5 | Epic 1 | 1.3 |
+| FR-6 | Epic 1 | 1.4 |
+| FR-7 | Epic 2 | 2.23 |
+| FR-8 | Epic 2 | 2.24 |
+| FR-9 | Epic 1 | 1.7 |
+| FR-10 | Epic 1 | 1.7 |
+| FR-11 | Epic 2 | 2.1, 2.2, 2.4, 2.9, 2.14 |
+| FR-12 | Epic 2 | 2.3 |
+| FR-13 | Epic 2 | 2.10, 2.11, 2.12, 2.19 |
+| FR-14 | Epic 2 | 2.17, 2.18 |
+| FR-15 | Epic 2 | 2.5, 2.6 |
+| FR-16 | Epic 2 | 2.7 |
+| FR-17 | Epic 3 | 3.1, 3.4 |
+| FR-18 | Epic 4 | 4.1 |
+| FR-19 | Epic 4 | 4.2 |
+| FR-20 | Epic 4 | 4.4 |
+| FR-21 | Epic 5 | 5.1, 5.2 |
+| FR-22 | Epic 4 | 4.5 |
+| FR-23 | Epic 4 | 4.3 |
+| FR-24 | Epic 6 | 6.1 |
+| FR-25 | Epic 6 | 6.2 |
+| FR-26 | Epic 6 | 6.3 |
+| FR-27 | Epic 6 | 6.4 |
+| FR-28 | Epic 6 | 6.5 |
+| FR-29 | Epic 6 | 6.6 |
+| FR-30 | Epic 6 | 6.7 |
+| FR-31 | Epic 6 | 6.8 |
+| FR-32 | Epic 7 | 7.1 |
+| FR-33 | Epic 7 | 7.2 |
+| FR-34 | Epic 7 | 7.3 |
+| FR-35 | Epic 8 | 8.1 |
+| FR-36 | Epic 8 | 8.2 |
+| FR-37 | Epic 8 | 8.3 |
+| FR-38 | Epic 8 | 8.4 |
+| FR-39 | Epic 8 | 8.5 |
 
-*(FR-19–22 and FR-24–27 — removed 2026-07-15 along with Epics 5, 6 [partially], and 7. See `sprint-change-proposal-2026-07-15.md` for history.)*
-
-FR-31: Epic 1 - Application reachability validation `[ADDED 2026-07-21]` — Story 1.3
-FR-32: Epic 1 - Dynamic browser tab branding `[ADDED 2026-07-21]` — Story 1.3 (capture) + Story 1.6 (display)
-FR-33: Epic 2 - Business-oriented import progress `[ADDED 2026-07-21]` — Stories 2.1, 2.2, 2.6 (stage transitions) + Story 2.7 (display)
-
-FR-35–FR-46: Epic 2 - Discovery engine redesign (page readiness, infinite scroll, State Identity Engine, Action Priority Model, Safety Engine, Data Resolver, widget coverage, Blocked Frontier + resume, Save-as-Project, crash recovery/error taxonomy, loop prevention) `[ADDED 2026-07-29]` — Stories 2.9-2.19
-FR-47: Epic 4 - Test data carry-forward from discovery into Scenario Generation defaults `[ADDED 2026-07-29]` — Story 4.1 amendment
-
-NFR-1 (Security): Epic 1 - Secret handling for stored discovery credentials
-NFR-2 (Reliability): Epic 2 - Graceful completion (exhaustive traversal) or failure (e.g., session expiry)
-NFR-4 (Accessibility): Cross-cutting - WCAG 2.1/2.2 AA applied within every epic's UI stories
-NFR-5 (Platform scope): Cross-cutting - Desktop-only constraint applied within every epic's UI stories
+Non-functional and design requirements apply across all epics.
 
 ## Epic List
 
-### Epic 1: Foundation, Auth & Application Onboarding
-A user can sign in, and onboard an Application (URL, environment, Dedicated Test Account credentials) — ready for its first Discovery Run. Establishes the structural seed scaffold, Organization tenancy, credential handling via SecretsClient, and the app shell/design-token foundation everything else builds on. `[UPDATED 2026-07-15]` No discovery scope or time-budget configuration — both removed (FR-4/FR-5); Discovery Runs always cover the full Application. `[UPDATED 2026-07-21]` Onboarding submission now validates Base URL reachability before creating an Application (FR-31) and auto-fetches its favicon (FR-32); the browser tab reflects the connected Application's name/favicon across the pipeline (Story 1.6).
-**FRs covered:** FR-1, FR-2, FR-3, FR-31, FR-32
+### Epic 1: Foundation, Sign-in & Application Onboarding
+People sign in to an organization-scoped workspace, find their way around the app shell and Overview dashboard, and add an application with its sign-in details.
+**Requirements covered:** FR-1, FR-2, FR-3, FR-5, FR-6, FR-9, FR-10
 
 ### Epic 2: Runtime Discovery & AI Journey Inference
-A user can start a Discovery Run, watch live progress (running/complete/failed-session-expired), and see AI-inferred candidate Journeys/Capabilities, each traceable to captured evidence. `[UPDATED 2026-07-15]` Every candidate Journey immediately enters the Trusted Knowledge Model and starts Scenario/Playwright generation as soon as it's created — no approval gate (FR-14, moved from the former Approve action). No `incomplete` status — a Discovery Run only ever completes (exhaustive traversal) or fails, since no time-budget cap exists. `[UPDATED 2026-07-18]` Raw discovery signal is normalized into a structured Application Model (Story 2.5, FR-30) before AI inference (Story 2.6) reads it — see `sprint-change-proposal-2026-07-18.md`. `[UPDATED 2026-07-21]` "Watch live progress" is now business-language staged progress (Initialization/Authentication/Discovery/Analysis, FR-33), not the raw crawl live-feed Story 2.2 originally specified — see Story 2.7 and `sprint-change-proposal-2026-07-21.md`. `[UPDATED 2026-07-29]` The Discovery module's internal crawl-decision engine gains page-readiness gating, bounded infinite-scroll sampling, a three-way state-identity classification, tiered action ordering, a Safe/Destructive/Ambiguous Safety Engine, structured data resolution with deferral, first-class widget coverage (tabs/dialogs/multi-window/file-upload), a Blocked Frontier with cross-session pause/resume (Save-as-Project), and crash recovery with a machine-readable error taxonomy — see `sprint-change-proposal-2026-07-29.md`. No change to the FR-14 discovery-gates-generation pipeline or Epic 3/4's curation/generation flow.
-**FRs covered:** FR-6, FR-7, FR-8, FR-14, FR-30, FR-33, FR-35, FR-36, FR-37, FR-38, FR-39, FR-40, FR-41, FR-42, FR-43, FR-44, FR-45, FR-46
+Vantage explores an application on its own in a real browser, safely and within limits, and turns what it finds into named business journeys. Discovery is optional for each application and only starts once the login has been proven to work. This epic describes the classic discovery engine, which now runs only for applications discovered before Explorer became the default, or when operations switch Explorer off.
+**Requirements covered:** FR-7, FR-8, FR-11, FR-12, FR-13, FR-14, FR-15, FR-16
 
-### Epic 3: Human Curation & Trusted Knowledge Model `[RENAMED 2026-07-15, was "Human Review & Trusted Knowledge Model"]`
-`[REWRITTEN 2026-07-15]` A reviewer curates discovered candidates — rename what's mislabeled, delete what doesn't belong — and inspects any candidate's discovered step/evidence detail inline. There is no approve/reject gate: every discovered Journey is already in the Trusted Knowledge Model and generating coverage before a reviewer looks at it (see Epic 2); deletion is the only exclusion mechanism. Re-running discovery only flags genuinely new Journeys.
-**FRs covered:** FR-9, FR-12, FR-13, FR-15, FR-23 (relocated 2026-07-15). `[CUT 2026-07-15]` FR-10 (Approve), FR-11 (Reject) — no story files retained (removed 2026-07-15); FR-28 (Edit) — see Story 3.4.
+### Epic 3: Journey Curation
+Users review the journeys that were found, and rename or delete them.
+**Requirements covered:** FR-17
 
-### Epic 4: Scenario & Playwright Test Generation
-`[UPDATED 2026-07-15]` Every discovered Journey automatically produces happy-path/negative Scenarios (rename/edit/removable pre-generation as of 2026-07-15) and executable Playwright Test Assets, generated as a named Test Suite — generation starts immediately on discovery, not on approval. `[UPDATED 2026-07-27]` No regeneration mechanism exists (FR-18 cut in full) — once generated, a Journey's coverage is refreshed only by deleting the Journey (Epic 3) and letting re-discovery produce a new one. `[UPDATED 2026-07-27]` The full set of current Test Suites can be downloaded as a single, suite-folder-organized, runnable Playwright project. `[UPDATED 2026-07-29]` Test data used to unblock a discovery-time exploration path carries forward as the default Test Data value when a generated Scenario recreates that same step (FR-47) — see `sprint-change-proposal-2026-07-29.md`.
-**FRs covered:** FR-16, FR-17, FR-29 (added 2026-07-15), FR-34 (added 2026-07-27), FR-47 (added 2026-07-29). `[CUT 2026-07-27]` FR-18 (Full regeneration) — no longer built, see Story 4.3's removal below.
+### Epic 4: Scenario & Test Case Generation
+Journeys become test scenarios and then TypeScript Playwright tests. Tests can also be written from a plain-English description. Every test sits in one library and can be downloaded as a project.
+**Requirements covered:** FR-18, FR-19, FR-20, FR-22, FR-23
 
-*(Epic 5 "CI/CD Delivery," Epic 6 "Analytics & Executive Dashboards," and Epic 7 "Deployment & AI Provider Configuration" removed in full 2026-07-15 — none had any supporting screen in the current UX, and Epic 7's on-prem deployment is a confirmed parked-for-later-release decision, not current scope. Epic 6's Journey Explorer (FR-23) survives, relocated into Epic 3's Story 3.1. See `sprint-change-proposal-2026-07-15.md` for the original history.)*
+### Epic 5: Record and Play
+Users record a test by clicking through a flow in a remote browser, then save or discard it.
+**Requirements covered:** FR-21
 
-## Epic 1: Foundation, Auth & Application Onboarding
+### Epic 6: Test Execution & Reporting
+Users run tests on demand or on a schedule. Failures get repaired automatically where possible, and results come with flaky flags, explanations, evidence, a report and an email.
+**Requirements covered:** FR-24 to FR-31
 
-A user can sign in, and onboard an Application (URL, environment, Dedicated Test Account credentials) — ready for its first Discovery Run.
+### Epic 7: Workspace Administration
+Admins manage the team and roles, workspace settings and the organization's activity history.
+**Requirements covered:** FR-4, FR-32, FR-33, FR-34
 
-`[NOTE 2026-07-21]` FR-31/FR-32 add reachability validation and favicon auto-fetch to Story 1.3's submission flow, and a new Story 1.6 owns browser-tab branding display — see `sprint-change-proposal-2026-07-21.md`.
+### Epic 8: Explorer Discovery
+Explorer is the default way Vantage learns an application. It reads each screen like a person, writes an App Summary for a person to confirm, asks when unsure, works through missions, flags things that look wrong, and proves scenarios before handing only the proven ones to test generation.
+**Requirements covered:** FR-35, FR-36, FR-37, FR-38, FR-39
 
-### Story 1.1: Repository & Service Scaffold
+---
 
-As a developer,
-I want the repository scaffolded to the architecture's fixed module boundaries with the core stack wired end-to-end,
-So that every subsequent feature has a consistent, contract-safe structure to build within.
+## Epic 1: Foundation, Sign-in & Application Onboarding
 
-**Acceptance Criteria:**
+### Story 1.1: Platform foundation (repository & services)
+**Status:** done
 
-**Given** an empty repository
-**When** the scaffold is applied
-**Then** the directory structure matches the Architecture Spine's Structural Seed exactly: `apps/web`, `apps/api`, `apps/workers/discovery`, `apps/workers/generation`, `packages/domain`, `packages/workflows`, `packages/ai_provider`, `packages/delivery_adapters`, `packages/ci_instructions`, `packages/secrets_client`, `migrations/`
-**And** `apps/api` runs on FastAPI with SQLModel entities backed by PostgreSQL 18.4 and Alembic migrations, and exposes a generated OpenAPI spec
-**And** `apps/web` runs on React 19 + Vite + TypeScript, with its API types generated from `apps/api`'s OpenAPI spec (AD-6) — no hand-written duplicate request/response type exists
-**And** a Temporal (Python SDK) connection is wired from `apps/api` and at least one worker process, sufficient to start and complete a trivial no-op workflow
-**And** the platform's own CI (build/lint/test) runs on GitHub Actions on every push
+As the delivery team, I want the product split into a web app, a server and separate background workers for exploration, test generation, test runs and recording, so that every feature has a consistent place to live and long jobs never block the screen.
 
-### Story 1.2: Sign In & Organization-Scoped Workspace
+**Acceptance criteria**
+1. Given the product is deployed, when a user works in the web app, then all data comes through the server, and the web app's understanding of server data is kept in step with the server automatically.
+2. Given a long job (exploration, generation, a test run or a recording), when it starts, then it runs in a background worker and the screen only shows its progress.
+3. Given a change is pushed, when the team's automated checks run, then code style, type checks and tests must pass.
 
-*Updated 2026-07-15 — IA changed from persistent nav-rail shell to top-bar + Home landing; see `sprint-change-proposal-2026-07-15.md`. Updated 2026-07-27 — Home layout and dark-mode-parity requirement changed per the UX v3 redirect; see `sprint-change-proposal-2026-07-27-3.md`.*
+### Story 1.2: Sign in, password reset & organization-scoped workspace
+**Status:** done
 
-As a user,
-I want to sign in and land in a workspace scoped to my Organization,
-So that my Applications and data are isolated from any other customer's.
+As a team member, I want to sign in securely and only ever see my organization's work, so that our applications and results stay private.
 
-**Acceptance Criteria:**
+**Acceptance criteria**
+1. Given an invited user, when they sign in with their email and password, then they land on the Overview for their own organization.
+2. Given a signed-in user has been inactive for 1 hour, when they next act, then they go back to Sign in with "Your session expired from inactivity". Activity keeps the session alive.
+3. Given a user clicks "Forgot password?", when they enter an email, then the screen always says "Check your email". If the account exists, a reset link is sent that works once within 1 hour and asks for a new password of at least 8 characters.
+4. Given any request, when it is answered, then it only ever includes the signed-in user's organization's data.
+5. Given the server can't be reached, when the app loads, then a "service unavailable" screen with a Retry button appears instead of Sign in.
 
-**Given** a registered user belonging to an Organization
-**When** they sign in
-**Then** they land on Home. `[UPDATED 2026-07-27]` With zero Applications onboarded, Home shows an onboarding empty state (icon badge, "No projects yet" heading, one line of body copy, a primary "+ Create New Project" button). With at least one existing Application, Home instead shows that Application as a persistent card (name, journey/scenario counts, status) beside a "Watch Demo" action — clicking the card resumes the guided pipeline at that Application's Discover Journeys step, never resetting to Connect App. An Application's card remains on Home regardless of its Journey count, including zero after all Journeys are deleted — Home only reverts to the zero-Applications empty state when no Application has ever been onboarded. All of this sits beneath the existing top bar (brand mark + product name, left — click returns to Home from anywhere; user-initials avatar, right)
-**And** the design-token system is applied per `EXPERIENCE.md`/`DESIGN.md`'s current token set — no component hardcodes a color. `[DECISION, 2026-07-27]` Full light/dark parity is dropped as a requirement (the reference UX no longer specifies dark values, and this was never a PRD/FR commitment) — the design-token system is light-mode only. The existing `@media (prefers-color-scheme: dark)`/`data-theme="dark"` overrides in `apps/web/src/tokens.css`/`theme.ts` must be removed, not left in place with stale pre-redirect colors — a stale dark theme would look more broken than no dark theme for OS-dark-mode users. Reinstating dark mode later requires a fresh product decision and new `DESIGN.md` token values, not a revival of the old teal-based dark palette
-**And** clicking the avatar opens a menu showing the user's name, email, and a Log out action
-**And** every API query the user's session triggers is scoped to their Organization via one central scoping mechanism (AD-12) — a second Organization's data is never returned
-**And** the Home screen omits the top-bar Application-name breadcrumb (UX-DR16) — it is inherently pre-Application
-**And** every interactive element (buttons, links, avatar menu) has a visible focus ring and is keyboard-operable
-**And** the token system's `ink-muted` value is the only token used for real label/caption/metadata text anywhere in the shell, with `ink-faint` reserved exclusively for decorative marks — this rule, plus the no-exclamation-points/no-celebratory-language voice-and-tone rule, is treated as a standing constraint every later story's UI copy must follow, not a one-time fix
+**Gaps / not built**
+- Clicking the "Welcome back" heading on the sign-in screen fills in a development login. This is switched on in every build, including the live product. It doesn't skip the password check, but it should be turned off outside development.
 
-*(Superseded 2026-07-15 — retained for history only: the prior AC described a persistent 236px nav rail with links grouped under Workspace/Onboard/Understand/Automate/Prove, Settings and sign-out pinned to the rail foot. No nav rail exists in the current IA; top-level navigation is the pipeline stepper introduced in Story 2.1.)*
+### Story 1.3: Add an application — basic details & connection test
+**Status:** done
 
-`[GAP — flagged 2026-07-29, not resolved here]` Story 2.17 (Save-as-Project) specifies a dashboard showing Confirmed/Blocked/Remaining-to-Explore counts and a "Paused — Action Needed" status for a paused project. The current Home screen's single persistent Application card (this story's 2026-07-27 AC) has no such counts or paused-state treatment. Needs a UX design pass before Story 2.17's frontend half can be built — do not read this note as authorizing ad hoc UI invention against it.
+As a member or admin, I want to add an application by giving its name, environment and URL, so that Vantage can start working on it.
 
-### Story 1.3: Onboard an Application — Basic Details
+**Acceptance criteria**
+1. Given the Add application form, when the user fills it in, then it asks for an application name, an environment (staging, production, qa, or "other" with a custom name) and a URL.
+2. Given a URL, when the user clicks Test connection, then Vantage checks the URL can be reached. The form won't submit until the test passes; clicking submit too early shows a reminder. The server checks again on submit.
+3. Given the form has been submitted, when the screen updates, then it becomes a read-only record of what was submitted ("Connected application").
+4. Given a new application, when it is created, then three schedules are set up for it automatically, all turned off: Nightly, Weekly and Monthly Regression.
+5. Given a viewer, when they look at the sidebar or top bar, then "Add application" isn't shown.
 
-*Updated 2026-07-15 — the 3-step wizard is replaced by a single-page Connect App form; see `sprint-change-proposal-2026-07-15.md`.*
+### Story 1.4: Application sign-in method (credentials / no login, saved sessions, MFA)
+**Status:** in-progress
 
-As a QA Director or Engineering Leader,
-I want to register a new Application by providing its URL, environment designation, and Dedicated Test Account credentials,
-So that it becomes available for discovery configuration.
+As a member or admin, I want to tell Vantage how to sign in to my application, so that it can explore and test pages behind a login.
 
-**Acceptance Criteria:**
+**What it does today**
+- The form has a toggle, "This application requires sign-in". When it's on, the form asks for an optional login page address, a username and a password or token. A note says these are stored encrypted and used only during exploration and test runs.
+- When it's off, the application is treated as needing no login.
+- The saved username and password are never shown again on the form. Admins manage them later in Settings, where each application also has a Sign-in on/off switch (Story 7.2).
 
-**Given** a signed-in user on Home
-**When** they choose "Start a New Project" (or "Managed Applications") and submit Application name, Base URL, environment, credentials, and authentication method (Story 1.4) on the single Connect App form
-**Then** an `Application` record is created, scoped to their Organization, and the submitted credentials are written only through `packages/secrets_client` (Vault/KMS-backed), never stored in plaintext in Postgres or logs (FR-2, AD-5, NFR-1)
-**And** the credentials field is explicitly labeled as requiring a Dedicated Test Account, not a real end-user identity (FR-2)
-**And** the Connect App screen shows the current Application's name and environment badge in the top bar once submitted, per the (2026-07-15) breadcrumb rule
-**And** `[ABSORBED FROM REMOVED STORY 1.5, 2026-07-15]` submitting returns the user to the pipeline's Discover Journeys step, where discovery begins immediately against the full Application — no scope/time-budget configuration exists (FR-4/FR-5 removed)
+**Acceptance criteria**
+1. Given sign-in is turned on, when the form is submitted, then the username and password go into the encrypted secrets store and nowhere else.
+2. Given sign-in is turned off, when Vantage explores or runs tests, then it doesn't try to log in.
+3. Given saved credentials, when exploration or a test run happens, then Vantage signs in with them on its own.
 
-**`[ADDED 2026-07-21]` Given** a user submits the Connect App form
-**When** the platform validates the Base URL
-**Then** it issues a reachability check (HTTP request, 2xx/3xx treated as reachable — the same tolerance FR-6(f) already uses for a live discovery-time destination) before creating the Application record (FR-31)
-**And** if the URL is unreachable (network/DNS error, or a 4xx/5xx response), the platform fails fast with a clear validation message naming the problem, and no Application record or DiscoveryWorkflow is created
-**And** if reachable, submission proceeds exactly as before (record created, discovery starts)
+**Gaps / not built**
+- Reusing a saved single-sign-on browser session works on the server but has no screen.
+- Storing an MFA one-time-code seed is accepted on the server when credentials are changed, but has no screen.
+- API-key and OAuth sign-in methods don't exist.
 
-**`[ADDED 2026-07-21]` Given** the Base URL passed the reachability check above
-**When** the platform creates the Application record
-**Then** it makes a best-effort attempt to fetch the target's favicon (`<link rel="icon">`, falling back to `/favicon.ico` at the Base URL's origin) and stores it as `Application.favicon_url` (FR-32)
-**And** a failed or missing favicon fetch does not block onboarding — `Application.favicon_url` is simply left null, and the platform's default icon is used instead
+### Story 1.6: Dynamic browser tab branding
+**Status:** dropped (reversed)
 
-*(Superseded 2026-07-15: the prior AC described a multi-step wizard stepper where only the active step's form renders. Connect App is now one consolidated form with a single "Connect Application" submit — no internal stepper.)*
+As a user with several tabs open, I wanted the browser tab to show which application I'm working on.
 
-### Story 1.6: Dynamic Browser Tab Branding `[ADDED 2026-07-21]`
+**What it does today**
+This story was built and later reversed on purpose. The browser tab always shows the title "Vantage" and the Vantage icon, whichever application is open. Showing each application's name and icon in the tab is no longer part of the product.
 
-*Added per `sprint-change-proposal-2026-07-21.md` (CR-1, display half — the capture half is Story 1.3's favicon-fetch AC above). Next available Epic 1 story number; 1.5 is not reused since it was already removed in the 2026-07-15 change and reusing it would collide with that history.*
+**Acceptance criteria**
+1. Given any page, when it is showing, then the browser tab shows "Vantage" and the Vantage icon.
 
-As a user working in the pipeline for a specific Application,
-I want the browser tab to show that Application's name and icon,
-So that I can tell which Application I'm working on at a glance across browser tabs.
+### Story 1.7: App shell, sidebar navigation & Overview dashboard
+**Status:** done
 
-**Acceptance Criteria:**
+As a user, I want a clear sidebar, an organization-wide dashboard and a list of applications, so that I can see how everything is doing and jump straight to where work is needed.
 
-**Given** a user is on any of the four pipeline-step screens (Connect App, Discover Journeys, Review Scenarios, Generate Suite) for a given Application
-**When** the screen renders
-**Then** the browser tab title shows the Application's name (e.g. "Claims Processing — Application Intelligence Platform")
-**And** the browser tab favicon shows `Application.favicon_url` if set, otherwise the platform's default icon
-**And** navigating to Home or Sign In reverts the tab to the platform's default title and icon (both screens are pre-/cross-Application, per the existing breadcrumb-suppression rule, UX-DR16)
+**Acceptance criteria**
+1. Given no application is open, when the sidebar shows, then it lists Overview, Applications (with a count), Add application (hidden for viewers) and a Configuration group: Team members (admins), Activity (admins) and Settings. The Configuration group is hidden for viewers.
+2. Given an application is open, when the sidebar shows, then it shows the application's name, an Exit link and these tabs: Overview, Journeys, Scenarios, Explorer, Test cases, Test runs, Record and play, Schedules, Download project. Journeys, Scenarios and Explorer only appear if Discovery was on for that application. For an application Explorer discovered, Journeys and Scenarios are hidden and any link to them opens Explorer instead. Record and play and Download project are hidden for viewers. Tabs can be opened in any order.
+3. Given the Overview, when it loads, then it shows applications tested, test cases generated, pass rate, failure rate, average run time, self-healed locators and last discovery. It also shows charts for pass rate over time, latest run outcome and test cases per application, plus an "Active pipelines" list of work in progress that opens the related application when clicked.
+4. Given the Applications list, when it loads, then each row shows journeys, tests, pass rate, last activity and status. Status is the current stage, "Ready to run", "Running", or after the first run a health level: Healthy, Needs attention or Critical. The list is paginated.
+5. Given an application row, when the user clicks it, then it opens on the most useful tab: Overview if tests exist, Test cases if generation is running or Discovery is off, Explorer if Explorer discovered the application (and right after an application is added with Discovery), otherwise Scenarios or Journeys.
+6. Given an admin opens a row's ⋮ menu, when they choose Rename, then the name is edited in place. When they choose Delete, then they confirm and the application is removed. Delete is blocked, with a reason given, while Discovery, generation or a test run is going. The application's data is purged after the clean-up period set in Settings.
+7. Given an application, when its Overview tab opens, then it shows "No test runs yet" until the first run finishes; after that it shows the health level, last run pass rate with a link to the run, "Pass rate by run" bars, counts and quick-action cards for each tab. For an application Explorer discovered, the Journeys and Scenarios cards are replaced by one "Open Explorer" card ("See what it learned and the scenarios it proved").
+8. Given there are no applications or no runs yet, when the page loads, then a clear empty state appears.
 
-### Story 1.4: Configure Application Authentication Method
-
-*Updated 2026-07-15 — "Authentication method" is now a plain `<select>` field on the single Connect App form, not a wizard step with option cards. Updated 2026-07-27 — concrete three-option set confirmed per the UX v3 redirect; see `sprint-change-proposal-2026-07-27-3.md`.*
-
-As a user onboarding an Application,
-I want to choose how the platform authenticates to it — standard login or a reusable pre-authenticated session,
-So that SSO/MFA-protected apps can still be discovered.
-
-**Acceptance Criteria:**
-
-**Given** a user filling out the Connect App form
-**When** they select "Username & Password" from the Authentication method dropdown
-**Then** username/password fields are captured and stored via SecretsClient for later use establishing a session before discovery
-
-**`[ADDED 2026-07-27]` Given** a user filling out the Connect App form
-**When** they open the Authentication method dropdown
-**Then** it offers exactly three options — Username & Password, API Key, OAuth Client Credentials — each revealing its own credential field(s) on selection (username+password fields; a single API Key field). `[GAP]` OAuth Client Credentials' own field set is unconfirmed — the reference UX reveals nothing further for it; needs explicit confirmation before implementation, not an invented Client ID/Secret pair.
-
-**Given** the user instead needs SSO/MFA session-reuse
-**When** they provide the reusable session state through the (explicitly provisional, per PRD Open Question 8) placeholder mechanism
-**Then** that session state is stored via SecretsClient as a secret reference, never in plaintext
-**And** the UI does not claim the platform performs a SAML/OAuth/OIDC handshake or MFA-code retrieval itself
-
-**`[GAP — flagged 2026-07-15]`** The current reference prototype's Connect App form shows only a generic Authentication method `<select>` with no visible SSO/MFA session-handoff option or field. PRD Open Question 8 remains unresolved — do not read this absence as "SSO/MFA support was cut." Needs explicit confirmation (from a fuller prototype export or direct product decision) before this story is built, specifically for the SSO/MFA branch of the AC above.
-
-*(Story 1.5 "Configure Discovery Scope & Time Budget" removed in full 2026-07-15 — FR-4/FR-5 confirmed removed concepts, not a UI gap; see PRD §9. Its remaining substance — submitting the Connect App form navigates to Discover Journeys and starts discovery on the full Application — is absorbed into Story 1.3's AC, the story that already owns form submission.)*
+---
 
 ## Epic 2: Runtime Discovery & AI Journey Inference
 
-A Discovery Run starts automatically on Application creation; the user watches live progress and sees AI-inferred candidate Journeys/Capabilities, each traceable to captured evidence.
+The stories in this epic describe the **classic discovery engine**. Explorer (Epic 8) is now the default: adding an application with Discovery on, or starting from the Explorer tab, runs Explorer. The classic engine runs only for applications discovered before the switch, or when operations switch Explorer off.
 
-### Story 2.1: Start a Discovery Run `[UPDATED 2026-07-15]`
+### Story 2.1: Start a discovery run
+**Status:** done
 
-*Trigger changed 2026-07-15 — Discovery now starts automatically when the Connect App form is submitted (Story 1.3), not via a separate manual "Start Discovery Run" action. There is no confirmed Applications/Discovery Progress screen with its own start button (see Story 1.5's removal and Story 1.3's absorbed AC).*
+As a member or admin, I want Discovery to start as soon as I add an application with Discovery on, so that mapping begins without an extra step.
 
-As a user,
-I want a Discovery Run to start as soon as I've onboarded an Application,
-So that the platform begins mapping its business journeys without an extra step.
+This story describes the classic engine. With Explorer on (the default), adding an application with Discovery starts Explorer instead (Story 8.1).
 
-**Acceptance Criteria:**
+**Acceptance criteria**
+1. Given an application added with Discovery on and a confirmed login (Story 2.23), when it is created, then a discovery run starts in the background and the Journeys tab shows its progress.
+2. Given the background exploration service isn't available, when the user tries to start, then they get a plain message saying the service is unavailable, and nothing is half-created.
 
-**Given** an Application was just created (Story 1.3's Connect App submission)
-**When** the creation request completes
-**Then** a `DiscoveryRun` record is created with `status=running`, and a bounded `DiscoveryWorkflow` is started for it (AD-1) — the workflow contains no direct I/O, only calls to Activities (AD-2)
-**And** the Discovery Progress screen shows a status pill reading "Running" with a pulsing dot
+### Story 2.2: Autonomous exploration captures the application model
+**Status:** done
 
-**`[ADDED 2026-07-21]` Given** the `DiscoveryRun` record above is created
-**Then** `DiscoveryRun.stage` is set to `initializing` immediately, before any crawl activity begins (FR-33, AD-10 extension) — consumed by Story 2.7's progress display
+As a user, I want Vantage to explore my application by itself, so that it builds a full picture of the pages, forms and actions to base tests on.
 
-### Story 2.2: Autonomous Exploration Captures the Application Model `[RENAMED 2026-07-18, was "...Captures Evidence"]`
+**Acceptance criteria**
+1. Given a running discovery, when Vantage moves through the application, then it records each page with a screenshot, along with its forms and fields, the actions on it and how pages link to each other.
+2. Given the same page can be reached by several routes, when it has already been seen, then it isn't explored again.
+3. Given a page has many identical actions (for example, an "Edit" button on every row), when Vantage explores it, then it tries one example of each kind rather than every copy.
+4. Given an action leads to another page, when that page is on the same site, then it is explored in turn. Pages that fail to load or return an error are skipped.
 
-*Updated 2026-07-15 — no configurable scope; Discovery always explores the entire Application (FR-4 removed). Rewritten 2026-07-18 — reworked (reverted from `review` to `in-progress`): writes typed rows (`Page`/`Form`/`FormField`/`ValidationRule`/`Action`/`ApiEndpoint`/`PageTransition`) directly, not a generic `Evidence` record — the flat capture concept is removed in full, not merely renamed. Adds crawl-optimization ACs. See `sprint-change-proposal-2026-07-18.md`; Story 2.5 merges/derives from what this story captures. Extended 2026-07-19 — three further crawl-engine refinements (ACs 7-9): button-triggered navigation is now followed onward instead of dead-ending, forms with an identical shape/starting values are sampled representatively across pages, and broken/error destinations are skipped rather than captured. Reworked again 2026-07-21 (reverted `review` → `in-progress`) — AC3's raw live-feed requirement is walked back (capture unchanged, no longer user-facing); gains `stage=authenticating`/`discovering` transition ACs. See `sprint-change-proposal-2026-07-21.md`.*
+### Story 2.3: Discovery Completion and Stop Limits
+**Status:** done
 
-As a user,
-I want the platform to autonomously explore my Application,
-So that a structured record of it is captured as the basis for journey mapping.
+As a user, I want Discovery to stop on its own at a sensible point, so that it finishes in reasonable time and I know the result is final.
 
-**Acceptance Criteria:**
+**Acceptance criteria**
+1. Given a running discovery, when there are no new pages left to explore, then the run completes.
+2. Given the admin limits for maximum pages (500 by default) or maximum discovery time (30 minutes by default), both set in Settings, when either limit is reached, then the run stops and completes with what it found.
+3. Given a run stops, when it is recorded, then the reason it stopped is saved with it: nothing new left, page limit reached, or time limit reached.
+4. Given a run completes, when its journeys are ready, then scenario and test generation do not start on their own. The user starts them with "Review scenarios" (Story 3.1).
+5. Given a run has completed, when its status is shown anywhere, then it reads from the run's own recorded status and is never guessed from other data.
 
-1. **`[REWRITTEN 2026-07-18]` Given** a running Discovery Run, **when** `DiscoveryActivity` navigates pages, exercises UI actions and forms, and invokes APIs across the entire Application, **then** each observation is written directly as a typed row — a page visit as `Page`, a form as `Form` (+ `FormField`/`ValidationRule`), a UI action as `Action`, an API call as `ApiEndpoint`, a navigation as `PageTransition` — every row tagged with both `application_id` and `discovery_run_id`, and (where the column exists) `merged_into_id = null` (FR-6, FR-30, AD-8, AD-14). There is no intermediate generic capture record.
-2. Large binary artifacts (screenshots) are referenced via `Page.object_storage_key` (an object-storage key), never stored inline in Postgres.
-3. `[WALKED BACK 2026-07-21]` Captured pages/actions/API calls continue to be written in real time as typed rows (AC1) — this underlying capture behavior is unchanged. However, the raw live-feed list is no longer surfaced to the user during a running Discovery Run; user-facing progress display (business-language stages, no crawl/queue/technical terminology, FR-33) is owned by Story 2.7. `DiscoveryActivity` additionally transitions `DiscoveryRun.stage` to `authenticating` (on session establishment, FR-3) then `discovering` (on crawl start) at its natural checkpoints (AD-10 extension). See `sprint-change-proposal-2026-07-21.md` — this AC was previously "The Discovery Progress screen's live-feed list shows the most recently captured pages/actions/API calls, newest first, in monospace, appended as discovery proceeds," which is now superseded for user-facing display purposes.
-4. **`[ADDED 2026-07-18]`** **Given** the same logical page is reachable via more than one navigation path, **when** the crawler computes a page fingerprint, **then** that page is explored and captured once, not once per path (page-fingerprint deduplication) — a crawl-time optimization, distinct from Story 2.5's cross-run `merged_into_id` resolution (FR-6, AD-15).
-5. **`[ADDED 2026-07-18]`** **Given** a page exposes both unexplored navigation links and already-explored interaction targets, **when** the crawler chooses what to do next, **then** it prioritizes unexplored navigation paths before repeating interactions on an already-visited page (navigation-first) (FR-6, AD-15).
-6. **`[ADDED 2026-07-18]`** **Given** a page contains a repeated identical action pattern (e.g., an "Edit" button repeated once per grid row), **when** the crawler encounters it, **then** it exercises one representative instance of that action pattern, not every individual instance (representative-action sampling) — consistent with FR-7/AD-15's clarification that "exhaustive" applies at the level of distinct pages/action patterns (FR-7, AD-15). **`[UPDATED 2026-07-19]`** Bounded to a small number of distinct action labels per page, page-body content before nav/header/footer chrome.
-7. **`[ADDED 2026-07-19]`** **Given** a page is reachable only via a non-link action, **when** that action navigates to a same-origin destination, **then** the destination is enqueued for further crawling and the navigation recorded as a `PageTransition` — previously such destinations were captured but never explored further (FR-6, AD-15).
-8. **`[ADDED 2026-07-19]`** **Given** a `Form` with an identical shape and starting field values (hidden fields included) is reachable identically from more than one page, **when** the crawler encounters it again, **then** it is captured once (representative-form sampling, mirrors AC 6) (FR-6, AD-15).
-9. **`[ADDED 2026-07-19]`** **Given** a destination fails to load or responds 4xx/5xx, **when** the crawler reaches it, **then** it is marked visited and skipped — no `Page` row, no further exploration (FR-6, FR-7, AD-15).
+### Story 2.4: Session expiry handling
+**Status:** in-progress
 
-`[PARTIALLY SUPERSEDED 2026-07-29]` AC 4 (page-fingerprint dedup) and AC 6 (representative-action sampling) remain in force as crawl-time, in-run optimizations, but are now read alongside Story 2.10's State Identity Engine (SAME/VARIANT/NEW), which is the authoritative cross-state comparison going forward. AC 5 (navigation-first) is superseded by Story 2.11's Action Priority Model for the untried-in-page-action-vs-unvisited-nav case — see `sprint-change-proposal-2026-07-29.md` and Architecture AD-17.
+As a user, I want Discovery to cope when the application logs it out, so that a timed-out session doesn't quietly produce a half-empty map.
 
-### Story 2.3: Discovery Completion `[RENAMED 2026-07-15, was "Discovery Stop Conditions & Completeness Status"]`
+**Acceptance criteria**
+1. Given the application's session expires mid-exploration, when Vantage notices it has been sent back to the login page, then it signs in again and carries on. It makes a limited number of attempts in a row.
+2. Given signing in again keeps failing, when the run stops, then the Journeys tab shows a "session expired" banner that is distinct from other failures.
 
-*Rewritten 2026-07-15 — FR-5 (time budget) removed; there is no time-budget stop condition, no `incomplete` status, and no accompanying amber status-pill state. A Discovery Run only ever completes via exhaustive traversal or fails (Story 2.4). This is an accepted-risk tradeoff — see PRD §12 Risk item 7 (no safety cap against unbounded exploration).*
+**Gaps / not built**
+- The banner asks the user to sign in again to continue, but a run that failed this way can't be restarted or resumed.
 
-As a user,
-I want a Discovery Run to stop once exploration is exhaustive,
-So that I know the map reflects everything discovery found.
+### Story 2.5: Application model builder
+**Status:** done
 
-**Acceptance Criteria:**
+As a user, I want duplicate findings merged into one clean model of my application, so that journeys and tests are built from reliable information.
 
-**Given** a running Discovery Run
-**When** no new pages, actions, or state transitions are found
-**Then** `DiscoveryRun.status` is set to `complete` (FR-7, AD-10)
-**And** completeness is read directly from `DiscoveryRun.status` everywhere it's shown, never inferred from the presence or absence of other data
+**Acceptance criteria**
+1. Given exploration has finished, when the model is built, then duplicate pages, forms and actions (within this run or from earlier runs) are merged into one entry each.
+2. Given the merged model, when it is built, then each element a test can use (buttons, links, inputs) gets a preferred way to find it plus back-up ways, and expected outcomes are derived from what happened on the page.
 
-**`[ADDED 2026-07-29]` Given** a Discovery Run reaches `DiscoveryRun.status=complete`
-**Then** the completion report includes counts of Blocked items (Story 2.15), Skipped-Unsafe items (Story 2.12), and Errored branches (Story 2.18), alongside confirmed states/journeys — none of these categories block completion; a run can legitimately complete with open items in any of them (FR-42/FR-45)
+### Story 2.6: AI Journey/Capability Inference from the Application Model
+**Status:** done
 
-### Story 2.4: Session Expiry Handling
+As a user, I want what was found turned into named business journeys, so that I review something meaningful instead of a raw log.
 
-As a user,
-I want to be told plainly when a Discovery Run fails because my session expired,
-So that I can re-authenticate rather than mistake it for a normal, if small, result.
+**Acceptance criteria**
+1. Given the model has been built, when AI inference runs, then it writes journeys with business-language names (never raw page addresses), each linked to the pages and steps behind it.
+2. Given the same journey is found again later, when inference runs, then it is matched to the existing journey rather than duplicated.
 
-**Acceptance Criteria:**
+### Story 2.7: Business-Oriented Discovery Progress Display
+**Status:** done
 
-**Given** a running Discovery Run whose session has expired mid-crawl (detected via an auth-redirect)
-**When** `DiscoveryActivity` detects this condition
-**Then** it terminates the run with `DiscoveryRun.status=failed`, `failure_reason=session_expired` — a condition distinct from a normal stop condition (AD-11)
-**And** the platform surfaces a re-authentication prompt keyed specifically off `session_expired`, visually distinguishable from any other `failed` cause (FR-3). `[UPDATED 2026-07-15]` No longer needs to be distinguished from `incomplete` — that status no longer exists (FR-5 removed).
+As a user who has just started Discovery, I want progress shown in plain stages, so that I understand what is happening without technical detail.
 
-### Story 2.5: Application Model Builder `[ADDED 2026-07-18]` `[RENUMBERED 2026-07-18, was Story 2.6]`
+**Acceptance criteria**
+1. Given a running discovery, when the Journeys tab is open, then it shows these stages in order: Exploring pages, Capturing screenshots, Grouping flows, Mapping journeys. A note says "Discovery runs in the background — this list updates automatically".
+2. Given journeys are found, when they appear, then the list fills in live.
+3. Given the run is paused, has failed, lost its session, or recovered from a background restart, when the tab is open, then a matching banner explains the situation.
 
-*Renumbered ahead of AI Journey/Capability Inference (now Story 2.6) — this story must run first in the actual pipeline (Discovery → Model Builder → Inference), and the original 2.5/2.6 assignment had that backwards. See `sprint-change-proposal-2026-07-18.md`.*
+### Story 2.8: Production object storage on AWS S3
+**Status:** done
 
-As a user,
-I want the platform to merge duplicate captures into one reusable, canonical Application Model,
-So that journey inference and test generation work from reliable, deduplicated structure — and re-discovering an Application I've already mapped doesn't produce a pile of duplicates.
+As the team running Vantage, I want screenshots, traces and reports kept in managed cloud storage, so that large files are stored durably without running our own storage service.
 
-**Acceptance Criteria:**
+**Acceptance criteria**
+1. Given Discovery takes a screenshot, or a test run produces a screenshot, trace or report, when it is saved, then it goes to cloud file storage and the database only keeps a pointer to it.
+2. Given any environment (local or live), when files are stored, then the same cloud storage service is used.
 
-1. **`[REWRITTEN 2026-07-18]` Given** typed rows captured by Story 2.2 (`Page`/`Form`/`Action`/`ApiEndpoint`/`PageTransition`, `merged_into_id = null`), **when** `ApplicationModelBuilderActivity` runs after `DiscoveryActivity` completes and before `InferenceActivity` starts (AD-1, AD-14), **then** rows representing the same logical page/form/API — whether captured in this run or an earlier Discovery Run against the same Application — are resolved to one canonical row per Application: every duplicate's `merged_into_id` is set to point at the canonical row, and the canonical row itself keeps `merged_into_id = null`.
-2. `Component` and `ComponentLocator` rows are derived (never raw-captured) for **every automatable element, not only clickable ones** — grouping canonical `Action` rows on the same canonical `Page` by label/selector shape for buttons/links, *and* one `Component` per canonical `FormField` for form inputs — each `Component` carrying a preferred locator plus one or more alternative/fallback locators, and its target page where applicable. `FormField` gets a nullable `component_id` back-reference to its derived `Component`.
-3. `Assertion` rows are derived from canonical `PageTransition`/`ApiEndpoint` outcomes attached to a canonical `Page`, with an optional `component_id` when the assertion targets a specific element rather than a page/API-level outcome.
-4. Only `ApplicationModelBuilderActivity` ever sets an existing row's `merged_into_id`, and only it writes `Component`/`ComponentLocator`/`Assertion` rows — `DiscoveryActivity` never resolves duplicates or writes these three, and `InferenceActivity` only ever reads canonical rows (AD-14).
+### Story 2.9: Page Readiness & Bounded Sampling
+**Status:** done
 
-**`[RESOLVED 2026-07-18]`** The Application Model's page-grouping concept is served by the existing `Capability` entity — no separate `Module` entity is introduced.
+As a user, I want Vantage to wait until a page has properly loaded, and to sample long or endless lists rather than scroll forever, so that captures are complete and runs don't stall.
 
-`[NOTE — 2026-07-29]` Story 2.10's State Identity Engine (SAME/VARIANT/NEW) runs *during* the crawl, against an in-process cache — it does not replace this story's cross-run `merged_into_id` canonicalization, which still runs after Discovery completes and additionally catches duplicates across separate Discovery Runs (e.g. re-discovery) that the in-run cache never saw. The two mechanisms are complementary: Story 2.10 avoids over-exploring within one run; this story still owns cross-run canonicalization.
+**Acceptance criteria**
+1. Given a page is loading, when Vantage is about to capture it, then it waits until network activity has quietened (ignoring analytics and repeated polling), the page has stopped changing and content is showing, up to a time limit. The limit is 15 seconds by default (set in Settings). A per-application override exists but has no screen.
+2. Given the limit is reached first, when the page still hasn't settled, then Vantage records that and moves on. The run itself is never blocked.
+3. Given a list that keeps loading more items, when new items look the same as earlier ones, then Vantage stops scrolling that list and moves on.
 
-### Story 2.6: AI Journey/Capability Inference from the Application Model `[RENUMBERED 2026-07-18, was Story 2.5]`
+### Story 2.10: Recognising Same, Variant and New Screens
+**Status:** done
 
-*Updated 2026-07-18 — reworked (reverted from `review` to `in-progress`) to read the Application Model built by Story 2.5 instead of raw Evidence directly, and renumbered after it (was Story 2.5, incorrectly numbered ahead of its own dependency); see `sprint-change-proposal-2026-07-18.md`.*
+As a user, I want Vantage to tell a truly new screen apart from the same screen showing different data, so that it neither misses real variants nor wastes time on repeats.
 
-As a user,
-I want the platform to turn captured discovery evidence into candidate Business Capabilities and Journeys in business language,
-So that I have something meaningful to review instead of a raw crawl log.
+**Acceptance criteria**
+1. Given a newly seen screen, when it is compared with earlier screens of the same kind, then it is judged the same (skipped), a variant (kept as a sibling) or new (fully explored), based on a similarity score and per-application thresholds.
 
-**Acceptance Criteria:**
+### Story 2.11: Exploration Planner, Action Priorities & Getting Back to a Page
+**Status:** done
 
-**Given** a Discovery Run that has completed, with its Application Model built (Story 2.5)
-**When** `InferenceActivity` runs, calling the AI provider exclusively through the `AIProvider` port (AD-3, no direct vendor SDK import)
-**Then** candidate `Journey`/`Capability` rows are written with `status=candidate` and a business-language name — never a raw route/page identifier (FR-8)
-**And** each candidate Journey's supporting canonical Application Model rows (Page/Form/ApiEndpoint/Component — never a superseded/merged row) are attributed to it via `journey_id`, set by `InferenceActivity` (AD-8, AD-14)
-**And** each candidate Journey gets a deterministic `identity_key` computed from its evidence shape, not its AI-generated name (AD-13)
-**And** `Journey.discovery_run_id` is set once, at creation, and is immutable
+As a user, I want Vantage to finish exploring a page's own actions before moving on, and to plan its next step sensibly, so that pages are fully understood and effort stays bounded.
 
-**`[ADDED 2026-07-21]` Given** `InferenceActivity` begins
-**Then** `DiscoveryRun.stage` is set to `analyzing` (FR-33, AD-10 extension)
-**Given** `InferenceActivity` completes (all candidate Journeys written)
-**Then** `DiscoveryRun.status` is set to `complete` (existing behavior, AD-10) — `stage`'s final value of `analyzing` is understood by the frontend (Story 2.7) to map to 100%
+**Acceptance criteria**
+1. Given a page, when Vantage chooses what to do next, then it tries actions within the page (tabs, panels, "load more") before links that lead away.
+2. Given a candidate action, when it is checked, then loop, safety and data checks run in a fixed order, and Vantage decides to do it, put it off, or skip it.
+3. Given Vantage has to get back to a page to try its next action, when it returns, then it uses a fixed series of fallbacks, ending with reopening the starting page. It never replays a whole path of steps.
 
-### Story 2.7: Business-Oriented Import Progress Display `[ADDED 2026-07-21]`
+### Story 2.12: Safety Engine — Risky Actions, Caution Level & Post-Action Checks
+**Status:** in-progress
 
-*Added per `sprint-change-proposal-2026-07-21.md` (CR-2). Next available Epic 2 story number. Depends on the `stage` transitions written by Stories 2.1, 2.2, and 2.6 (AD-10 extension) but does not require reordering relative to them — purely additive read-side plumbing.*
+As a user, I want Vantage to never perform clearly destructive actions while exploring, so that Discovery can't cause irreversible changes in my environment.
 
-As a user who just submitted Connect App,
-I want to see plain-language progress on my import (Initialization, Authentication, Discovery, Analysis) instead of technical crawl detail,
-So that I understand what's happening without needing to know how discovery works internally.
+**Acceptance criteria**
+1. Given a candidate action, when it is classified by rules (wording and patterns), then it is safe, clearly destructive or unclear.
+2. Given a clearly destructive action, when it is reached, then it is never performed.
+3. Given an unclear action, when it is reached, then whether it is performed depends on the application's safety setting.
 
-**Acceptance Criteria:**
+**Gaps / not built**
+- An AI-assisted second opinion for unclear actions is built but not switched on. Classification is rules-only.
+- There is no way to set an application's caution level, so every application is treated as non-production and unclear actions (Submit, Save, Approve) are performed.
+- Actions held back for approval can't be approved anywhere.
 
-**Given** a running `DiscoveryRun`
-**When** the frontend polls its status
-**Then** it shows one of four business-language stage labels — Initialization, Authentication, Discovery, Analysis — mapped from `DiscoveryRun.stage`, each with a fixed percentage and a progress indicator (FR-33). `[UPDATED 2026-07-21, live UX correction]` The percentage shown while a stage is in progress is the percentage of the stage that just *finished*, not that stage's own target — showing 75% the instant "Discovery" (by far the longest stage) starts made it look nearly done: 0/10/25/75 (Initialization/Authentication/Discovery/Analysis in progress); 100% is implicit at completion (Journeys appear, this view unmounts) rather than ever rendered.
-**And** no technical terms (e.g. "crawling," "crawl queue," "page fingerprint," or any raw route/page/API text) appear anywhere in this view
-**And** `DiscoveryRun.status=complete` transitions the display to 100% / Discover Journeys ready
-**And** `DiscoveryRun.status=failed` (e.g. `session_expired`, AD-11) shows the existing re-authentication prompt in place of stage progress
+### Story 2.13: Data Resolver — Choosing What to Type, and Learning from Rejections
+**Status:** done
 
-**Notes:** The Application Model Builder step (Story 2.5) is presented as part of the "Discovery" stage, not "Analysis" — per explicit product decision, since it's still processing what was crawled, not yet AI inference.
+As a user, I want Vantage to fill forms with real or safely made-up data, and never guess business-specific values, so that exploration gets through forms without inventing data it shouldn't.
 
-### Story 2.8: Production Object Storage on AWS S3 `[ADDED 2026-07-24]`
+**What it does today**
+When a field needs a value, Vantage tries in this order:
+1. Values seeded for the application (Story 2.20).
+2. A value it already used earlier in the same run.
+3. Safe made-up data for generic fields, or a placeholder file for uploads.
 
-*Added per `sprint-change-proposal-2026-07-24.md`. Resolves the object-storage backend provider question the architecture explicitly deferred (AD-8, Operational Envelope) — decided as AWS S3 for production. Next available Epic 2 story number.*
+If none of these works, it puts the step off. Every value used is recorded against the run.
 
-As an operator running AITestGen in production,
-I want discovery-evidence binaries (screenshots, DOM snapshots) stored in AWS S3 instead of a self-hosted MinIO deployment,
-So that the platform relies on managed, durable cloud storage rather than an in-cluster stateful service we operate ourselves.
+**Acceptance criteria**
+1. Given a field needs a value, when one is available from the sources above, then it is used and recorded.
+2. Given a business-specific value can't be found, when the action is checked, then it is put off rather than guessed.
 
-**Acceptance Criteria:**
+**Gaps / not built**
+- Reading a usable value from the current page was cut on purpose.
 
-**Given** a production (EKS) deployment
-**When** `DiscoveryActivity` persists a screenshot via `object_store.py`
-**Then** the binary is written to an AWS S3 bucket using the same `put(bytes) -> key` / `get(key) -> bytes` contract Story 2.2 established — no caller (`crawler.py`, `activities.py`) changes
+### Story 2.14: Widget & Container Coverage — Frames, Embedded Components, Tabs, Dialogs, Windows, Uploads
+**Status:** in-progress
 
-**And** the in-cluster `minio` Deployment/Service/PVC (`ops/k8s/04-minio.yaml`) is removed, and `apps/api`/`apps/workers/discovery` k8s manifests and the `aitestgen-config`/`aitestgen-secrets` objects are updated for an S3 bucket + region instead of a MinIO endpoint; the discovery-worker pods authenticate to S3 via IAM (pod identity / IRSA) where the cluster supports it, falling back to an access-key pair in `aitestgen-secrets` otherwise
+As a user, I want Vantage to see inside the containers real enterprise applications use, so that it doesn't report an empty page as a success.
 
-**And** local development and CI continue to run against the existing docker-compose MinIO service unchanged (dev ergonomics only, per the architecture's local/production split) — `object_store.py` targets either backend through the same S3-compatible API, selected by endpoint configuration, not a code branch
+**Acceptance criteria**
+1. Given tab groups on a page, when they are detected, then each tab's content is explored. Tabs inside a page are explored before navigation links.
+2. Given a dialog or pop-up opens, when its content has been explored, then Vantage closes it and goes back to the page underneath.
+3. Given a new window or tab opens, when it does, then Vantage records it as a page linked from the action that opened it (address and title) without exploring it further, and focus goes back to the original.
+4. Given embedded frames or self-contained components, when they are present, then Vantage looks inside them up to a set depth.
+5. Given a file-upload field, when it is reached, then a safe placeholder file is used.
 
-**Notes:** Local-dev behavior is intentionally out of scope — MinIO in `docker-compose.yml` remains the local/CI substitute (S3 wire-compatible). Only the production (`ops/k8s/`) deployment and its ConfigMap/Secret wiring change. See `sprint-change-proposal-2026-07-24.md` for the full impact analysis.
+**Gaps / not built**
+- The fallback for widgets that aren't properly labelled (best-guess detection) isn't built.
 
-> **`[REWRITTEN 2026-08-03]` Stories 2.9–2.22 — read `docs/DISCOVERY_ENGINE_V2.md` first.**
-> A feasibility review of the 2026-07-29 batch replaced its design spine. That document is now
-> authoritative for the whole Discovery Engine; the individual story files under
-> `_bmad-output/implementation-artifacts/` carry the detailed, current acceptance criteria. Where
-> an entry below is terser than its story file, the story file wins.
->
-> What the review changed:
-> - **Story 2.16's mechanism was replaced** — generic step-replay resume is not reliable across
->   arbitrary applications (AD-21 concedes this); it is now re-crawl from a confirmed entry point.
->   **AD-21 requires a matching amendment.**
-> - **Story 2.11 gained a State Return ladder** — getting back to a state to try its next action
->   was assumed free and was the largest unbounded cost in the original design.
-> - **Story 2.14 gained iframe traversal and shadow-DOM piercing** — absent from every story,
->   epic and architecture decision in the batch, and pervasive in enterprise targets.
-> - **Story 2.15's aggregation key** changed from exact prose match to a normalized key.
-> - **Story 2.12 gained a per-Application safety posture** — always-deferring on ambiguity had an
->   unbounded, unacknowledged coverage cost.
-> - **Stories 2.20, 2.21 and 2.22 were added** (test-data pool, locator durability, coverage
->   report) — see below.
-> - **Stories 2.9 and 2.10 were marked `done` in error.** Their story files carried detailed
->   completion records for work that does not exist in the source tree. Both are reset to
->   `ready-for-dev`; treat all of 2.9–2.22 as unbuilt.
->
-> **Build order:** **[2.22 Task 1 only — the `record_diagnostic()` sink contract]** → 2.14 → 2.9 →
-> 2.21 → 2.10 → 2.11 → 2.19 → 2.20 → 2.13 → 2.12 → 2.15 → **[2.22 remainder]** → 2.18 → 2.17 →
-> 2.16. Story 2.22 deliberately splits: seven stories write through its Task 1 sink, so that one
-> task lands before any of them.
+### Story 2.15: Blocked Items — One Combined Request per Missing Thing
+**Status:** in-progress
 
-### Story 2.9: Page Readiness & Infinite Scroll/Pagination Sampling `[ADDED 2026-07-29]` `[REWRITTEN 2026-08-03]`
+As a user, I want areas blocked by the same missing information grouped into one question, so that I'm not asked the same thing on every page.
 
-*Added per `sprint-change-proposal-2026-07-29.md`. Rewritten 2026-08-03 per `docs/DISCOVERY_ENGINE_V2.md` — readiness is now three explicit signals (network quiet with polling/analytics filtered out, DOM stability via an injected `MutationObserver`, non-empty rendered content), all bounded by the Page Load Timeout, and the run is never blocked by readiness.*
+**What it does today**
+Every put-off step is recorded and grouped with others that need the same information, whether that is missing data, approval, or both. Blocked areas never stop the rest of the exploration.
 
-As a user, I want the platform to wait for a page to genuinely finish loading before capturing it, and to sample rather than endlessly scroll/paginate a repeating list, so that discovery captures complete, accurate snapshots without stalling on unbounded content.
+**Acceptance criteria**
+1. Given a step is put off, when it is recorded, then it joins any open request that needs the same information instead of creating a duplicate.
 
-**Acceptance Criteria:**
+**Gaps / not built**
+- Nothing on screen shows these grouped requests or lets a user answer them.
 
-**Given** a page transition, **when** the Observer is about to capture a snapshot, **then** it waits for DOM-mutation quiescence and network settling (application-relevant requests only) up to a configurable Page Load Timeout (project default + per-run override), proceeding with a best-effort snapshot and a DISC-004 log entry if the ceiling is reached first (FR-35).
-**Given** a scroll/"Load More" action, **when** newly revealed items fingerprint as SAME as already-seen items for a bounded number of consecutive samples, **then** the region is marked sampled and exploration continues elsewhere; a hard per-page scroll/pagination budget applies regardless (FR-36).
+### Story 2.16: Remembering the Route to a Blocked Area & Resuming It
+**Status:** in-progress
 
-### Story 2.10: State Identity Engine — SAME/VARIANT/NEW Classification `[ADDED 2026-07-29]`
+As a user, I want the route to a blocked area remembered, so that once I supply what was missing, exploration can pick up there without re-submitting forms and creating duplicate records.
 
-*Added per `sprint-change-proposal-2026-07-29.md`. Supersedes Story 2.2's page-fingerprint dedup (AC 4) as the authoritative cross-state comparison; see that story's amendment note and Architecture AD-16.*
+**What it does today**
+When a path is blocked, the steps that led there are saved as a readable record. The logic to save a supplied value and explore forward again from the nearest reachable starting page exists, but nothing triggers it.
 
-As a user, I want the platform to tell genuinely new application behavior apart from the same behavior with different data, so that discovery doesn't miss real variants or waste effort re-exploring duplicates.
+**Gaps / not built**
+- Resuming after the user answers a blocked request. There is no screen for it, and nothing starts it.
 
-**Acceptance Criteria:**
+### Story 2.17: Pause and Resume Discovery
+**Status:** done
 
-**Given** an observed state, **when** compared against previously-seen states sharing the same route template, **then** a weighted score (heading/action-set/form-set/nav/structural similarity) against two configurable thresholds yields SAME (discarded), VARIANT (new sibling Page row via `variant_of_page_id`), or NEW (full new Page/actions/transitions) (FR-37).
-**Given** a score between the two thresholds, **when** the classification is genuinely ambiguous, **then** the AI provider may supply a supporting, non-authoritative opinion — the State Identity Engine still owns the final verdict.
-**Given** the comparison runs during an active crawl, **when** checking prior states, **then** it reads from an in-process cache scoped to this Discovery Run's Activity execution (AD-16), not a new persistent cache tier.
+As a user, I want to pause Discovery and resume it later without losing progress, so that I don't have to finish everything in one sitting.
 
-### Story 2.11: Exploration Planner & Action Priority Tiering `[ADDED 2026-07-29]`
+**Acceptance criteria**
+1. Given a running discovery, when a member or admin clicks Pause Discovery, then the run pauses and a "Paused" banner shows.
+2. Given a paused run, when they click Resume Discovery (in the same or a later session), then exploration continues from where it stopped without re-exploring confirmed pages.
+3. Given a viewer, when they view the Journeys tab, then pause and resume aren't available.
+4. Given an application that has ever had an Explorer run, when Pause or Resume Discovery is attempted, then it is refused with "Explorer discovers this application: pause or resume it from the Explorer tab." Explorer has its own Pause, Stop and Resume (Story 8.1).
 
-*Added per `sprint-change-proposal-2026-07-29.md`. Supersedes Story 2.2's navigation-first rule (AC 5) for the untried-in-page-action-vs-unvisited-nav case; see Architecture AD-17.* **`[REWRITTEN 2026-08-03]` Retitled "Exploration Planner, Action Tiering & State Return". Now also owns the State Return ladder — the bounded strategy for getting back to a state to try its next action (no-op → browser back → re-navigate → bounded safe replay → give up and mark `unreached`), plus a per-state return budget. The specialist chain dropped from five questions to three (state identity is decided per-state in Story 2.10, not per-action; action/transition history moved to Story 2.19). Ships with pass-through default specialists so it is independently shippable.**
+**Gaps / not built**
+- A summary of confirmed, blocked and remaining-to-explore counts for a paused application.
 
-As a user, I want the platform to fully explore a page's own actions before navigating away from it — and to be honest about the actions it could not get back to — so that no page's behavior is left partially understood and the cost of thorough exploration stays bounded and reportable.
+### Story 2.18: Crash Recovery & Discovery Error Codes
+**Status:** done
 
-**Acceptance Criteria:**
+As a user, I want Discovery to recover from background crashes and to log application errors clearly, so that problems don't silently cut results short.
 
-**Given** a candidate action, **when** it is tagged, **then** it is classified Tier 1 (in-page) or Tier 2 (navigation-intent) deterministically (ARIA/landmark role, href target, layout position), with AI as a fallback only for genuinely ambiguous cases (FR-38).
-**Given** a state with untried Tier 1 actions, **when** the Planner selects the next action, **then** every untried Tier 1 action (including finishing Story 2.9's scroll sampling) is exhausted before any Tier 2 action is attempted.
-**Given** all of a candidate action's specialist checks (State Identity, action history, transition-cycle, Safety Engine, Data Resolver), **when** the Planner combines their answers, **then** it reaches exactly one Execution Decision — EXECUTE / DEFER / SKIP — executed in tier order.
+**Acceptance criteria**
+1. Given the background worker restarts mid-run, when it comes back, then the run carries on from where it got to, and the Journeys tab shows that it recovered and is resuming.
+2. Given a page keeps failing (server errors, pages that never settle, lost track after a form), when a small number of retries have been used up, then that branch is recorded as errored and exploration continues elsewhere.
+3. Given any discovery error, when it is recorded, then it uses one of a small fixed set of error types with a plain explanation.
 
-### Story 2.12: Safety Engine — Action Classification & Post-Action Verification `[ADDED 2026-07-29]`
+### Story 2.19: Loop Prevention
+**Status:** done
 
-*Added per `sprint-change-proposal-2026-07-29.md`. `[REVERSES PRD §12 Risk item 6's prior "accepted risk, no guardrail" decision — flagged for explicit Product Manager sign-off before this story leaves backlog.]`*
+As a user, I want all anti-loop safeguards checked before every action, so that an odd page can't trap Discovery.
 
-As a user, I want the platform to never perform a clearly destructive action and to defer ambiguous ones for explicit authorization, so that discovery can't cause irreversible side effects in the target environment.
+**Acceptance criteria**
+1. Given a candidate action, when it is checked, then Vantage skips actions it has already tried, cycles of going back and forth between the same pages, and repeated versions of the same page address. It also respects the scroll and per-page action limits.
 
-**Acceptance Criteria:**
+### Story 2.20: Test Data Pool — Business Values Supplied Before Discovery
+**Status:** in-progress
 
-**Given** a candidate action, **when** classified, **then** it is Safe (executed automatically), Clearly Destructive (never executed), or Ambiguous/state-changing (deferred to the Blocked Frontier, Story 2.15, not guessed) (FR-39).
-**Given** genuine uncertainty even after an AI-assisted opinion, **when** the Safety Engine can't confidently classify Safe, **then** it defaults to DEFER, never EXECUTE.
-**Given** a Safe action just executed, **when** a before/after indicator comparison (record count, status field) shows an unexpected change, **then** it is flagged as a safety-classification anomaly in the end-of-run report — visibility only, does not block the crawl.
+As a user, I want to give Vantage business-specific values before Discovery starts, so that it can get through areas that would otherwise block.
 
-### Story 2.13: Data Resolver — Structured Input Resolution `[ADDED 2026-07-29]`
+**What it does today**
+Values can be stored for each application, and they are kept across discovery runs. When filling a form, Discovery checks these values first. Values marked sensitive go into the encrypted secrets store.
 
-*Added per `sprint-change-proposal-2026-07-29.md`. Formalizes and extends the existing generic-value-filling behavior built in Story 2.2.*
+**Gaps / not built**
+- There is no screen to add or manage these values. They can only be set through the server.
 
-As a user, I want the platform to reuse real or safely-synthesized data before ever guessing business-specific values, so that generated coverage uses trustworthy inputs and never fabricates data it shouldn't.
+### Story 2.21: Durable Element Finding — Ranked Locators & Fragility Detection
+**Status:** done
 
-**Acceptance Criteria:**
+As a user, I want Vantage to capture the most reliable way to find each element on a page, so that generated tests keep working after my application's next release.
 
-**Given** an action needing input, **when** resolving a value, **then** the platform tries, in order: a value visible on the current page, a value observed earlier this run, safe synthetic data (or a placeholder file for uploads) for generic fields, then defers to the Blocked Frontier for business-specific data it can't resolve (FR-40).
-**Given** any value is used (including synthetic), **when** the action executes, **then** the value is logged against the run for later traceability (Story 2.18's reporting).
+**Acceptance criteria**
+1. Given an element is captured, when the ways to find it are worked out, then dedicated test IDs come first, then accessible role and name, then visible text and labels, then page structure.
+2. Given a way of finding an element relies on machine-generated names, when the options are ranked, then it goes below every readable option. It is kept rather than dropped.
+3. Given the ways of finding an element are stored, when they are saved, then each gets a reliability score.
 
-### Story 2.14: Widget Coverage — Tabs, Dialogs, Multi-Window, File Upload `[ADDED 2026-07-29]`
+### Story 2.22: Coverage report & run diagnostics
+**Status:** in-progress
 
-*Added per `sprint-change-proposal-2026-07-29.md`.* **`[REWRITTEN 2026-08-03]` Retitled "Widget & Container Coverage". Adds two container types absent from the entire original batch: recursive same-origin `iframe` traversal (cross-origin frames logged as unreachable containers) and open-shadow-root piercing for capture and fingerprinting (closed roots logged as unreachable). Both are pervasive in enterprise targets — SAP/Salesforce portals, Lightning Web Components, Polymer/Stencil design systems — and today's crawler sees inside neither, reporting an empty host page as a successful capture. **Build this story first in the remaining backlog.***
+As a user, I want an honest account of what Discovery reached, what it couldn't and why, so that I can trust the result and act on the gaps.
 
-As a user, I want the platform to see inside the containers real enterprise applications actually use — frames, shadow roots, tabs, modals, popups — and to handle uploads, so that discovery doesn't report an empty page and call it success.
+**What it does today**
+The server can produce a report for each run that groups what happened into reached, blocked, skipped for safety, errored and unreached, together with the engine's decision details.
 
-**Acceptance Criteria:**
+**Gaps / not built**
+- There is no screen for this report. "Complete" is still shown without these counts.
 
-**Given** a tab-group widget (ARIA `role="tablist"`/`"tab"`), **when** detected, **then** each tab is a Tier-1 candidate action whose resulting content is observed and fingerprinted as its own state (FR-41).
-**Given** an action opens a dialog/modal/popup, **when** its contents are observed, **then** they are fingerprinted as a nested state, and the dialog's own close action (Escape/"X"/Cancel) is reliably detected and exercised to safely return to the underlying page.
-**Given** an action opens a new browser tab/window, **when** it is same-origin and in-scope, **then** it is followed as a linked sub-flow; **when** cross-origin or out-of-scope, **then** it is deferred and focus returns to the original tab.
-**Given** a `type="file"` input, **when** encountered, **then** it is routed to the Data Resolver (Story 2.13) for a safe generated placeholder file, logged the same as any synthetic value.
-**Given** an element with no standard ARIA role, **when** detected, **then** structural heuristics apply as a fallback, flagged with lower confidence for later review.
+### Story 2.23: Validate login before discovery starts
+**Status:** done
 
-### Story 2.15: Blocked Frontier — Aggregated Deferral `[ADDED 2026-07-29]`
+As a member or admin, I want Vantage to prove my application's login works before it starts exploring, so that Discovery never runs, or fails late, on bad credentials.
 
-*Added per `sprint-change-proposal-2026-07-29.md`.*
+**Acceptance criteria**
+1. Given Discovery is on and the application needs sign-in, when the user submits, then Vantage first signs in with the credentials in a real browser.
+2. Given the credentials are rejected, when the check finishes, then the form shows "The username or password is incorrect…" and Discovery doesn't start.
+3. Given the result can't be confirmed (for example, a timeout), when the check finishes, then the form shows "We couldn't confirm these credentials…" and Discovery doesn't start.
+4. Given the login works, when the check finishes, then the application is created and Discovery starts.
 
-**`[REWRITTEN 2026-08-03]` Aggregation now keys on a normalized key (field name + input type + route family), not exact-string match of a generated prose description. The original silently produced one ask per page whenever wording varied ("Active Policy Number" vs "Policy Number (Active)") — the exact failure the story exists to prevent. `required_description` is now a display label only. The same normalizer is shared with Story 2.20's Test Data Pool so seeded values satisfy blocks automatically.**
+**Gaps / not built**
+- The check recognises English error wording only and uses fixed time limits.
 
-As a user, I want blocked exploration areas that need the same missing data consolidated into one request, so that I'm not asked the same question once per page.
+### Story 2.24: Optional autonomous discovery (skip discovery per application)
+**Status:** done
 
-**Acceptance Criteria:**
+As a member or admin, I want to add an application without autonomous Discovery, so that I can build tests only by describing or recording them.
 
-**Given** the Planner reaches a DEFER decision, **when** a `BlockedTask` is created or updated, **then** it carries a normalized `aggregation_key` and is attached to an existing open task with the same key rather than duplicated (FR-42).
-**Given** a blocked area, **when** autonomous exploration is otherwise exhausted and the area is meaningful, **then** one consolidated request is presented, with an explicit option to finish without supplying it.
-**Given** a DEFER from the Safety Engine (approval needed) versus the Data Resolver (data needed), **when** a `BlockedTask` is written, **then** both use the identical `BlockedTask` structure and resume path — only `required_type` differs; a single blocked path may carry both requirements at once.
+**Acceptance criteria**
+1. Given the Add application form, when it loads, then "Autonomous discovery" is ticked by default, and the submit button reads "Start discovery".
+2. Given the box is unticked, when the user submits, then the button reads "Add application", the application is added without any exploration, and the Journeys, Scenarios and Explorer tabs don't appear.
+3. Given an application without Discovery, when it is opened, then it lands on Test cases, where tests can be authored (Story 4.4) or recorded (Epic 5).
 
-### Story 2.16: Blocked Mid-Exploration — Path Persistence & Resume `[ADDED 2026-07-29]`
+---
 
-*Added per `sprint-change-proposal-2026-07-29.md`. `ExplorationStep` is deliberately named to avoid collision with the existing `Journey` domain entity — see Architecture AD-20.*
+## Epic 3: Journey Curation
 
-**`[MECHANISM REPLACED 2026-08-03]` Retitled "Blocked Path Record & Re-Crawl Resume". Step-replay resume was found unreliable against arbitrary applications for four independent reasons: "known-irreversible" is not knowable from the DOM (and guessing wrong creates a duplicate real business record); deep-linking past a skipped step fails wherever server-side state is required; stored inputs go stale and were never staleness-checked (only the newly supplied value was); and the target application may have changed between block and resume. AD-21 already concedes the general case is unsolved — **AD-21 requires a matching amendment.** Replaced with: record the path as a human-readable diagnostic, write the supplied value into the Test Data Pool (Story 2.20), and re-crawl forward from the nearest URL-reachable confirmed entry point under normal crawl rules. Slower, far more robust, no duplicate-record risk. Build last; a legitimate cut candidate if Story 2.20 removes most blocks in pilot use.**
+### Story 3.1: Discover Journeys — candidate list & detail panel
+**Status:** done
 
-As a user, I want the route to a blocked area remembered and re-reachable once I supply what was missing, so that answering the question actually unblocks exploration — without the platform blindly re-submitting forms and creating duplicate records in my application.
+As a reviewer, I want to see every discovered journey with its evidence, so that I can judge each one against what was actually found.
 
-**Acceptance Criteria:**
+**Acceptance criteria**
+1. Given journeys exist, when the Journeys tab opens, then each journey shows as a card with its business name, a screenshot (click to enlarge) and its page-by-page steps. Repeated steps on the same page are shown as one business step.
+2. Given many journeys, when the user types in search, then the list filters.
+3. Given the user is happy with the journeys, when they click "Review scenarios", then scenario drafting starts and the Scenarios tab opens.
+4. Given any journey, when it is shown, then no confidence or risk score appears.
+5. Given an application Explorer discovered, when its sidebar shows, then the Journeys page is hidden and links to it open Explorer. Its journeys still exist, built from Explorer's proven scenarios (Story 8.5), because test generation reads them. Opened directly, the page shows an Open Explorer button instead of discovery progress or Pause/Resume.
 
-**Given** a block occurs after N successful steps, **when** the `BlockedTask` is written, **then** all N steps are persisted as ordered `ExplorationStep` rows referencing their already-confirmed `Page` (not duplicating it), as a human-readable diagnostic record of how the crawler reached the blocked point — explicitly not as a replay script (FR-43).
-**Given** a user supplies the missing value, **when** resume begins, **then** the value is written to the Test Data Pool under the block's `aggregation_key`, a fresh browser session is established, and the engine re-crawls forward from the nearest confirmed entry point reachable by URL, under normal crawl rules. No stored step is blindly re-executed.
-**Given** no confirmed entry point on the recorded path is reachable by URL, **when** resume is attempted, **then** the engine re-crawls from the Application root and the report states that the shorter path could not be used — resume degrades, it never fails silently.
-**Given** a resumed path reaches its previously-blocked step, **when** the new value/authorization is supplied, **then** the `BlockedTask` is marked Resolved and exploration continues downstream.
-**Given** a single exploration path, **when** it blocks a second time later in its own continuation, **then** the same `BlockedTask`/step-list record is extended, not replaced with a new, unrelated record.
+### Story 3.4: Rename & delete a journey
+**Status:** done
 
-### Story 2.17: Save-as-Project — Cross-Session Pause & Resume `[ADDED 2026-07-29]`
+As a member or admin, I want to rename or delete a discovered journey, so that names make sense and irrelevant journeys are left out.
 
-*Added per `sprint-change-proposal-2026-07-29.md`. `[GAP — flagged, not designed]` The Confirmed/Blocked/Remaining dashboard and Paused status have no equivalent in the current 6-screen IA; see Story 1.2's amendment note.*
+**Acceptance criteria**
+1. Given a journey, when it is renamed, then the new name shows everywhere the journey appears.
+2. Given a journey, when it is deleted, then it is left out of everything that follows: scenarios, tests and runs.
+3. Given a viewer, when they view journeys, then rename and delete aren't available.
 
-As a user, I want to pause an entire in-progress discovery effort and resume it later without losing progress or re-exploring what's already confirmed, so that missing test data doesn't force me to finish everything in one sitting.
+**Gaps / not built**
+- Merging, splitting or editing what makes up a journey isn't supported. Neither is regenerating a kept journey.
 
-**Acceptance Criteria:**
+---
 
-**Given** a running Discovery Run, **when** the user pauses it, **then** `DiscoveryRun.status` is set to `paused`; the confirmed Application Model, open `BlockedTask`s, and the remaining exploration queue are all already durable (no new persistence mechanism needed beyond what Stories 2.15/2.16/2.2 already write) (FR-44).
-**Given** a paused project, **when** the user resumes it (same or different session), **then** the platform re-authenticates fresh, loads the confirmed model and open Blocked items, and does not re-explore any already-canonical state.
+## Epic 4: Scenario & Test Case Generation
 
-**`[GAP — flagged, not designed here]`** The dashboard surfacing Confirmed/Blocked/Remaining counts and Paused status (per the source document's worked example) has no equivalent screen in the current 6-screen IA (`DESIGN.md`/`EXPERIENCE.md`) — needs a UX pass before this AC's frontend half can be built; see Story 1.2's amendment note.
+### Story 4.1: Generate scenarios for a journey
+**Status:** done
 
-### Story 2.18: Crash Recovery & Error Taxonomy `[ADDED 2026-07-29]`
+As a member or admin, I want test scenarios drafted for each journey, so that the map becomes real test coverage.
 
-*Added per `sprint-change-proposal-2026-07-29.md`.*
+**Acceptance criteria**
+1. Given the user clicks "Review scenarios", when drafting runs, then progress shows Reading journeys, Drafting scenarios, Deriving test data, and scenarios appear grouped by journey.
+2. Given a scenario, when it is shown, then it has test steps, test data fields and an expected result. Each field is marked "Required for this scenario" or "Optional — auto-filled if left blank".
+3. Given a scenario, when a member or admin works on it, then they can rename it, delete it, edit test data in place, fill test data with Auto-generate, or clear values.
+4. Given drafting fails for one journey, when the others carry on, then the failed journey is listed with the reason. It can't be retried.
+5. Given the user clicks "Generate test cases", when generation starts, then the Test cases tab opens.
+6. Given an application Explorer discovered, when the Scenarios page would show, then it is hidden from the sidebar; Explorer's own Scenarios tab replaces it. If Review scenarios is opened, no drafting runs: it lists Explorer's proven scenarios with "Explorer worked these out by using the app. Generate test cases to turn them into tests." and keeps the Generate test cases button. Before anything is handed over, it shows "Scenarios appear here once Explorer has proven its tests."
 
-As an operator, I want engine crashes to recover automatically and target-application failures to be logged with both a machine-readable code and a plain-language explanation, so that transient infrastructure or target-app issues don't silently corrupt or truncate a discovery run's results.
+**Gaps / not built**
+- There is no approve/reject step for scenarios. Review means renaming, deleting and editing data.
+- Labels for test type (happy path, negative, edge case) exist but are hidden on request.
+- There is no Ready / Needs Data filter.
+- Values used during Discovery are not carried over as default test data for scenarios.
 
-**Acceptance Criteria:**
+### Story 4.2: Generate Playwright test cases from scenarios
+**Status:** done
 
-**Given** an engine-side crash (process/container restart mid-run), **when** the worker restarts, **then** `DiscoveryActivity` resumes from the last checkpointed (already-committed typed row) position, treating any in-flight action at crash time as unconfirmed and re-verifying rather than assuming success — no separate checkpoint mechanism beyond existing real-time typed-row writes (FR-45).
-**Given** a target-application failure (5xx, broken render, or a Story 2.9 Page Load Timeout), **when** it recurs after a small bounded number of retries, **then** the branch is written as a `DiscoveryError` row (`Errored`, not misclassified as NEW or silently dropped) and exploration continues elsewhere.
-**Given** any `DiscoveryError`, **when** surfaced, **then** it carries both a fixed `error_code` (DISC-001..006 starter taxonomy) and a human-readable message with a suggested next action — the end-of-run report lists Errored branches alongside Blocked and Skipped-Unsafe items.
+As a member or admin, I want each scenario turned into a runnable Playwright test, so that I have real regression coverage.
 
-### Story 2.19: Loop Prevention Consolidation `[ADDED 2026-07-29]`
+**Acceptance criteria**
+1. Given scenarios, when generation runs, then each scenario becomes a TypeScript Playwright test. Each test is checked to make sure it compiles, repaired automatically if it doesn't, and checked for common problems; tests with problems are marked for review.
+2. Given generation is running, when the Test cases tab opens, then a progress screen shows the stages (Resolving locators, Writing test cases, Generating fixtures), counts (test cases, journeys covered, estimated run time) and the status of each journey, including "Incomplete" and "Terminated".
+3. Given a journey is generating, when the user clicks Terminate, then that journey stops. When they click Retry Generation, then it runs again.
+4. Given generation has finished, when the progress screen shows, then the user can download or run the test cases.
 
-*Added per `sprint-change-proposal-2026-07-29.md`.*
+### Story 4.3: Download a generated test project
+**Status:** done
 
-As a user, I want all of the discovery engine's anti-loop safeguards to run consistently before any action executes, so that a pathological page pattern can't stall a run even when the primary sampling mechanisms (State Identity, infinite-scroll sampling) don't catch it.
+As a member or admin, I want to download all tests as a ready-to-run Playwright project, so that I can run them outside Vantage.
 
-**Acceptance Criteria:**
+**Acceptance criteria**
+1. Given at least one test exists, when the Download project tab opens, then it shows the project layout: a folder of tests for each journey, shared fixtures and utilities, a config file and a README.
+2. Given the user clicks Download project, when the file is ready, then they get a .zip of a runnable TypeScript Playwright project. The application's login is read from environment settings rather than written into the files.
+3. Given a viewer, or an application with no tests, when they look at the sidebar, then the tab is hidden. A viewer is also refused by the server.
 
-**Given** a candidate action about to execute, **when** the Planner checks it, **then** it applies, in order: state dedup (Story 2.10), action-history check, transition-cycle detection (A→B→A→B), route normalization (parameterized-duplicate sampling), the infinite-scroll/pagination budget (Story 2.9), and a final depth/action/scroll budget ceiling (FR-46).
-**Given** these checks are backstops, **when** Story 2.9/2.10's primary sampling mechanisms already prevent a specific loop, **then** this story does not duplicate that logic — it adds the checks not already covered (action-history tracker, transition-cycle detection are the two genuinely new pieces here).
+### Story 4.4: Author a test case in plain English
+**Status:** done
 
-### Story 2.20: Test Data Pool — Seeded Application Test Data `[ADDED 2026-08-03]`
+As a member or admin, I want to describe a test in plain English and have Vantage write it, so that I can add tests without Discovery or writing code.
 
-*Added per `docs/DISCOVERY_ENGINE_V2.md`, following the feasibility review of the 2026-07-29 batch. The highest-leverage gap it found: the cheapest time to obtain test data is **before** the crawl, not after. Stories 2.15 and 2.16 are substantial machinery built to recover from a situation a few seeded values prevent outright. Story 4.1 already applies this pattern at scenario-generation time — this brings it one stage earlier.*
+**Acceptance criteria**
+1. Given the "Author a test case" panel, when the user picks an existing journey or names a new one and describes what to do and what to check, then an AI agent works through the live application ("No prior discovery is needed").
+2. Given the agent is working, when progress shows, then it reads "Exploring the live application…" followed by "Generating the test case…".
+3. Given the test is ready, when it is added, then it appears in the test case list marked "Authored by prompt". Vantage first runs it and repairs it as an internal check, and that check run isn't kept.
+4. Given some steps couldn't be done in the application, when the result shows, then they are listed under "Not generated — Vantage couldn't do these in the application".
+5. Given an application without Discovery, when the panel is used, then it works the same way.
 
-As a user, I want to give the platform the business-specific values it will need before discovery starts, so that it explores straight through the areas that would otherwise block instead of stopping and asking me afterwards.
+### Story 4.5: Test case library & source filters
+**Status:** done
 
-**Acceptance Criteria:**
+As a user, I want every test case in one searchable list showing where it came from, so that I can find and manage tests whatever their source.
 
-**Given** an Application, **when** a user seeds test data, **then** entries of (label, normalized key, value, sensitive flag) persist per Application across Discovery Runs.
-**Given** the Data Resolver (Story 2.13) needs a value, **when** it resolves, **then** the pool is consulted first, ahead of page scanning, run reuse and synthesis.
-**Given** a pool entry, **when** its key is computed, **then** it uses the identical shared normalization function as Story 2.15's `aggregation_key`, so pool entries and blocked requirements match automatically.
-**Given** a user supplies a value against an open `BlockedTask`, **when** it is accepted, **then** it is written to the pool under that block's key and satisfies **every** path needing that key, not only the one that surfaced the ask.
-**Given** an entry marked sensitive, **when** stored, **then** it uses the existing `packages/secrets_client` Vault client and is masked in all logs, `SyntheticDataEntry` output and reports.
+**Acceptance criteria**
+1. Given test cases exist, when the Test cases tab opens, then a paginated list shows each test's number, name, journey and source: "From discovery", "Authored by prompt" or "Recorded".
+2. Given the filter chips All / Author test cases / Record-and-play test cases (each with a count), when one is chosen, then the list narrows to match. Search works on number, name and journey.
+3. Given a row is expanded, when the user picks View code, then the Playwright test opens in a pop-up.
+4. Given a member or admin edits test data on a row, when they save, then only that one test is rewritten to use the new data.
 
-**`[GAP — needs UX pass]`** No management screen exists in the current 6-screen IA. V1 scope is backend + API only, which is independently useful (values can be seeded via API and by answering blocks).
+---
 
-### Story 2.21: Locator Durability — Ranked Capture & Fragility Detection `[ADDED 2026-08-03]`
+## Epic 5: Record and Play
 
-*Added per `docs/DISCOVERY_ENGINE_V2.md`, following the feasibility review. Nothing in the 2026-07-29 batch addressed whether captured locators survive the target application's next deployment — meaning a crawl could fully succeed and still produce a worthless test suite. Extends the existing `_selector_strategy`/`_derive_locators` path in `model_builder.py` rather than replacing it.*
+### Story 5.1: Record a test in a remote browser
+**Status:** done
 
-As a user, I want the platform to capture the most durable way to find each element, and to tell me when it couldn't find a durable one, so that generated tests still pass after my application's next deploy — and so I know in advance when they won't.
+As a member or admin, I want to record a test by clicking through a flow, so that I can capture exactly the path I care about.
 
-**Acceptance Criteria:**
+**Acceptance criteria**
+1. Given the Record and play tab, when the user enters a flow name and picks "Record a login flow" (start logged out) or "Record an authenticated flow" (start signed in as the saved user), then "Record a flow" opens a separate tab with a live remote browser.
+2. Given recording has started, when the page shows, then it warns "Anything you type — including passwords — is recorded into the generated test."
+3. Given the browser blocks the pop-up, when that happens, then a link is offered to open it manually. A dropped connection reconnects.
+4. Given a recording link, when 30 minutes pass without use, then it expires.
+5. Given a viewer, when they look at the sidebar, then the Record and play tab is hidden.
 
-**Given** an interactive element is captured, **when** locators are derived, **then** a ranked candidate list is stored: `data-testid`/`data-test`/`data-cy` → ARIA role + accessible name → visible text → label-to-field association → scoped CSS → absolute CSS.
-**Given** a candidate contains a machine-generated identifier — CSS-in-JS hashes (`css-1x2y3z`), framework IDs (`ctl00_ContentPlaceHolder1_…`, GWT/Ext JS auto-IDs), long hex/UUID fragments, index-only paths — **when** ranked, **then** it is down-ranked below every human-meaningful alternative (never discarded; a fragile locator still beats none).
-**Given** an element inside an iframe or shadow root (Story 2.14), **when** its locator is stored, **then** it records the full container chain so it resolves from the top-level page.
-**Given** locators are captured, **when** a durability score is computed per element, **then** it is persisted so Story 2.22 can report the proportion of captured elements with no durable locator — the most actionable number in the report, since the fix (add test IDs) is one the customer controls.
+### Story 5.2: Save, cancel and replay recorded tests
+**Status:** done
 
-### Story 2.22: Coverage Report & Run Diagnostics `[ADDED 2026-08-03]`
+As a member or admin, I want to save or throw away a recording, and run saved recordings like any other test, so that recordings become part of the suite.
 
-*Added per `docs/DISCOVERY_ENGINE_V2.md`, following the feasibility review, which found no feedback or observability signal anywhere in the design despite every heuristic in the engine requiring per-application tuning. Without visible numbers nobody can distinguish an over-merging threshold from a genuinely small application, and the product becomes unfalsifiable.*
+**Acceptance criteria**
+1. Given a recording, when the user clicks Stop and Save, then it becomes a Playwright test and is checked to make sure it compiles. Vantage then switches to Test cases and highlights the new row, marked "Recorded".
+2. Given a recording, when the user clicks Discard, then nothing is saved.
+3. Given saving fails, when the error shows, then the user can try again.
+4. Given a recorded test, when it is run, then it uses the same set-up, element finding and automatic repair as generated tests.
 
-As a user, I want an honest account of what discovery reached, what it couldn't, and why it made the calls it made, so that I can trust the result, act on the gaps, and tune the engine against my application instead of guessing.
+---
 
-**Acceptance Criteria:**
+## Epic 6: Test Execution & Reporting
 
-**Given** a Discovery Run reaches a terminal state, **when** its result is presented, **then** it reports five categories: **Reached**, **Blocked** (distinct aggregated asks + waiting-path counts), **Skipped for safety**, **Unreached** (states abandoned at Story 2.11's return-ladder rung 5, cross-origin frames, closed shadow roots), and **Errored** (DISC-coded branches).
-**Given** `DiscoveryRun.status = complete`, **when** surfaced anywhere, **then** it is never presented alone — always with those counts. Per AD-15 the crawl is deliberate sampling, and an unqualified "Complete" invites a user to read it as "my whole application was covered".
-**Given** the engine's heuristics ran, **when** diagnostics are collected, **then** the report includes Story 2.10 state-identity scores and verdicts (and whether widened no-route-discrimination mode was entered), Story 2.14 low-confidence detections and unreachable containers, Story 2.21's fragile-locator proportion, Story 2.13 values the application rejected, Story 2.12 verdicts and posture in force, and which Story 2.19 guard fired where.
-**Given** a producing story has not yet landed, **when** its diagnostics are absent, **then** the report renders the sections it has rather than failing — every producer writes through one named sink function, so sections light up incrementally.
+### Story 6.1: Run tests — run all or a named selective run
+**Status:** done
 
-**Note:** This story's Task 1 (the diagnostics sink contract) is a **prerequisite for Stories 2.10, 2.11, 2.12, 2.13, 2.14, 2.19 and 2.21** — define it before its producers, or reconciling seven independently-invented logging shapes becomes larger than the feature itself.
+As a member or admin, I want to run all tests or a chosen set, so that I can check the whole application or just the areas I care about.
 
-**`[GAP — needs UX pass]`** No screen exists in the current 6-screen IA. V1 is the structured backend report, queryable and exportable via API.
+**Acceptance criteria**
+1. Given the Test runs tab, when the user chooses Run tests and then "All test cases", then every test in the application runs.
+2. Given "Selective run", when the dialog opens, then the user must give a Run Name and pick journeys from a searchable list (with Select all / Clear). They can expand a journey to pick individual tests.
+3. Given any run, when it starts, then it gets its own Run # number. Tests run 5 at a time, except that a run containing any test Explorer marked as belonging to an application that keeps progress per login (saved drafts, a cart) runs all its tests one at a time. Manual runs are allowed to overlap.
+4. Given the runs list, when it loads, then it shows latest pass rate, average pass rate, median duration and open failures. Each row shows Run #, who or what started it ("Manual run by …" or "Scheduled run — …"), date, duration, results and pass rate. Paging uses plain Prev/Next buttons.
+5. Given a viewer, when they view the tab, then they can see runs but can't start one.
+6. Given a test deliberately skipped in its code (for example, one marked as a known bug), when the run finishes, then it shows as **Skipped** with its reason instead of errored.
 
-## Epic 3: Human Curation & Trusted Knowledge Model `[RENAMED 2026-07-15, was "Human Review & Trusted Knowledge Model"]`
+### Story 6.2: Cancel a run
+**Status:** done
 
-`[REWRITTEN 2026-07-15]` A reviewer curates discovered candidates (rename, delete) in the Discover Journeys screen; every discovered Journey is already in the Trusted Knowledge Model and generating coverage before the reviewer looks at it (Epic 2) — deletion is the only exclusion mechanism, not a gate. `[UPDATED 2026-07-21]` Epic 3 for V1 is Stories 3.1 and 3.4 only — cross-run re-discovery refinement (formerly Story 3.5) is out of scope for this version, to be revisited later. `InferenceActivity`'s existing `identity_key` find-or-create (Story 2.6) already prevents duplicate Journey rows on a re-discovery match; refining what happens beyond that on a match is the deferred work.
+As a member or admin, I want to cancel a run in progress, so that I can stop a run I started by mistake or no longer need.
 
-### Story 3.1: Discover Journeys — Candidate List & Detail Panel
+**Acceptance criteria**
+1. Given a running run, when the user clicks Cancel run and confirms, then running tests are stopped, unfinished tests are marked cancelled and finished results are kept.
+2. Given a cancelled run, when it ends, then no report and no email are produced.
 
-*Renamed/updated 2026-07-15 (was "Review Queue"): this is now the pipeline's step 2 ("Discover Journeys"), and folds in FR-23 (Journey detail, relocated from the deferred Epic 6 Journey Explorer). No persistent nav rail exists — see Story 1.2.*
+### Story 6.3: Self-healing of failing tests
+**Status:** done
 
-As a reviewer,
-I want to see all candidate Journeys in a list and inspect the discovered detail behind any one of them,
-So that I can judge each inference against what discovery actually captured.
+As a member or admin, I want failing tests repaired automatically when the cause is the test rather than the application, so that small changes to the application don't break my suite.
 
-**Acceptance Criteria:**
+**Acceptance criteria**
+1. Given a test fails, when automatic repair runs, then the AI looks at the error, the console output and a screenshot, and checks the live page if the problem is finding an element. It changes the test, checks it, runs it again, and repeats within a fixed number of automatic attempts.
+2. Given a failure caused by the environment, when repair runs, then the test is simply re-run once without AI.
+3. Given a failure inside one of the test's checks, when repair is considered, then it isn't repaired. Any proposed fix that would change a check is rejected.
+4. Given the same failure keeps happening, when repair runs, then it stops early.
+5. Given a failed test, when the user clicks Retry, then it runs again with repair, using the admin's "maximum self-heal attempts" budget (3 by default).
+6. Given a test is being repaired, when the run detail is shown, then it shows a pulsing "Self-healing" status. Afterwards the chips "Self-healed" or "Heal exhausted" appear.
+7. Given a test that records a known bug, when it fails, then it is never repaired, because repair would hide the bug it records.
+8. Given operations have switched automatic repair off (a server setting; it is on by default), when a test fails, then no automatic repair runs. The manual Retry still repairs.
 
-**Given** candidate Journeys exist for an Application
-**When** the reviewer reaches the Discover Journeys pipeline step
-**Then** each candidate row shows its business-language name and a step count (FR-9)
-**And** selecting a row loads that Journey's discovered step-by-step detail — each step's route, method, and stage badge (e.g. "Login," "MFA Verification") — into a detail panel on the right, replacing any prior selection (FR-23, relocated)
-**And** no confidence, risk, or importance score/percentage/star/flag appears anywhere on a candidate row or in the detail panel
+### Story 6.4: Flaky test flags
+**Status:** done
 
-**`[RESOLVED 2026-07-15]`** Three items previously flagged as gaps are now settled: **`New`/`Dupe` badges are cut** (not built), the **live pending-count indicator is cut** (its only home, the nav rail, is retired — no on-screen replacement is being built), and the **detail panel is sticky on scroll**, retaining its 340px width; its content changes only when the reviewer selects a different candidate row, never as a side effect of scrolling.
+As a user, I want unreliable tests flagged, so that I don't chase failures that aren't real.
 
-*(Stories 3.2 "Approve" and 3.3 "Reject" removed 2026-07-15 — no approval gate exists; every discovered Journey enters the Trusted Knowledge Model and starts generation immediately (FR-14). `GenerationWorkflow`-start logic lives in Story 2.6 (renumbered from 2.5, 2026-07-18); Delete (Story 3.4) is the sole exclusion mechanism.)*
+**Acceptance criteria**
+1. Given a test's last 10 finished results, including this run, when they contain at least one pass and at least one fail, then the test shows a "Flaky" chip ("Inconsistent results across this test") and is counted in the run's Flaky group.
+2. Given results from cancelled runs or internal check runs, when flakiness is worked out, then they are ignored.
+3. Given a test's first run, when it is shown, then it is never flagged flaky.
 
-### Story 3.4: Rename & Delete a Journey/Capability
+### Story 6.5: Failure explanations & evidence (screenshots, traces)
+**Status:** done
 
-*Updated 2026-07-15 — Edit (FR-28) was added, then cut the same day: its exact editable surface was never confirmed in the UX review, and product decided not to build it. Reverted to Rename & Delete only.*
+As a user, I want to understand why a test failed and see the evidence, so that I can fix the right thing quickly.
 
-As a reviewer,
-I want to rename or delete a discovered Journey/Capability,
-So that the Trusted Knowledge Model reflects names I trust and excludes what doesn't belong.
+**Acceptance criteria**
+1. Given a failed test, when the user opens it, then a Summary tab gives a plain-language explanation. Known errors are explained by fixed rules. Anything else is explained by AI once, labelled "Explained by AI — may not be exact", and the explanation is reused for the same error.
+2. Given a failed test, when the user opens Raw error, then the exact error is shown.
+3. Given a failed test, when evidence was kept, then a screenshot and a step-by-step trace are available. The Screenshot capture setting decides which screenshots are kept.
+4. Given most failures in a run share one cause (for example, sign-in failed), when the run detail is shown, then a banner names that cause.
+5. Given the run detail, when it loads, then results are grouped as Passed, Self-healed, Flaky and Failed, with a results-by-journey chart.
 
-**Acceptance Criteria:**
+**Gaps / not built**
+- Fixed-rule explanations recognise English wording only.
 
-**Given** a candidate Journey/Capability
-**When** the reviewer renames it via the row's `⋯` menu
-**Then** the new name is saved and displayed everywhere the Journey/Capability appears (FR-12)
-**Given** a candidate Journey/Capability
-**When** the reviewer deletes it (via the `⋯` menu)
-**Then** it is excluded from the Trusted Knowledge Model — along with any Scenarios/Test Assets already generated for it — from Generate Suite compilation and Analytics (FR-13); this does not cancel an in-flight or completed `GenerationWorkflow`. `[UPDATED 2026-07-27]` There is no way to redo generation for a kept Journey — FR-18 (regeneration) is cut in full; deletion only excludes, it never triggers anything new
+### Story 6.6: Allure test report
+**Status:** done
 
-## Epic 4: Scenario & Playwright Test Generation
+As a member or admin, I want a branded HTML report for each run, so that I can share results with others.
 
-`[UPDATED 2026-07-15]` Every discovered Journey automatically produces happy-path/negative Scenarios and executable Playwright Test Assets, viewable — generation starts immediately on discovery (Epic 2), not on approval. `[UPDATED 2026-07-27]` No regeneration mechanism exists — Story 4.3 (FR-18) is cut in full, not deferred; once generated, a Journey's coverage is refreshed only by deleting the Journey (Epic 3) and letting re-discovery produce a new one. `[UPDATED 2026-07-27]` A reviewer can download the full set of current Test Suites as a single, suite-folder-organized, runnable Playwright project (new Story 4.3, FR-34).
+**Acceptance criteria**
+1. Given a finished run, when the user clicks View report, then a Vantage-branded report opens at a link that stays the same for that run.
+2. Given a viewer, when they try to open it, then they see "Reports aren't available for view-only access".
+3. Given a report would be too large, when the run finishes, then no report is produced.
 
-### Story 4.1: Generate Scenarios for a Discovered Journey `[RENAMED 2026-07-15, was "...for an Approved Journey"]`
+**Gaps / not built**
+- The report is built just before the run is closed off, so a test that never started may be missing from it.
 
-*Updated 2026-07-15 — Scenarios are no longer view-only; adds FR-29 (edit/remove). Trigger updated same day: generation starts on discovery, not approval (FR-10/FR-11 cut — see Epic 3). Updated 2026-07-27 — adds a Ready/Needs Data readiness filter per the UX v3 redirect; see `sprint-change-proposal-2026-07-27-3.md`.*
+### Story 6.7: Run-completed email
+**Status:** done
 
-As a user,
-I want a discovered Journey to automatically get integration test Scenarios covering both happy-path and negative cases,
-So that the map becomes actionable test coverage, not just documentation.
+As the person who started a run, I want an email when it finishes, so that I don't have to keep checking.
 
-**Acceptance Criteria:**
+**Acceptance criteria**
+1. Given a run finishes, when the email is sent, then it goes to the person who started it. For a scheduled run, including "Run now", it goes to whoever created the schedule.
+2. Given the email, when it is opened, then it shows the overall result, up to 10 failures, a "View report" link and an "Open in Vantage" link that opens the run after sign-in.
+3. Given a run was cancelled, or ended through automatic clean-up, when it ends, then no email is sent.
 
-**Given** a Journey for which `InferenceActivity` started a `GenerationWorkflow` at creation (AD-1)
-**When** `ScenarioGenerationActivity` runs, calling the AI provider only through the `AIProvider` port
-**Then** `Scenario` rows are created for the Journey, covering both happy-path and negative/edge-case scenarios (FR-16)
-**And** the Review Scenarios screen lists them with `Happy Path`/`Negative Path`/`Edge Case` badges, each with a `⋯` menu offering rename/edit/remove (FR-29)
-**And** selecting a scenario shows its Test steps, a Test data table, and Expected result in a detail panel
+**Gaps / not built**
+- Each email is sent at most once. In rare cases it may not arrive, but it is never sent twice.
+- No email is sent when a run is closed off after getting stuck, or after a manual retry.
 
-**`[ADDED 2026-07-27]` Given** a generated Scenario
-**When** the platform evaluates its required Test Data fields
-**Then** it computes a readiness status — Ready if every required field has a value, otherwise Needs Data — shown as a status pill on the Scenario's list row and in its detail panel, recomputed live (no separate save step) the instant a required field is filled or cleared
-**And** the Review Scenarios screen offers a 3-way filter (All / Ready / Needs Data) above the list, filtering which Scenarios are shown without altering which exist
+### Story 6.8: Scheduled test runs
+**Status:** done
 
-**`[GAP — flagged 2026-07-15]`** Whether an edited Scenario's Test data/steps actually feed Playwright generation, or the edit is display-only, is unconfirmed — flag for engineering before implementing the edit action's persistence behavior.
+As a member or admin, I want test runs to happen automatically on a timetable, so that regressions are caught without anyone remembering to run tests.
 
-**`[ADDED 2026-07-29]` Given** a generated Scenario recreates an exploration path that passed through a step which used discovery-time test data (a user-supplied unblocking value, Story 2.16, or a Data-Resolver-synthesized value, Story 2.13, including a placeholder upload file)
-**Then** that same value is surfaced as the default Test Data value for that step, not regenerated or left blank (FR-47)
+**Acceptance criteria**
+1. Given the Schedules tab, when it loads, then it lists schedules with name, cadence, next run and an Enabled toggle. A ⋮ menu offers Run now, Edit and Delete.
+2. Given the New/Edit schedule dialog, when the user sets the cadence, then they can choose Daily, Weekly (pick days), Monthly (day 1–28) or Custom (a five-part timetable expression interpreted in the server's time zone). Times are picked in 15-minute steps.
+3. Given a schedule comes due while a run is already going for that application, when it fires, then it is skipped rather than queued. "Run now" says the run is already in progress.
+4. Given an application is deleted, when that happens, then its schedules stop.
+5. Given a new application, when it is created, then it gets Nightly, Weekly and Monthly Regression schedules, all turned off.
 
-**`[NOTE — 2026-07-18]`** `ScenarioGenerationActivity`'s AI context now draws on canonical Application Model rows (Story 2.5) rather than raw Evidence (removed) — no AC change, only richer input to the same `AIProvider` call.
+**Gaps / not built**
+- Only test runs can be scheduled. The dialog text says "Run discovery or test cases automatically on a cadence", but Discovery can't be scheduled, and the text needs correcting.
 
-*(Superseded 2026-07-15 — retained for history: the prior AC required Scenarios be strictly view-only with no checkbox/action button on any row (UX-DR23). This rule no longer holds — see FR-29 and `EXPERIENCE.md#Review & Trust Model`.)*
+---
 
-### Story 4.2: Generate Playwright Test Assets via a Named Test Suite
+## Epic 7: Workspace Administration
 
-*Updated 2026-07-15 — reframed from a standalone "Generated Tests" code-review screen into "Generate Suite," the pipeline's 4th step. Underlying `TestAsset` generation is unchanged. Updated 2026-07-27 — resolves the post-generation-screen `[GAP]` per the UX v3 redirect; see `sprint-change-proposal-2026-07-27-3.md`.*
+### Story 7.1: Team members, roles (admin / member / viewer) & invites
+**Status:** done
 
-As a user,
-I want each generated Scenario converted into an executable Playwright test as part of a named, generated Test Suite,
-So that I have real, runnable regression coverage for the Journey.
+As an admin, I want to invite teammates with the right role and manage the team, so that the right people have the right access.
 
-**Acceptance Criteria:**
+**Acceptance criteria**
+1. Given the Team members page (admins only), when it loads, then it lists each person's name, email, role and when they were last active ("Never signed in" if they haven't). A ⋮ menu offers Change role and Remove.
+2. Given Invite member, when the admin enters an email address and picks Member, Admin or Viewer, then that person is emailed an invitation link that can only be used once.
+3. Given an invitee opens the link, when they enter their full name and a password of at least 8 characters, then their account is created in that organization and they are signed in. A link that is invalid, expired or already used shows one general error.
+4. Given role rules, when an admin acts, then they can't remove themselves or change their own role, and the last admin can't be demoted. Role changes take effect on the person's next action.
+5. Given a viewer, when they use the app, then the only change they can make is signing out.
 
-**Given** generated Scenarios for a Journey
-**When** `PlaywrightGenerationActivity` runs
-**Then** a `TestAsset` row is created per Scenario, carrying the generated Playwright code, a `generation_run_id`, and `current=true` (FR-17, AD-8)
-**And** the Generate Suite screen lets the user name the suite and confirm a target environment before generating, showing a summary (journey count, scenario count) alongside the generate action
+**Gaps / not built**
+- The invite dialog says "Invitation expires in 7 days", but invitations actually expire after 72 hours. The text needs correcting.
+- If no email service is set up, the invitation link is only written to the server's log.
 
-**`[NOTE — 2026-07-18]`** `PlaywrightGenerationActivity`'s AI context now includes the Application Model's Component locator metadata (preferred + fallback locators) — no AC change, richer input to the same `AIProvider` call.
+### Story 7.2: Settings
+**Status:** done
 
-**`[NOTE FOR PM/ENG — 2026-07-15]`** The Generate Suite screen also shows an "Execution" choice (`Run immediately`/`Schedule for later`/`Save without running`) — this is a confirmed UI placeholder only; do not build execution/scheduling behavior against it (see architecture Deferred section).
+As an admin, I want to control Discovery and test limits, evidence and clean-up, and saved logins, so that Vantage behaves the way our organization needs.
 
-**`[RESOLVED 2026-07-27]`** The screen shown immediately after clicking "Generate Test Suite" is confirmed: a Suite Generated screen showing a hero card (suite name, "Generated {N} test cases across {N} journeys · Est. runtime {X}"), three stat tiles (test cases / journeys covered / est. runtime), and a collapsible Generated Tests list grouped by generated file, each group expandable to a per-scenario row (type badge, name, a secondary "Code" button). This screen also hosts the "Download Test Suite" action (Story 4.3) and a "Go to Dashboard" button, which returns to Home — there is no separate Dashboard screen. See `sprint-change-proposal-2026-07-27-3.md`.
+**Acceptance criteria**
+1. Given Settings (admins only; members who open it see "Access denied" and viewers don't see the link), when it loads, then it offers maximum discovery time, maximum pages, maximum journeys, navigation timeout, interaction level (Passive / Normal / Aggressive), maximum scenarios per journey, maximum test cases per application and maximum self-heal attempts.
+2. Given Screenshot capture, when the admin changes it, then screenshots are kept for failed tests (the default), passed tests, or all tests.
+3. Given clean-up of deleted applications, when the admin chooses a period, then deleted applications are purged after 1 day, 1 week or 1 month (the default). Clean-up is always on.
+4. Given Saved credentials, when an admin reveals a password, then it is shown and the reveal is recorded in Activity. When an admin adds or changes a username and password, then it is saved. It isn't re-checked at that point.
+5. Given Saved credentials, when it loads, then it also lists applications with no login ("No login") and shows a per-application Sign-in on/off switch, which only admins can change and only for username-and-password or no-login applications. Turning it off means the application has no login, so discovery, Explorer and test runs open it directly. It can't be turned back on from the switch alone: saving a username and password with Add credentials turns sign-in back on.
+6. Given any change, when it is saved, then it applies to the whole deployment.
 
-*(Story 4.3 "Full Regeneration of Test Assets on Request" [FR-18] removed in full 2026-07-27 — explicit product decision, not deferred. No code existed to remove: despite tracking suggesting it was "completed," the regenerate-trigger endpoint and UI control were never built — that commit actually implemented Story 4.2, mislabeled by the developer. See `sprint-change-proposal-2026-07-27.md`.)*
+### Story 7.3: Activity history
+**Status:** done
 
-### Story 4.3: Download a Generated Test Suite `[ADDED 2026-07-27, same day the prior Story 4.3 was cut — different feature, reused slot]`
+As an admin, I want one timeline of everything that happened across the organization, so that I can see what ran, what failed and who changed what.
 
-As a user,
-I want to download all current Test Suites for an Application as a single, ready-to-run Playwright project,
-So that I can run the generated tests locally, or fold them into my own regression process, without hand-assembling a project from copied code.
+**Acceptance criteria**
+1. Given the Activity page (admins only), when it loads, then it shows Time, Event, By and Result for discovery runs and test runs (each one row that updates as it goes), scenario and test generation, and changes to settings, credentials, the team, applications and schedules.
+2. Given the filters, when the admin uses them, then they can filter by type, application, result and time range (24 hours, 7, 30 or 90 days), search, and sort newest or oldest first.
+3. Given a row is opened, when the detail drawer shows, then it explains what happened, why it couldn't run and a suggested next step. Settings changes show before and after values; credentials are never shown. Failed tests show a screenshot, a trace, the exact error and the log.
+4. Given Open application, when it is clicked, then it goes to the related tab or run.
+5. Given an entry is older than 90 days, when daily clean-up runs, then it is deleted.
 
-**Acceptance Criteria:**
+**Gaps / not built**
+- Search filters each page after it loads, so a page of results can come back shorter than expected.
+- Explorer actions are not recorded.
 
-**Given** an Application with at least one current Test Suite
-**When** the reviewer clicks Download on the Test Suites Generated screen
-**Then** the platform assembles a zip containing one folder per current Test Suite under `tests/`, named after its Journey, each holding that suite's generated test files (FR-34)
-**And** the archive also includes a generated `package.json` (`@playwright/test`), a `playwright.config.ts`, empty `fixtures/` and `utils/` scaffold folders, and a `README.md` covering setup
-**And** the assembled project is structurally validated (every current suite present, no partial/empty suite folder) before the zip is returned
-**And** after extracting and running `npm install && npx playwright install`, `npx playwright test` runs the full project, and `npx playwright test tests/<suite-folder>` runs a single suite
+---
 
-**`[CORRECTED 2026-07-27, during story creation; REVERSED 2026-07-29]`** The downloaded project is **TypeScript** (`@playwright/test`) — `TestAsset.code` is generated as TypeScript code (`HostedAIProvider.generate_playwright`), and no code-language conversion step exists in the pipeline. (The 2026-07-27 pass had corrected this to Python; that correction is itself now reversed as of 2026-07-29.)
+## Epic 8: Explorer Discovery
 
-**`[NOTE FOR ENG — 2026-07-29]`** Suite-folder naming reuses the existing `toTestFileName` slug convention already implemented in `TestSuiteResults.tsx` (`apps/web/src/components/TestSuiteResults.tsx`) directly — the suite folder name is that same slug (hyphens), one directory level up; each test file within it is `<slug>.spec.ts`, matching Playwright's own default discovery convention with no adaptation needed.
+Explorer is the default discovery engine. Adding an application with Discovery on, or starting from the Explorer tab, runs Explorer; the classic engine (Epic 2) runs only for applications discovered before the switch, or when operations switch Explorer off.
 
-*(Epic 5 "CI/CD Delivery" [Stories 5.1-5.3], Epic 6 "Analytics & Executive Dashboards" [Stories 6.1, 6.3, 6.4 — 6.2 relocated into Story 3.1], and Epic 7 "Deployment & AI Provider Configuration" [Stories 7.1-7.2] removed in full 2026-07-15. None had any supporting screen in the current UX; Epic 7's on-prem deployment is additionally a confirmed parked-for-later-release product decision. See `sprint-change-proposal-2026-07-15.md` for the original history and rationale.)*
+### Story 8.1: Start Explorer and watch it live
+**Status:** in-progress
+
+As a member or admin, I want Explorer to start learning my application as soon as I add it, and to watch what it is doing as it happens, so that I know discovery is under way and can step in, pause or stop it when I need to.
+
+**What it does today**
+- Adding an application with Autonomous discovery ticked starts Explorer. Users can also start it from the Explorer tab (compass icon, after Journeys) with **Start exploring**, after optionally adding other kinds of users with their usernames and passwords. Only one run can be active per application.
+- The header shows a one-line status and Questions, Pause, Stop, Resume or New run. The **Live** sub-tab shows a "Waiting for you" box, the latest screenshot with a trail of 6, the last 80 activity entries and a four-stage progress panel (Learning the app → Your check → Trying every path → Writing scenarios).
+- The application's discovery status follows Explorer (running, paused, failed, then complete after the hand-off). Classic Pause/Resume is refused for any application that has had an Explorer run.
+- Explorer never deletes data, moves money, makes a business decision or signs out on its own; it asks first. It presses a final Save, Submit or Create only on applications marked as test environments.
+
+**Acceptance criteria**
+1. Given an application is added with Autonomous discovery ticked and Explorer is on, when it is created, then an Explorer run starts and the application opens on the Explorer tab.
+2. Given Explorer's background service isn't running, when the application is added, then its discovery is marked failed ("worker unavailable"), and Explorer can be started later from the Explorer tab.
+3. Given no run is active, when the user presses Start exploring or New run, then a run starts. A second run can't start while one is active.
+4. Given a running run, when the Live tab is open, then it shows the status line, latest screenshots, activity log and progress.
+5. Given a running run, when the user presses Pause or Stop and later Resume, then it carries on from the step it reached without redoing finished work.
+6. Given operations have switched Explorer off, when an application is added with discovery, then the classic engine runs instead.
+
+**Gaps / not built**
+- No deployment setup for Explorer's background service yet; in a deployed environment, adding an application with discovery marks discovery failed.
+- Members, not just admins, can add or delete other user types with their passwords. Viewers can download Explorer's tests, run report, mission recordings and highlight video (no screen offers these yet).
+- Explorer actions are not recorded in Activity.
+- Starting Explorer on an application discovered by the classic engine hides its Journeys and Scenarios pages for good, although the start card says current Journeys are not affected.
+- The tab's first loading state uses a spinner instead of trailing bouncing dots.
+- Per-mission recordings and the highlight video have no screen.
+
+### Story 8.2: Review and confirm the App Summary
+**Status:** done
+
+As a member or admin, I want Explorer to tell me what it thinks my application is for and wait for me to confirm it, so that everything it tests afterwards is based on an understanding I have checked.
+
+**Acceptance criteria**
+1. Given Explorer has learned the application, when the one-page App Summary is ready, then the run waits, the "Waiting for you" box offers Check the summary, and the person who started the run is emailed.
+2. Given a waiting summary (name, one-liner, key tasks, questions, optional goal for the run, screens to leave out), when the user edits and saves it, then the changes are kept.
+3. Given unanswered questions in the summary, when it is shown, then "Looks right — confirm" is disabled. Once all are answered, confirming turns the answers into knowledge for the application and Explorer moves on to missions.
+4. Given a summary left unconfirmed for 14 days, when the time is up, then the run expires for good; "Start a new run" begins from what was already learned and keeps the answers.
+5. Given the Knowledge panel, when the user adds a fact or test data, uploads a document (PDF, Word, text, Markdown or CSV, up to 15 MB) or forgets an item, then it applies to this and every later run of that application.
+
+**Gaps / not built**
+- Members, not just admins, can add or delete knowledge and documents.
+- Without mail settings on the server, the email is only logged.
+- Explorer reads dates in English month names only.
+
+### Story 8.3: Answer Explorer's questions
+**Status:** done
+
+As a member or admin, I want Explorer to ask me when it is unsure or about to do something risky, and to remember my answers, so that it gets past things only I know without guessing, and never asks me the same thing twice.
+
+**Acceptance criteria**
+1. Given Explorer needs information or permission, when it asks, then the header's Questions button shows the count and pulses, and the question appears in the "Questions for you" panel and the "Waiting for you" box.
+2. Given a blocking question, when nobody answers within 10 minutes (the default), then only the asking mission was waiting, and it carries on without the answer.
+3. Given an answer, when the same need comes up in this or a later run, then Explorer uses the answer instead of asking again. Similar open questions are merged.
+4. Given an "is this a bug?" question, when it is open, then it never blocks and sits with its finding.
+5. Given the person who started the run, when Explorer asks a blocking question, then they are emailed.
+
+**Gaps / not built**
+- Without mail settings on the server, the email is only logged.
+
+### Story 8.4: Missions, screens and findings
+**Status:** in-progress
+
+As a member or admin, I want Explorer to work through the real goals of my application, show me every screen it found and flag anything that looks wrong, so that I can see how much was covered and spot problems before any test is written.
+
+**Acceptance criteria**
+1. Given the summary is confirmed, when Explorer plans, then it creates up to 15 missions and works on at most 3 at once. Each mission in the Progress panel has a Skip button.
+2. Given screens that only appear for some options, amounts or server responses, when Explorer hunts, then it tries each option, small and large amounts and empty or failing responses, and records the screens that appear.
+3. Given the Screens sub-tab, when it opens, then it shows a searchable, paged grid of screens; clicking one shows its actions and where each leads.
+4. Given health problems (broken screens, server errors, broken links, slow pages, wording mistakes, things that look wrong), when Explorer meets them, then they appear under "Things that look wrong", where each can be marked a false alarm or judged as a bug, and the list can be downloaded as CSV.
+
+**Gaps / not built**
+- Worked out and stored, but no screen: adding your own mission, per-mission recordings, which screens each extra user type can reach, unlinked pages, code coverage and the application health score.
+- No map or graph view of screens.
+
+### Story 8.5: Proven scenarios and hand-off to test cases
+**Status:** done
+
+As a member or admin, I want Explorer to write scenarios, prove each one works, and pass only the proven ones on to test generation, so that my test cases start from behaviour that has been shown to work and possible bugs are judged by a person.
+
+**Acceptance criteria**
+1. Given a run reaches testing, when scenarios are written, then they come in seven kinds: Getting around, Input rules, Error handling, Data shown, Saving a form, Whole journey (up to 8) and Page quality. There are up to 150 per run, scaled to the application's size.
+2. Given a scenario, when it replays the same way every time and fails without its key step, then it is marked as working. When the application behaves differently from what should happen, then it is kept as a possible bug.
+3. Given the Scenarios sub-tab, when it opens, then it shows counts, kind filters, groups (whole journeys first, then one per screen) and a proof video for each scenario.
+4. Given testing has finished, when results are handed over, then only proven scenarios become journeys and scenarios in the rest of the product. A possible bug is handed over only when the user chooses "Not a bug, keep as a test"; Ignore leaves it out.
+5. Given at least one working scenario, when the user presses Generate tests, then test cases are generated, reusing Explorer's proven test as-is wherever it compiles.
+6. Given Explorer runs again, when it hands over, then its earlier results stop being current.
+
+**Gaps / not built**
+- No screen for the run report, downloading Explorer's proven tests as a project, or re-writing scenarios without exploring again.
+- Whether an application keeps progress per login (which makes its runs go one test at a time) is a keyword guess.
+- For an application first discovered by the classic engine, Generate tests would likely cover both the classic journeys and Explorer's (inferred, not confirmed).
+
+---
+
+## Not built / deferred
+
+These were planned at some point but are not in the current product:
+- Sending tests into a customer's CI/CD pipeline or code repository.
+- Running Vantage, or its AI, inside a customer's own network.
+- Blocking destructive actions during test runs. This was deliberately removed so "Run tests" works with no setup.
+- Regenerating a kept journey's scenarios and tests on request.
+- A screen for the discovery coverage report (Story 2.22).
+- Answering blocked discovery requests, and resuming or replaying the path to them (Stories 2.15, 2.16).
+- A Confirmed / Blocked / Remaining summary for a paused Discovery (Story 2.17).
+- A Ready / Needs Data filter for scenarios, and carrying Discovery values into scenario test data (Story 4.1).
+- A screen to manage seeded test data (Story 2.20).
+- Single-sign-on session reuse, MFA codes, API-key and OAuth sign-in for applications under test (Story 1.4).
+- Scheduling Discovery runs.
+- Deployment setup for Explorer's background service, limiting Explorer's other user types and knowledge to admins, refusing Explorer's downloads to viewers, and recording Explorer actions in Activity (Epic 8).
+- Screens for Explorer's extra results: adding a mission, recordings, the highlight video, the run report, the proven-tests download, re-writing scenarios, user-type access, unlinked pages, code coverage and the health score (Stories 8.1, 8.4, 8.5).
+- Per-application browser tab branding (Story 1.6). This was built and then deliberately reversed.
+- Dark mode. This was dropped; the product is light mode only.

@@ -52,6 +52,7 @@ from domain import (
     apply_test_run_cancel,
     lock_test_run,
 )
+from domain.recorded_test_data import RecordedFieldsChanged, apply_recorded_test_data
 import hvac.exceptions
 from explorer_core import ExplorerRun
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
@@ -134,7 +135,13 @@ from api.auth import (
 )
 from api.coverage_report import build_coverage_report
 from api.db import engine, get_session
-from api.discovery import pause_discovery_run, resume_discovery_run, start_discovery_run
+from api.discovery import (
+    discovery_task_queue,
+    discovery_workers_available,
+    pause_discovery_run,
+    resume_discovery_run,
+    start_discovery_run,
+)
 from api.explorer import router as explorer_router
 from api.invites import InviteAcceptError, accept_invite, create_invite, send_invite_email
 from api.password_reset import (
@@ -695,6 +702,9 @@ class HomeApplicationRead(ApplicationRead):
     # TestRunRead.health so the card's post-execution badge and the Runs tab
     # badge for the same run never disagree.
     last_test_run_health: HealthRead
+    # Global overview's Flaky tile — from the latest *completed* Full Suite run,
+    # never an in-progress one (its partial results would flicker the count).
+    last_test_run_flaky_count: int = 0
     # Home row's Executions/Trend columns — total run count (all-time) and
     # the last 8 runs' pass rates, oldest first (same convention as
     # `get_overview`'s `reversed(recent_runs)` trend).
@@ -833,6 +843,13 @@ async def create_application(
     async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
         await _check_reachable(client, payload.url)
 
+    # Before any write: if discovery can't start (no worker), the application
+    # is not added at all — the form shows a retry message instead of leaving
+    # an app behind with a failed run. Skipped when discovery is off.
+    if payload.discovery_required and not await discovery_workers_available():
+        logger.warning("create_application blocked: discovery workers unavailable")
+        raise HTTPException(status_code=503, detail="DISCOVERY_UNAVAILABLE")
+
     # Credentials are written via SecretsClient immediately; the Application
     # row below stores only the returned opaque SecretRef.path (AD-5/NFR-1).
     # Exactly one of the two credential shapes is stored, matching the
@@ -944,17 +961,20 @@ def _verify_credentials_workflow_id(organization_id: uuid.UUID, check_id: uuid.U
 
 
 # "Start discovery" pre-flight: a real browser login with the entered
-# credentials, run by the discovery worker (the only process with Chromium).
-# Start + poll like the Scenarios tab's regenerate/auto-fill — the login can
-# take over a minute, too long for one blocking request. `create_application`
-# itself is deliberately unchanged, so direct API callers aren't gated.
+# credentials, run by whichever worker will run discovery (Explorer by
+# default, see `discovery_task_queue`). Start + poll like the Scenarios tab's
+# regenerate/auto-fill — the login can take over a minute, too long for one
+# blocking request. `create_application` doesn't run this check, so direct API
+# callers aren't gated on credentials (it does refuse to save an app when no
+# discovery worker is available).
 @app.post("/applications/verify-credentials", response_model=CredentialCheckStarted, status_code=202)
 async def start_credential_check(
     payload: CredentialCheckPayload,
     organization_id: CurrentOrgIdDep,
 ) -> CredentialCheckStarted:
     client = await get_temporal_client()
-    if not await has_pollers(client, DISCOVERY_TASK_QUEUE):
+    queue = discovery_task_queue()
+    if not await has_pollers(client, queue):
         raise HTTPException(status_code=503, detail="DISCOVERY_UNAVAILABLE")
 
     # Stored in Vault, never passed as workflow input — Temporal persists
@@ -975,7 +995,7 @@ async def start_credential_check(
                 login_url=payload.login_url or None,
             ),
             id=_verify_credentials_workflow_id(organization_id, check_id),
-            task_queue=DISCOVERY_TASK_QUEUE,
+            task_queue=queue,
         )
     except Exception:
         # ponytail: if the worker dies after the workflow starts but before
@@ -1260,9 +1280,17 @@ async def get_home(
             if last_test_run and last_test_run.total_count
             else None
         )
+        # `runs` is newest first, Full Suite only.
+        # ponytail: two queries per application (results + flaky history),
+        # fine at current application counts — a fuller version would batch
+        # them across `app_ids` like the counts above.
+        last_completed_run = next((r for r in runs if r.status == "completed"), None)
         result.append(
             HomeApplicationRead(
                 **base.model_dump(),
+                last_test_run_flaky_count=(
+                    _flaky_count_for_run(session, last_completed_run) if last_completed_run else 0
+                ),
                 journey_count=journey_counts.get(application.id, 0),
                 scenario_count=scenario_counts.get(application.id, 0),
                 scenario_journeys_covered=scenario_journeys_covered.get(application.id, 0),
@@ -2604,6 +2632,11 @@ def update_scenario_test_data(
 # singleton: only one regenerate can be in flight per Scenario at a time,
 # so there's no separate request_id to mint/track — this same id is both
 # started and polled.
+#
+# A recorded Scenario skips all of that: its fields are its own typed calls,
+# so the save is a direct literal swap done inline here
+# (`apply_recorded_test_data`) — no AI, no Temporal, and so no dependency on
+# the generation worker being up.
 
 
 class RegenerateTestAssetStatusRead(BaseModel):
@@ -2622,7 +2655,22 @@ async def regenerate_test_asset(
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
 ) -> dict[str, bool]:
-    _get_org_scenario(session, organization_id, external_id)
+    scenario, _journey = _get_org_scenario(session, organization_id, external_id)
+    if scenario.source == "recorded":
+        try:
+            apply_recorded_test_data(session, scenario)
+        except RecordedFieldsChanged as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="This test's code changed since it was recorded, so its test data "
+                "can't be matched to it — edit the code directly.",
+            ) from exc
+        except RuntimeError as exc:  # supersede_test_asset lost a race (e.g. a heal)
+            raise HTTPException(
+                status_code=409,
+                detail="This test was just updated by something else — reopen it and try again.",
+            ) from exc
+        return {"started": True}
 
     client = await get_temporal_client()
     if not await has_pollers(client, GENERATION_TASK_QUEUE):
@@ -2652,7 +2700,18 @@ async def get_regenerate_test_asset_status(
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
 ) -> RegenerateTestAssetStatusRead:
-    _get_org_scenario(session, organization_id, external_id)
+    scenario, _journey = _get_org_scenario(session, organization_id, external_id)
+    if scenario.source == "recorded":
+        # Saved synchronously by the POST above — there's nothing to poll.
+        current = session.exec(
+            select(TestAsset).where(
+                TestAsset.scenario_id == scenario.id,
+                TestAsset.current.is_(True),  # type: ignore[attr-defined]
+            )
+        ).one()
+        return RegenerateTestAssetStatusRead(
+            status="complete", test_asset_id=str(current.external_id)
+        )
     client = await get_temporal_client()
     handle = client.get_workflow_handle_for(
         RegenerateTestAssetWorkflow.run, _regenerate_test_asset_workflow_id(external_id)
@@ -3656,10 +3715,13 @@ class TestResultRead(BaseModel):
     # "Retry with self-healing" workflow (`heal-{id}`) is running, otherwise
     # "automatic" (the HealTestActivity right after the test ran).
     heal_kind: str | None = None
-    # Outcomes across this Scenario's recent runs disagree (see
-    # `_flaky_scenario_ids`). Independent of `healed_test_asset_id` — the
-    # frontend gives Self-healed priority when bucketing a result.
+    # This Scenario flip-flops pass<->fail across its recent runs (see
+    # `_flaky_histories`). An overlay, not a bucket: a flaky result still counts
+    # as Passed or Failed in the Runs tab summary.
     is_flaky: bool = False
+    # The outcomes behind `is_flaky`, oldest to newest, True = passed (this run
+    # last). Only set when flaky; lets the UI show why it was flagged.
+    flaky_history: list[bool] | None = None
     # Plain-language version of `error_message` for people who don't read
     # Playwright errors (`workflows.failure_explainer`) — `error_message`
     # itself is returned unchanged alongside, as the "Raw error". Source:
@@ -4805,33 +4867,54 @@ def get_test_run_allure_report(
     )
 
 
-# Flaky = a Scenario whose recent outcomes disagree. The window is the
-# Scenario's last N finished results (this run's included), so an old failure
-# that has since been fixed stops flagging the test once it ages out.
+# Flaky = a Scenario that flip-flops: over its last N finished results (this
+# run's included) the outcome changes pass<->fail at least `FLAKY_MIN_FLIPS`
+# times, and the latest change is among the last `FLAKY_RECENT_FLIP_RESULTS`
+# results. So P F P is flaky, P P P F F is a regression (one flip), and
+# P F P F P P P P P P has settled and stops flagging.
 FLAKY_HISTORY_RUNS = 10
+FLAKY_MIN_FLIPS = 2
+FLAKY_RECENT_FLIP_RESULTS = 5
 _FLAKY_PASS_STATUSES = frozenset({"passed"})
 _FLAKY_FAIL_STATUSES = frozenset({"failed", "timed_out", "errored"})
 
 
-def _flaky_scenario_ids(
+def _is_flaky_sequence(outcomes: list[bool]) -> bool:
+    """`outcomes` oldest to newest, True = passed. Flaky when it flips often
+    enough and recently enough (see the constants above)."""
+    flip_positions = [i for i in range(1, len(outcomes)) if outcomes[i] != outcomes[i - 1]]
+    return (
+        len(flip_positions) >= FLAKY_MIN_FLIPS
+        and flip_positions[-1] >= len(outcomes) - FLAKY_RECENT_FLIP_RESULTS
+    )
+
+
+def _flaky_histories(
     session: Session, test_run: TestRun, results: list[TestResult]
-) -> set[uuid.UUID]:
-    """`TestResult.scenario_id`s in `results` that are flaky: across this run
-    plus the Application's earlier completed runs (most recent
-    `FLAKY_HISTORY_RUNS` results per Scenario), at least one pass and at least
-    one fail. `scenario_id` is the key because it survives a heal or
-    regeneration, unlike `test_asset_id`. Cancelled runs, self-heal
-    verification runs and unfinished results (pending/blocked/cancelled) carry
-    no pass/fail signal and are skipped; a result not yet finished itself is
-    never flaky. A first run has a single outcome, so nothing is flaky."""
-    outcomes: dict[uuid.UUID, set[bool]] = {}
+) -> dict[uuid.UUID, list[bool]]:
+    """`TestResult.scenario_id` -> outcome sequence (oldest to newest, True =
+    passed) for each Scenario in `results` that is flaky as of `test_run`:
+    this run's result plus the Application's earlier completed runs (most
+    recent `FLAKY_HISTORY_RUNS` results per Scenario). `scenario_id` is the key
+    because it survives a heal or regeneration, unlike `test_asset_id`.
+    Cancelled runs, self-heal verification runs, unfinished results
+    (pending/blocked/cancelled) and self-healed passes carry no flakiness
+    signal and are skipped: a heal overwrites the failure it repaired, so
+    counting it would read the healer's patching as flakiness (Self-healed has
+    its own count). A result not yet finished itself is never flaky.
+
+    ponytail: infra-caused `errored` is not told apart from a product failure
+    (the DB has no infra marker), and a fail-then-pass inside one run is not
+    seen because a rerun overwrites the `TestResult`. A fuller version would
+    persist the first-attempt status / an attempts table."""
+    current: dict[uuid.UUID, bool] = {}
     for r in results:
-        if r.status in _FLAKY_PASS_STATUSES:
-            outcomes[r.scenario_id] = {True}
+        if r.status in _FLAKY_PASS_STATUSES and r.healed_test_asset_id is None:
+            current[r.scenario_id] = True
         elif r.status in _FLAKY_FAIL_STATUSES:
-            outcomes[r.scenario_id] = {False}
-    if not outcomes:
-        return set()
+            current[r.scenario_id] = False
+    if not current:
+        return {}
 
     ranked = (
         select(
@@ -4850,19 +4933,36 @@ def _flaky_scenario_ids(
             TestRun.status == "completed",
             TestRun.run_number < test_run.run_number,
             TestRun.triggered_by_name.is_distinct_from(_INTERNAL_VERIFICATION_TRIGGER_NAME),  # type: ignore[union-attr]
-            TestResult.scenario_id.in_(outcomes),  # type: ignore[attr-defined]
+            TestResult.scenario_id.in_(current),  # type: ignore[attr-defined]
             TestResult.status.in_(_FLAKY_PASS_STATUSES | _FLAKY_FAIL_STATUSES),  # type: ignore[attr-defined]
+            or_(
+                TestResult.status != "passed",  # type: ignore[arg-type]
+                TestResult.healed_test_asset_id.is_(None),  # type: ignore[union-attr]
+            ),
         )
         .subquery()
     )
     # This run supplies one of the N slots, so only N-1 earlier results count.
-    for scenario_id, status in session.exec(
-        select(ranked.c.scenario_id, ranked.c.status).where(
-            ranked.c.recency <= FLAKY_HISTORY_RUNS - 1
-        )
+    # Newest first from the query; reversed below to read oldest to newest.
+    newest_first: dict[uuid.UUID, list[bool]] = {}
+    for scenario_id, status, _recency in session.exec(
+        select(ranked.c.scenario_id, ranked.c.status, ranked.c.recency)
+        .where(ranked.c.recency <= FLAKY_HISTORY_RUNS - 1)
+        .order_by(ranked.c.scenario_id, ranked.c.recency)
     ).all():
-        outcomes[scenario_id].add(status in _FLAKY_PASS_STATUSES)
-    return {scenario_id for scenario_id, seen in outcomes.items() if len(seen) == 2}
+        newest_first.setdefault(scenario_id, []).append(status in _FLAKY_PASS_STATUSES)
+    histories = {
+        scenario_id: [*reversed(newest_first.get(scenario_id, [])), outcome]
+        for scenario_id, outcome in current.items()
+    }
+    return {sid: seq for sid, seq in histories.items() if _is_flaky_sequence(seq)}
+
+
+def _flaky_count_for_run(session: Session, test_run: TestRun) -> int:
+    """Flaky Scenarios as of `test_run` — one definition for the Overview tab's
+    and the Global overview's Flaky tiles."""
+    results = session.exec(select(TestResult).where(TestResult.test_run_id == test_run.id)).all()
+    return len(_flaky_histories(session, test_run, list(results)))
 
 
 @app.get(
@@ -4923,7 +5023,7 @@ async def get_test_run(
         for r in results
         if r.heal_started_at is not None and r.heal_started_at >= heal_live_after
     }
-    flaky_scenario_ids = _flaky_scenario_ids(session, test_run, list(results))
+    flaky_histories = _flaky_histories(session, test_run, list(results))
     # Presentation only: reads error_message, never changes it.
     explanations = {r.id: explain_failure(r.status, r.error_message) for r in results}
     ai_explanations = _ai_failure_explanations(
@@ -4976,7 +5076,8 @@ async def get_test_run(
             ),
             heal_in_progress=r.id in heal_kinds,
             heal_kind=heal_kinds.get(r.id),
-            is_flaky=r.scenario_id in flaky_scenario_ids,
+            is_flaky=r.scenario_id in flaky_histories,
+            flaky_history=flaky_histories.get(r.scenario_id),
             **_failure_fields(r),
         )
         for r in results
@@ -5572,6 +5673,9 @@ class LatestRunSummaryRead(BaseModel):
     # field so the frontend has one parser (`parseTrigger`) for both the
     # Runs tab and this Overview tile.
     trigger: str
+    # Same count Run details shows for this run (`_flaky_histories`); scoped to
+    # the latest Full Suite run like every other field here.
+    flaky_count: int = 0
 
 
 class OverviewRead(BaseModel):
@@ -5655,6 +5759,9 @@ def get_overview(
         duration_ms = None
         if latest.started_at and latest.completed_at:
             duration_ms = int((latest.completed_at - latest.started_at).total_seconds() * 1000)
+        # Flaky comes from the newest *completed* run so an in-progress run's
+        # partial results never move the count (same rule as `get_home`).
+        last_completed_run = next((r for r in recent_runs if r.status == "completed"), None)
         latest_run = LatestRunSummaryRead(
             id=latest.external_id,
             created_at=latest.created_at,
@@ -5665,6 +5772,9 @@ def get_overview(
             blocked_count=latest.blocked_count,
             duration_ms=duration_ms,
             trigger=_trigger_label(latest),
+            flaky_count=(
+                _flaky_count_for_run(session, last_completed_run) if last_completed_run else 0
+            ),
         )
 
     discovery_run = _latest_discovery_run(session, application.id)

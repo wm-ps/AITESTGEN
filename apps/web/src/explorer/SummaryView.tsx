@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBullseye, faCircleCheck, faCircleQuestion, faListOl, faPen, faPlus, faTrashCan } from '@fortawesome/free-solid-svg-icons'
+import { faBullseye, faCircleCheck, faCircleQuestion, faPen } from '@fortawesome/free-solid-svg-icons'
 import { LoadingDots } from '../components/LoadingDots'
 import { type AppBrief, type ExplorerRun, type ExplorerScreen } from './explorerApi'
 import { glassCard, Pill, SectionTitle } from './ui'
 
-// Only what Explorer can stand behind: what the app is, the tasks it will
-// test, and the questions it needs answered. Its guesses about the business
+// Only what Explorer can stand behind: what the app is, the questions it
+// needs answered, and which screens to cover (the whole app unless you untick
+// some). Its own task list stays internal: it read as a narrower scope than
+// "test everything" and confused people. Its guesses about the business
 // (who uses it, business objects and their statuses, expected rules, parts
 // that may appear sometimes) are left out of view — they were too often wrong.
 
@@ -46,11 +48,6 @@ export function SummaryView({
   }, [run.brief, editing])
 
   const set = <K extends keyof AppBrief>(key: K, value: AppBrief[K]) => setDraft((d) => ({ ...d, [key]: value }))
-  const updateTask = (index: number, patch: object) => {
-    const list = [...(draft.key_tasks ?? [])]
-    list[index] = { ...list[index], ...patch }
-    set('key_tasks', list)
-  }
 
   const save = async (next: AppBrief = draft) => {
     setBusy('save')
@@ -218,41 +215,11 @@ export function SummaryView({
           </SectionTitle>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {questions.map((q, n) => (
-              <SummaryQuestion key={q.i} number={n + 1} question={q.question} options={q.options} answer={q.answer} editable={editable} onAnswer={(a) => answer(q.i, a)} />
+              <SummaryQuestion key={q.i} number={n + 1} question={q.question} screen={q.screen} changes={q.changes} options={q.options} answer={q.answer} editable={editable} onAnswer={(a) => answer(q.i, a)} />
             ))}
           </div>
         </div>
       )}
-
-      <div style={{ ...glassCard, padding: '18px 20px' }}>
-        <SectionTitle
-          icon={faListOl}
-          aside={editing ? (
-            <button type="button" className="button-secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => set('key_tasks', [...(b.key_tasks ?? []), { name: '', why_it_matters: '' }])}>
-              <FontAwesomeIcon icon={faPlus} style={{ fontSize: 10, marginRight: 5 }} /> Add task
-            </button>
-          ) : undefined}
-        >
-          What Explorer will test
-        </SectionTitle>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          {(b.key_tasks ?? []).map((task, i) => (
-            <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '10px 0', borderTop: i ? '1px solid var(--line)' : 'none' }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent-2)', fontWeight: 700 }}>{String(i + 1).padStart(2, '0')}</span>
-              {editing ? (
-                <>
-                  <input aria-label="Task name" placeholder="Enter the task" value={task.name} onChange={(e) => updateTask(i, { name: e.target.value })} style={inputStyle} />
-                  <button type="button" aria-label="Remove" onClick={() => set('key_tasks', (b.key_tasks ?? []).filter((_, k) => k !== i))} style={{ flex: 'none', width: 28, height: 28, border: '1px solid var(--line)', borderRadius: 8, background: 'white', color: 'var(--fg-4)', cursor: 'pointer' }}>
-                    <FontAwesomeIcon icon={faTrashCan} style={{ fontSize: 11 }} />
-                  </button>
-                </>
-              ) : (
-                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)' }}>{task.name}</span>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
     </div>
   )
 }
@@ -263,6 +230,8 @@ export function SummaryView({
 function SummaryQuestion({
   number,
   question,
+  screen,
+  changes,
   options,
   answer,
   editable,
@@ -270,6 +239,8 @@ function SummaryQuestion({
 }: {
   number: number
   question: string
+  screen?: string
+  changes?: string
   options: string[]
   answer?: string
   editable: boolean
@@ -306,7 +277,11 @@ function SummaryQuestion({
     <div style={{ display: 'flex', gap: 12, padding: '12px 0', borderTop: number > 1 ? '1px solid var(--line)' : 'none' }}>
       <span style={{ flex: 'none', width: 22, height: 22, borderRadius: 1000, background: 'var(--accent-wash)', color: 'var(--accent-2)', fontSize: 12, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{number}</span>
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)', lineHeight: '20px' }}>{question}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {screen && <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-5)' }}>On {screen}</span>}
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)', lineHeight: '20px' }}>{question}</div>
+          {changes && <span style={{ fontSize: 12.5, color: 'var(--fg-4)' }}>Your answer: {changes}</span>}
+        </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {editable ? (
             <>

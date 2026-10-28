@@ -9,6 +9,21 @@ def test_routes_in_code_finds_page_addresses_not_assets():
     assert not any("static" in r or "/api/" in r for r in routes)
 
 
+def test_routes_in_code_skips_back_end_service_paths():
+    code = 'a={path:"UsersListView"};b="/pricepoint-management/v4";c="/rule-management-api/v4"'
+    assert routes_in_code(code) == {"UsersListView"}
+
+
+def test_a_page_button_is_only_done_on_its_own_page():
+    from explorer_worker.understand import done_key
+
+    campaigns = done_key("Create", "https://a.com/#/CampaignsListView", nav=False)
+    assert campaigns != done_key("Create", "https://a.com/#/PricePointsListView", nav=False)
+    assert done_key("Users", "https://a.com/#/Home", nav=True) == done_key(
+        "Users", "https://a.com/#/Taxes", nav=True
+    )
+
+
 def test_coverage_summary_counts_only_the_apps_own_code():
     scripts = [
         {

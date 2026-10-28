@@ -8,6 +8,7 @@ import {
   faDiagramProject,
   faLayerGroup,
   faPlus,
+  faShuffle,
   faTableList,
   faTriangleExclamation,
   faWandMagicSparkles,
@@ -114,6 +115,10 @@ export function Overview({
   // "No tests have run yet", not "tests are failing"), so counting every
   // never-run app as needing attention here would overstate real failures.
   const needsAttentionCount = ranApps.filter((a) => a.last_test_run_health.tier !== 'healthy').length
+  // Backend already scopes each app's count to its latest *completed* Full
+  // Suite run, so summing over every app is safe (an in-progress run adds 0).
+  const totalFlaky = apps.reduce((sum, a) => sum + (a.last_test_run_flaky_count ?? 0), 0)
+  const flakyAppCount = apps.filter((a) => (a.last_test_run_flaky_count ?? 0) > 0).length
 
   // Average of each app's own recent-pass-rate history, aligned from the
   // most-recent run backwards — the only cross-app time series the API
@@ -485,6 +490,22 @@ export function Overview({
                 label: 'Self-healed locators',
                 value: stats == null ? '—' : String(stats.self_healed_count),
                 sub: 'In the last 7 days',
+                aside: {
+                  icon: faShuffle,
+                  label: 'Flaky tests',
+                  value: String(totalFlaky),
+                  // Hover on the count: one "App : n" line per affected app.
+                  valueRows:
+                    totalFlaky > 0
+                      ? apps
+                          .filter((a) => (a.last_test_run_flaky_count ?? 0) > 0)
+                          .map((a) => `${a.name} : ${a.last_test_run_flaky_count}`)
+                      : undefined,
+                  sub:
+                    totalFlaky === 0
+                      ? 'None in latest runs'
+                      : `Across ${flakyAppCount} application${flakyAppCount === 1 ? '' : 's'}`,
+                },
               },
               {
                 id: 'discovery',
@@ -495,15 +516,65 @@ export function Overview({
               },
             ]
 
-            function MiniTile({ icon, label, value, sub, flex }: { icon: typeof faCompass; label: string; value: string; sub: string; flex?: number }) {
+            type TileStat = { icon: typeof faCompass; label: string; value: string; sub: string; valueColor?: string; valueRows?: string[] }
+
+            function TileStatBlock({ icon, label, value, sub, valueColor, valueRows }: TileStat) {
+              const [hover, setHover] = useState(false)
               return (
-                <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, padding: '16px 18px', flex, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <FontAwesomeIcon icon={icon} style={{ fontSize: 12, color: 'var(--accent-hi)' }} />
                     <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>{label}</span>
                   </div>
-                  <div style={{ fontSize: 22, lineHeight: '28px', color: 'var(--fg)', marginTop: 8, fontWeight: 600 }}>{value}</div>
+                  <div
+                    onMouseEnter={valueRows ? () => setHover(true) : undefined}
+                    onMouseLeave={valueRows ? () => setHover(false) : undefined}
+                    style={{ position: 'relative', fontSize: 22, lineHeight: '28px', color: valueColor ?? 'var(--fg)', marginTop: 8, fontWeight: 600, ...(valueRows ? { cursor: 'pointer', width: 'fit-content' } : {}) }}
+                  >
+                    {value}
+                    {valueRows && hover && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: 0,
+                          bottom: '100%',
+                          marginBottom: 6,
+                          zIndex: 5,
+                          pointerEvents: 'none',
+                          background: 'var(--panel)',
+                          border: '1px solid var(--border-2)',
+                          borderRadius: 8,
+                          boxShadow: 'var(--panel-shadow)',
+                          padding: '6px 10px',
+                          fontSize: 11.5,
+                          fontWeight: 400,
+                          lineHeight: '16px',
+                          color: 'var(--fg-2)',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {valueRows.map((r) => (
+                          <div key={r}>{r}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 2 }}>{sub}</div>
+                </div>
+              )
+            }
+
+            function MiniTile({ flex, aside, ...stat }: TileStat & { flex?: number; aside?: TileStat }) {
+              return (
+                <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, padding: '16px 18px', flex, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 18 }}>
+                  <div style={{ flex: 1, minWidth: 140 }}>
+                    <TileStatBlock {...stat} />
+                  </div>
+                  {aside && (
+                    <div style={{ flex: 1, minWidth: 140, paddingLeft: 18, borderLeft: '1px solid var(--border-1)' }}>
+                      <TileStatBlock {...aside} />
+                    </div>
+                  )}
                 </div>
               )
             }
@@ -530,9 +601,10 @@ export function Overview({
                   {testCasesCard}
                   <MiniTile {...miniTiles[0]} />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(330px,1fr))', gap: 14 }}>
-                  <MiniTile {...miniTiles[1]} />
-                  <MiniTile {...miniTiles[2]} />
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(200px,1fr))', gap: 14 }}>
+                  {miniTiles.slice(1).map((t) => (
+                    <MiniTile key={t.id} {...t} />
+                  ))}
                 </div>
               </>
             )

@@ -9,6 +9,7 @@ the way. It ends by writing the App Summary for the user to confirm.
 import asyncio
 import logging
 import os
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -40,11 +41,17 @@ from explorer_worker.session import load_target, open_signed_in
 
 logger = logging.getLogger(__name__)
 
-FIRST_LOOK_SCREENS = int(os.environ.get("EXPLORER_FIRST_LOOK_SCREENS", "24"))
+# The first look maps the WHOLE app before the App Summary, so you can untick
+# the parts to leave out (Catalog BO has ~84 screens; the old 24-screen budget
+# left two thirds unseen). It stops when nothing new is left to open, or at
+# these safety caps. ponytail: flat caps — a per-app estimate if very large
+# apps hit them.
+FIRST_LOOK_SCREENS = int(os.environ.get("EXPLORER_FIRST_LOOK_SCREENS", "150"))
 # A run that starts from an earlier run's map only looks for what's new.
-REVISIT_SCREENS = int(os.environ.get("EXPLORER_REVISIT_SCREENS", "10"))
+REVISIT_SCREENS = int(os.environ.get("EXPLORER_REVISIT_SCREENS", "40"))
 LEAD_TIMEOUT_S = 180
-FIRST_LOOK_MINUTES = float(os.environ.get("EXPLORER_FIRST_LOOK_MINUTES", "25"))
+FIRST_LOOK_MINUTES = float(os.environ.get("EXPLORER_FIRST_LOOK_MINUTES", "120"))
+MENU_GROUPS = 40
 # How many frontier options the "where next" call sees — the rest wait.
 CHOICES_SHOWN = 20
 
@@ -62,6 +69,18 @@ class Lead:
     value: int
     # "visit" = go and read the screen; "flow" = start a task and walk it.
     kind: str = "visit"
+    # In the app's menu/header (on every screen) rather than on this page.
+    nav: bool = False
+    # A collapsed menu group to open first: the item is hidden until it is.
+    via: str | None = None
+
+
+def done_key(label: str, from_url: str, nav: bool) -> str:
+    """What "already tried" means for a label. A menu item is the same
+    everywhere; a page button is only the same on that page — "Create" on
+    Price points is not "Create" on Campaigns (seen on Catalog BO: one walk
+    through Campaigns' Create hid every other screen's Create)."""
+    return plain_label(label) if nav else f"{plain_label(label)}@{url_pattern(from_url)}"
 
 
 class UnderstandStopped(Exception):
@@ -131,14 +150,26 @@ async def _first_look(
     take_in = mind.take_in
 
     status, load_ms = await eyes.goto(eyes.page.url)  # re-settle wherever sign-in landed
-    await take_in(await eyes.look(eyes.page.url, status, load_ms), reached_by="Start page")
+    start = await eyes.look(eyes.page.url, status, load_ms)
+    await take_in(start, reached_by="Start page")
+    menu = await _menu_leads(eyes, start.url, seen_patterns, leads)
+    if menu:
+        leads += menu
+        journal.event(
+            "thought",
+            f"The menu has {len(menu)} more places in it",
+            "Some were folded away under menu groups. I'll look at each of them.",
+        )
 
     already = len(understood)  # known from an earlier run: only new screens count
     while leads and len(understood) - already < budget and time.monotonic() < deadline:
         if journal.status() == "stopped":
             raise UnderstandStopped()
         leads.sort(key=lambda lead: -lead.value)
-        options = leads[:CHOICES_SHOWN]
+        # Map every place first; walking through forms (flows) is slow and
+        # only comes once nothing else is left to open — missions do the rest.
+        places = [lead for lead in leads if lead.kind != "flow"]
+        options = (places or leads)[:CHOICES_SHOWN]
         choice = await brain.choose_next(
             [vars(o) for o in options], understood, budget - (len(understood) - already)
         )
@@ -147,7 +178,7 @@ async def _first_look(
         journal.event("thought", f"Next: {lead.label}", choice.get("thought") or lead.why)
         if lead.kind == "flow":
             if await _open(eyes, lead):
-                walked.update((lead.why, lead.label))
+                walked.update((lead.why, done_key(lead.label, lead.from_url, lead.nav)))
                 journal.event(
                     "phase",
                     f"Walking through: {lead.why}",
@@ -164,7 +195,7 @@ async def _first_look(
                 )
                 branches += walk.branches
             else:
-                _give_up_on(lead.label, leads, walked)
+                _give_up_on(lead, leads, walked)
                 journal.event("thought", f"Couldn't start {lead.label}", "Moving on.")
             continue
         try:
@@ -173,7 +204,7 @@ async def _first_look(
         except TimeoutError:
             visit = None
         if visit is None:
-            _give_up_on(lead.label, leads, walked)
+            _give_up_on(lead, leads, walked)
             journal.event(
                 "thought",
                 f"{lead.label} didn't open anything new",
@@ -185,12 +216,12 @@ async def _first_look(
     return branches
 
 
-def _give_up_on(label: str, leads: list[Lead], walked: set[str]) -> None:
-    """A label that opened nothing is usually in a header shown on every
-    screen — so it was queued once per screen. Drop every copy, and never
-    queue it again this look."""
-    walked.update((label, plain_label(label)))
-    leads[:] = [lead for lead in leads if plain_label(lead.label) != plain_label(label)]
+def _give_up_on(lead: Lead, leads: list[Lead], walked: set[str]) -> None:
+    """A menu item that opened nothing was queued once per screen (the menu
+    is on all of them): drop every copy. A page button only on its page."""
+    key = done_key(lead.label, lead.from_url, lead.nav)
+    walked.add(key)
+    leads[:] = [o for o in leads if done_key(o.label, o.from_url, o.nav) != key]
 
 
 async def _open(eyes: Eyes, lead: Lead) -> bool:
@@ -201,8 +232,104 @@ async def _open(eyes: Eyes, lead: Lead) -> bool:
         await eyes.goto(lead.from_url)
     before = await eyes.fingerprint()
     if not await eyes.click_text(lead.label, lead.role):
-        return False
+        # Folded away in a menu group: open the group, then click it.
+        if not (lead.via and await eyes.click_text(lead.via)):
+            return False
+        before = await eyes.fingerprint()
+        if not await eyes.click_text(lead.label, lead.role):
+            return False
     return await eyes.wait_for_change(before, 5000)
+
+
+def _readable(text: str) -> str:
+    """ "User access Icon User access" (an icon's alt text read out with the
+    words) is the button a person and its accessible name call "User access"."""
+    match = re.fullmatch(r"(.+?)\s+\w*\s*icon\s+\1", text.strip(), re.IGNORECASE)
+    return match[1] if match else text.strip()
+
+
+def _is_link(item: dict[str, Any], here: str) -> bool:
+    href = (item.get("href") or "").strip()
+    return bool(href) and not href.lower().startswith("javascript") and url_pattern(href) != here
+
+
+async def _menu_leads(
+    eyes: Eyes, start_url: str, seen_patterns: set[str], leads: list[Lead]
+) -> list[Lead]:
+    """Menu items folded away under groups ("User access" → Users, Roles):
+    invisible until the group opens, so the screen reading never offers them.
+    Open each menu entry that isn't a link and keep what appears. No model."""
+    assert eyes.page is not None
+    here = url_pattern(start_url)
+    first = await eyes.nav_items()
+    seen = {plain_label(_readable(i.get("text") or "")) for i in first}
+    seen |= {plain_label(lead.label) for lead in leads}
+    groups = list(
+        {
+            plain_label(i["text"]): i
+            for i in reversed(first)
+            if i.get("text") and not _is_link(i, here) and not is_risky_label(i["text"])
+        }.values()
+    )[::-1][:MENU_GROUPS]
+    found: list[Lead] = []
+    for group in groups:
+        group["text"] = _readable(group["text"])
+        showing = len(await eyes.nav_items())
+        if not await eyes.click_text(group["text"], group.get("role")):
+            continue
+        if url_pattern(eyes.page.url) != here:
+            # A page, not a group. Its `javascript:void(0)` link is never
+            # queued as a lead, so queue it here (Catalog BO's Brands, My locks).
+            if url_pattern(eyes.page.url) not in seen_patterns and plain_label(
+                group["text"]
+            ) not in {plain_label(lead.label) for lead in leads}:
+                found.append(
+                    Lead(
+                        group["text"],
+                        group.get("role"),
+                        None,
+                        start_url,
+                        "Menu",
+                        "In the app's menu",
+                        3,
+                        nav=True,
+                    )
+                )
+            await eyes.goto(start_url)
+            continue
+        now = await eyes.nav_items()
+        if len(now) < showing:
+            # A menu toggle (Catalog BO's unlabeled "Icon" button) folded the
+            # whole menu away and every later click failed: unfold it again.
+            await eyes.click_text(group["text"], group.get("role"))
+            continue
+        for item in now:
+            text = _readable(item.get("text") or "")
+            if not text or plain_label(text) in seen or is_risky_label(text):
+                continue
+            seen.add(plain_label(text))
+            href = item.get("href") if _is_link(item, here) else None
+            if href and (
+                url_pattern(href) in seen_patterns
+                or not is_explorable_link(href, eyes.origin, text)
+            ):
+                continue
+            found.append(
+                Lead(
+                    text,
+                    item.get("role"),
+                    href,
+                    start_url,
+                    "Menu",
+                    f"In the app's menu under {group['text']}",
+                    3,
+                    nav=True,
+                    via=group["text"],
+                )
+            )
+    if found and eyes.page.url != start_url:
+        await eyes.goto(start_url)
+    return found
 
 
 async def _follow(eyes: Eyes, lead: Lead) -> Visit | None:
@@ -230,6 +357,7 @@ def _collect_leads(
     inventory = visit.inventory
     by_text: dict[str, dict[str, Any]] = {}
     by_plain: dict[str, dict[str, Any]] = {}
+    nav_texts = {plain_label(i.get("text") or "") for i in inventory.get("nav_items", [])}
     for item in inventory.get("links", []) + inventory.get("nav_items", []):
         text = (item.get("text") or "").strip()
         if text and text not in by_text:
@@ -240,10 +368,10 @@ def _collect_leads(
     queued = {(lead.label, url_pattern(lead.from_url)) for lead in leads}
 
     def add(label: str, why: str, value: int, kind: str = "visit") -> None:
+        nav = plain_label(label) in nav_texts
         if (
             not label
-            or label in walked
-            or plain_label(label) in walked
+            or done_key(label, visit.url, nav) in walked
             or (label, here) in tried
             or (label, here) in queued
         ):
@@ -282,6 +410,7 @@ def _collect_leads(
                 why,
                 max(1, min(5, value)),
                 kind,
+                nav,
             )
         )
 
@@ -294,12 +423,7 @@ def _collect_leads(
                 value if isinstance(value, int) else 2,
             )
     for flow in reading["starts_flow"][:5]:
-        if (
-            isinstance(flow, dict)
-            and flow.get("goal")
-            and flow["goal"] not in walked
-            and str(flow.get("label") or "").strip() not in walked
-        ):
+        if isinstance(flow, dict) and flow.get("goal") and flow["goal"] not in walked:
             value = flow.get("value")
             # Tasks are the heart of the app — rank them above plain navigation.
             add(

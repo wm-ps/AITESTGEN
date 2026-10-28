@@ -516,6 +516,15 @@ class Eyes:
                 continue
         return False
 
+    async def nav_items(self) -> list[dict[str, Any]]:
+        """The menu items and links on screen now (no screenshot, no model)."""
+        assert self.page is not None
+        try:
+            inventory: dict[str, Any] = await self.page.evaluate(_INVENTORY_JS)
+        except PlaywrightError:
+            return []
+        return list(inventory.get("nav_items") or []) + list(inventory.get("links") or [])
+
     async def look(self, url_hint: str, status: int | None, load_ms: int) -> Visit:
         """Read the current screen + collect health signals since last look."""
         assert self.page is not None
@@ -671,10 +680,16 @@ class Eyes:
         return False
 
     async def fingerprint(self) -> str:
-        """Cheap "did anything change?" check: address + start of the text."""
+        """Cheap "did anything change?" check: address + all of the text + open
+        dialogs. Not just the start of the text: a long side menu fills it,
+        and dialogs and wizard steps are drawn after it (seen on Catalog BO,
+        where "Create" and "Use a template" looked like they did nothing)."""
         assert self.page is not None
         try:
-            text = await self.page.evaluate("() => (document.body?.innerText || '').slice(0, 4000)")
+            text = await self.page.evaluate(
+                "() => (document.body?.innerText || '') + '|' + "
+                "document.querySelectorAll('[role=dialog], dialog[open], .modal.show').length"
+            )
         except PlaywrightError:
             text = ""
         # A dead `href="#"` link only appends "#" — that isn't a change.

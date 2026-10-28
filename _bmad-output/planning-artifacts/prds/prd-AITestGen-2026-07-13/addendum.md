@@ -1,32 +1,44 @@
-# Addendum: Application Intelligence Platform PRD
+# Addendum: Vantage (AITestGen) PRD
 
-Depth that belongs to the broader product story but doesn't earn a place in the V1 execution PRD. Useful for architecture, sales enablement, and future V2/V3 PRDs.
+*Last updated: 2026-10-27*
 
-## Competitive Positioning (from Product Brief)
+This addendum holds the broader product story that sits outside the PRD's description of what is built today. It is useful for sales enablement, positioning and future planning.
 
-V1 does not win on a unique technical edge. Autonomous, URL-only discovery that generates tests without source code access is already claimed by several players: **Virtuoso QA**, **QA.tech**, and **Autonoma AI** among them. Any V1 pitch leaning on "we can discover your app from just a URL" is making a claim the market has already heard.
+## Competitive Positioning
 
-What V1 actually offers is a different *shape* of product: competitors that discover autonomously still frame themselves as test-automation tools — discovery serves the tests. This platform inverts that: the business capability map and journey understanding are the product; generated Playwright tests are one output among several. No competitor identified in the brief's market research combines business-capability language, journey-level understanding, coverage analytics, and risk scoring into a single intelligence layer the way this platform intends to. That framing, plus the human-in-the-loop review step (AI-discovered journeys as draft, not ground truth), is what V1 sells on.
+Autonomous, URL-only discovery that writes tests without source access is claimed by several vendors, among them **Virtuoso QA**, **QA.tech** and **Autonoma AI**. Playwright itself now ships free agents that explore an app, plan tests, write them and heal them. "We can explore your app from a URL" is therefore not a differentiator on its own.
 
-## V2 / V3 Vision Arc
+Vantage's case rests on the complete loop, built so a QA team can trust it:
+- **Three ways to create tests, one library.** Autonomous Discovery, plain-English authoring and record-and-play all produce tests that share the same locators, self-healing, results and reports.
+- **Self-healing that cannot cheat.** Repairs may change how a test finds things on the page, never what it asserts. Failed assertions are never healed.
+- **Results people can act on.**
+  - Plain-language failure summaries, with AI-written ones clearly labelled.
+  - Flaky flags based on each test's recent history.
+  - A run-level banner when most failures share one cause.
+  - A branded report and a run-completed email.
+- **Low friction, no lock-in.** A URL and a test login get a team started, and the login is proven before Discovery begins. The whole project downloads as a runnable Playwright project.
+- **Team-ready.** Organization workspaces, three roles (admin, member, viewer), schedules, an org-wide Overview and an admin Activity history.
 
-The platform grows along: **coverage intelligence → application intelligence → change intelligence.**
+## Vision Arc
 
-- **V1** proves business journeys can be discovered and turned into working regression coverage without anyone having to remember they exist.
-- **V2** adds source-code correlation — every Journey traces back to the routes, components, and dependencies that implement it, turning the map from a picture of behavior into a picture of structure *and* behavior. This is the point at which competitors without source access lose parity.
-- **V3** closes the loop: given a code change, the platform tells a team which Business Journeys are at risk and which tests to run before shipping — release-readiness intelligence no competitor in this market currently offers (per brief research). This is the strongest, most defensible part of the long-term vision, and the reason early pilots are likely being sold as much on the roadmap as on V1 itself.
+The direction is **coverage intelligence → application intelligence → change intelligence.**
 
-Long-term destination: the system of record for Application Intelligence — the place engineering leaders, QA directors, architects, and product owners go to understand what's built, what's changed, and what's at risk before every release. Not yet earned — contingent on V1 holding up in real pilots and V2's technical differentiation proving out.
+- **Today:** Vantage turns an application's journeys into running, self-maintaining regression coverage, whether the tests come from Discovery, authoring or recording.
+- **Next:** connect each journey to the code that implements it, and add a business capability map with coverage and risk views across applications.
+- **Later:** given a code change, tell a team which journeys are at risk and which tests to run before shipping.
 
-## Confidence/Risk Scoring — Why It Was Cut From V1 (and how to revisit)
+The long-term goal is to be the place engineering leaders and QA teams go to understand what is built and what a release puts at risk. That goal has not been reached; it depends on the current product proving itself in real use.
 
-During PRD discovery, both the per-Journey AI discovery confidence score and the Stage-8 risk/confidence scorecard (explicitly named in the approved brief as a V1 outcome) were cut. The reasoning:
+## Confidence and Risk Scoring: Why It Isn't Built, and How to Revisit
 
-- The brief's scorecard definition uses "usage" and "error rates" as inputs — in a normal reading, these imply live production telemetry, which V1 does not ingest (discovery is a point-in-time crawl, not continuous observation).
-- Once that dependency surfaced, resolving it raised more unresolved sub-questions (what counts as a feed, who provides it, how is it kept fresh) than the feature's value justified for a first release.
+Neither a per-journey confidence score nor a risk scorecard exists today. The original scorecard idea leaned on usage and error-rate data, which needs live production monitoring that Vantage does not collect.
 
-**If revisiting for V2 or a V1 fast-follow:** the per-Journey discovery confidence score does *not* strictly require a production feed — it could be computed purely from discovery-time signals (e.g., consistency of the navigation pattern across the crawl, clarity/uniqueness of the matched API calls). That's a smaller, self-contained feature that could be reintroduced without waiting for a telemetry integration. The full risk/confidence *scorecard*, by contrast, genuinely wants usage and error-rate data and is more naturally a V2+ feature once source-code correlation or a customer telemetry integration exists.
+Two cheaper signals do exist and could be surfaced without any monitoring feed:
+- the application health tier (Healthy, Needs attention, Critical) together with the "% of journeys covered by scenarios" figure, and
+- each test's pass and flaky history.
 
-## Success Criteria — Full Reasoning (from Product Brief)
+A lightweight per-journey risk view could be built from these and from Discovery's own coverage report, which the server produces but no screen shows yet. A full risk scorecard still needs usage data and is a later-phase item.
 
-The brief deliberately avoids setting numeric coverage or time-saved targets for V1: "a percentage invented now would be a fabricated claim, not a real success criterion." The intended sequence is pilot data first, thresholds second — not the reverse. This is why §7 of the PRD reads as qualitative/directional rather than quantitative, and why Open Question 2 (V2 greenlight threshold) is deliberately still open rather than pre-answered.
+## Success Criteria: Reasoning
+
+Numeric coverage or time-saved targets are deliberately not set. A percentage invented before there is real usage data would be a made-up claim, not a success criterion. The intended order is usage data first, thresholds second. This is why the PRD's success metrics are directional.

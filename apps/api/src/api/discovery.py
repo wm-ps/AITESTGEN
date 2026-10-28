@@ -13,6 +13,7 @@ import os
 import uuid
 
 from domain import Application, DiscoveryRun
+from explorer_core import EXPLORER_TASK_QUEUE
 from sqlmodel import Session, col, select
 from workflows import DISCOVERY_TASK_QUEUE, DiscoveryWorkflow
 
@@ -25,6 +26,32 @@ logger = logging.getLogger(__name__)
 # discovery. Set EXPLORER_REPLACES_DISCOVERY=0 to go back to the classic
 # crawler (its code is unchanged).
 EXPLORER_REPLACES_DISCOVERY = os.environ.get("EXPLORER_REPLACES_DISCOVERY", "1") != "0"
+
+
+def discovery_task_queue() -> str:
+    """The worker that runs a new discovery — and its "Start discovery" login
+    pre-flight, so the check signs in exactly the way discovery will."""
+    return EXPLORER_TASK_QUEUE if EXPLORER_REPLACES_DISCOVERY else DISCOVERY_TASK_QUEUE
+
+
+async def discovery_workers_available() -> bool:
+    """Whether a worker is polling the queue a new discovery run would use —
+    checked by `create_application` before it writes anything, so an app is
+    never saved when discovery can't start. Temporal being unreachable counts
+    as "not available" rather than a 500.
+
+    ponytail: a point-in-time snapshot, not a guarantee — a worker dying
+    between this check and `start_discovery_run` still leaves a saved app with
+    a failed run (the Journeys failed banner + retry covers it). A fuller
+    version would start the run and create the app in one compensating
+    transaction."""
+    queue = discovery_task_queue()
+    try:
+        client = await get_temporal_client()
+        return await has_pollers(client, queue)
+    except Exception:
+        logger.exception("could not check discovery workers on %s", queue)
+        return False
 
 
 async def start_discovery_run(

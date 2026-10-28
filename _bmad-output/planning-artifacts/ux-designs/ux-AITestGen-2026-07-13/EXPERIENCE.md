@@ -1,170 +1,361 @@
 ---
-name: Application Intelligence Platform
+name: Vantage (AITestGen)
 status: final
-updated: 2026-07-27
-sources:
-  - "../../prds/prd-AITestGen-2026-07-13/prd.md"
-  - "../../briefs/brief-AITestGen-2026-07-12/brief.md"
-  - "../../research/market-application-intelligence-platform-research-2026-07-12.md"
+updated: 2026-10-27
 ---
 
-# Application Intelligence Platform — Experience Spine
+# Vantage — Experience Spine
 
-> `DESIGN.md` is the visual identity reference; this spine is the experience — information architecture, behavior, states, and flows. Where this file describes a visual property, `DESIGN.md` wins on conflict. Composition reference: `mockups/prototype-v3.html` (current, 2026-07-27 — a bundled SPA export using a custom template DSL over `this.state`; supersedes `mockups/prototype-v2-standalone.html`, kept in the mockups folder for history only alongside `prototype-v1.html`).
-
-> **`[NOTE FOR PM/ENG — 2026-07-27]`** This revision reconciles the locked (2026-07-21) spine against `prototype-v3.html`. Full reconciliation detail, including what was rejected and why, lives in `reconcile-prototype-v3.md`. Three kinds of change happened in this pass: (1) **adopted** — the visual identity redirect (see `DESIGN.md`), the Review Scenarios ready/needs-data filter, the Suite Generated screen (resolving a prior `[GAP]`), and a clarified Landing/existing-Application rule; (2) **rejected as prototype drift** — a reintroduced Journey-level Edit action, a raw scrolling discovery live-feed, a single-TypeScript-file suite download, a "Discovery Attention" approve/skip gate, and a "Workspace" multi-tab home screen with live pass/fail results; (3) **carried forward unchanged** — everything from the 2026-07-15/2026-07-21 revisions not named above, including the four-step pipeline shape, the Review & Trust Model's rename/delete-only Journey action set, and Sign In. **Corrected this pass (2026-07-27):** Key Flow 3 (formerly framed as UJ-2's "unresolved Dashboard gap") was miscast as a still-open item awaiting product resolution — the current PRD (updated 2026-07-21) already disposed of UJ-2 as removed in full on 2026-07-15. See Key Flows below for the correction.
+This document covers the experience as it ships today: screens, navigation, flows, roles, states and copy rules. `DESIGN.md` is the visual reference and wins on any visual question.
 
 ## Foundation
 
-Desktop web app only — no mobile or tablet form factor. Unchanged.
+- **Platform.** Vantage is a desktop web app for QA and engineering teams. It turns a deployed web application into a maintained Playwright test suite, written in TypeScript, with very little hand-writing of tests. There is no mobile or tablet layout.
+- **Accounts.** Accounts are invite-only and scoped to one organization; nobody can sign themselves up. Everything a user sees belongs to their organization.
+- **Main objects:**
+  - Application: the app under test.
+  - Journey: a real user flow that Vantage discovered.
+  - Scenario: a test idea for a journey, with its steps, test data and expected result.
+  - Test case: a runnable Playwright test.
+  - Test run: one execution of some or all test cases, with its results.
+- **Three ways to get test cases:**
+  - Autonomous Discovery, then scenarios, then generated tests. Discovery has two engines: **Explorer**, the default, which writes and proves scenarios itself; and **classic discovery**, which finds journeys for the user to turn into scenarios. Classic discovery now runs only for applications discovered before Explorer became the default, or when operations switch Explorer off.
+  - **Author a test case** in plain English.
+  - **Record and play** in a remote browser.
+- **Accessibility.** WCAG 2.1 AA is the floor. Every interactive element shows a visible teal focus ring, tab order follows visual order, and form controls are keyboard-operable.
 
-**WCAG is the explicit accessibility bar.** Unchanged — see Accessibility Floor.
+## Roles and what each one sees
 
-The product's core entity model — Application → Discovery Run → Capability/Journey → Scenario → Test Asset — is defined in full in PRD §3 (Glossary) and is not restated here. Every discovered, non-deleted Journey and Capability enters the Trusted Knowledge Model automatically (PRD FR-14 — there is no human approval gate; deletion, FR-13, is the only exclusion mechanism), and every candidate Journey the platform shows a reviewer is traceable back to the specific pages, actions, and API calls discovery actually captured (PRD FR-8 consequence).
+There are three roles. The server enforces them, and the interface hides controls a role cannot use.
 
-**Sign In is unchanged.** It is not in scope of this revision beyond the visual restyle documented in `DESIGN.md` (the login canvas, the two-column layout with a product intro on the left and the sign-in card on the right). Its field set, "Continue with Single Sign-On" link, and validation are unaffected.
+| Capability | Admin | Member | Viewer |
+|---|---|---|---|
+| See every application, journey, scenario, test case, run and result | yes | yes | yes |
+| Add an application; start, pause or resume Discovery | yes | yes | no |
+| Explorer tab: start, pause, stop, resume, confirm the summary, answer questions, judge bugs | yes | yes | no (buttons shown, but refused) |
+| Explorer tab: knowledge and other user types | yes | yes (gap: should be admin only) | no (buttons shown, but refused) |
+| Download Explorer's tests, report, recordings and highlight video (no screen yet) | yes | yes | yes (gap) |
+| Rename or delete an application (⋮ on the Applications list) | yes | no | no |
+| Rename/delete journeys and scenarios, edit test data, generate scenarios and test cases | yes | yes | no |
+| Author a test case; Record and play | yes | yes | no (Record and play tab hidden) |
+| Run tests, cancel a run, retry a failure with self-healing | yes | yes | no |
+| Manage schedules | yes | yes | no |
+| Open a run's HTML report | yes | yes | no ("Reports aren't available for view-only access") |
+| Download the project | yes | yes | no (tab hidden) |
+| Team members, Activity | yes | no | no |
+| Settings, including each application's Sign-in switch | yes | sees the link, gets "Access denied" | link hidden |
+
+Rules:
+- A viewer cannot change anything, Explorer included. On the Explorer tab the buttons are not hidden from viewers; the platform refuses them instead.
+- Admins cannot remove themselves or change their own role, and the last admin cannot be demoted.
+- A role change applies on the user's next action.
+
+The invite dialog describes the roles like this:
+- **Member:** "Can onboard applications, review scenarios and trigger runs."
+- **Admin:** "Everything a member can do, plus saved credentials and discovery limits."
+- **Viewer:** "Can view applications, test cases and run results — no changes."
 
 ## Information Architecture
 
-**Six screens**, unchanged in count and shape from the 2026-07-15/2026-07-21 revisions: one pre-authentication (Sign In), one cross-application landing (Landing), and a 4-step guided pipeline scoped to a single Application. There is no persistent nav rail — top-level navigation *is* the pipeline stepper.
+### Before sign-in
+- **Sign in.** A split screen. The left side is a marketing image panel. The right side is the sign-in card ("Welcome back — Sign in to your Vantage account"), with a "Forgot password?" link and "An initiative of Omnewave".
+- **Forgot / reset password.**
+  - The screen always says "Check your email", whether or not the address has an account.
+  - The reset link lasts 1 hour.
+  - A new password needs at least 8 characters and must be entered twice.
+- **Accept invite ("Set up your account").**
+  - The invitee enters a full name and a password, and is signed in straight away.
+  - An invalid, expired or already-used link shows one generic error.
+- **Service unavailable.** If the backend cannot be reached, this screen replaces sign-in, with a Retry button.
 
-| Screen | Reached from | Status |
-|---|---|---|
-| Sign In | App open, unauthenticated | Confirmed, unchanged |
-| Landing | Sign-in (default landing) | Confirmed — see State Patterns for the two distinct empty/non-empty treatments |
-| Connect App (pipeline step 1) | Landing ("+ Create New Project" or an existing Application card) | Confirmed |
-| Discover Journeys (pipeline step 2) | Connect App submission, or resuming an existing Application | Confirmed |
-| Review Scenarios (pipeline step 3) | Discover Journeys → "Continue to Scenarios" | Confirmed |
-| Generate Suite (pipeline step 4) | Review Scenarios → "Generate Test Suite" | Confirmed, now including the post-generation **Suite Generated** screen — resolves the prior `[GAP]` for what appears after generation completes |
+### After sign-in: the shell
+The shell has a **left sidebar** and a top bar. The top bar holds a breadcrumb, an "Add application" button (a "View only" badge for viewers) and an account menu with Log out. There is **no step-by-step wizard**: every area is a sidebar destination and can be opened in any order.
 
-**Confirmed still cut, not reintroduced (2026-07-27):** `prototype-v3.html` adds two new screens beyond these six — a "Discovery Attention" approve/skip gate for uncertain or missing-field discoveries, and a "Workspace" screen (Overview / Test Suite / Runs / Application tabs, including a live Passed/Failed test-execution view). Both are rejected in full; see the note at the top of this file and `reconcile-prototype-v3.md`. No replacement screen exists for either.
+Sidebar, when no application is open:
+- **Overview**, the organization-wide dashboard and the landing page after sign-in.
+- **Applications**, with a count badge.
+- **Add application** (hidden for viewers).
+- **Configuration** group (hidden for viewers):
+  - **Team members** (admin only)
+  - **Activity** (admin only)
+  - **Settings**
 
-**Primary flow:** Landing → Connect App → Discover Journeys → Review Scenarios → Generate Suite → Suite Generated. Unchanged in shape from the prior revision, now with its terminal screen filled in.
+When an application is open, the sidebar switches to an **Application** section. It shows the app's name, an Exit link and these tabs, in order:
 
-**Naming rule — function-first labels — still holds,** unchanged.
+**Overview · Journeys · Explorer · Scenarios · Test cases · Test runs · Record and play · Schedules · Download project**
 
-**Breadcrumb / app-name context rule** — unchanged: the top bar shows the current Application's name plus an environment pill on all four pipeline-step screens; suppressed on Sign In and Landing.
+- Journeys, Explorer (compass icon) and Scenarios appear only if the application was added with Autonomous discovery turned on.
+- For an application **Explorer has discovered**, Journeys and Scenarios are hidden; Explorer's own Scenarios sub-tab replaces them, and any link to them opens Explorer. Classic applications keep Journeys and Scenarios and also get Explorer. Once someone starts Explorer on a classic application, it counts as an Explorer application from then on.
+- Record and play and Download project are hidden for viewers. Overview and Download project are always listed; until there is something to show they display an empty state ("No test runs yet", "No test cases generated yet").
+- Opening an application from the list lands on the most useful tab:
+  - **Test cases** while tests are first being generated, or for an app without Discovery.
+  - **Overview** once a test suite exists.
+  - Otherwise **Explorer** for an Explorer application, or **Scenarios** or **Journeys** for a classic one.
+- Right after an application is added with Discovery on, it opens on **Explorer**.
 
-**Browser tab branding rule** (FR-32, Story 1.6) — unchanged, same suppression logic as the breadcrumb rule.
+## Screens
 
-## Review & Trust Model
+**Overview (organization dashboard)**
+- Headline numbers: applications tested, test cases generated, pass rate, failure rate, average run duration, self-healed locators and last discovery. Some are marked "in the last 7 days".
+- Charts: Pass rate over time, Latest run outcome and Test cases per application.
+- An **Active pipelines** list shows what is running right now: discovery in progress, generating test cases, authoring from a prompt, or a run in progress. Each item opens its application.
 
-This remains the product's central mechanic, and its final action sets are **unchanged and reconfirmed** against `prototype-v3.html`:
+**Applications**
+- A paginated table with these columns: Application, Journeys, Tests, Pass rate, Last activity, Status.
+- Status shows one of:
+  - the Discovery or generation stage
+  - "Ready to run"
+  - "Running"
+  - after the first completed run, a health tier: Healthy, Needs Attention or Critical
+- Hovering coverage shows the "% of journeys covered by scenarios".
+- **Admins** have a ⋮ menu with two items:
+  - **Rename** works inline.
+  - **Delete** asks for confirmation. It is blocked, with the reason shown, while Discovery, generation or a run is in progress.
+- A deleted application disappears at once. Its data is purged after the retention period set in Settings.
 
-**1. Journey review supports rename and delete only, via a per-row `⋯` menu** (Discover Journeys screen). `prototype-v3.html`'s underlying JS retains a vestigial `startEditJourney` function (a description-edit mode, wired to nothing visible in the rendered menu — only Rename and Delete are actually bound to on-screen buttons), which the 2026-07-27 reconciliation explicitly rejects as prototype drift rather than a reintroduced product decision — see `reconcile-prototype-v3.md`. There is still no approve/reject step; every discovered, non-deleted Journey is already in the Trusted Knowledge Model from the moment it's created. **Merging two Journeys into one, or editing a Journey's composition, remains out of scope** (PRD §4.4 Non-Goal).
+**Add application**
+- Fields:
+  - Application name
+  - Environment: staging, production, qa, or "other" with a custom name
+  - URL, with a **Test connection** button
+  - A toggle, **"This application requires sign-in"**. When it is on, the form asks for an optional login URL, a username and a password or token, with a note that credentials are stored encrypted and used only during discovery and runs.
+  - An **Autonomous discovery** checkbox, on by default.
+- The URL must pass Test connection before the form will submit; clicking submit too early shows a reminder.
+- If Discovery is on and the app needs sign-in, Vantage first **signs in for real** to check the credentials:
+  - Wrong credentials show "The username or password is incorrect…".
+  - An unconfirmed result shows "We couldn't confirm these credentials…".
+  - Discovery never starts on a login that hasn't been proven to work.
+- The submit button reads "Start discovery" or "Add application", depending on the checkbox. With discovery on, the new application is discovered by Explorer. If Explorer's service is not running, the application's discovery shows as failed and Explorer can be started later from its tab.
+- After submit, the page becomes a read-only "Connected application" summary. The password is never shown again.
 
-**2. Generated Scenarios support rename, edit, and remove** (PRD FR-29), unchanged. `prototype-v3.html`'s Review Scenarios row menu itself renders only Rename/Delete, same as Journeys — but the richer "edit" surface for a Scenario is its detail panel's inline **Test Data** field-editing (see Component Patterns), which the prototype does render fully. `[GAP]` whether an edited Scenario's Test Data/steps are actually used for Playwright generation, or the edit is cosmetic, was not confirmed by this reconciliation pass either — carried forward from the prior revision.
+**Explorer**
+- **Header:** the application name, a one-line status of what Explorer is doing ("Reading the Quotes screen"), and these buttons:
+  - **Questions**, with a count. It pulses when Explorer is waiting on the user and opens the "Questions for you" panel.
+  - **Pause** and **Stop** while a run is going.
+  - **Resume** for a paused, stopped or failed run; it carries on from the step it reached.
+  - **New run** otherwise.
+- **Start card** (before the first run, or after New run): explains what Explorer does, with an **"Other kinds of users"** panel to add a user type with its username and password, then **Start exploring**. Only one run can be active per application.
+- Four sub-tabs on a segmented bar:
+  - **Live** (the default):
+    - a pulsing **"Waiting for you"** box: either "Explorer has learned the app. Check its summary and confirm…" with **Check the summary**, or the first open blocking question with **Answer now**;
+    - a live frame with the latest screenshot and a trail of the last 6, any of which can be pinned;
+    - an Activity log of the last 80 things Explorer did or thought;
+    - a Progress panel with four stages (Learning the app → Your check → Trying every path → Writing scenarios) and a missions list (first 3, then "show all"), each with **Skip**.
+  - **What it learned:**
+    - The **App Summary**: app name, one-liner, key tasks, questions for the user with answer options, an optional "Goal for this run" and screens to leave out. While it is waiting, the user can **Edit**, **Save changes** and **"Looks right — confirm"**. Confirm is disabled until every question is answered.
+    - A **Knowledge** panel: add a fact or test data, upload a document (PDF, Word, text, Markdown or CSV, up to 15 MB), or forget an item. Knowledge belongs to the application and carries over to later runs.
+    - Last and folded: **"Things that look wrong"**, each with a thumbnail, a false-alarm action and its "is this a bug?" question, plus **Download CSV**.
+  - **Screens:** a searchable, paged screenshot grid. Choosing a screen shows its actions and where each leads. There is no map view.
+  - **Scenarios:**
+    - Counts: "work as they should", "possible bugs to check", "still being tried" and "from what you told Explorer".
+    - Kind filter chips. Groups show whole journeys first, then one group per screen.
+    - Each scenario can open a **proof video**.
+    - A possible bug offers **"Not a bug, keep as a test"** or **Ignore**.
+    - A pulsing **Generate tests** button appears once the run has finished testing and at least one scenario works.
+- **Questions for you** panel: blocking questions ("I need this to continue", "May I press Send?", clarifications) and their answer controls. Only the mission that asked waits, for 10 minutes by default. "Is this a bug?" questions never block and sit with their finding. Every answer becomes knowledge for the application, so the same question is not asked twice. The person who started the run is emailed when the summary is ready and when a blocking question is asked.
+- **Expired run:** if the App Summary is not confirmed within 14 days, a banner says the run is over and cannot be resumed. **Start a new run** begins from what was already learned and keeps the user's answers.
+- Explorer never deletes data, moves money, makes a business decision or signs out on its own; it asks first.
+- Not on any screen yet: adding your own mission, per-mission recordings, the highlight video, the run report, downloading Explorer's tests, and re-writing scenarios without exploring again.
 
-**New this revision — a Scenario readiness signal, additive, not previously in this file:** each Scenario now carries a **Ready** vs **Test Data Required** status, computed from whether every required Test Data field has a value. Review Scenarios adds a 3-way filter (All / Ready / Needs Data) above the list, and a Scenario missing required data shows an inline warning banner in its detail panel ("Test data required — fill in the highlighted fields below to mark this scenario Ready"), plus a per-field "Required to generate this test" note under any still-empty required input. This does not conflict with any locked decision — it's an additive detail on the existing Story 4.1 review screen, adopted per the 2026-07-27 reconciliation.
+**Journeys (Discover Journeys)**
+- *Classic discovery only.* For an Explorer application this page (hidden from the sidebar) shows **Open Explorer** and "Explorer is finding this app's journeys. They appear here when it has finished.", with no Pause or Resume.
+- While Discovery runs, a progress view walks through four stages: Exploring pages, Capturing screenshots, Grouping flows and Mapping journeys. It notes "Discovery runs in the background — this list updates automatically".
+- **Pause Discovery** and **Resume Discovery** buttons are available. Resuming continues from where it stopped. For an application that has ever had an Explorer run they are refused with "Explorer discovers this application: pause or resume it from the Explorer tab."
+- Banners cover these situations:
+  - the session expired mid-discovery
+  - the run failed
+  - Discovery is paused
+  - Discovery recovered after a restart and is resuming
+- Each discovered journey is a card with a screenshot (click to enlarge) and its page-by-page steps. Repeated steps on one page are merged into one business step.
+- Users can search journeys, rename them and delete them.
+- **Review scenarios** starts scenario writing and moves to Scenarios.
 
-**Evidence traceability remains the mechanism that makes review trustworthy,** unchanged — surfaced as a numbered step list (route, method, and a stage tag per step) on Discover Journeys, now paired with a sticky reference-screenshot placeholder column (see Component Patterns) that wasn't previously specified.
+**Scenarios (Review Scenarios)**
+- Scenarios are grouped by journey. While they are being written, progress shows Reading journeys, Drafting scenarios and Deriving test data.
+- Each scenario shows its test steps, its test data fields and its expected result. Each field is marked "Required for this scenario" or "Optional — auto-filled if left blank".
+- Users can rename or delete a scenario, edit test data inline, **Auto-generate** test data, or clear values.
+- If one journey's scenarios fail, the rest carry on, and the failed journeys are listed with the reason. There is no retry button for them.
+- There is no approve or reject step.
+- **Generate test cases** starts writing tests and moves to Test cases.
+- For an Explorer application this page adds "Explorer worked these out by using the app. Generate test cases to turn them into tests." Explorer's proven tests are reused as-is when they compile.
 
-By product decision (PRD §5 Non-Goals), there is still **no AI confidence or risk score anywhere in this workflow**, and **no reviewer prioritization or importance-marking**.
+**Test cases**
+- **While generating,** a one-time progress screen shows:
+  - Stages: Resolving locators, Writing test cases and Generating fixtures.
+  - Counts: test cases, journeys covered and estimated runtime.
+  - Status for each journey, including "Incomplete" and "Terminated".
+  - Actions: **Terminate** (per journey), **Retry Generation**, **Download Test Cases** and **Run Test Cases**.
+- **Normal view:** a paginated list. Each row shows a test case number, name, journey and a source badge: From discovery, Authored by prompt or Recorded.
+  - Filter chips with counts (All, Author test cases, Record-and-play test cases) and a search box.
+  - Expanding a row offers **View code** and an inline **Test data** editor. Saving the test data rewrites that one test.
+- **Author a test case:**
+  - The user picks an existing journey or names a new one.
+  - They describe in plain English what to do and what to check.
+  - Vantage explores the live app ("No prior discovery is needed"), writes the test and adds it to the list. Progress reads "Exploring the live application…" and then "Generating the test case…".
+  - Steps it could not perform are listed under "Not generated — Vantage couldn't do these in the application".
 
-## Voice and Tone
+**Record and play**
+- The user enters a flow name and chooses **Record a login flow** (start signed out) or **Record an authenticated flow** (start signed in as the app's saved user).
+- **Record a flow** opens a separate tab that streams a real remote browser. A warning says: "Anything you type — including passwords — is recorded into the generated test."
+- **Stop and Save** turns the recording into a test, jumps to Test cases and highlights the new row. **Discard** throws the recording away.
+- Edge cases are handled:
+  - a blocked pop-up, with a link to open the tab manually
+  - a dropped connection, which reconnects
+  - a save failure, with Try again
+- A recording link expires after 30 minutes.
 
-Unchanged from the prior revision. Plain, function-first, factual. No exclamation points, no emoji, no celebratory language. Business nouns from the PRD glossary (§3) — **Application**, **Capability**, **Journey**, **Scenario**, **Test Asset**, **Trusted Knowledge Model** — capitalized as proper product nouns.
+**Test runs**
+- **Run tests** offers two choices:
+  - **All test cases.**
+  - **Selective run:** a dialog with a required Run Name and a searchable journey list (Select all / Clear). Journeys expand to show individual test cases.
+- Every run gets its own **Run #**. Runs can overlap. Tests run 5 at a time, except that a run including tests for an application that keeps progress per login (saved drafts, a cart) runs them one at a time.
+- **Runs list:**
+  - Summary tiles: latest pass rate, average pass rate, median duration and open failures.
+  - Each row shows Run #, who or what triggered it ("Manual run by …" or "Scheduled run — …"), the date, duration, results and pass rate.
+  - The list pages with Prev/Next.
+- **Run detail:**
+  - A status pill, **View report** and **Cancel run**.
+  - A "Results by journey" chart and a breakdown into Passed, Self-healed, Flaky and Failed.
+  - Each test row may show these chips:
+    - **Self-healed:** "Failed on first run — automatically remediated by self-healing".
+    - **Flaky:** "Inconsistent results across this test".
+    - **Retry:** retry with self-healing.
+    - **Heal exhausted.**
+    - A pulsing **Self-healing** status while a heal runs.
+    - **Skipped** (amber) for a test deliberately skipped in its code, with its reason (for example "Known bug — should: … The app currently: …").
+  - Failure details offer a plain-language **Summary**, a **Raw error** tab, a screenshot and a trace. Explanations written by AI are labelled "Explained by AI — may not be exact".
+- **Cancel run** stops running tests, marks unfinished ones Cancelled and keeps finished results. No report or email is produced for a cancelled run.
+- **Flaky** means a test's last 10 finished results contain at least one pass and at least one fail. A test's first run is never flaky.
+- **Self-healing** runs automatically after a failure, within a fixed limit, unless operations have switched automatic healing off. Tests that record a known bug are never healed. The manual Retry uses the admin's attempts setting (default 3). It repairs how a test finds and drives the page; **it never changes what a test checks**, and a failed check is never "healed".
+- **View report** opens a Vantage-branded HTML report for the run.
+- When a run finishes, **an email** goes to the person who started it (for a schedule, its creator). It lists the outcome and up to 10 failures, with "View report" and "Open in Vantage" links.
 
-One addition worth naming explicitly given the new Suite Generated screen: its copy ("Generated {N} test cases across {N} journeys · Est. runtime {X}") stays in the same factual, count-forward register as the rest of the product — a status report, not a celebration, even though `DESIGN.md`'s gradient hero card gives it more visual weight than a typical screen. Visual emphasis and celebratory copy are independent; the copy discipline does not loosen just because the card got a gradient.
+**Schedules**
+- A table with Schedule, Cadence, Next run and an Enabled toggle. A ⋮ menu offers Run now, Edit and Delete.
+- The New/Edit dialog has these fields:
+  - **Name.**
+  - **Cadence:** Daily, Weekly (pick days), Monthly (day 1–28) or Custom (cron).
+  - **Time:** hour and minute pickers in 15-minute steps.
+- Schedules **run tests only**; Discovery is not scheduled.
+- A scheduled run is skipped if a run is already going; "Run now" then says one is already in progress.
+- Every new application starts with three disabled schedules: Nightly, Weekly and Monthly Regression.
 
-| Do | Don't |
-|---|---|
-| "Review queue cleared. All candidates from the Jul 12 run have been triaged." — empty state as a factual status report | "You're all caught up! 🎉" |
-| "Generated 47 test cases across 12 journeys · Est. runtime 6m 40s." — count-forward, factual | "Woohoo! Your tests are ready!" |
-| "All journeys have been removed." — bare factual state, no apology, no CTA invented | "Looks like there's nothing here — want to start over?" |
-| Capitalize Journey / Capability / Application / Scenario / Test Asset as proper nouns | Lowercase business nouns inconsistently, or invent synonyms mid-product |
-| Reviewer-facing copy assumes technical fluency (routes, API calls, status codes) | Copy talks down, over-explains basic web concepts, or adds encouragement/hype |
+**Download project**
+- Shows the project structure: one test file per journey, plus fixtures, utilities, the Playwright configuration and a readme.
+- **Download project** gives a .zip of a runnable TypeScript Playwright project.
 
-## Component Patterns
+**Application Overview**
+- Always listed in the sidebar. Until the first run finishes it shows "No test runs yet".
+- Shows the health tier, last run pass rate (with View run), "Pass rate by run" bars, and counts: journeys mapped, test cases, pass rate, open failures, and passed/failed/not run.
+- Quick-action cards lead to each tab. The Record and play and Download cards are hidden for viewers. For an Explorer application, the Journeys and Scenarios cards become one **Open Explorer** card: "See what it learned and the scenarios it proved."
 
-Behavioral only — visual specs live in `{DESIGN.md#Components}`.
+**Team members (admin)**
+- A table showing name, email, role and last active (or "Never signed in"). A ⋮ menu offers Change role and Remove.
+- **Invite member** takes one email address and a role, then sends an email invitation.
+- **Invitations expire after 72 hours.** The dialog's current "7 days" wording is wrong and should be corrected.
 
-| Component | Use | Behavioral rules |
-|---|---|---|
-| Top bar | Global — every authenticated screen | **New row, not previously documented here (visual spec only lived in `{DESIGN.md#Components}`).** Brand mark + wordmark sit at the left on every authenticated screen; clicking either returns to Landing from anywhere, including mid-pipeline. Once inside an Application's pipeline (the 4 pipeline-step screens only), a divider, the Application's name, and an environment pill additionally render beside the brand mark — suppressed on Sign In and Landing, per the breadcrumb rule in Information Architecture. A circular user-initials avatar sits at the far right on every authenticated screen (including Landing); clicking it opens a menu with the user's name, email, and a Log out action. The browser tab mirrors the same suppression logic (FR-32, Story 1.6): pipeline screens show the connected Application's name and favicon (or the platform default if none was fetched), Sign In and Landing show the platform default. |
-| Pipeline stepper | Global (all 4 pipeline screens) | Unchanged. Click navigates between completed steps; the active step is highlighted. `[GAP]` whether a completed step is clickable to jump back was not confirmed in this pass either — carried forward. |
-| List row + `⋯` menu | Discover Journeys, Review Scenarios | Click/select loads that item's detail into the right-hand panel, replacing the previous selection. Every row's `⋯` menu is **always visible**, not hover-gated. Both screens' row menus render **Rename** and **Delete** only — see Review & Trust Model above for why Scenarios' fuller edit/remove capability (FR-29) lives in the detail panel instead of a third menu item. |
-| Kebab menu (`⋯` trigger) | Discover Journeys, Review Scenarios list rows | **New row — dedicated behavioral coverage; visual spec in `{DESIGN.md#components.kebab-menu}`.** Click opens a two-item dropdown (Rename, Delete) anchored below the trigger; the trigger itself carries a visible focus outline per Accessibility Floor. The dropdown closes on selecting an item, clicking outside it, or pressing Escape. Always visible, never hover-gated (see Interaction Primitives). The Delete item renders and hovers in `{DESIGN.md#colors.danger}` / `{DESIGN.md#colors.danger-wash}` to read as the destructive action. |
-| Icon button (generic) | Global — kebab-menu trigger, Generated Tests disclosure expand/collapse chevron, back/close affordances | **New row — dedicated behavioral coverage; visual spec in `{DESIGN.md#components.icon-button}`.** Transparent at rest, fills `{DESIGN.md#colors.border}` on hover, focus-visible outline per Accessibility Floor. Click triggers its one bound action only (open a menu, toggle a disclosure, navigate back) — there is no distinct press/active visual state beyond hover and focus. |
-| Badge (Scenario type) | Review Scenarios list rows, Review Scenarios detail panel, Suite Generated per-scenario rows | **New row — dedicated behavioral coverage; visual spec in `{DESIGN.md#components.badge}`.** Purely a non-interactive display label — no click, hover, or focus state of its own. Set automatically at scenario-generation time (FR-16) from the Scenario's type (Happy Path / Negative Path / Edge Case); never user-editable, never triggers a state change on its own. |
-| Status pill | Review Scenarios list rows, Review Scenarios detail panel | **New row — dedicated behavioral coverage; visual spec in `{DESIGN.md#components.status-pill}`.** Non-interactive display label computed live from Test Data completeness (see Review & Trust Model) — flips between **Ready** and **Needs Data** the instant a required field is filled or cleared in the detail panel, with no separate save step. Not itself clickable, but drives which Scenarios the Scenario status filter surfaces. |
-| Detail panel — Discover Journeys | Discover Journeys | Shows the Journey's name, description, and a numbered step list (route/action + a stage tag per step). New this revision: a sticky **reference-screenshot placeholder** column alongside the step list, labeled "journey screenshot" — a visual stand-in for a real evidence screenshot, not yet backed by a real captured image per this reconciliation; treat as a placeholder pattern to fill with real evidence, not as confirmation that screenshot capture is in scope. |
-| Detail panel — Review Scenarios | Review Scenarios | Shows a type badge + a Ready/Needs Data status pill, the Scenario name, a numbered Test Steps list, a **Test Data** callout (labeled field rows, required fields marked, inline warnings for empty required fields), and an **Expected Result** block. |
-| Scenario status filter | Review Scenarios | New this revision. A 3-way segmented control (All / Ready / Needs Data) filters the Scenario list by Test Data completeness; does not affect which Scenarios exist, only which are shown. |
-| Connect App form | Connect App | A single-page form — Application name, Base URL, Environment select, Authentication method select, then method-specific credential field(s), one submit CTA ("Connect Application"). Authentication method's confirmed option set: **Username & Password, API Key, OAuth Client Credentials** (adopted from `prototype-v3.html` as the concrete Story 1.4 option set). **On submit (PRD FR-31, added 2026-07-21, not previously represented here):** the platform validates the Base URL is reachable (2xx/3xx) before creating the Application record or starting discovery. A network/DNS error or 4xx/5xx response blocks submission — the form stays on Connect App and shows a specific, factual inline error; nothing is created and Discovery Progress never starts. A reachable URL proceeds exactly as onboarding did before this FR existed. See State Patterns below for the failure-state row. `[GAP]` the prototype shows no distinct credential fields for OAuth Client Credentials specifically — needs explicit confirmation of what that method's fields should be, not an invented Client ID/Secret pair. `[GAP]` PRD Open Question 8 (SSO/MFA session-handoff) remains unaddressed by this option set, unchanged from the prior revision — none of the three options is an SSO flow. |
-| Generate Suite panel | Generate Suite | Unchanged in shape: a form (Suite name, Target environment, journey/scenario counts) beside a static summary card (an "included Journeys" list and a checklist). Its downstream execution behavior remains a placeholder per the prior revision — not a confirmed spec. |
-| Suite Generated | Generate Suite → "Generate Test Suite" | **New this revision — resolves the prior `[GAP]` for what appears after generation.** A hero card (suite name, generated-count summary, "Download Test Suite" button, "Go to Dashboard" button) followed by three stat tiles (test cases / journeys covered / estimated runtime) and a collapsible list of generated tests grouped by file. "Go to Dashboard" is read as **"return to Landing"** — there is no separate Dashboard screen; see Information Architecture. "Download Test Suite" triggers a download of the locked Python (pytest/pytest-playwright) suite-folder project (Story 4.3/FR-34) — the prototype's own literal single-TypeScript-file download behavior is not the real behavior; see `reconcile-prototype-v3.md`. |
-| Empty state | Discover Journeys, Review Scenarios, Landing | Two distinct patterns — see State Patterns below for which applies where. |
+**Activity (admin)**
+- An organization-wide timeline with these columns: Time, Event, By, Result.
+- It covers:
+  - Discovery runs and test runs, each as a single row that updates in place.
+  - Scenario and test case generation.
+  - Changes to settings, credentials, the team, applications and schedules.
+- Filters: type, application, result, time range (24 hours, 7, 30 or 90 days) and search. The list sorts newest or oldest first.
+- A detail drawer explains what happened, why it could not run and the next step. It also shows before and after values for settings changes (credentials are never shown), and screenshots, traces and errors for failed tests.
+- **Open application** jumps to the related place.
+- History is kept for 90 days.
+- Explorer actions are not recorded here; an Explorer application appears only through its single Discovery row.
 
-## State Patterns
-
-| State | Surface | Treatment |
-|---|---|---|
-| Discovery running / completing (PRD FR-7, FR-33) | Discover Journeys (pre-list) | **Unchanged mechanism**, reconfirmed against `prototype-v3.html`: a centered card (spinner, "Discovering journeys in {Application name}," the current business-language stage label, and a progress bar). It shows exactly one of four business-language stage labels — Initialization, Authentication, Discovery, Analysis — mapped from `DiscoveryRun.stage`, with the paired percentage representing the *previous* stage's completion (0/10/25/75), per the 2026-07-21 correction. `prototype-v3.html` additionally renders a rotating single-line "Currently exploring: {business area}" caption (cycling through area names like "Claims → File a Claim") beneath the stage label — this reconciliation does **not** adopt that rotating caption as a confirmed behavior: it reads as exactly the kind of "raw scrolling technical live-feed of discovered areas" the 2026-07-27 decision explicitly rejects, even though its individual items are business-language phrases rather than raw routes. Discovery Progress therefore stays scoped to the four canonical stage labels only. A restyled 4-up metric-tile row (counts like "Unique routes discovered," "Interactions explored") appears in the prototype alongside the spinner; this is a plausible compatible detail (aggregate counts, not a feed) but is not asserted here as a confirmed product behavior — flagged as an open item, not adopted or rejected outright. |
-| Discover Journeys list cleared | Discover Journeys | **Adopted 2026-07-27:** when an Application's Journeys are all deleted, Discover Journeys shows bare centered text — **"All journeys have been removed."** — no title, no icon, no illustration, no CTA. Open item, not yet resolved: whether a recovery CTA (e.g., "Re-run discovery") should exist here is a UX call not made by this reconciliation; the prototype has none, and none is invented. |
-| Review Scenarios list cleared | Review Scenarios | New empty-state string observed in the prototype, consistent in style with the above: "No scenarios remain — add journeys back to generate scenarios." Same bare-text pattern, no CTA. |
-| Landing, zero Applications onboarded | Landing | Richer empty state: icon badge, "No projects yet" heading, one line of explanatory body copy, and a primary "+ Create New Project" button. This is distinct from the row below and must not be conflated with it. |
-| Landing, an Application exists whose Journeys are all deleted | Landing | **Adopted 2026-07-27, correcting a prototype-demo artifact:** the Application's card still appears on Landing exactly as it would with Journeys present (name, journey/scenario counts reading zero, a status label) — clicking it **resumes the guided pipeline**, landing on that Application's Discover Journeys screen, which then shows its own "All journeys have been removed" empty state (the row above). `prototype-v3.html`'s actual behavior — Landing reverting entirely to the zero-Applications "No projects yet" state the moment the one hardcoded demo Application's journey count hits zero — is rejected as a shared-boolean prototype-demo artifact, not a real product rule. A real Application record persists on Landing regardless of its Journey count. |
-| Journey/Scenario row before action | Discover Journeys, Review Scenarios | Unchanged: rows show their name, a step/scenario count or type badge, and an always-visible `⋯` menu. `[GAP]` post-edit/remove row treatment not confirmed, carried forward. |
-| Connect App reachability check fails (PRD FR-31, added 2026-07-21) | Connect App | **New, not previously represented in this document.** Submitting a Base URL that returns a network/DNS error or a 4xx/5xx response blocks Application creation and the DiscoveryWorkflow start: the form stays on Connect App (no navigation to Discovery Progress), the submit action is treated as blocked/failed, and a specific, factual inline error message is shown (e.g. "Could not reach this URL — check it's correct and reachable"), not a generic failure banner. Reuses the same 2xx/3xx reachability tolerance FR-6(f) already established for a live discovery-time destination — no new concept, just applied one step earlier. |
-
-## Interaction Primitives
-
-- **Click to navigate/act.** Every stepper step, list row, and button is a single click. No double-click, drag, or multi-select.
-- **Always-visible row menus,** unchanged — the `⋯` trigger on Journey/Scenario rows is never hover-gated, favoring discoverability and non-hover input methods.
-- **Sticky reference column** — new this revision: Discover Journeys' reference-screenshot placeholder column stays pinned in the viewport as the step list scrolls, mirroring the sticky-evidence-panel discipline the product has used since the 2026-07-15 revision's Journey/Scenario detail panels.
-- **Inline field editing for Test Data,** new this revision: a Scenario's required Test Data fields are edited directly in the detail panel (not behind a separate "edit mode" toggle) — filling a required field updates that field's missing-warning and can move the Scenario from Needs Data to Ready.
-- **Prototype fidelity note (2026-07-27):** `prototype-v3.html` is a larger, more elaborate bundled SPA export than `prototype-v2-standalone.html`, still running against pre-seeded demo data with no live backend. Two of its screens ("Discovery Attention," "Workspace") are rejected wholesale as unauthorized scope expansion rather than treated as a stronger signal — see `reconcile-prototype-v3.md`. Treat the six adopted screens' interaction behavior as the current best signal; treat the two rejected screens' code as informative for *what was considered and declined*, not as a spec.
-
-## Accessibility Floor
-
-Behavioral commitments; visual contrast lives in `{DESIGN.md#Colors}`.
-
-- **WCAG 2.1/2.2 AA is the floor**, unchanged.
-- **Focus-visible on every interactive element**, unchanged.
-- **Keyboard operability for selection controls**, unchanged — Connect App's Environment and Authentication method are native `<select>` elements.
-- **Tab order matches visual order**, unchanged.
-- **Label/caption contrast is a standing requirement, not a one-time fix — reconfirmed and re-flagged this revision.** `DESIGN.md` documents that `prototype-v3.html` reintroduces the exact contrast failure pattern fixed once already in the 2026-07-15 revision: several genuinely informational captions (Landing's journey/scenario counts, list pagination labels, "No matches." text) render in the decorative-only faint gray tier rather than the AA-passing muted tier. This is called out explicitly so it is caught before implementation rather than silently re-introduced a second time: any string a user needs to actually read must route through `{DESIGN.md#colors.ink-muted}`, full stop, regardless of what color the reference prototype uses for it.
-
-## Inspiration & Anti-patterns
-
-- **Rejected — Journey-level Edit (2026-07-27):** `prototype-v3.html`'s underlying code retains an unused `startEditJourney` function that would open a description-edit mode from the Journey row menu, but no visible button in the rendered template actually triggers it — only Rename and Delete are wired to on-screen controls. Treated as prototype drift (dead code from an earlier build), not a reintroduced product decision. Do not wire it up as a "quick win" without a product-level decision first.
-- **Rejected — "Discovery Attention" (2026-07-27):** a new screen in `prototype-v3.html` presenting an approve/skip gate for "uncertain" discovered items and a manual-entry form for "missing" fields, shown between Discovery Progress and Discover Journeys. Dropped entirely — it reintroduces exactly the reviewer-gate/manual-entry pattern the product's Trusted-Knowledge-Model-by-default design (FR-14) was built to avoid, and no story authorizes it. The underlying *idea* — surfacing discovery's own uncertainty about specific fields or candidates — is not without merit and could be reconsidered deliberately later; see `reconcile-prototype-v3.md` for that discussion. It is not built now.
-- **Rejected — "Workspace" (2026-07-27):** a new tabbed screen (Overview / Test Suite / Runs / Application) in `prototype-v3.html`, reachable from the top-bar brand mark, including an Overview tab with a health rollup and a "Run Suite" action, and a Runs tab showing live Passed/Failed/Not Run test-execution counts. Dropped entirely, including its non-Runs tabs. The Runs tab specifically implies live test execution plus a CI read-back channel, which the current architecture does not support — coverage stays generated-vs-not only, per the locked stance below. No return-to-existing-Application "home" screen exists right now; Landing plus the pipeline is the whole IA. The health/coverage-rollup *concept* is a reasonable future direction and is discussed further in `reconcile-prototype-v3.md`, but nothing is built from it now.
-- **Rejected — raw discovery live-feed (2026-07-27):** see State Patterns above — Discovery Progress stays scoped to four business-language stage labels.
-- **Rejected — single-file TypeScript suite download (2026-07-27):** see Component Patterns above — the download stays the locked Python suite-folder project.
-- **Carried forward, unchanged from 2026-07-15:** merge/split/edit Journey actions remain out of scope; reviewer prioritization/importance-marking remains out of scope; AI confidence/risk score UI remains out of scope. See PRD §4.4 and §5.
+**Settings (admin)**
+- **Discovery limits:**
+  - maximum discovery time
+  - maximum pages
+  - maximum journeys
+  - navigation timeout
+  - interaction level (Passive, Normal or Aggressive)
+  - maximum scenarios per journey
+  - maximum test cases per application
+  - maximum self-heal attempts
+- **Screenshot capture:** for failed test cases (the default), for passed ones, or for all.
+- **Auto-clean up removed projects:** after 1 day, 1 week or 1 month (default 1 month).
+- **Saved credentials:** reveal a password (the reveal is recorded in Activity) or add and rotate an app's username and password. Apps with no login are listed as "No login".
+  - A **Sign-in** column has an on/off switch per app (username-and-password or no-login apps only). Off means the app has no login, and discovery, Explorer and test runs open it directly. Turning it back on needs a username and password saved with **Add credentials**.
+- Settings apply to the whole workspace.
 
 ## Key Flows
 
-### Flow 1 — Maria reviews her Application's discovered journeys (PRD UJ-1, updated 2026-07-27)
+**1. First application, with Discovery.**
+1. An admin invites teammates, and each invitee sets a password.
+2. A member signs in and lands on Overview, then chooses **Add application**.
+3. They enter the name, environment and URL, click Test connection, turn on sign-in and enter credentials, keep Autonomous discovery on, and click **Start discovery**.
+4. Vantage proves the login, then Explorer starts and the application opens on **Explorer › Live**.
+5. When the "Waiting for you" box pulses, the member clicks **Check the summary**, answers its questions, edits it if needed and clicks **"Looks right — confirm"**.
+6. Explorer works through its missions. Blocking questions make the Questions button pulse; the member answers them in the panel.
+7. On **Scenarios**, the member watches proof videos and judges each possible bug ("Not a bug, keep as a test" or Ignore), then clicks **Generate tests**.
+8. The progress screen finishes, and they choose **Run Test Cases**.
+9. They review results, flaky flags and failure explanations, retry with self-healing where useful, open the report, and get the run-completed email.
 
-Maria Colón, QA Director at a mid-size insurer, is connecting the Claims Processing App for the first time.
+**1b. Classic discovery** (applications discovered before Explorer, or with Explorer switched off). Discovery starts after the login check and Journeys fill in live. The member renames or deletes journeys, clicks **Review scenarios**, tidies the scenarios and test data, then clicks **Generate test cases** and continues as in steps 8–9.
 
-1. Maria signs in, lands on **Landing**. She has no Applications onboarded yet, so Landing shows the "No projects yet" onboarding empty state; she clicks "+ Create New Project."
-2. On **Connect App**, she fills in the Application name, Base URL, environment, and chooses **Username & Password** as her authentication method, then submits — the platform validates the Base URL is reachable (PRD FR-31) before creating the Application or starting discovery; a failed check would keep her on Connect App with a specific inline error, but her URL is reachable, so submission proceeds.
-3. **Discovery Progress** shows the four business-language stages in turn (Initialization → Authentication → Discovery → Analysis) with a progress bar — no raw technical feed, no per-page live scroll.
-4. On **Discover Journeys**, she sees the discovered candidates in a list, each with a step count. Selecting one loads its discovered step-by-step flow (route, action, stage tag) in the detail panel, alongside a reference-screenshot placeholder, so she can confirm the AI's inference before deciding.
-5. She uses each row's `⋯` menu to **rename** a generically-labeled candidate and **delete** ones she doesn't want carried forward — rename and delete only; there is no approve/reject step, every candidate is already in the Trusted Knowledge Model.
-6. She continues to **Review Scenarios**, where generated scenarios appear grouped by their source Journey, tagged `Happy Path`/`Negative Path`/`Edge Case`. She filters to **Needs Data** to find the three scenarios still missing required Test Data, fills in the highlighted fields for each until they flip to **Ready**.
-7. **Climax:** she continues to **Generate Suite**, names the suite, confirms the target environment, and generates it against the suite summary.
-8. **Resolution:** she lands on **Suite Generated** — a hero card confirms "Generated 47 test cases across 12 journeys · Est. runtime 6m 40s," she expands the Generated Tests list to spot-check a couple of files, then clicks **Download Test Suite** to get the Python suite-folder project. This closes the prior revision's `[GAP]` — the post-generation screen is now fully specified.
+**2. Application without Discovery.**
+1. The member unchecks Autonomous discovery and clicks **Add application**.
+2. The app opens on Test cases, without the Journeys, Explorer and Scenarios tabs.
+3. They build tests with **Author a test case** or **Record and play**, then run them as in Flow 1.
 
-### Flow 2 — Maria returns to an app she's already connected (new, 2026-07-27, illustrating the Landing persistence rule)
+**3. Keeping it running.** The team turns on a schedule (daily, weekly, monthly or cron) and watches pass rates on Overview and the Applications list. Admins use Activity to see what happened and why, and adjust Settings. Anyone except a viewer can download the project to run it outside Vantage.
 
-1. A week later, Maria signs in and lands on **Landing**. Her Claims Processing App card is still there, showing its current journey/scenario counts — even though she deleted several duplicate Journeys in the session above, the Application itself never disappeared from Landing.
-2. She clicks the card. This **resumes the guided pipeline** — she lands directly on **Discover Journeys** for that Application (not Connect App again, and not a reset Landing).
-3. **Edge case:** if she had gone on to delete *every* Journey for this Application in a later session, this same click would land her on Discover Journeys' own "All journeys have been removed" empty state — Landing itself still shows her the card, it just resumes into an empty pipeline step rather than pretending the Application was never connected.
+**4. Viewer.** A viewer signs in and browses Overview, Applications, journeys, scenarios, test cases and run results. They see no Add, Run, Record, Download, Schedule-edit or menu actions, and reports explain that they aren't available for view-only access. The Explorer tab is the exception: its controls are shown to viewers, but every change they try is refused.
 
-### Flow 3 — Devon checks release readiness before sign-off (PRD UJ-2) — `[REMOVED 2026-07-15, corrected 2026-07-27 — PRD-level cut, not a standing UX gap]`
+## State Patterns
 
-**Corrected this pass:** the prior (2026-07-21) revision of this file framed this flow as `[BLOCKED, carried forward unchanged]`, stating it "still needs explicit product-level resolution via the PRD." That framing was stale — the PRD already resolved it, in the other direction. The current PRD (`prd.md`, updated 2026-07-21) confirms UJ-2 was **removed in full on 2026-07-15**, not deferred or left open: "*UJ-2 'Devon checks release readiness before a Friday deploy' removed in full 2026-07-15 — it depended entirely on the multi-application executive dashboard, which has no supporting screen in the current UX and is removed from scope*" (PRD §2.3, line 51), reconfirmed at §6.2 line 265 ("UJ-2 ... depended entirely on the removed executive dashboard") and §9 line 308 ("UJ-2 removed"). The dependent FRs — Capability Map (FR-22), coverage analytics (FR-24), and the multi-application executive dashboard (FR-25) — were removed alongside it; no screen in the current six-screen IA serves any of them, and none should be invented here to retroactively satisfy a cut requirement.
+| State | Treatment |
+|---|---|
+| Loading content | Grey skeleton blocks in the shape of the content |
+| Busy button | The label followed by trailing bouncing dots; the button is disabled while busy |
+| Running operation | A status pill with trailing bouncing dots (Discovery, generation, run, self-healing) plus a stage list where relevant |
+| Empty | A factual heading, one line and at most one action: "Add your first application", "No applications yet", "No test runs yet" |
+| Background services down | A plain message saying the service is unavailable and to try again; nothing is half-started |
+| Whole app unreachable | The "service unavailable" screen with Retry |
+| Session expired | Return to Sign in with "Your session expired from inactivity" (after 1 hour idle) |
+| Validation errors | Inline under the field, in plain words: wrong credentials, unreachable URL, missing Run Name |
+| Blocked action | The control is disabled or the menu item explains why (for example, Delete while a run is going) |
+| Discovery paused / failed / session expired / recovering | A banner on Journeys explains the situation, with Resume where it applies (classic discovery) |
+| Waiting on the user (Explorer) | The thing being waited on pulses: the "Waiting for you" box, the Questions button, Generate tests once it is available |
+| Explorer run paused / stopped / failed / expired | The header offers Resume (paused, stopped, failed) or New run; an expired run shows a banner and "Start a new run" |
+| Partial generation | The affected journey is marked "Incomplete", the others carry on, and Retry Generation is offered |
+| Run failures | A plain-language Summary first, the raw error on its own tab; a run-wide banner when most failures share one cause |
+| Cancelled | Shown in neutral grey, never as a failure |
+| Viewer access | Write controls are hidden; a report or Settings link shows a short "not available" message (not yet on the Explorer tab, where controls are shown and the platform refuses them) |
 
-This correction documents the cut rather than silently deleting the flow's history, matching this project's established pattern for retired scope (see `epics.md`'s Epic 5/6/7 removal entries and the Story 3.2/3.3 deletion note in `.memlog.md`). The flow's steps are preserved below only as a record of what was once scoped and is no longer — not a current spec, and not an open item:
+## Voice and Copy Rules
 
-1. ~~Devon signs in and opens Dashboard...~~
-2. ~~He scans the KPI row and by-Application coverage table...~~
-3. ~~He spots an inline warning flag ("1 pending test")...~~
-4. ~~He factors that gap into his release decision...~~
+- Plain, factual and calm. No exclamation points, no emoji and no hype. Status messages report counts and outcomes.
+- The sign-in screen speaks to buyers in plain business language and uses no technical terms.
+- Errors say what went wrong and what to do next, in everyday words. Raw technical detail stays behind a "Raw error" tab.
+- **Placeholders are instructions, never fake examples:** "Enter the application name", not an invented company or email. The custom cron field is the only exception, where the real format is shown.
+- **Busy labels** read as a verb with trailing bouncing dots ("Saving", "Running"), never a spinner or a bare "…".
+- More-options menus are always the vertical ⋮.
+- Anything written by AI and possibly imprecise is labelled as such ("Explained by AI — may not be exact").
+- There are no AI confidence or risk scores anywhere.
 
-Reviving any part of this journey (a multi-application rollup, coverage analytics, or a release-readiness view) would require a fresh, explicit product decision reinstating the relevant FR(s) — it is not something this spine can restore unilaterally, and not something a downstream consumer should treat as pending.
+## Interaction Primitives
+
+- Single click to open, select and act. There is no drag-and-drop or double-click.
+- Row menus (⋮) are always visible, never shown only on hover.
+- Rename happens inline. Deletes always ask for confirmation.
+- Lists that change in the background (Discovery, generation, runs, Activity) update themselves without a reload.
+- Dialogs close with Escape or Cancel.
+- Screenshots enlarge on click.
+
+## Not built / deferred
+
+- Scheduling Discovery. Only test runs can be scheduled, even though the schedule dialog's wording suggests otherwise; that wording should be corrected.
+- Signing into the app under test with a saved single-sign-on session or a one-time-code (MFA) seed. There is no screen for either. API-key and OAuth sign-in methods do not exist.
+- For classic discovery: a screen for its coverage report, and a way to answer questions it gets stuck on. Explorer asks and takes answers through its Questions panel.
+- Explorer screens for: adding your own mission, per-mission recordings, the shareable highlight video, the run report, downloading Explorer's proven tests, and re-writing scenarios without exploring again.
+- Hiding Explorer's controls from viewers, admin-only Explorer user types and knowledge, and Activity entries for Explorer actions.
+- Delivering tests into a CI/CD pipeline, and bringing your own AI model.
+- Blocking risky actions during test runs.
+- Regenerating journeys or scenarios.
+- Scenario type badges (Happy / Negative / Edge), which are hidden.
+- Dark mode, which was dropped.

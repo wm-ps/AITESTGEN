@@ -1,47 +1,84 @@
-# Adversarial Review — Version Currency & Vendor-Compatibility Assumptions
+---
+title: Version Currency Review — Vantage stack as built
+target: ../ARCHITECTURE-SPINE.md (Stack table)
+date: 2026-10-27
+method: Locked versions read from uv.lock, apps/web/package-lock.json, Dockerfiles, docker-compose.yml and the test-suite assembler; compared against upstream release status found by web search on 2026-10-27. Where search results were inconclusive this is stated.
+---
 
-**Lens:** Was every named technology decision in the Stack table (and the two port abstractions) actually reality-checked, or asserted from training data?
-**Reviewed:** `ARCHITECTURE-SPINE.md` Stack table + Design Paradigm + AD-3/AD-4, cross-checked against `.memlog.md`.
-**Review date:** 2026-07-13 (same day as spine creation).
-**Method:** Independent web search per named technology, done fresh in this review (not reusing the spine's own claims).
+# Version Currency Review (2026-10-27)
+
+This replaces the 2026-07-13 review of the July draft. That review's findings (TypeScript "5.x", Vite "6.x/7.x", Jenkins-as-Git-host in the `DeliveryAdapter`) no longer apply: the stack table now lists exact locked versions, TypeScript is deliberately pinned, and CI/CD delivery was removed.
 
 ## Verdict
 
-Two of the ten Stack entries (Python, PostgreSQL) were genuinely verified with a cited method and are still accurate; the rest were asserted with either intentionally vague phrasing ("current stable") that dodges falsifiability, or a specific-sounding qualifier that is now measurably wrong — TypeScript "current 5.x" is stale by two major versions as of today, and Vite "current 6.x/7.x" is one major version behind a materially different (Rolldown/Oxc-based) 8.0 release. The `DeliveryAdapter` port additionally bakes in an unexamined assumption: Jenkins is not a Git host and has no native PR/commit API, so treating it as a peer of GitHub/GitLab/Azure DevOps under one uniform "create PR or direct commit" interface is a category error the spine never surfaces.
+The application stack is current. Python, FastAPI, SQLModel/SQLAlchemy, Postgres 18, React 19, Vite 8 and Tailwind 4 are all on their current lines. The risks are in the **container and test-runtime pins**, not the libraries: `nginx:1.27` is past end of life, Vault 1.18 is several minors behind, Temporal server runs in dev mode, the generated projects' `@playwright/test ^1.48.0` floor sits far below the Python Playwright 1.61 the workers use, and `@playwright/mcp@0.0.41` is an early pre-1.0 pin.
 
 ## Findings
 
-### 1. [CRITICAL] TypeScript "current 5.x" is factually wrong as of the spine's own date
-The spine (line 122) and memlog (`(version)` line 15) both cite "current 5.x." Independent search shows **TypeScript 7.0 went GA on 2026-07-08** — five days before this spine was written — following **TypeScript 6.0 on 2026-03-23**. As of today, 5.x is two major versions behind current. This isn't a rounding error; it's a specific, checkable claim ("5.x" is a major-version pin) that is simply false on the date the document was authored.
-More importantly for AD-6 (OpenAPI-generated types are the *only* frontend/backend contract): TypeScript 7's Go-native compiler **does not ship a stable programmatic/compiler API until 7.1** — tools that depend on the TS compiler API (many OpenAPI-to-TS codegen tools, ts-morph-based generators, custom transformers) are explicitly told to stay on 6.0 via a compatibility package until 7.1 lands. If the intent was "pin to 5.x/6.x deliberately for codegen-tooling compatibility," that's a defensible engineering call — but the spine states it as "current," not "pinned for compatibility," so a reader can't tell whether this was a reasoned choice or an unexamined default. No source is cited either way.
-**Action:** Either correct "current 5.x" to name the actual pin reason (tooling compatibility, not currency) or update it and verify AD-6's codegen toolchain against TS 7.
+### 1. [HIGH] `nginx:1.27-alpine` (web image) is end of life
+The 1.27 line stopped receiving security fixes in June 2025, and 1.28/1.29 have since ended too. 1.30 (stable) and 1.31 (mainline) are the supported lines. **Action:** bump the web Dockerfile to `nginx:1.30-alpine`. This is a one-line change and nothing in the static-file config depends on 1.27.
 
-### 2. [HIGH] Vite "current 6.x/7.x" is one major version stale, and the gap isn't cosmetic
-Independent search shows **Vite 8.1.4 is current** as of 2026-07-13, with Vite 8 having replaced esbuild/Rollup internals with Rolldown/Oxc — a real toolchain change, not just a version bump, that can affect plugin compatibility. The spine's "6.x/7.x" range was presumably accurate at some earlier point in 2026 but was not re-verified before being written into a document dated today. Given AD-6's reliance on the frontend build/codegen chain, this compounds Finding 1.
+### 2. [HIGH] Temporal server runs `start-dev` from `temporalio/admin-tools:1.31.2` in production
+The version itself is fine. The deployment mode is the problem: the dev server keeps state in memory, so workflow history and every Temporal Schedule (user test-run schedules, cleanup, stale-run reconcile) are lost on pod restart. This is an operational risk, not a currency issue, but it belongs here because the "version" in use is the dev-server build. **Action:** run a persistent Temporal (Postgres-backed) or Temporal Cloud before relying on schedules.
 
-### 3. [MEDIUM] `DeliveryAdapter` (AD-4) treats Jenkins as a peer of GitHub/GitLab/Azure DevOps without checking whether that's structurally true
-AD-4's rule is "GitHub Actions, GitLab CI, Jenkins, and Azure DevOps are adapter implementations" of one `DeliveryAdapter` interface whose job is "Test Asset -> customer repo (PR or direct commit)." Independent search confirms Jenkins is a CI **orchestrator**, not a Git host: it has no native repository or pull-request API of its own — it checks out and reports back to whatever external SCM (GitHub, Bitbucket, GitLab, etc.) the customer actually uses, via plugins. GitHub, GitLab, and Azure DevOps all bundle CI *and* repo hosting/PR APIs under one product; Jenkins does not. A "Jenkins Adapter" that creates a PR or direct commit therefore has no natural target unless the spine silently assumes every Jenkins customer's actual Git host is also one of the other three — an assumption that is never stated, let alone verified. This is exactly the kind of vendor-compatibility assumption AD-4 exists to make explicit, and it isn't.
-**Action:** Either scope AD-4 to "Git-hosting + CI providers" and drop Jenkins as a peer category (replacing it with the actual SCM Jenkins customers use), or add a stated assumption that Jenkins delivery always targets a paired GitHub/GitLab/Bitbucket repo, with the adapter split accordingly.
+### 3. [MEDIUM] Generated test projects pin `@playwright/test ^1.48.0`
+The worker images use Playwright 1.61 (Python), but generated, recorded and downloaded TS projects declare `^1.48.0`, as does `packages/playwright_typecheck/typecheck`. The caret allows newer versions to resolve, but the declared floor is about 13 minors old. A downloaded suite installed in a fresh environment may get a different browser build than the one the specs were generated and healed against. **Action:** raise the floor to the version actually used by the execution worker, and keep the two in step.
 
-### 4. [MEDIUM] SQLModel's bus-factor/maintenance risk is absent from the reasoning, despite being publicly documented
-The memlog justifies SQLModel as "2026 consensus greenfield pick" with no mention of a well-documented, years-running community concern: SQLModel is maintained essentially by a single maintainer (also the FastAPI author), and has a track record of lagging behind current SQLAlchemy releases and slow PR review. Independent search confirms SQLModel is **not abandoned** (v0.0.39 shipped 2026-06-25, actively released), so the Stack entry itself is fine — but a spine-level architecture decision that names a single-maintainer dependency as load-bearing for the entire `packages/domain` layer should at least acknowledge the bus-factor risk rather than cite generic "consensus," especially when the same maintainer's other project (SQLModel) has previously fallen behind its own dependency (SQLAlchemy) for extended periods.
+### 4. [MEDIUM] HashiCorp Vault `1.18`
+Third-party trackers list Vault 1.21 as already past end of life and 2.0/2.1 as current (an official HashiCorp source was not found in search). HashiCorp's policy expects customers to stay within two releases of the latest major release. On that basis 1.18 is out of support. Vault holds only target-app credentials here, and auto-unseal keeps the root token on the same volume (see spine risks). **Action:** upgrade to a supported Vault release when the unseal setup is revisited. The KV v2 API used through hvac 2.4.0 is stable across these versions.
 
-### 5. [LOW] "current stable" phrasing for FastAPI/SQLModel/Alembic/Temporal SDK is unfalsifiable by design
-Four of ten Stack rows use "current stable" / "current GA" instead of a version number. This avoids the staleness trap of Findings 1–2, but it also means no verification actually happened against a specific claim — the memlog's `(version)` line lists these the same way, with no version number or source link recorded, only PostgreSQL and Python got an explicit "(version) Verified via web" note. Independently confirmed as of 2026-07-13: FastAPI (active, monthly releases, ~0.136.x line), SQLModel (v0.0.39, 2026-06-25), Alembic (v1.18.5, 2026-06-25), Temporal Python SDK (active, GA since 2022, release 2026-07-02) are all current and healthy — so the underlying claims hold, but only because this review went and checked; the spine itself gives the reader no way to distinguish "verified vague" from "asserted vague."
+### 5. [MEDIUM] `@playwright/mcp@0.0.41`
+This is an early pre-1.0 pin used only by the live-exploration agent. Pre-1.0 MCP tooling changes tool names and arguments between releases, so the exact pin is the right *policy*. It is likely well behind upstream, though: this review did not confirm the current release. **Action:** re-test live exploration against a current release before bumping, and keep the version exactly pinned.
 
-### 6. [LOW / informational] Temporal paradigm choice and AI-provider port pattern both hold up under scrutiny
-- Temporal remains, per current (2026) industry comparisons, the most production-proven engine for exactly this shape of problem (long-running, retriable, multi-stage, human-gated pipeline) — the memlog's own reasoning (durable/resumable multi-step execution) matches how 2026 sources describe Temporal's differentiated niche versus Airflow/Prefect/Dagster (data-pipeline tools) and versus Inngest/Trigger.dev (lighter-weight, more TS-agentic-loop oriented). No materially better alternative surfaced for this use case.
-- The `AIProvider` port pattern (AD-3) is validated by current industry practice — unified-interface LLM abstraction (LiteLLM, Vercel AI SDK Core, etc.) is a well-established 2026 pattern specifically because vendor SDK churn/deprecation is common. This is the one port abstraction where the "unverified vendor SDK compatibility" concern is *not* hiding an unexamined assumption — the pattern is sound and current practice backs it.
+### 6. [LOW] TypeScript 5.9.3 instead of 7.x
+This pin is deliberate. TypeScript 7.0 (Go-native, GA July 2026) shipped without a programmatic compiler API. 7.1 restores one and is in beta now, with stable expected around late November 2026. `openapi-typescript`, `tsc -b` in CI and the `tsc --noEmit` gate in `playwright_typecheck` all run fine on 5.9. **Action:** stay on 5.9 until 7.1 is stable and the codegen toolchain supports it.
 
-## Items Independently Re-Verified As Accurate (no issue)
+### 7. [LOW] Node 22 for the web build
+Node 22 is in maintenance LTS and Node 24 is the active LTS. It is only used at build time, so the risk is low. **Action:** bump to `node:24-alpine` with the next web dependency refresh.
 
-| Stack entry | Spine claim | Independent check (2026-07-13) |
+### 8. [LOW] Temporal Python SDK 1.30.0
+SDK 1.31.0 was released in about late July 2026, and this review did not confirm anything newer. Being one minor behind carries no known compatibility issue with the 1.31.x dev server. **Action:** routine bump.
+
+## Current as of 2026-10-27 (no action)
+
+| Component | Locked | Note |
 | --- | --- | --- |
-| Python | 3.14.6 | Confirmed latest patch (released 2026-06-10); memlog shows this was actually verified, not asserted. |
-| PostgreSQL | 18.4 | Confirmed latest point release (2026-05-14; 18.3 was an out-of-cycle fix on 2026-02-26); native `uuidv7()` claim in Consistency Conventions also confirmed correct — it is a genuine PG18 core function, no extension required. |
-| React | 19.x | Confirmed current; latest is 19.2.7, no React 20 yet. |
-| Playwright (Python) | 1.57+ | Phrased as a floor, not "current" — technically still satisfied (latest is 1.61.0, 2026-06-29), but the floor itself is now ~2 releases/several months stale, suggesting it wasn't re-checked at spine-authoring time either. Low-severity, not flagged as a separate finding since the "+" hedge makes the claim non-falsifiable. |
+| Python | 3.14.6 | Current 3.14 line; ruff/pyright target py314 |
+| FastAPI / uvicorn | 0.139.0 / 0.51.0 | Active monthly releases |
+| SQLModel / SQLAlchemy | 0.0.39 / 2.0.51 | SQLModel's single-maintainer risk is noted, but it is actively released |
+| Alembic | 1.18.5 | Current |
+| psycopg | 3.3.4 | Current 3.x |
+| PostgreSQL | 18.4 (local) | Current major; native `uuidv7()` is relied on. Prod is an external host and its version is not pinned in repo, so verify it is 18+ |
+| Playwright (Python) | 1.61.0 | Recent |
+| LangGraph / langchain-core / mcp | 1.2.11 / 1.6.1 / 2.1.1 | Post-1.0 lines |
+| hvac / boto3 / httpx / pydantic | 2.4.0 / 1.43.55 / 0.28.1 / 2.13.4 | Current |
+| React | 19.2.7 | Current major |
+| Vite | 8.1.5 | Current major (Rolldown/Oxc) |
+| Tailwind CSS | 4.3.3 | Current major |
+| vitest / oxlint / recharts / @novnc/novnc | 3.2.7 / 1.74.0 / 3.10.1 / 1.7.0 | Acceptable |
+| allure / allure-playwright | ^3.20.1 / ^3.13.0 | Allure 3 (Node, no Java) |
+| pypdf | 6.20.1 (`pypdf>=5.0` in `apps/api`) | Added by the Explorer merge (knowledge-document uploads). On the current 6.x major; the exact latest release was not confirmed. Pure Python, no native deps. |
 
-## Bottom Line
+## Explorer merge (2026-10-27, 2d88b20 / 460f8e4)
 
-The spine's own memlog shows exactly two entries (Python, Postgres) with an explicit "(version) Verified via web" trace. Every other Stack row and the paradigm/port decisions were asserted without a recorded verification step. Independent verification in this review found most of them still hold, but two — TypeScript and Vite — are stated with a specific-sounding "current" qualifier that is now wrong, and one port abstraction (DeliveryAdapter/Jenkins) encodes a vendor-compatibility assumption that doesn't survive contact with how Jenkins actually works. The pattern here isn't "everything is wrong" — it's that the spine's confident phrasing doesn't track which claims were checked and which weren't, and the two places that weren't checked happen to be the two that changed most recently.
+The merge added two workspace packages, `explorer-worker` (`apps/workers/explorer`) and `explorer-core` (`packages/explorer_core`), and one third-party library, **pypdf 6.20.1** (above). No web (`package.json`/`package-lock.json`), Dockerfile or docker-compose version changed. The Explorer worker's declared floors (`temporalio>=1.9`, `sqlmodel>=0.0.24`, `psycopg[binary]>=3.2`, `httpx>=0.28`, `playwright>=1.57`) resolve to the same locked versions as the rest of the workspace, so the stack table is unchanged apart from pypdf. Python floor is `>=3.14`, matching the workspace.
+
+There is no Explorer worker container image yet, so there is no base-image pin to check. When one is added it should use the same `python:3.14-slim` + Playwright 1.61 browser build as the discovery and execution workers.
+
+Explorer calls the LiteLLM proxy with two new model aliases, `gpt-5.6-sol` (thinking) and `gpt-5.6-luna` (fast), via its own httpx client with `response_format: json_object`. Any alias change must keep JSON-object mode and image input working through the proxy.
+
+## Vendor-compatibility assumptions checked
+
+- **LLM access:** no vendor SDK is installed. All calls go through httpx to a LiteLLM proxy with a model alias (`gpt-5.6-luna` in prod; Explorer adds `gpt-5.6-sol` through its own client, see above). Model swaps are config-only. The one GPT-specific request-param branch in `hosted.py` is the only place a non-GPT alias could behave differently.
+- **`GEMINI_API_KEY`** is present in `.env` but no code references it. It is harmless, but dead config.
+
+## Sources
+- [nginx versions and EOL (versionlog.com)](https://versionlog.com/nginx-oss/)
+- [nginx EOL (isitpatched.com)](https://isitpatched.com/eol/nginx)
+- [endoflife.date — nginx](https://endoflife.date/nginx)
+- [HashiCorp Vault 2.1 version status (endoflife.ai)](https://endoflife.ai/hashicorp-vault/2.1)
+- [HashiCorp Vault releases & EOL (versio.io)](https://www.versio.io/en/product-release-end-of-life-eol-hashicorp-vault.html)
+- [TypeScript 7.1 beta (digitalapplied.com)](https://www.digitalapplied.com/blog/typescript-7-1-beta-whats-new-what-to-test)
+- [TypeScript 7.1 beta API (warp2search.net)](https://www.warp2search.net/story/typescript-71-beta-released-new-api-unblocks-vue-svelte-and-angular-tooling/)
+- [temporalio on piwheels](https://www.piwheels.org/project/temporalio/)
+- [temporalio summary (ecosyste.ms)](https://summary.ecosyste.ms/projects/371560)

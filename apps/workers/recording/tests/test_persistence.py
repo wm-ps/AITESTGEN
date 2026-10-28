@@ -141,6 +141,34 @@ def test_recordings_share_one_recorded_tests_journey(application):
         assert len(runs) == 1
 
 
+def test_recording_saves_its_typed_values_as_test_data_without_passwords(application):
+    code = (
+        "import { test } from '@playwright/test';\n\n"
+        "test('x', async ({ page }) => {\n"
+        "  await page.getByRole('textbox', { name: 'User Name' }).fill('someone');\n"
+        "  await page.getByRole('textbox', { name: 'Password' }).fill('s3cret-pw');\n"
+        "  await page.getByRole('spinbutton', { name: 'Amount (USD)' }).fill('25');\n"
+        "});\n"
+    )
+    saved = save_recording_sync(
+        application_id=application.id,
+        discovery_run_id=create_recording_discovery_run_sync(application.id),
+        code=code,
+        steps=[],
+        requires_auth=False,
+        name="transfer",
+    )
+
+    with Session(engine) as session:
+        scenario = session.exec(
+            select(Scenario).where(Scenario.external_id == saved.scenario_external_id)
+        ).one()
+        assert scenario.test_data == [
+            {"name": "User Name", "mandatory": True, "value": "someone"},
+            {"name": "Amount (USD)", "mandatory": True, "value": "25"},
+        ]
+
+
 def _seed_legacy_recording(session: Session, application: Application, run_id, name: str):
     journey = Journey(
         application_id=application.id,

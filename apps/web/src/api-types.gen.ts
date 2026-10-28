@@ -2606,6 +2606,11 @@ export interface components {
             duration_ms: number | null;
             /** Trigger */
             trigger: string;
+            /**
+             * Flaky Count
+             * @default 0
+             */
+            flaky_count: number;
         };
         /** LiveTestCaseComponentRead */
         LiveTestCaseComponentRead: {
@@ -3460,6 +3465,8 @@ export interface components {
              * @default false
              */
             is_flaky: boolean;
+            /** Flaky History */
+            flaky_history?: boolean[] | null;
             /** Failure Title */
             failure_title?: string | null;
             /** Failure Detail */

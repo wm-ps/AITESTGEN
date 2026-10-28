@@ -132,9 +132,7 @@ describe('App', () => {
     fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'staging' } })
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'qa-password' } })
-    // Start discovery is gated on a successful Test connection (ConnectAppForm).
-    fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
-    await screen.findByText('URL is reachable.')
+    // Start discovery checks the URL itself (ConnectAppForm), then the login.
     fireEvent.click(screen.getByRole('button', { name: 'Start exploration' }))
 
     await waitFor(() => {

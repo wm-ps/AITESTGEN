@@ -43,6 +43,8 @@ const INVALID_CREDENTIALS_MESSAGE =
   'The username or password is incorrect. Enter valid credentials and click Start exploration again.'
 const UNCERTAIN_CREDENTIALS_MESSAGE =
   "We couldn't confirm these credentials. Click Start exploration to validate again."
+const DISCOVERY_NOT_STARTED_MESSAGE =
+  "Exploration couldn't start, so the application was not added. Click Start exploration to try again."
 
 // Anything that isn't a proved `valid` / `invalid` (request error, worker
 // unavailable, timeout) collapses to `uncertain` — discovery never starts on
@@ -102,7 +104,7 @@ export function ConnectAppForm({
   const [submitting, setSubmitting] = useState(false)
   // Shown under the Username/Password fields — cleared on any edit to the
   // fields the check was run against.
-  const [validatingCredentials, setValidatingCredentials] = useState(false)
+  const [busyLabel, setBusyLabel] = useState('Connecting')
   const [credentialMessage, setCredentialMessage] = useState<string | null>(null)
   const [testingConnection, setTestingConnection] = useState(false)
   const [connectionResult, setConnectionResult] = useState<{ ok: boolean; detail: string | null } | null>(null)
@@ -122,15 +124,25 @@ export function ConnectAppForm({
     return () => clearTimeout(timeout)
   }, [showConnectionPopover])
 
-  async function handleTestConnection() {
-    if (testingConnection || !url) return
-    setTestingConnection(true)
+  // Shared by the Test connection button (discovery off) and Start discovery's
+  // first step (discovery on): same call, same result line under the URL.
+  async function runConnectionTest(): Promise<boolean> {
     setConnectionResult(null)
     try {
       const result = await api.testConnection(url)
       setConnectionResult({ ok: result.reachable, detail: result.detail })
+      return result.reachable
     } catch (err) {
       setConnectionResult({ ok: false, detail: err instanceof ApiError ? err.message : 'Could not reach the server to test this URL.' })
+      return false
+    }
+  }
+
+  async function handleTestConnection() {
+    if (testingConnection || !url) return
+    setTestingConnection(true)
+    try {
+      await runConnectionTest()
     } finally {
       setTestingConnection(false)
     }
@@ -138,7 +150,9 @@ export function ConnectAppForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!canStartDiscovery) {
+    // With discovery on, Start discovery runs the URL check itself (below), so
+    // the manual Test connection gate only applies when discovery is off.
+    if (!discoveryRequired && !canStartDiscovery) {
       setShowConnectionPopover(true)
       return
     }
@@ -146,10 +160,14 @@ export function ConnectAppForm({
     setCredentialMessage(null)
     setSubmitting(true)
     try {
+      if (discoveryRequired) {
+        setBusyLabel('Checking URL')
+        if (!(await runConnectionTest())) return
+      }
       // Only when discovery will actually run with a login — "Add
       // application" (no discovery) or a no-sign-in app skips the check.
       if (discoveryRequired && requiresSignIn) {
-        setValidatingCredentials(true)
+        setBusyLabel('Validating credentials')
         const verdict = await checkCredentials({
           url,
           login_url: loginUrl || undefined,
@@ -161,6 +179,7 @@ export function ConnectAppForm({
           return
         }
       }
+      setBusyLabel('Connecting')
       const application = await api.createApplication({
         name,
         url,
@@ -172,9 +191,15 @@ export function ConnectAppForm({
       })
       onConnected(application)
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to connect the application.')
+      setError(
+        err instanceof ApiError && err.message === 'DISCOVERY_UNAVAILABLE'
+          ? DISCOVERY_NOT_STARTED_MESSAGE
+          : err instanceof ApiError
+            ? err.message
+            : 'Failed to connect the application.',
+      )
     } finally {
-      setValidatingCredentials(false)
+      setBusyLabel('Connecting')
       setSubmitting(false)
     }
   }
@@ -276,6 +301,8 @@ export function ConnectAppForm({
                   }}
                   style={{ ...fieldInputStyle, fontFamily: 'var(--font-mono)', fontSize: 13 }}
                 />
+                {/* With discovery on, Start discovery checks the URL itself. */}
+                {(!discoveryRequired || readOnly) && (
                 <button
                   type="button"
                   disabled={!url || testingConnection || readOnly}
@@ -307,6 +334,7 @@ export function ConnectAppForm({
                     </>
                   )}
                 </button>
+                )}
               </div>
               {connectionResult && (
                 <div style={{ fontSize: 12, color: connectionResult.ok ? 'var(--ok)' : 'var(--bad)' }}>
@@ -423,7 +451,12 @@ export function ConnectAppForm({
                 type="checkbox"
                 checked={discoveryRequired}
                 disabled={readOnly}
-                onChange={(e) => setDiscoveryRequired(e.target.checked)}
+                onChange={(e) => {
+                  setDiscoveryRequired(e.target.checked)
+                  // A URL result from the other mode (Test connection vs.
+                  // Start discovery's own check) must not carry over.
+                  setConnectionResult(null)
+                }}
                 style={{ marginTop: 2, accentColor: 'var(--accent)', flexShrink: 0 }}
               />
               <div>
@@ -504,7 +537,7 @@ export function ConnectAppForm({
                       }}
                     >
                       {submitting ? (
-                        <LoadingDots label={validatingCredentials ? 'Validating credentials' : 'Connecting'} />
+                        <LoadingDots label={busyLabel} />
                       ) : (
                         <>
                           <FontAwesomeIcon icon={discoveryRequired ? faPlay : faPlus} style={{ fontSize: 11 }} />

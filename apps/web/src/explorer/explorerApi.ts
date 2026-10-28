@@ -31,7 +31,7 @@ export type AppBrief = {
   key_tasks?: { name: string; why_it_matters?: string; steps?: string[] }[]
   rules_we_expect?: { rule: string; source: string; confidence: string }[]
   hidden_parts_suspected?: { where: string; what: string; why: string }[]
-  questions_for_you?: { question: string; options: string[]; answer?: string }[]
+  questions_for_you?: { question: string; options: string[]; answer?: string; screen?: string; changes?: string }[]
   // Set by you at review: what to focus on, and screens to leave out.
   focus?: string
   skip_screens?: string[]

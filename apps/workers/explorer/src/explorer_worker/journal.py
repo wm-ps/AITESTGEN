@@ -3,6 +3,7 @@ screenshots, understood screens, health issues, run status. Short-lived DB
 sessions per write so the Live screen sees progress immediately."""
 
 import logging
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -21,6 +22,17 @@ from explorer_core.notify import send_pause_email
 from sqlmodel import Session, col, select
 
 from explorer_worker.db import engine
+from explorer_worker.sense import url_pattern
+
+_URL = re.compile(r"https?://\S+")
+_NUMBER = re.compile(r"\d+")
+
+
+def _failure_key(detail: str | None) -> str:
+    """What failed, minus what changes per call: request URLs become their
+    place, other numbers (ids, timestamps, line:col) are dropped."""
+    text = _URL.sub(lambda m: url_pattern(m.group()), detail or "")
+    return _NUMBER.sub("#", text)
 
 logger = logging.getLogger(__name__)
 
@@ -249,22 +261,35 @@ class Journal:
     ) -> bool:
         """Returns True when this is a new problem (repeats just count up).
         Background/server errors are the same problem wherever they show up,
-        so they match on what failed; page problems match on the page."""
+        so they match on what failed (ids and query values ignored); page
+        problems match on the place (`/offers/17` = `/offers/9`). What the
+        AI writes matches in other words too — it rewords the same issue."""
+        from explorer_worker.memory import similar  # memory imports journal
+
         detail = (detail or "")[:1000] or None
-        same_place = (
-            ExplorerHealthIssue.detail == detail
-            if kind in ("server_error", "background_error")
-            else ExplorerHealthIssue.url == url
-        )
+        title = title[:300]
         with Session(engine) as session:
-            existing = session.exec(
+            rows = session.exec(
                 select(ExplorerHealthIssue).where(
                     ExplorerHealthIssue.run_id == self.run_id,
                     ExplorerHealthIssue.kind == kind,
-                    ExplorerHealthIssue.title == title[:300],
-                    same_place,
                 )
-            ).first()
+            ).all()
+            if kind in ("server_error", "background_error"):
+                failed = _failure_key(detail)
+                existing = next((r for r in rows if r.title == title and _failure_key(r.detail) == failed), None)
+            else:
+                place = url_pattern(url)
+                reworded = kind in ("looks_wrong", "wording")
+                existing = next(
+                    (
+                        r
+                        for r in rows
+                        if url_pattern(r.url) == place
+                        and (r.title == title or (reworded and similar(r.title, title)))
+                    ),
+                    None,
+                )
             if existing is not None:
                 existing.occurrences += 1
                 session.add(existing)
@@ -275,7 +300,7 @@ class Journal:
                     run_id=self.run_id,
                     kind=kind,
                     severity=severity,
-                    title=title[:300],
+                    title=title,
                     detail=detail,
                     url=url,
                     shot_id=shot_id,
