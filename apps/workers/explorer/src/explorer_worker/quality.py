@@ -56,9 +56,18 @@ _JS = {
 }
 
 
+# Kept so older runs' phone checks still prove and export, but no longer
+# planned: responsive scenarios aren't wanted for now.
+NOT_PLANNED = {"fits_phone"}
+
+
 def planned_checks(screen: dict[str, Any]) -> list[str]:
     """The checks worth planning for a screen (labels only where it has fields)."""
-    return [name for name in CHECKS if name != "fields_labelled" or screen.get("fields")]
+    return [
+        name
+        for name in CHECKS
+        if name not in NOT_PLANNED and (name != "fields_labelled" or screen.get("fields"))
+    ]
 
 
 def test_row(name: str, screen: dict[str, Any]) -> dict[str, Any]:
