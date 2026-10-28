@@ -17,7 +17,7 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 import { ApiError } from '../api'
 import { AppIdentityLine } from '../components/AppIdentityLine'
-import { LoadingDots, Spinner } from '../components/LoadingDots'
+import { LoadingDots } from '../components/LoadingDots'
 import {
   explorerApi,
   WORKING_STATUSES,
@@ -290,7 +290,7 @@ export function ExplorerTab({
 
       {run === undefined ? (
         <div style={{ ...glassCard, padding: 28, display: 'flex', gap: 10, alignItems: 'center', color: 'var(--fg-3)', fontSize: 13.5 }}>
-          <Spinner size={14} /> Loading Explorer…
+          <LoadingDots label="Loading Explorer" />
         </div>
       ) : run === null || startingFresh ? (
         <StartCard applicationId={applicationId} applicationName={applicationName} busy={starting} onStart={start} onCancel={run ? () => setStartingFresh(false) : undefined} />
