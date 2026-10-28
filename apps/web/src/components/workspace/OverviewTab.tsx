@@ -325,12 +325,7 @@ export function OverviewTab({
           sub={`Latest run · ${formatDuration(overview.latest_run.duration_ms)}`}
         />
         <StatTile label="Open failures" value={overview.failed} sub={`${blocked_count} skipped`} />
-        <StatTile
-          label="Flaky"
-          value={overview.latest_run.flaky_count}
-          sub="In the latest run"
-          valueColor="var(--flaky-strong)"
-        />
+        <StatTile label="Flaky" value={overview.latest_run.flaky_count} sub="In the latest run" />
       </div>
 
       <div

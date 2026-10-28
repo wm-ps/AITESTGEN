@@ -142,10 +142,10 @@ describe('RunsTab', () => {
     expect(retry).toBeEnabled()
   })
 
-  // Passed / Self-healed / Failed use each result's own status and sum to the
-  // finished results. Flaky is an overlay count: a flaky result is still
-  // counted as Passed or Failed.
-  it('keeps Passed / Self-healed / Failed on raw status and counts Flaky separately', async () => {
+  // Passed / Failed use each result's own status and sum to the finished
+  // results; a self-healed pass is just a pass. Flaky is an overlay count: a
+  // flaky result is still counted as Passed or Failed.
+  it('counts self-healed passes as Passed and Flaky separately', async () => {
     const base = { ...failedResult, error_message: null, heal_blocked_reason: null }
     stubRunDetail([
       { ...base, id: 'r1', scenario_name: 'Clean pass', status: 'passed' },
@@ -162,8 +162,8 @@ describe('RunsTab', () => {
     const tileValue = async (label: string) =>
       (await screen.findByText(label, { selector: 'div' })).nextElementSibling?.textContent
     await waitFor(async () => expect(await tileValue('Flaky')).toBe('2'))
-    expect(await tileValue('Passed')).toBe('2')
-    expect(await tileValue('Self-healed')).toBe('2')
+    expect(await tileValue('Passed')).toBe('4')
+    expect(screen.queryByText('Self-healed', { selector: 'div' })).toBeNull()
     expect(await tileValue('Failed')).toBe('3')
   })
 
