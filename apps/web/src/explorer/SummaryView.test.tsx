@@ -1,7 +1,7 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { SummaryView } from './SummaryView'
-import type { ExplorerRun } from './explorerApi'
+import type { ExplorerRun, ExplorerScreen } from './explorerApi'
 
 const runWith = (answer: string) =>
   ({
@@ -33,5 +33,25 @@ describe('SummaryView', () => {
     render(<SummaryView run={runWith('POL-1')} screens={[]} onSave={vi.fn(async () => {})} onConfirm={onConfirm} />)
     fireEvent.click(confirmButton())
     expect(onConfirm).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves out pages picked by typing, shown as chips, and shows no screenshots', async () => {
+    const onSave = vi.fn(async () => {})
+    const screens = [
+      { name: 'Change password', shot_id: 's1' },
+      { name: 'Transfer funds', shot_id: 's2' },
+    ] as unknown as ExplorerScreen[]
+    const { container } = render(<SummaryView run={runWith('POL-1')} screens={screens} onSave={onSave} onConfirm={vi.fn(async () => {})} />)
+    expect(container.querySelector('img')).toBeNull()
+
+    const field = screen.getByLabelText(/Pages to leave out/)
+    fireEvent.change(field, { target: { value: 'chan' } })
+    expect(screen.queryByRole('option', { name: 'Transfer funds' })).toBeNull()
+    fireEvent.click(screen.getByRole('option', { name: 'Change password' }))
+    await waitFor(() => expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ skip_screens: ['Change password'] })))
+    expect(screen.getByRole('button', { name: 'Remove Change password' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Change password' }))
+    await waitFor(() => expect(onSave).toHaveBeenLastCalledWith(expect.objectContaining({ skip_screens: [] })))
   })
 })

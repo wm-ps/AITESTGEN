@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBullseye, faCircleCheck, faCircleQuestion, faListOl, faPen, faPlus, faTrashCan } from '@fortawesome/free-solid-svg-icons'
 import { LoadingDots } from '../components/LoadingDots'
-import { shotUrl, type AppBrief, type ExplorerRun, type ExplorerScreen } from './explorerApi'
+import { type AppBrief, type ExplorerRun, type ExplorerScreen } from './explorerApi'
 import { glassCard, Pill, SectionTitle } from './ui'
 
 // Only what Explorer can stand behind: what the app is, the tasks it will
@@ -86,11 +86,6 @@ export function SummaryView({
   // One tile per screen name; screens behind a choice show under their own name too.
   const tiles = [...new Map(screens.map((s) => [s.name, s])).values()]
   const skipped = new Set(b.skip_screens ?? [])
-  const toggleScreen = (name: string) => {
-    const next = { ...draft, skip_screens: skipped.has(name) ? [...skipped].filter((n) => n !== name) : [...skipped, name] }
-    setDraft(next)
-    if (!editing) void onSave(next)
-  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -240,33 +235,21 @@ export function SummaryView({
               />
             </div>
             {tiles.length > 0 && (
-              <div style={{ fontSize: 12.5, color: 'var(--fg-4)' }}>
-                Untick screens Explorer should leave alone. It won't plan missions or scenarios for them.
-              </div>
+              <PagesToLeaveOut
+                pages={tiles.map((t) => t.name)}
+                selected={[...skipped]}
+                onChange={(names) => {
+                  const next = { ...draft, skip_screens: names }
+                  setDraft(next)
+                  if (!editing) void onSave(next)
+                }}
+              />
             )}
           </>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13.5, color: 'var(--fg-2)' }}>
             <div><span style={{ fontWeight: 600 }}>Goal:</span> {b.focus?.trim() || 'The whole app'}</div>
             <div><span style={{ fontWeight: 600 }}>Left out:</span> {skipped.size ? [...skipped].join(', ') : 'Nothing'}</div>
-          </div>
-        )}
-        {editable && tiles.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
-            {tiles.map((t) => {
-              const on = !skipped.has(t.name)
-              return (
-                <label key={t.name} style={{ display: 'flex', flexDirection: 'column', borderRadius: 10, overflow: 'hidden', cursor: 'pointer', border: `1px solid ${on ? 'color-mix(in srgb, var(--accent-2) 35%, transparent)' : 'var(--line)'}`, background: 'white', opacity: on ? 1 : 0.55, transition: 'all 150ms ease' }}>
-                  <span style={{ aspectRatio: '16 / 10', background: 'var(--bg-2)', overflow: 'hidden' }}>
-                    {t.shot_id && <img src={shotUrl(t.shot_id)} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top', filter: on ? 'none' : 'grayscale(1)' }} />}
-                  </span>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px' }}>
-                    <input type="checkbox" checked={on} onChange={() => toggleScreen(t.name)} style={{ accentColor: 'var(--accent-2)', flex: 'none' }} />
-                    <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.name}>{t.name}</span>
-                  </span>
-                </label>
-              )
-            })}
           </div>
         )}
       </div>
@@ -357,6 +340,84 @@ function SummaryQuestion({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// "Pages to leave out": type a page's name, pick it from the suggestions, and
+// it becomes a chip. Explorer plans no missions or scenarios for those pages
+// (the same `skip_screens` list the old screenshot checkboxes set). Optional.
+function PagesToLeaveOut({
+  pages,
+  selected,
+  onChange,
+}: {
+  pages: string[]
+  selected: string[]
+  onChange: (names: string[]) => void
+}) {
+  const [query, setQuery] = useState('')
+  const q = query.trim().toLowerCase()
+  const matches = q ? pages.filter((p) => !selected.includes(p) && p.toLowerCase().includes(q)).slice(0, 8) : []
+  const add = (name: string) => {
+    onChange([...selected, name])
+    setQuery('')
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, position: 'relative' }}>
+      <label htmlFor="explorer-leave-out" style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>
+        Pages to leave out <span style={{ fontWeight: 400, color: 'var(--fg-5)' }}>(optional)</span>
+      </label>
+      <div style={{ ...inputStyle, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '6px 8px', minHeight: 40 }}>
+        {selected.map((name) => (
+          <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 6px 3px 10px', borderRadius: 1000, background: 'var(--bg-2)', border: '1px solid var(--line)', fontSize: 12.5, fontWeight: 600, color: 'var(--fg)' }}>
+            {name}
+            <button
+              type="button"
+              aria-label={`Remove ${name}`}
+              onClick={() => onChange(selected.filter((n) => n !== name))}
+              style={{ border: 'none', background: 'none', padding: '0 2px', cursor: 'pointer', color: 'var(--fg-4)', fontSize: 14, lineHeight: 1 }}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          id="explorer-leave-out"
+          role="combobox"
+          aria-expanded={matches.length > 0}
+          aria-controls="explorer-leave-out-options"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && matches.length) {
+              e.preventDefault()
+              add(matches[0])
+            } else if (e.key === 'Backspace' && !query && selected.length) {
+              onChange(selected.slice(0, -1))
+            }
+          }}
+          placeholder={selected.length ? '' : 'Type a page name to leave it out'}
+          style={{ flex: 1, minWidth: 180, border: 'none', outline: 'none', background: 'transparent', font: 'inherit', fontSize: 13.5, color: 'var(--fg-1)' }}
+        />
+      </div>
+      {matches.length > 0 && (
+        <div id="explorer-leave-out-options" role="listbox" style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 5, marginTop: 4, background: 'white', border: '1px solid var(--line)', borderRadius: 8, boxShadow: 'var(--shadow-dropdown)', overflow: 'hidden' }}>
+          {matches.map((name) => (
+            <div
+              key={name}
+              role="option"
+              aria-selected={false}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => add(name)}
+              style={{ padding: '8px 12px', fontSize: 13, cursor: 'pointer', color: 'var(--fg-1)' }}
+            >
+              {name}
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ fontSize: 12, color: 'var(--fg-4)' }}>Explorer won't plan missions or scenarios for these pages.</div>
     </div>
   )
 }
