@@ -7,6 +7,7 @@ import re
 import uuid
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 from explorer_worker import brain
 from explorer_worker.browser import Visit
@@ -59,6 +60,22 @@ class Mind:
             if key:
                 _READINGS[(journal.run_id, key)] = reading
         name = str(reading.get("screen_name") or "Untitled screen")[:120]
+        if reading.get("is_blank") or reading.get("is_error_page"):
+            # A blank or error page is a bug, not a screen: counting it would
+            # only inflate the screen total (seen on Catalog BO's sign-in return).
+            # The sign-in hand-back (`?code=…&state=…`) is blank by design.
+            if reading.get("is_blank") and not _is_sign_in_return(visit.url):
+                journal.health_issue(
+                    "looks_wrong",
+                    "medium",
+                    f"Blank page at {url_pattern(visit.url)}",
+                    f"Reached by {action or reached_by or 'opening it'}; nothing is shown.",
+                    visit.url,
+                    shot_id,
+                )
+            _record_health(journal, visit, {} if known is not None else reading, shot_id)
+            journal.event("thought", f"Not a screen: {name}", "Logged as a possible bug.", shot_id)
+            return name
         signature = screen_signature(
             reading.get("entity"), str(reading.get("view_kind")), reading.get("mode"), name
         )
@@ -129,6 +146,16 @@ class Mind:
         if self.on_screen is not None:
             self.on_screen(visit, name)
         return name
+
+
+def _is_sign_in_return(url: str) -> bool:
+    """An OAuth/OIDC sign-in hand-back: `code` and `state` in the query
+    (or in a hash route's query)."""
+    parts = urlsplit(url)
+    keys = parse_qs(parts.query, keep_blank_values=True).keys() | parse_qs(
+        parts.fragment.partition("?")[2], keep_blank_values=True
+    ).keys()
+    return {"code", "state"} <= keys
 
 
 def _record_health(

@@ -3,7 +3,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import { faBan, faBug, faChevronDown, faFileArrowDown, faLinkSlash, faServer } from '@fortawesome/free-solid-svg-icons'
 import { LoadingDots } from '../components/LoadingDots'
-import { explorerApi, shotUrl, type ExplorerHealthIssue, type ExplorerQuestion } from './explorerApi'
+import { explorerApi, shotUrl, type ExplorerHealthIssue, type ExplorerQuestion, type ExplorerScreen } from './explorerApi'
 import { glassCard, IconTile, Pill } from './ui'
 
 // Only what a person would call a bug. Slow pages, wording nits and errors
@@ -57,11 +57,13 @@ function downloadCsv(name: string, csv: string) {
 // a bug?" question is answered right on the finding it is about.
 export function HealthView({
   issues,
+  screens = [],
   questions,
   onAnswered,
   onOpenShot,
 }: {
   issues: ExplorerHealthIssue[]
+  screens?: ExplorerScreen[]
   questions: ExplorerQuestion[]
   onAnswered: () => Promise<void>
   onOpenShot: (shotId: string, caption: string) => void
@@ -69,6 +71,12 @@ export function HealthView({
   const bugs = possibleBugs(issues)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
+  // Where it is and how Explorer got there, in one short line.
+  const where = (issue: ExplorerHealthIssue) => {
+    const screen = screens.find((s) => (issue.shot_id && s.shot_id === issue.shot_id) || s.url === issue.url)
+    if (!screen) return ''
+    return screen.reached_by ? `On ${screen.name} · reached by ${screen.reached_by}` : `On ${screen.name}`
+  }
   const askFor = (issue: ExplorerHealthIssue) =>
     issue.shot_id ? questions.find((q) => q.kind === 'rule' && q.status === 'open' && q.shot_id === issue.shot_id) : undefined
 
@@ -137,8 +145,9 @@ export function HealthView({
                     <Pill tone={issue.severity === 'high' ? 'bad' : 'warn'}>{issue.severity === 'high' ? 'Bug' : kind.label}</Pill>
                     {q && <span style={{ width: 7, height: 7, flex: 'none', borderRadius: 1000, background: 'var(--warn-2)', animation: 'explorer-attention 1.6s ease-out infinite' }} title="Needs your answer" />}
                   </div>
-                  <div title={issue.title} style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', lineHeight: '17px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{issue.title}</div>
-                  {issue.detail && <div title={issue.detail} style={{ fontSize: 12, color: 'var(--fg-3)', lineHeight: '16px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{issue.detail}</div>}
+                  <div title={issue.title} style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', lineHeight: '17px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{issue.title}</div>
+                  {where(issue) && <div style={{ fontSize: 11.5, color: 'var(--fg-4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={where(issue)}>{where(issue)}</div>}
+                  {issue.detail && <div title={issue.detail} style={{ fontSize: 12, color: 'var(--fg-3)', lineHeight: '16px', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden', wordBreak: 'break-word' }}>{issue.detail}</div>}
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
                     {q && action("It's a bug", () => explorerApi.answer(q.id, "It's a bug").then(() => undefined), true)}
                     {q && action("It's correct", () => explorerApi.answer(q.id, "It's correct — that's how it should work").then(() => undefined))}

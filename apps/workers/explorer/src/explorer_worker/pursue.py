@@ -160,6 +160,28 @@ async def pursue(
 
     landed: list[str] = [arrived(step_name)]
 
+    async def ask_way_past(screen: str, what_happened: str) -> bool:
+        """Before giving up on a screen, ask the person once how to get past
+        it — usually a value only they know (an existing record, a code).
+        Without this a silent rejection ended every Catalog BO mission
+        "blocked" with no question asked."""
+        key = f"stuck:{screen}"
+        if ask is None or key in asked:
+            return False
+        asked.add(key)
+        answer = await ask(
+            "data",
+            f"I can't get past “{screen}”: {what_happened}. What should I enter or do there?",
+            f"Needed to: {goal}",
+            [],
+            journal.shot(visit.shot),
+        )
+        if not answer:
+            return False
+        learned.append(f"The user said, about getting past “{screen}”: {answer}")
+        result.history.append(f"{screen}: asked how to get past it, got an answer")
+        return True
+
     for _ in range(max_steps):
         heartbeat()
         if stop_requested():
@@ -191,6 +213,9 @@ async def pursue(
             landed.append(arrived(step_name))
             continue
         circling = going_in_circles(landed)
+        if circling and await ask_way_past(step_name, "I keep coming back to it"):
+            landed = landed[-1:]
+            continue
         if circling:
             # Never keep walking in circles: it learns nothing and burns the run.
             result.ended = "stuck"
@@ -409,6 +434,12 @@ async def pursue(
                 )[:600],
                 journal.shot(visit.shot),
             )
+            if stuck > MAX_RETRIES_ON_SAME_STEP and await ask_way_past(
+                step_name,
+                f"pressing “{advance}” " + (f"showed “{said[:120]}”" if said else "did nothing"),
+            ):
+                stuck = 0
+                continue
             if stuck > MAX_RETRIES_ON_SAME_STEP:
                 result.ended = "stuck"
                 result.outcome = f"Couldn't get past {step_name}" + (f": {said}" if said else "")

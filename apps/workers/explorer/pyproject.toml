@@ -6,6 +6,7 @@ requires-python = ">=3.14"
 dependencies = [
     "temporalio>=1.9",
     "explorer-core",
+    "workflows",
     "domain",
     "secrets-client",
     "object-store",
@@ -23,6 +24,7 @@ dev = [
 
 [tool.uv.sources]
 explorer-core = { workspace = true }
+workflows = { workspace = true }
 domain = { workspace = true }
 secrets-client = { workspace = true }
 object-store = { workspace = true }

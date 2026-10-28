@@ -10,6 +10,7 @@ import os
 from explorer_core import EXPLORER_TASK_QUEUE
 from temporalio.client import Client
 from temporalio.worker import Worker
+from workflows import VerifyCredentialsWorkflow
 
 from explorer_worker.activities import (
     breadth_activity,
@@ -30,6 +31,7 @@ from explorer_worker.activities import (
     resume_point_activity,
     run_mission_activity,
     understand_app_activity,
+    verify_credentials_activity,
 )
 from explorer_worker.workflow import ExplorerRunWorkflow
 
@@ -44,7 +46,8 @@ async def main() -> None:
     worker = Worker(
         client,
         task_queue=EXPLORER_TASK_QUEUE,
-        workflows=[ExplorerRunWorkflow],
+        # Also the "Start discovery" login pre-flight: Explorer does discovery.
+        workflows=[ExplorerRunWorkflow, VerifyCredentialsWorkflow],
         activities=[
             promote_activity,
             fail_run_activity,
@@ -64,6 +67,7 @@ async def main() -> None:
             requeue_test_activity,
             finish_testing_activity,
             resume_point_activity,
+            verify_credentials_activity,
         ],
         max_concurrent_activities=MAX_CONCURRENT_ACTIVITIES,
     )

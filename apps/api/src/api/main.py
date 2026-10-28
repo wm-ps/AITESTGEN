@@ -135,6 +135,7 @@ from api.auth import (
 from api.coverage_report import build_coverage_report
 from api.db import engine, get_session
 from api.discovery import (
+    discovery_task_queue,
     discovery_workers_available,
     pause_discovery_run,
     resume_discovery_run,
@@ -956,18 +957,20 @@ def _verify_credentials_workflow_id(organization_id: uuid.UUID, check_id: uuid.U
 
 
 # "Start discovery" pre-flight: a real browser login with the entered
-# credentials, run by the discovery worker (the only process with Chromium).
-# Start + poll like the Scenarios tab's regenerate/auto-fill — the login can
-# take over a minute, too long for one blocking request. `create_application`
-# doesn't run this check, so direct API callers aren't gated on credentials
-# (it does refuse to save an app when no discovery worker is available).
+# credentials, run by whichever worker will run discovery (Explorer by
+# default, see `discovery_task_queue`). Start + poll like the Scenarios tab's
+# regenerate/auto-fill — the login can take over a minute, too long for one
+# blocking request. `create_application` doesn't run this check, so direct API
+# callers aren't gated on credentials (it does refuse to save an app when no
+# discovery worker is available).
 @app.post("/applications/verify-credentials", response_model=CredentialCheckStarted, status_code=202)
 async def start_credential_check(
     payload: CredentialCheckPayload,
     organization_id: CurrentOrgIdDep,
 ) -> CredentialCheckStarted:
     client = await get_temporal_client()
-    if not await has_pollers(client, DISCOVERY_TASK_QUEUE):
+    queue = discovery_task_queue()
+    if not await has_pollers(client, queue):
         raise HTTPException(status_code=503, detail="DISCOVERY_UNAVAILABLE")
 
     # Stored in Vault, never passed as workflow input — Temporal persists
@@ -988,7 +991,7 @@ async def start_credential_check(
                 login_url=payload.login_url or None,
             ),
             id=_verify_credentials_workflow_id(organization_id, check_id),
-            task_queue=DISCOVERY_TASK_QUEUE,
+            task_queue=queue,
         )
     except Exception:
         # ponytail: if the worker dies after the workflow starts but before

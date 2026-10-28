@@ -1,5 +1,5 @@
 """POST/GET /applications/verify-credentials — the "Start discovery" login
-pre-check (start + poll, run by the discovery worker).
+pre-check (start + poll, run by the worker that runs discovery).
 
 Temporal, Vault and auth are all faked: this verifies the route's own logic
 (503 when no worker, temp-secret lifecycle, org-scoped workflow id, status
@@ -13,9 +13,10 @@ from types import SimpleNamespace
 import pytest
 from api import main
 from api.auth import block_viewer_writes, current_org_id
+from explorer_core import EXPLORER_TASK_QUEUE
 from fastapi.testclient import TestClient
 from temporalio.client import WorkflowExecutionStatus
-from workflows import DISCOVERY_TASK_QUEUE, VerifyCredentialsResult
+from workflows import VerifyCredentialsResult
 
 ORG_ID = uuid.uuid4()
 OTHER_ORG_ID = uuid.uuid4()
@@ -102,7 +103,8 @@ def test_start_stores_a_temporary_secret_and_starts_an_org_scoped_workflow(clien
     check_id = response.json()["check_id"]
     started = temporal.started[0]
     assert started["id"] == f"verify-credentials-{ORG_ID}-{check_id}"
-    assert started["task_queue"] == DISCOVERY_TASK_QUEUE
+    # Explorer runs discovery by default, so it runs the login check too.
+    assert started["task_queue"] == EXPLORER_TASK_QUEUE
     # Only the temp secret's path is workflow input — never the password.
     assert started["input"].secret_ref == f"applications/{ORG_ID}/temp-1"
     assert "qa-password" not in repr(started["input"])

@@ -2,14 +2,16 @@
 CleanupWorkflow dispatches to (AD-2).
 
 `Application` soft-delete (`deleted_at`, AD-15) never purged anything —
-child rows across ~26 dependent tables, the Vault secret, and S3 objects all
+child rows across every dependent table, the Vault secrets, and S3 objects all
 accumulated forever. This purges all of it, once `deleted_at` is older than
 the admin-configured `DiscoverySettings.delete_project_after` window.
 
-Delete order matters: no FK in this schema has `ondelete=CASCADE` (confirmed
-by inspecting every migration that adds one), so dependent rows are deleted
-leaf-first, in the order below, inside one DB transaction per Application —
-either the whole Application purges, or none of it does. Vault/S3 deletes
+Delete order matters: no FK in the `domain` schema has `ondelete=CASCADE`, so
+dependent rows are deleted leaf-first, in the order below, inside one DB
+transaction per Application — either the whole Application purges, or none
+of it does. Explorer's `explorer_*` tables do cascade from `explorer_run` /
+`application`; their top-level rows are still deleted explicitly so the purge
+doesn't silently depend on the Application delete cascading. Vault/S3 deletes
 happen only after that transaction commits, since a partially-failed
 Vault/S3 cleanup is cleanup debt (loggable, retriable), not a correctness
 risk — the row is already gone from every user-facing query path by then.
@@ -49,6 +51,7 @@ from domain import (
     DiscoveryError,
     DiscoveryRun,
     DiscoverySettings,
+    ExecutionPolicy,
     ExplorationStep,
     Form,
     FormField,
@@ -56,6 +59,7 @@ from domain import (
     JourneyStep,
     Page,
     PageTransition,
+    RecordingSession,
     Scenario,
     Schedule,
     SyntheticDataEntry,
@@ -67,6 +71,7 @@ from domain import (
     TestSuite,
     ValidationRule,
 )
+from explorer_core.models import ExplorerKnowledge, ExplorerRole, ExplorerRun
 from object_store import ObjectStore
 from secrets_client.vault_client import SecretRef, VaultSecretsClient
 from sqlalchemy import ColumnElement, delete
@@ -107,9 +112,12 @@ class _PurgeIds:
     component_ids: list[uuid.UUID]
     blocked_task_ids: list[uuid.UUID]
     test_run_ids: list[uuid.UUID]
+    # Test-run object-store keys use the external id (`test-runs/{external_id}/`).
+    test_run_external_ids: list[uuid.UUID]
     test_suite_ids: list[uuid.UUID]
     test_result_ids: list[uuid.UUID]
-    test_data_secret_refs: list[str]
+    # Test data values and Explorer role logins live in Vault.
+    secret_refs: list[str]
 
 
 def _cutoff(settings: DiscoverySettings) -> datetime:
@@ -122,6 +130,9 @@ def find_purge_candidates_activity() -> list[str]:
     with Session(engine) as session:
         settings = session.exec(select(DiscoverySettings)).one()
         cutoff = _cutoff(settings)
+        # Read before commit() expires `settings` — touching it after the
+        # session closes raises DetachedInstanceError.
+        retention = settings.delete_project_after
         applications = session.exec(
             select(Application).where(
                 Application.deleted_at.is_not(None),  # type: ignore[union-attr]
@@ -140,7 +151,7 @@ def find_purge_candidates_activity() -> list[str]:
     logger.info(
         "cleanup: %d application(s) past retention (%s): %s",
         len(candidate_ids),
-        settings.delete_project_after,
+        retention,
         candidate_ids,
     )
     return candidate_ids
@@ -167,9 +178,10 @@ def _collect_purge_ids(session: Session, application_id: uuid.UUID) -> _PurgeIds
     blocked_task_ids = list(
         session.exec(select(BlockedTask.id).where(_eq(BlockedTask.application_id, application_id)))
     )
-    test_run_ids = list(
-        session.exec(select(TestRun.id).where(_eq(TestRun.application_id, application_id)))
-    )
+    test_runs = session.exec(
+        select(TestRun.id, TestRun.external_id).where(_eq(TestRun.application_id, application_id))
+    ).all()
+    test_run_ids = [row[0] for row in test_runs]
     test_suite_ids = (
         list(session.exec(select(TestSuite.id).where(_in(TestSuite.journey_id, journey_ids))))
         if journey_ids
@@ -180,7 +192,7 @@ def _collect_purge_ids(session: Session, application_id: uuid.UUID) -> _PurgeIds
         if test_run_ids
         else []
     )
-    test_data_secret_refs = [
+    secret_refs = [
         ref
         for ref in session.exec(
             select(TestDataEntry.secret_ref).where(
@@ -188,7 +200,11 @@ def _collect_purge_ids(session: Session, application_id: uuid.UUID) -> _PurgeIds
             )
         )
         if ref is not None
-    ]
+    ] + list(
+        session.exec(
+            select(ExplorerRole.secret_ref).where(_eq(ExplorerRole.application_id, application_id))
+        )
+    )
 
     return _PurgeIds(
         discovery_run_ids=discovery_run_ids,
@@ -198,9 +214,10 @@ def _collect_purge_ids(session: Session, application_id: uuid.UUID) -> _PurgeIds
         component_ids=component_ids,
         blocked_task_ids=blocked_task_ids,
         test_run_ids=test_run_ids,
+        test_run_external_ids=[row[1] for row in test_runs],
         test_suite_ids=test_suite_ids,
         test_result_ids=test_result_ids,
-        test_data_secret_refs=test_data_secret_refs,
+        secret_refs=secret_refs,
     )
 
 
@@ -213,6 +230,12 @@ def _delete_dependent_rows(session: Session, application_id: uuid.UUID, ids: _Pu
         nonlocal rows_deleted
         result = session.execute(stmt)
         rows_deleted += result.rowcount or 0  # type: ignore[attr-defined]
+
+    # Explorer: every explorer_* run table cascades from explorer_run.
+    _run(delete(ExplorerRun).where(_eq(ExplorerRun.application_id, application_id)))
+    _run(delete(ExplorerKnowledge).where(_eq(ExplorerKnowledge.application_id, application_id)))
+    _run(delete(ExplorerRole).where(_eq(ExplorerRole.application_id, application_id)))
+    _run(delete(RecordingSession).where(_eq(RecordingSession.application_id, application_id)))
 
     if ids.form_field_ids:
         _run(delete(ValidationRule).where(_in(ValidationRule.form_field_id, ids.form_field_ids)))
@@ -260,6 +283,8 @@ def _delete_dependent_rows(session: Session, application_id: uuid.UUID, ids: _Pu
     # pauses every one, see delete_application in apps/api), so a leftover
     # Temporal object is inert; purge_orphan_schedules.py sweeps it later.
     _run(delete(Schedule).where(_eq(Schedule.application_id, application_id)))
+    # Also referenced by test_run.execution_policy_id, so after TestRun.
+    _run(delete(ExecutionPolicy).where(_eq(ExecutionPolicy.application_id, application_id)))
     _run(delete(Journey).where(_eq(Journey.application_id, application_id)))
     _run(delete(Capability).where(_eq(Capability.application_id, application_id)))
     if ids.discovery_run_ids:
@@ -292,8 +317,8 @@ def purge_application_activity(input: PurgeApplicationInput) -> PurgeApplication
         secret_ref = application.secret_ref
         ids = _collect_purge_ids(session, application_id)
         discovery_run_ids = ids.discovery_run_ids
-        test_run_ids = ids.test_run_ids
-        secret_refs = [secret_ref, *ids.test_data_secret_refs]
+        test_run_ids = ids.test_run_external_ids
+        secret_refs = [secret_ref, *ids.secret_refs]
 
         rows_deleted = _delete_dependent_rows(session, application_id, ids)
         session.delete(application)

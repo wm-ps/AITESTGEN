@@ -163,7 +163,9 @@ async def ask(
             journal.event("question", f"Question for you: {question}"[:300], why, shot_id)
         question_id = existing.id
     if not wait or WAIT_MINUTES <= 0:
-        if is_new and wait:
+        # Every new question is emailed — you may not be watching the run.
+        # One that doesn't block (e.g. "is this a bug?") says so.
+        if is_new:
             await asyncio.to_thread(
                 journal.email_starter,
                 "Explorer has a question for you",

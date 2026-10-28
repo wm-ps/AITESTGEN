@@ -26,6 +26,7 @@ from playwright.async_api import Route
 
 from explorer_worker.browser import Eyes
 from explorer_worker.journal import Journal
+from explorer_worker.sense import url_pattern
 from explorer_worker.session import load_target, open_signed_in
 
 HUNT_MINUTES = 25
@@ -395,6 +396,11 @@ async def _shaped_visit(eyes: Eyes, journal: Journal, screen: ExplorerScreen, mo
             await page.close()
     if mode == "flags" and not flips[0]:
         return 0  # nothing that looked like a feature switch
+    if url_pattern(visit.url) != url_pattern(screen.url):
+        # The app left the screen (to home, a denied page, sign-in): this is
+        # not a version of it. Seen on Catalog BO: 22 "hidden screens" that
+        # were home or Access denied.
+        return 0
     shaped = [line.strip() for line in text.split("\n") if line.strip()]
     new_lines = [line for line in shaped if line not in normal][:8]
     if not new_lines and len(shaped) > 3:
@@ -408,6 +414,7 @@ async def _shaped_visit(eyes: Eyes, journal: Journal, screen: ExplorerScreen, mo
             screen.url,
             journal.shot(visit.shot),
         )
+        return 0  # a bug, not a hidden screen
     label, short = _SIMULATED[mode]
     return int(
         _record(

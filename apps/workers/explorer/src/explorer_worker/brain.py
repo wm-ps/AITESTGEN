@@ -39,6 +39,7 @@ Understand it like a person would and reply with ONLY this JSON object:
   "actions": [{"label": "exact visible text", "kind": "navigate|create|edit|delete|submit|filter|search|export|other", "risky": true}],
   "hidden_hints": ["plain guess about a part of this screen that probably only appears under some condition, and why — e.g. 'An approval section may appear for large amounts (there is an Amount field and an empty Approvals panel)'"],
   "is_error_page": false,
+  "is_blank": false,
   "error_text": null,
   "wording_problems": [{"text": "exact text", "why": "spelling/grammar/unclear"}],
   "looks_wrong": [{"what": "...", "why": "which common-sense rule it breaks"}],
@@ -46,6 +47,7 @@ Understand it like a person would and reply with ONLY this JSON object:
   "starts_flow": [{"label": "exact visible text of a button/link that STARTS a business task, e.g. 'New order', 'Add employee', 'Apply now'", "goal": "the task in plain words, e.g. 'Place a new order'", "value": 1}],
   "created_records": [{"what": "e.g. 'Order number'", "value": "the exact identifier shown, character for character", "context": "plain words, e.g. 'given after placing an order'"}]
 }
+'is_blank' = the loaded screen shows no content of its own: an empty page, or only the app's frame/menu around an empty area (a loading indicator is NOT blank).
 'created_records' lists ONLY identifiers the app has just generated for a record (a reference, confirmation, order or ticket number shown after creating something, or the number of a record listed for this user) — never values the user typed in, and never placeholder or example text. They are reused later as test data.
 If this is a screen listed under 'Screens already understood' (same purpose — only the \
 data, filled-in values or messages differ), reuse its EXACT name, view_kind and mode. \
@@ -151,11 +153,19 @@ Summary a client will read and correct. Reply with ONLY this JSON object:
   "key_tasks": [{"name": "e.g. Place an order", "why_it_matters": "plain sentence", "steps": ["short steps a user takes"]}],
   "rules_we_expect": [{"rule": "plain rule, e.g. 'An email address must contain @'", "source": "common sense | seen in the app | your notes", "confidence": "high | medium | low"}],
   "hidden_parts_suspected": [{"where": "screen name", "what": "what probably appears only sometimes", "why": "plain reason"}],
-  "questions_for_you": [{"question": "a short multiple-choice question whose answer would most change how we test", "options": ["...", "..."]}]
+  "questions_for_you": [{"screen": "the exact screen name from the list this is about", "question": "a short multiple-choice question", "changes": "one plain sentence: what you will do differently depending on the answer", "options": ["...", "..."]}]
 }
 Rules: base 'rules_we_expect' on common sense and industry norms, not just on what \
 the app happened to do — mark rules only seen in the app as 'seen in the app' with low \
-confidence. At most 5 questions, only important ones. Be specific to THIS app."""
+confidence. Be specific to THIS app.
+Questions: ask ONLY what changes where you go or what you do next, tied to a screen you \
+actually saw. Good: whether a risky action on a named screen (delete, deploy, activate, \
+send, import) is safe to press in this environment; a value a named screen needs that \
+you could not find (an existing record id, a valid code); how to get past a screen \
+that blocked you; whether a whole area should be left alone. Never ask about business \
+meaning, wording, currencies, policies or how things "should" work — you can check \
+those while testing. If no answer would change your next steps, return no questions. \
+At most 4."""
 )
 
 

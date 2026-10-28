@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 EXPLORER_REPLACES_DISCOVERY = os.environ.get("EXPLORER_REPLACES_DISCOVERY", "1") != "0"
 
 
+def discovery_task_queue() -> str:
+    """The worker that runs a new discovery — and its "Start discovery" login
+    pre-flight, so the check signs in exactly the way discovery will."""
+    return EXPLORER_TASK_QUEUE if EXPLORER_REPLACES_DISCOVERY else DISCOVERY_TASK_QUEUE
+
+
 async def discovery_workers_available() -> bool:
     """Whether a worker is polling the queue a new discovery run would use —
     checked by `create_application` before it writes anything, so an app is
@@ -39,7 +45,7 @@ async def discovery_workers_available() -> bool:
     a failed run (the Journeys failed banner + retry covers it). A fuller
     version would start the run and create the app in one compensating
     transaction."""
-    queue = EXPLORER_TASK_QUEUE if EXPLORER_REPLACES_DISCOVERY else DISCOVERY_TASK_QUEUE
+    queue = discovery_task_queue()
     try:
         client = await get_temporal_client()
         return await has_pollers(client, queue)

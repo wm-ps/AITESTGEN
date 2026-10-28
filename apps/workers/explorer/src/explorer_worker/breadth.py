@@ -28,7 +28,7 @@ from explorer_worker.sense import url_pattern
 from explorer_worker.session import Target, load_target, open_signed_in
 
 MAX_SCREENS_PER_ROLE = 40
-MAX_UNLINKED = 10
+MAX_UNLINKED = 40
 _BLOCKED = re.compile(
     r"(access denied|not authori[sz]ed|forbidden|no permission|don't have permission|"
     r"do not have permission|unauthori[sz]ed|\b401\b|\b403\b|not allowed)",
@@ -44,6 +44,11 @@ _ROUTE_PATTERNS = [
 _NOT_PAGES = re.compile(
     r"(\.(js|css|png|svg|json|ico|woff2?)$|/api/|/services/|/rest/|assets|static|node_modules)",
     re.IGNORECASE,
+)
+# Back-end service addresses the front-end calls ("/pricepoint-management/v4"):
+# not pages. Opened as a page they only show the app's not-found/denied screen.
+_SERVICE_PATH = re.compile(
+    r"(^|/)(v\d+|api)(/|$)|-(api|service|services|management|mgmt)(/|$)", re.IGNORECASE
 )
 
 
@@ -164,7 +169,7 @@ def routes_in_code(code: str) -> set[str]:
     for pattern in _ROUTE_PATTERNS:
         for match in pattern.findall(code):
             route = match if isinstance(match, str) else match[0]
-            if not _NOT_PAGES.search(route) and ":" not in route:
+            if ":" not in route and not (_NOT_PAGES.search(route) or _SERVICE_PATH.search(route)):
                 found.add(route)
     return found
 
@@ -190,7 +195,8 @@ async def _unlinked_pages(
     base = target.app_url.split("#")[0]
     known = {s.url_pattern for s in journal.screen_rows()}
     candidates = []
-    for route in sorted(routes):
+    # Page names ("UsersListView") before paths: the cap must not go on paths.
+    for route in sorted(routes, key=lambda r: (r.startswith("/"), r)):
         url = (
             f"{base.rstrip('/')}/#/{route.lstrip('#/')}"
             if hash_routing or not route.startswith("/")
@@ -222,9 +228,10 @@ async def _unlinked_pages(
             + (visit.inventory.get("body_text") or "")[:300]
         )
         landed = url_pattern(page.url)
-        if len(body.strip()) < 30 or landed in known:
-            continue  # blank, or the app redirected somewhere already known
+        if len(body.strip()) < 30 or landed in known or _BLOCKED.search(body):
+            continue  # blank, denied, or the app redirected somewhere already known
         await mind.take_in(visit, "Found in the app's code", action="Open directly")
+        known.add(landed)
         visited.append(url)
     return visited
 

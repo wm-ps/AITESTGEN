@@ -128,9 +128,15 @@ export function healthLabel(score: number | null): string {
 
 export function Lightbox({ shotId, caption, onClose }: { shotId: string; caption?: string; onClose: () => void }) {
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // Capture phase + stop: Escape closes only the picture, never the dialog
+    // or drawer it was opened from (their listeners run later, in bubbling).
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.stopPropagation()
+      onClose()
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
   }, [onClose])
   return (
     <div
