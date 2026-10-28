@@ -58,6 +58,7 @@ export type HomeApplicationRead = ApplicationRead & {
   last_discovery_started_at: string | null
   last_test_run_passed_count: number | null
   last_test_run_failed_count: number | null
+  last_test_run_flaky_count: number
   live_exploration_generating: boolean
   // A Journey whose scenario generation permanently failed (Temporal
   // retries exhausted) — see `applicationStage()`'s `scenariosGenerating`.
@@ -236,9 +237,12 @@ export type TestResultRead = {
   // the automatic heal after the test ran, or a manual "Retry".
   heal_in_progress?: boolean
   heal_kind?: 'automatic' | 'manual' | null
-  // This Scenario's recent outcomes disagree (both passed and failed). The
-  // Runs tab ranks Self-healed above Flaky when bucketing a result.
+  // This Scenario flip-flops pass<->fail across its recent runs. An overlay
+  // on Passed/Failed in the Runs tab, not a bucket of its own.
   is_flaky?: boolean
+  // The outcomes behind is_flaky, oldest to newest, true = passed (this run
+  // last). Only set when flaky.
+  flaky_history?: boolean[] | null
   // Plain-language failure for the "Summary" tab; `error_message` stays the
   // untouched "Raw error". Source "ai" = an LLM explained an error no rule
   // recognised (shown with an "Explained by AI" caption); null = not
@@ -407,6 +411,7 @@ export type LatestRunSummaryRead = {
   blocked_count: number
   duration_ms: number | null
   trigger: string
+  flaky_count: number
 }
 export type OverviewRead = {
   health: HealthRead

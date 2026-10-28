@@ -142,17 +142,17 @@ describe('RunsTab', () => {
     expect(retry).toBeEnabled()
   })
 
-  // Buckets are exclusive and ranked Self-healed > Flaky > Passed/Failed, so
-  // a healed result that is also flaky counts only as Self-healed, and the
-  // four tiles always add up to the finished results.
-  it('splits results into Passed / Self-healed / Flaky / Failed by priority', async () => {
+  // Passed / Self-healed / Failed use each result's own status and sum to the
+  // finished results. Flaky is an overlay count: a flaky result is still
+  // counted as Passed or Failed.
+  it('keeps Passed / Self-healed / Failed on raw status and counts Flaky separately', async () => {
     const base = { ...failedResult, error_message: null, heal_blocked_reason: null }
     stubRunDetail([
       { ...base, id: 'r1', scenario_name: 'Clean pass', status: 'passed' },
       { ...base, id: 'r2', scenario_name: 'Healed pass', status: 'passed', healed_test_asset_id: 'asset-2' },
-      { ...base, id: 'r3', scenario_name: 'Healed and flaky', status: 'passed', healed_test_asset_id: 'asset-3', is_flaky: true },
-      { ...base, id: 'r4', scenario_name: 'Flaky pass', status: 'passed', is_flaky: true },
-      { ...base, id: 'r5', scenario_name: 'Flaky fail', status: 'failed', is_flaky: true },
+      { ...base, id: 'r3', scenario_name: 'Healed again', status: 'passed', healed_test_asset_id: 'asset-3' },
+      { ...base, id: 'r4', scenario_name: 'Flaky pass', status: 'passed', is_flaky: true, flaky_history: [true, false, true] },
+      { ...base, id: 'r5', scenario_name: 'Flaky fail', status: 'failed', is_flaky: true, flaky_history: [false, true, false] },
       { ...base, id: 'r6', scenario_name: 'Plain fail', status: 'failed' },
       { ...base, id: 'r7', scenario_name: 'Timed out', status: 'timed_out' },
     ])
@@ -162,9 +162,29 @@ describe('RunsTab', () => {
     const tileValue = async (label: string) =>
       (await screen.findByText(label, { selector: 'div' })).nextElementSibling?.textContent
     await waitFor(async () => expect(await tileValue('Flaky')).toBe('2'))
-    expect(await tileValue('Passed')).toBe('1')
+    expect(await tileValue('Passed')).toBe('2')
     expect(await tileValue('Self-healed')).toBe('2')
-    expect(await tileValue('Failed')).toBe('2')
+    expect(await tileValue('Failed')).toBe('3')
+  })
+
+  it('explains a Flaky flag with the outcome trail and filters the list from the Flaky tile', async () => {
+    const base = { ...failedResult, error_message: null, heal_blocked_reason: null }
+    stubRunDetail([
+      { ...base, id: 'r1', scenario_name: 'Steady pass', status: 'passed' },
+      { ...base, id: 'r2', scenario_name: 'Wobbly pass', status: 'passed', is_flaky: true, flaky_history: [true, false, true] },
+    ])
+
+    render(<RunsTab applicationId="app-1" initialRunId="run-1" />)
+
+    const chip = await screen.findByText('Flaky', { selector: 'span' })
+    expect(chip).toHaveAttribute('title', expect.stringContaining('Pass → Fail → Pass'))
+    expect(chip).toHaveAttribute('title', expect.stringContaining('2 flips'))
+    expect(screen.getByText(/Steady pass/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { pressed: false, name: /flaky/i }))
+
+    await waitFor(() => expect(screen.queryByText(/Steady pass/)).not.toBeInTheDocument())
+    expect(screen.getByText(/Wobbly pass/)).toBeInTheDocument()
   })
 
   // The toolbar's Cancel run (Workspace) hands the cancelled run down — an
