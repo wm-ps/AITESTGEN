@@ -342,7 +342,7 @@ describe('ReviewScenarios', () => {
     expect(screen.queryByRole('progressbar')).toBeNull()
   })
 
-  it('shows "No scenarios yet" (not the generation loader) when discovery has not found any journeys', async () => {
+  it('shows "No scenarios yet" (not the generation loader) when exploration has not found any journeys', async () => {
     stubFetch([])
     render(<ReviewScenarios applicationId="app-1" onContinueToGenerate={() => {}} onGoToJourneys={() => {}} />)
 

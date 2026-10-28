@@ -30,11 +30,11 @@ export function ImportProgress({ applicationName }: { applicationName?: string }
       <GenerationLoader
         icon={Route}
         title="Mapping journeys…"
-        body={`Vantage is exploring the deployed URL and grouping discovered pages into journeys${applicationName ? ` in ${applicationName}` : ''}.`}
+        body={`Vantage is exploring the deployed URL and grouping explored pages into journeys${applicationName ? ` in ${applicationName}` : ''}.`}
         bullets={['Exploring pages', 'Grouping flows', 'Capturing screenshots']}
         footer={
           <p className="caption" style={{ margin: '10px 0 0', fontSize: 12, opacity: 0.7 }}>
-            Discovery runs in the background — this list updates automatically.
+            Exploration runs in the background — this list updates automatically.
           </p>
         }
       />

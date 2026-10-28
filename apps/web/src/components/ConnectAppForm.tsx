@@ -40,9 +40,9 @@ const fieldInputStyle: React.CSSProperties = {
 const CREDENTIAL_POLL_MS = 1000
 const CREDENTIAL_POLL_MAX_ATTEMPTS = 150
 const INVALID_CREDENTIALS_MESSAGE =
-  'The username or password is incorrect. Enter valid credentials and click Start discovery again.'
+  'The username or password is incorrect. Enter valid credentials and click Start exploration again.'
 const UNCERTAIN_CREDENTIALS_MESSAGE =
-  "We couldn't confirm these credentials. Click Start discovery to validate again."
+  "We couldn't confirm these credentials. Click Start exploration to validate again."
 
 // Anything that isn't a proved `valid` / `invalid` (request error, worker
 // unavailable, timeout) collapses to `uncertain` — discovery never starts on
@@ -97,7 +97,7 @@ export function ConnectAppForm({
   // the application — the submit button's label follows it so the user can
   // tell which one they're about to do.
   const [discoveryRequired, setDiscoveryRequired] = useState(application ? hasDiscovery(application) : true)
-  const submitLabel = discoveryRequired ? 'Start discovery' : 'Add application'
+  const submitLabel = discoveryRequired ? 'Start exploration' : 'Add application'
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   // Shown under the Username/Password fields — cleared on any edit to the
@@ -190,8 +190,8 @@ export function ConnectAppForm({
             {readOnly
               ? 'What was submitted when this application connected.'
               : discoveryRequired
-                ? 'Enter the deployed URL and sign-in credentials. Discovery starts immediately — journeys, scenarios and Playwright code follow automatically.'
-                : 'Enter the deployed URL and sign-in credentials. No discovery runs — add test cases yourself by writing them or recording them.'}
+                ? 'Enter the deployed URL and sign-in credentials. Exploration starts immediately — journeys, scenarios and Playwright code follow automatically.'
+                : 'Enter the deployed URL and sign-in credentials. No exploration runs — add test cases yourself by writing them or recording them.'}
           </div>
         </div>
 
@@ -357,7 +357,7 @@ export function ConnectAppForm({
                   {!requiresSignIn
                     ? 'Turn on if the application asks for a username and password.'
                     : discoveryRequired
-                      ? 'Credentials are stored encrypted and injected at discovery and run time only.'
+                      ? 'Credentials are stored encrypted and injected at exploration and run time only.'
                       : 'Credentials are stored encrypted and injected at run time only.'}
                 </div>
               </div>
@@ -428,7 +428,7 @@ export function ConnectAppForm({
               />
               <div>
                 <label htmlFor="connect-app-discovery" style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--fg-1)' }}>
-                  Autonomous discovery
+                  Autonomous exploration
                 </label>
                 <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
                   Crawl the application to map journeys and scenarios automatically. Uncheck to only add the application

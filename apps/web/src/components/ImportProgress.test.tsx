@@ -16,11 +16,11 @@ describe('ImportProgress', () => {
 
   it('names the Application in the body text when applicationName is given', () => {
     render(<ImportProgress applicationName="Claims Processing" />)
-    expect(screen.getByText(/grouping discovered pages into journeys in Claims Processing\./)).toBeTruthy()
+    expect(screen.getByText(/grouping explored pages into journeys in Claims Processing\./)).toBeTruthy()
   })
 
   it('omits the Application name from the body text when not given', () => {
     render(<ImportProgress />)
-    expect(screen.getByText(/grouping discovered pages into journeys\./)).toBeTruthy()
+    expect(screen.getByText(/grouping explored pages into journeys\./)).toBeTruthy()
   })
 })

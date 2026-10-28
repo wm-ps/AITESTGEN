@@ -26,7 +26,7 @@ const POLL_INTERVAL_MS = 15000
 // this app's own applicationStage() outcomes; Execution is the one active
 // state that stage doesn't carry (a run can still be going after the suite
 // is otherwise complete), so it's checked independently and wins ties.
-const PIPE_STAGE_LABELS = ['Discovery', 'Scenarios', 'Test cases', 'Execution'] as const
+const PIPE_STAGE_LABELS = ['Exploration', 'Scenarios', 'Test cases', 'Execution'] as const
 
 function activePipelineIndex(app: HomeApplicationRead): number | null {
   const { isRunning, scenariosGenerating, suiteGenerating, testRunRunning } = applicationStage(app)
@@ -154,7 +154,7 @@ export function Overview({
       <div>
         <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Overview</h1>
         <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 4 }}>
-          Discovers your application from a deployed URL and generates its Playwright test suite.
+          Explores your application from a deployed URL and generates its Playwright test suite.
         </div>
       </div>
 
@@ -215,7 +215,7 @@ export function Overview({
                 : stageIndex === 1
                   ? `${app.scenario_journeys_covered}/${app.journey_count} journeys`
                   : stageIndex === 0
-                    ? 'Discovery in progress'
+                    ? 'Exploration in progress'
                     : stageIndex === 2
                       ? 'Generating test cases'
                       : 'Run in progress'
@@ -489,7 +489,7 @@ export function Overview({
               {
                 id: 'discovery',
                 icon: faCompass,
-                label: 'Last discovery',
+                label: 'Last exploration',
                 value: lastDiscoveryAt == null ? '—' : relativeTime(lastDiscoveryAt),
                 sub: `${appsDiscoveredUnderAWeek} of ${apps.length} apps under 7 days`,
               },

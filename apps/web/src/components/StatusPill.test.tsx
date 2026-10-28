@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { StatusPill } from './StatusPill'
 
 describe('StatusPill', () => {
-  it('shows Discovery in Progress with bouncing dots in signal color', () => {
+  it('shows Exploration in Progress with bouncing dots in signal color', () => {
     render(<StatusPill status="running" />)
-    const pill = screen.getByText('Discovery in Progress')
+    const pill = screen.getByText('Exploration in Progress')
     expect((pill as HTMLElement).style.color).toBe('var(--accent)')
     const dots = document.querySelector('[aria-hidden="true"]') as HTMLElement
     expect(dots.children).toHaveLength(3)

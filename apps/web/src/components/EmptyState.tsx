@@ -250,7 +250,7 @@ export function JourneysIllustration() {
     <svg width={64} height={64} viewBox="0 0 64 64" fill="none" aria-hidden="true">
       {/* A map pin (the journey's start) with the mapped route beyond it
           gone — dashed, not drawn — and its waypoints left hollow: this is
-          "removed", not "not discovered yet". */}
+          "removed", not "not explored yet". */}
       <path
         d="M12 26c-4.5 0-8 3.4-8 7.8 0 5.6 8 14.2 8 14.2s8-8.6 8-14.2c0-4.4-3.5-7.8-8-7.8Z"
         fill="var(--accent)"

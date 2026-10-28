@@ -70,7 +70,7 @@ function RecordIcon() {
 // journeys/scenarios/record aren't part of Workspace's own tab set (they
 // predate it, or have no backend yet) — merged with Workspace's static tab
 // list below, then reordered to the prototype's sequence.
-const JOURNEYS_TAB = { key: 'journeys', label: 'Journeys', heading: 'Discover Journeys', icon: JourneysIcon }
+const JOURNEYS_TAB = { key: 'journeys', label: 'Journeys', heading: 'Explore Journeys', icon: JourneysIcon }
 const SCENARIOS_TAB = { key: 'scenarios', label: 'Scenarios', heading: 'Review Scenarios', icon: ScenariosIcon }
 const RECORD_TAB = { key: 'record', label: 'Record and play', heading: 'Record and play', icon: RecordIcon }
 // Vantage Explorer (docs/vantage-explorer/PLAN.md) — the discovery module.

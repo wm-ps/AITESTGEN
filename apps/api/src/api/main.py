@@ -1366,7 +1366,7 @@ def _require_crawler_discovery(session: Session, application: Application) -> No
     ).first() is not None:
         raise HTTPException(
             status_code=409,
-            detail="Explorer discovers this application: pause or resume it from the Explorer tab.",
+            detail="Explorer explores this application: pause or resume it from the Explorer tab.",
         )
 
 
@@ -1382,7 +1382,7 @@ async def pause_discovery(
     _require_crawler_discovery(session, application)
     discovery_run = _latest_discovery_run(session, application.id)
     if discovery_run is None or discovery_run.status != "running":
-        raise HTTPException(status_code=409, detail="discovery run is not running")
+        raise HTTPException(status_code=409, detail="exploration run is not running")
     discovery_run = await pause_discovery_run(session, discovery_run)
     return _to_application_read(session, application, discovery_run)
 
@@ -1646,7 +1646,7 @@ async def delete_application(
     application = _get_org_application(session, organization_id, external_id)
     discovery_run = _latest_discovery_run(session, application.id)
     if discovery_run is not None and discovery_run.status == "running":
-        raise HTTPException(status_code=409, detail="discovery run is still in progress")
+        raise HTTPException(status_code=409, detail="exploration run is still in progress")
     application.deleted_at = datetime.now(UTC)
     session.add(application)
     record_activity(
@@ -1700,7 +1700,7 @@ async def resume_discovery(
     _require_crawler_discovery(session, application)
     discovery_run = _latest_discovery_run(session, application.id)
     if discovery_run is None or discovery_run.status != "paused":
-        raise HTTPException(status_code=409, detail="discovery run is not paused")
+        raise HTTPException(status_code=409, detail="exploration run is not paused")
     discovery_run = await resume_discovery_run(session, application)
     return _to_application_read(session, application, discovery_run)
 
@@ -1726,7 +1726,7 @@ def list_captures(
         or application is None
         or application.organization_id != organization_id
     ):
-        raise HTTPException(status_code=404, detail="discovery run not found")
+        raise HTTPException(status_code=404, detail="exploration run not found")
 
     # There is no single "capture" table (Story 2.2 rework, no generic
     # Evidence) — the live feed is a union across the typed capture tables,
@@ -1796,7 +1796,7 @@ def get_discovery_report(
         or application is None
         or application.organization_id != organization_id
     ):
-        raise HTTPException(status_code=404, detail="discovery run not found")
+        raise HTTPException(status_code=404, detail="exploration run not found")
     return build_coverage_report(session, discovery_run)
 
 

@@ -135,7 +135,7 @@ describe('App', () => {
     // Start discovery is gated on a successful Test connection (ConnectAppForm).
     fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
     await screen.findByText('URL is reachable.')
-    fireEvent.click(screen.getByRole('button', { name: 'Start discovery' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Start exploration' }))
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Journeys' })).toBeTruthy()
@@ -152,7 +152,7 @@ describe('App', () => {
     expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.png')
   })
 
-  it('adds an application without discovery, landing on Test cases with no Journeys/Scenarios tabs', async () => {
+  it('adds an application without exploration, landing on Test cases with no Journeys/Scenarios tabs', async () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       const path = String(url)
       if (path.endsWith('/auth/me')) {
@@ -204,7 +204,7 @@ describe('App', () => {
     })
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'qa-password' } })
-    fireEvent.click(screen.getByLabelText('Autonomous discovery'))
+    fireEvent.click(screen.getByLabelText('Autonomous exploration'))
     fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
     await screen.findByText('URL is reachable.')
     // The topbar CTA shares this name — the form's own submit is the one to click.
