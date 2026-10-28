@@ -30,6 +30,7 @@ import uuid
 from dataclasses import dataclass
 
 from domain import Application, DiscoveryRun, Journey, Scenario, TestAsset, TestSuite
+from domain.recorded_test_data import extract_recorded_test_data
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
@@ -171,7 +172,9 @@ def save_recording_sync(
             name=name,
             steps=steps,
             expected_result="",
-            test_data=[],
+            # The typed values (passwords excluded) as editable fields —
+            # Edit Test Data swaps them back into `code` by order, no AI.
+            test_data=extract_recorded_test_data(code),
             generation_run_id=journey.attempt,
             test_case_number=test_case_number,
             current=True,

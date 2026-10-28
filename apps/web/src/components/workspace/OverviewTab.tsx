@@ -23,7 +23,17 @@ const RecordIcon = faIcon(faCircleDot)
 
 // Prototype's appStats tile recipe (Vantage v2 mockup, isAppHome.appStats) —
 // same label/value/sub tile used un-iconed on the Global overview page.
-function StatTile({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
+function StatTile({
+  label,
+  value,
+  sub,
+  valueColor = 'var(--fg)',
+}: {
+  label: string
+  value: string | number
+  sub?: string
+  valueColor?: string
+}) {
   return (
     <div
       style={{
@@ -35,7 +45,7 @@ function StatTile({ label, value, sub }: { label: string; value: string | number
       }}
     >
       <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>{label}</div>
-      <div style={{ fontSize: 28, lineHeight: '32px', color: 'var(--fg)', fontWeight: 600, letterSpacing: '-0.02em', marginTop: 8 }}>{value}</div>
+      <div style={{ fontSize: 28, lineHeight: '32px', color: valueColor, fontWeight: 600, letterSpacing: '-0.02em', marginTop: 8 }}>{value}</div>
       {sub && <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 5 }}>{sub}</div>}
     </div>
   )
@@ -315,6 +325,7 @@ export function OverviewTab({
           sub={`Latest run · ${formatDuration(overview.latest_run.duration_ms)}`}
         />
         <StatTile label="Open failures" value={overview.failed} sub={`${blocked_count} skipped`} />
+        <StatTile label="Flaky" value={overview.latest_run.flaky_count} sub="In the latest run" />
       </div>
 
       <div

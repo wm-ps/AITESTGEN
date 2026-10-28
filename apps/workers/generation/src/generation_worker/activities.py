@@ -41,6 +41,7 @@ from domain import (
     TestSuite,
     ValidationRule,
 )
+from domain.test_asset import supersede_test_asset  # re-exported: heal imports it from here
 from safety_classifier import classify_scenario_steps
 from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
@@ -1153,6 +1154,9 @@ async def regenerate_test_asset_activity(input: RegenerateTestAssetActivityInput
     the current TestAsset is left completely untouched. Callers must treat
     "regeneration failed" as "the previous, working test is still current",
     never as data loss.
+
+    A recorded test never gets here: the API saves it inline with
+    `domain.recorded_test_data.apply_recorded_test_data`, no AI.
     """
     (
         scenario,
@@ -1625,60 +1629,6 @@ def _persist_test_asset_sync(
         session.commit()
         session.refresh(test_asset)
         return str(test_asset.external_id)
-
-
-def supersede_test_asset(
-    session: Session,
-    prior: TestAsset,
-    *,
-    code: str,
-    requires_auth: bool,
-    warnings: list[str],
-    status: str,
-    primary_page_id: uuid.UUID | None,
-) -> TestAsset:
-    """Flips `prior.current` off and inserts a new `current=True` TestAsset
-    for the same scenario/suite — the in-place "replace the current asset"
-    operation `_persist_test_asset_sync` above never needed (it only ever
-    inserts a brand-new current row; whole-suite supersede is handled
-    separately by `ensure_test_suite_activity`, on a *new* TestSuite, not by
-    flipping an existing row). HealTestActivity (execution worker) was the
-    first caller that needs this, every time a healed candidate passes
-    typecheck — not only when it also passes execution — so the "latest
-    code" for the next heal attempt is simply whatever TestAsset is
-    currently `current` for this scenario, with no separate state to thread
-    through the heal loop.
-
-    `RegenerateTestAssetActivity` (Edit Test Data) is a second caller
-    alongside HealTestActivity, and the two can now genuinely race — a heal
-    triggered by an in-flight run, at the same moment as a manual
-    data-driven regenerate for the same scenario. `prior` is re-fetched
-    under a row lock (`with_for_update`) and re-checked immediately before
-    being flipped, so the loser of a real race aborts cleanly (raises)
-    instead of both callers each inserting their own `current=True` row for
-    the same scenario."""
-    locked_prior = session.exec(
-        select(TestAsset).where(TestAsset.id == prior.id).with_for_update()
-    ).one()
-    if not locked_prior.current:
-        raise RuntimeError(
-            f"TestAsset {locked_prior.id} was already superseded by another caller"
-        )
-    locked_prior.current = False
-    session.add(locked_prior)
-    new_asset = TestAsset(
-        scenario_id=locked_prior.scenario_id,
-        test_suite_id=locked_prior.test_suite_id,
-        code=code,
-        current=True,
-        requires_auth=requires_auth,
-        warnings=warnings,
-        status=status,
-        primary_page_id=primary_page_id,
-    )
-    session.add(new_asset)
-    session.flush()
-    return new_asset
 
 
 def _current_test_asset_sync(scenario_external_id: str) -> tuple[uuid.UUID, str]:
