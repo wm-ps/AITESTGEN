@@ -630,12 +630,23 @@ async def build_and_prove(
     # ponytail: a screen that IS the sign-in landing page still can't be
     # proven this way; reloading it isn't an act.
     try:
+        entry_text, entry_url = "", ""
         if signed_out:
             await eyes.goto(start_url)
             lead_in = None
         else:
             await eyes.goto(target.app_url)
             eyes.remember_entry()
+            # What showed before the test did anything: the entry point, taken
+            # before skipping ahead. Reaching the screen is the test's own act,
+            # so its content can prove a "this screen shows X" check (the
+            # broken-on-purpose run, without the last click in, still has to
+            # make that proof vanish).
+            assert eyes.page is not None
+            entry_text = await eyes.page.evaluate(
+                "() => document.body ? document.body.innerText : ''"
+            )
+            entry_url = eyes.page.url
             lead_in = await fast_forward(eyes, journal, run_id, start_screen)
         # Unless the scenario is about resuming, a saved-progress prompt left
         # by an earlier run is answered with start over: the recorded route
@@ -679,10 +690,7 @@ async def build_and_prove(
                 # sending the visitor to sign in is the very thing it checks).
                 start_text, start_url_now = "", ""
             else:
-                start_text = await eyes.page.evaluate(
-                    "() => document.body ? document.body.innerText : ''"
-                )
-                start_url_now = eyes.page.url
+                start_text, start_url_now = entry_text, entry_url
             eyes.mark_calls()  # an API proof counts only what the test itself caused
             mind = QuietMind(journal, target.notes, heartbeat)
             if await ensure_scope(run_id):
