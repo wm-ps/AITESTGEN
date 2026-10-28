@@ -130,6 +130,7 @@ async def pursue(
     lead_in: list[dict[str, str]] | None = None,
     stay_signed_out: bool = False,
     obey_goal: bool = True,
+    approved_presses: set[str] | None = None,
 ) -> Pursuit:
     """`non_production` lets a mission press final Save/Submit/Create so it
     can make its own test data (PLAN.md Step 5); actions that need a human's
@@ -369,8 +370,9 @@ async def pursue(
             result.outcome = f"Already pressed “{advance}” once; not pressing it again"
             journal.event("thought", "Not sending twice", result.outcome)
             break
-        approved = False
-        if ask is not None and (
+        # A button you already said "Yes, press it" to while Explorer explored.
+        approved = pre_approved(str(advance), approved_presses or set())
+        if not approved and ask is not None and (
             needs_ok or (is_final and not may_commit(f"{advance} ({goal})", non_production))
         ):
             answer = await ask(
@@ -438,6 +440,12 @@ async def pursue(
     if not result.outcome:
         result.outcome = f"Stopped after {result.steps} steps on {step_name}"
     return result
+
+
+def pre_approved(label: str, approved: set[str]) -> bool:
+    """Did the user already approve pressing this button (a risk question
+    answered "Yes, press it")? Nothing approved: never."""
+    return bool(approved) and _same_button(label, approved)
 
 
 def _same_button(label: str, pressed: set[str]) -> bool:

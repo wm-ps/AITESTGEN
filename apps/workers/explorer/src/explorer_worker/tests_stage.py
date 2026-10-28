@@ -27,6 +27,7 @@ from explorer_core import (
     TEST_KINDS,
     ExplorerHealthIssue,
     ExplorerMission,
+    ExplorerQuestion,
     ExplorerRecording,
     ExplorerRun,
     ExplorerScreen,
@@ -178,6 +179,29 @@ def reached_screen(screens: list[ExplorerScreen], name: str | None, visited: set
     return any(pattern in visited for pattern in own)
 
 
+_RISK_QUESTION = re.compile(r"May I press “(.+?)”")
+
+
+def approved_labels(answers: list[tuple[str, str | None]]) -> set[str]:
+    """(risk question, answer) -> the buttons the user said "Yes, press it" to."""
+    labels: set[str] = set()
+    for question, answer in answers:
+        found = _RISK_QUESTION.search(question or "")
+        if found and str(answer or "").strip().lower().startswith("yes"):
+            labels.add(found.group(1).strip())
+    return labels
+
+
+def approved_presses(run_id: uuid.UUID) -> set[str]:
+    with Session(engine) as session:
+        rows = session.exec(
+            select(ExplorerQuestion.question, ExplorerQuestion.answer).where(
+                ExplorerQuestion.run_id == run_id, ExplorerQuestion.kind == "risk"
+            )
+        ).all()
+    return approved_labels([(q, a if isinstance(a, str) else None) for q, a in rows])
+
+
 def goal_fits_by_address(screens: list[ExplorerScreen]) -> dict[str, str]:
     """Address pattern -> that screen's place against the run's Goal, for the
     addresses that show exactly one screen (like `route_screens`)."""
@@ -269,6 +293,9 @@ async def plan_tests(run_id: uuid.UUID) -> int:
     gate = asyncio.Semaphore(4)
     target = load_target(run_id)
     may_save = target.non_production
+    # Buttons you said "Yes, press it" to while Explorer explored: on a test
+    # environment, scenarios may plan and press them too.
+    approved = sorted(approved_presses(run_id)) if may_save else []
 
     async def plan_part(index: int, only: list[str]) -> list[dict[str, Any]]:
         async with gate:
@@ -280,6 +307,7 @@ async def plan_tests(run_id: uuid.UUID) -> int:
                 bugs,
                 notes,
                 may_save=may_save,
+                approved=approved,
                 only=only,
                 # An app with no login gets no sign-in scenarios.
                 sign_in=index == 0 and target.requires_login,
@@ -682,6 +710,7 @@ async def build_and_prove(
                 # Lets "open its address directly" tests do exactly that.
                 known_screens={},  # never jump to a screen by its address
                 stay_signed_out=signed_out,
+                approved_presses=approved_presses(run_id) if target.non_production else set(),
             )
             assert eyes.page is not None
             final = await eyes.look(eyes.page.url, None, 0)

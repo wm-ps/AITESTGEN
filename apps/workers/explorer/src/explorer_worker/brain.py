@@ -569,6 +569,7 @@ async def plan_tests(
     notes: str | None,
     *,
     may_save: bool = False,
+    approved: list[str] | None = None,
     only: list[str] | None = None,
     sign_in: bool = True,
 ) -> list[dict[str, Any]]:
@@ -592,6 +593,13 @@ async def plan_tests(
         "deletes or changes a password (those always wait for a person). Do not plan tests "
         "that need such a press, except validation tests where the app rejects the input "
         "before anything is saved.\n"
+        + (
+            "Exception — the user approved pressing these buttons on this test environment, so "
+            "plan tests that press them, including the task completed end to end with its "
+            f"result checked: {json.dumps(approved, ensure_ascii=False)}\n"
+            if approved
+            else ""
+        )
         + f"Confirmed App Summary: {json.dumps(brief, ensure_ascii=False)[:20000]}\n"
         f"Known screens: {json.dumps(screens, ensure_ascii=False)[:40000]}\n"
         f"Ways between screens: {json.dumps(links, ensure_ascii=False)[:8000]}\n"
