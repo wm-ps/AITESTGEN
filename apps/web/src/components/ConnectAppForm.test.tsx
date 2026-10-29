@@ -70,7 +70,7 @@ describe('ConnectAppForm', () => {
     expect(body.password).toBe('qa-password')
   })
 
-  it('defaults Autonomous exploration to checked and sends discovery_required true', async () => {
+  it('defaults Explore autonomously to checked and sends discovery_required true', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
       .mockResolvedValueOnce(CHECK_STARTED)
@@ -79,7 +79,7 @@ describe('ConnectAppForm', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
-    expect((screen.getByLabelText('Autonomous exploration') as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByLabelText('Explore autonomously') as HTMLInputElement).checked).toBe(true)
     expect(screen.queryByRole('button', { name: /Add application/ })).toBeNull()
 
     fillCommonFields()
@@ -96,7 +96,7 @@ describe('ConnectAppForm', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
-    fireEvent.click(screen.getByLabelText('Autonomous exploration'))
+    fireEvent.click(screen.getByLabelText('Explore autonomously'))
     expect(screen.queryByRole('button', { name: /^Start$/ })).toBeNull()
 
     fillCommonFields()
@@ -113,7 +113,7 @@ describe('ConnectAppForm', () => {
     const onConnected = vi.fn()
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
-    fireEvent.click(screen.getByLabelText('Autonomous exploration'))
+    fireEvent.click(screen.getByLabelText('Explore autonomously'))
     fillCommonFields()
     fireEvent.click(screen.getByRole('button', { name: /Add application/ }))
 
@@ -148,7 +148,7 @@ describe('ConnectAppForm', () => {
     expect(body.password).toBeUndefined()
   })
 
-  it('does not show the workspace-defaults note under Autonomous exploration', () => {
+  it('does not show the workspace-defaults note under Explore autonomously', () => {
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     expect(screen.queryByText(/workspace defaults/)).toBeNull()
@@ -194,7 +194,7 @@ describe('ConnectAppForm', () => {
     const onConnected = vi.fn()
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
-    fireEvent.click(screen.getByLabelText('Autonomous exploration'))
+    fireEvent.click(screen.getByLabelText('Explore autonomously'))
     fillCommonFields()
     fireEvent.click(screen.getByRole('button', { name: /Add application/ }))
 
@@ -210,7 +210,7 @@ describe('ConnectAppForm', () => {
     const onConnected = vi.fn()
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
-    fireEvent.click(screen.getByLabelText('Autonomous exploration'))
+    fireEvent.click(screen.getByLabelText('Explore autonomously'))
     fillCommonFields()
     await passConnectionTest()
     // Editing the URL after testing it invalidates that test — the field's
@@ -232,7 +232,7 @@ describe('ConnectAppForm', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
-    fireEvent.click(screen.getByLabelText('Autonomous exploration'))
+    fireEvent.click(screen.getByLabelText('Explore autonomously'))
     fireEvent.change(screen.getByLabelText('Deployed URL'), { target: { value: 'https://staging.example.com' } })
     fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
 
@@ -352,7 +352,7 @@ describe('ConnectAppForm', () => {
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     expect(screen.queryByRole('button', { name: 'Test connection' })).toBeNull()
-    fireEvent.click(screen.getByLabelText('Autonomous exploration'))
+    fireEvent.click(screen.getByLabelText('Explore autonomously'))
     expect(screen.getByRole('button', { name: 'Test connection' })).toBeTruthy()
   })
 

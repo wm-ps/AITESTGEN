@@ -461,7 +461,7 @@ export function ConnectAppForm({
               />
               <div>
                 <label htmlFor="connect-app-discovery" style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--fg-1)' }}>
-                  Autonomous exploration
+                  Explore autonomously
                 </label>
                 <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
                   Explore the application to map journeys and scenarios automatically. Uncheck to only add the application
