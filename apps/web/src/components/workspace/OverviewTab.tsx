@@ -301,6 +301,8 @@ export function OverviewTab({
   // this stat tile and "Last run pass rate" are explicitly run-scoped, so
   // they must agree with the bars they sit next to instead of quietly
   // pulling from a different metric with a different denominator.
+  // Shown as a whole percent, as on the Runs page and the bars below — one
+  // run read "94.7%" here and "95%" there.
   const runPassRate = total > 0 ? passed_count / total : null
   const trend = overview.trend
   const deltaPts =
@@ -321,7 +323,7 @@ export function OverviewTab({
         <StatTile label="Test cases" value={overview.total_tests} sub={`${overview.not_run} not yet run`} />
         <StatTile
           label="Pass rate"
-          value={runPassRate == null ? '—' : `${(runPassRate * 100).toFixed(1)}%`}
+          value={runPassRate == null ? '—' : `${Math.round(runPassRate * 100)}%`}
           sub={`Latest run · ${formatDuration(overview.latest_run.duration_ms)}`}
         />
         <StatTile label="Open failures" value={overview.failed} sub={`${blocked_count} skipped`} />
@@ -358,7 +360,7 @@ export function OverviewTab({
           </div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, flexWrap: 'wrap' }}>
             <div style={{ fontSize: 40, lineHeight: '42px', fontWeight: 600, letterSpacing: '-0.03em', color: 'var(--fg)' }}>
-              {runPassRate == null ? '—' : `${(runPassRate * 100).toFixed(1)}%`}
+              {runPassRate == null ? '—' : `${Math.round(runPassRate * 100)}%`}
             </div>
             {deltaPts != null && (
               <div style={{ fontSize: 11.5, fontWeight: 500, color: deltaPts >= 0 ? 'var(--ok)' : 'var(--bad)' }}>

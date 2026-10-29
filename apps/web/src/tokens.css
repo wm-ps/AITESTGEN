@@ -43,6 +43,8 @@
   --flaky: #7c3aed;
   --flaky-strong: #6d28d9;
   --flaky-wash: #f5f3ff;
+  /* Self-healed: passed, but only after self-healing fixed the test. */
+  --healed: #fb923c;
   --happy-wash: #eff6ff;
   --happy-strong: #1d4ed8;
 
