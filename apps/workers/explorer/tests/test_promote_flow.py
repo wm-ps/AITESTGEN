@@ -5,7 +5,12 @@ import uuid
 
 from domain import Component, ComponentLocator, Form, FormField, Page
 from explorer_core import ExplorerScreen
-from explorer_worker.promote import _persist_screen_model, _proof_sentence, captured_flow
+from explorer_worker.promote import (
+    _persist_screen_model,
+    _proof_sentence,
+    _test_data,
+    captured_flow,
+)
 
 
 def test_recorded_actions_become_generator_steps() -> None:
@@ -132,3 +137,19 @@ def test_captured_flow_uses_the_recorded_locator() -> None:
     assert flow[1]["value"] == 'get_by_placeholder("Enter full name")'
     assert flow[2]["value"] == 'get_by_label("Rear", exact=True)'
     assert flow[3]["value"] == 'get_by_role("button", name="Continue")'
+
+
+def test_saved_credential_fills_are_marked_login_test_data() -> None:
+    data = _test_data(
+        [
+            {"do": "fill", "field": "Username", "value": "{{username}}"},
+            {"do": "fill", "field": "Password", "value": "{{password}}"},
+            {"do": "click", "target": "Sign in"},
+            {"do": "fill", "field": "Search", "value": "invoices"},
+        ]
+    )
+    assert [(f["name"], f.get("login")) for f in data] == [
+        ("Username", True),
+        ("Password", True),
+        ("Search", None),
+    ]

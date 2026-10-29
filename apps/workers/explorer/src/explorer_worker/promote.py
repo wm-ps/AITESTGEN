@@ -37,6 +37,7 @@ from domain import (
     TestAsset,
     TestSuite,
 )
+from domain.login_fields import is_saved_credential_value
 from explorer_core import ExplorerRun, ExplorerScreen, ExplorerShot, ExplorerTestCase
 from object_store import ObjectStore
 from sqlalchemy import update
@@ -556,8 +557,15 @@ def _proof_sentence(check: dict[str, Any] | None) -> str:
 
 
 def _test_data(script: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # A fill of the saved username/password is the login, not test data:
+    # marked so it's never shown to the user or the AI (`domain.login_fields`).
     return [
-        {"name": str(step.get("field")), "mandatory": True, "value": str(step.get("value"))}
+        {
+            "name": str(step.get("field")),
+            "mandatory": True,
+            "value": str(step.get("value")),
+            **({"login": True} if is_saved_credential_value(step.get("value")) else {}),
+        }
         for step in script
         if step.get("do") == "fill"
     ][:20]

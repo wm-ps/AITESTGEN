@@ -11,6 +11,10 @@ across lines) doesn't break the mapping; names are display-only. Password
 calls are never editable and never part of that order, so skipping one can
 never shift which literal a username or later field writes to.
 
+The account's own login username/email stays in that order (so the
+mapping never shifts) but is marked `"login": True` — see
+`domain.login_fields`; the API never shows or accepts it.
+
 ponytail: a regex over Playwright source, the same Codegen-vocabulary
 approach `recording_worker.steps_parser` takes, not a TypeScript AST — a
 hand-edited or unusual call (a value built from variables, a template
@@ -27,6 +31,7 @@ from dataclasses import dataclass
 
 from sqlmodel import Session, select
 
+from domain.login_fields import is_login_identity_name, is_new_or_confirm, is_password_name
 from domain.scenario import Scenario
 from domain.test_asset import TestAsset, supersede_test_asset
 
@@ -48,8 +53,9 @@ _CSS_LOCATOR_RE = re.compile(
 # bare identifier the call is made on (`amountInput` in `amountInput.fill`).
 _RECEIVER_RE = re.compile(r"(?P<name>[A-Za-z_$][\w$]*)\s*$")
 _IDENT_RE = re.compile(r"[A-Za-z_$][\w$]*")
-# "spinbutton" must not read as a PIN field, so `pin` is whole-word only.
-_PASSWORD_RE = re.compile(r"passw(?:or)?d|passcode|\bpin\b", re.IGNORECASE)
+# Ends the form a typed value belongs to: a click (submit, "Next"), a page
+# load, or Enter pressed into a field.
+_FORM_BREAK_RE = re.compile(r"\.\s*(?:click|dblclick)\(|\.goto\(|\.press\(\s*['\"]Enter")
 _STATEMENT_BREAK_RE = re.compile(r";|=>\s*\{")
 _MAX_VARIABLE_HOPS = 3
 
@@ -152,7 +158,7 @@ def _describe_call(code: str, statement: str, statement_start: int) -> tuple[str
             names = [n for n in names if _variable_definition(code, n, statement_start)]
         if description is None:
             description = _humanize(variable)
-    is_password = any(_PASSWORD_RE.search(text) for text in password_evidence)
+    is_password = any(is_password_name(text) for text in password_evidence)
     return description, is_password
 
 
@@ -183,18 +189,66 @@ def _editable_inputs(code: str) -> list[RecordedInput]:
     return [i for i in find_recorded_inputs(code) if not i.is_password]
 
 
+def _forms(code: str, inputs: list[RecordedInput]) -> list[list[RecordedInput]]:
+    """Typed calls grouped by form: consecutive calls with no click, page
+    load, or Enter between them."""
+    forms: list[list[RecordedInput]] = []
+    for recorded in inputs:
+        if forms and not _FORM_BREAK_RE.search(code, forms[-1][-1].end, recorded.start):
+            forms[-1].append(recorded)
+        else:
+            forms.append([recorded])
+    return forms
+
+
+def _is_identity(recorded: RecordedInput) -> bool:
+    return not recorded.is_password and is_login_identity_name(recorded.description or "")
+
+
+def _login_inputs(code: str, inputs: list[RecordedInput]) -> set[int]:
+    """Spans (`start`) of the account's own username/email: the identity
+    fields on the form the login password is typed into, or — for a
+    multi-step login whose password form holds nothing else — on the form
+    just before it.
+
+    ponytail: inferred from the code alone (Codegen records no "this was
+    the login" marker), so it's deliberately strict: a form with any other
+    kind of field (signup's "First name") or a new/confirm password (signup,
+    reset) is never a login form, and a login form with an unusual extra
+    field (a company code) leaves its username editable. A fuller version
+    would have the recorder mark the login steps while they're recorded."""
+    forms = _forms(code, inputs)
+    marked: set[int] = set()
+    for index, form in enumerate(forms):
+        passwords = [i for i in form if i.is_password]
+        if not passwords or any(is_new_or_confirm(i.description or "") for i in passwords):
+            continue
+        others = [i for i in form if not i.is_password]
+        if others:
+            if all(_is_identity(i) for i in others):
+                marked.update(i.start for i in others)
+        elif index > 0 and all(_is_identity(i) for i in forms[index - 1]):
+            marked.update(i.start for i in forms[index - 1])
+    return marked
+
+
 def extract_recorded_test_data(code: str) -> list[dict]:
     """`Scenario.test_data` fields for a recording — same `{name,
     mandatory, value}` shape generation writes, one per editable typed
-    call, in code order. Repeated names (Codegen records a correction as a
-    second fill) become `Name (2)`."""
+    call, in code order, the login username/email marked `"login": True`.
+    Repeated names (Codegen records a correction as a second fill) become
+    `Name (2)`."""
+    login = _login_inputs(code, find_recorded_inputs(code))
     fields: list[dict] = []
     seen: dict[str, int] = {}
     for position, recorded in enumerate(_editable_inputs(code), start=1):
         base = recorded.description or f"Field {position}"
         seen[base] = seen.get(base, 0) + 1
         name = base if seen[base] == 1 else f"{base} ({seen[base]})"
-        fields.append({"name": name, "mandatory": recorded.value != "", "value": recorded.value})
+        field = {"name": name, "mandatory": recorded.value != "", "value": recorded.value}
+        if recorded.start in login:
+            field["login"] = True
+        fields.append(field)
     return fields
 
 

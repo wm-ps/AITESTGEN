@@ -30,6 +30,7 @@ from typing import Any
 
 import httpx
 from domain import Journey, Page, Scenario
+from domain.login_fields import visible_fields
 
 from ai_provider.journey_candidate import JourneyCandidate, JourneyCandidateStep
 from ai_provider.live_exploration_decision import LiveExplorationDecision
@@ -972,11 +973,16 @@ def _describe_test_data(
         tag = " (number)" if field_input_types.get(f["name"]) == "number" else ""
         return f"- {f['name']}{tag}: {f.get('value')}"
 
-    return "\n".join(_line(f) for f in scenario.test_data) or "(none)"
+    # Login fields never reach the AI: the spec signs in through
+    # CREDENTIALS/fillCredentials (see the Credential rule above).
+    return "\n".join(_line(f) for f in visible_fields(scenario.test_data)) or "(none)"
 
 
 def _describe_changed_test_data(changed_test_data: list[dict]) -> str:
-    return "\n".join(f"- {f['name']}: {f.get('value')}" for f in changed_test_data) or "(none)"
+    return (
+        "\n".join(f"- {f['name']}: {f.get('value')}" for f in visible_fields(changed_test_data))
+        or "(none)"
+    )
 
 
 def _describe_known_pages(known_pages: list[dict[str, str]] | None) -> str:

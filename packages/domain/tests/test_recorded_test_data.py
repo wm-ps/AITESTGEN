@@ -54,7 +54,7 @@ def _password_literal(code: str) -> str:
 class TestExtract:
     def test_fields_in_code_order_with_deduped_names_and_no_password(self) -> None:
         assert extract_recorded_test_data(PUBLIC_LOGIN) == [
-            {"name": "User Name", "mandatory": True, "value": "someone"},
+            {"name": "User Name", "mandatory": True, "value": "someone", "login": True},
             {"name": "Amount (USD)", "mandatory": True, "value": "0.01"},
             {"name": "Amount (USD) (2)", "mandatory": True, "value": "11111"},
         ]
@@ -190,6 +190,88 @@ class TestSwap:
         )
         with pytest.raises(RecordedFieldsChanged):
             swap_recorded_values(healed_away, fields)
+
+
+def _spec(*lines: str) -> str:
+    body = "".join(f"  {line}\n" for line in lines)
+    return f"test('t', {{ tag: '@public' }}, async ({{ page }}) => {{\n{body}}});\n"
+
+
+def _login_names(code: str) -> list[str]:
+    return [f["name"] for f in extract_recorded_test_data(code) if f.get("login")]
+
+
+class TestLoginFields:
+    def test_single_form_login_marks_username_and_later_fields_stay_editable(self) -> None:
+        fields = extract_recorded_test_data(PUBLIC_LOGIN)
+        assert [f["name"] for f in fields if f.get("login")] == ["User Name"]
+        assert [f["name"] for f in fields if not f.get("login")] == [
+            "Amount (USD)",
+            "Amount (USD) (2)",
+        ]
+
+    def test_multi_step_login_marks_the_username_page(self) -> None:
+        code = _spec(
+            "await page.goto('https://app.example.com/login');",
+            "await page.getByRole('textbox', { name: 'Email address' }).fill('me@corp.test');",
+            "await page.getByRole('button', { name: 'Next' }).click();",
+            "await page.getByRole('textbox', { name: 'Password' }).fill('s3cret');",
+            "await page.getByRole('button', { name: 'Sign in' }).click();",
+            "await page.getByRole('textbox', { name: 'Search' }).fill('invoices');",
+        )
+        assert _login_names(code) == ["Email address"]
+        assert [f["name"] for f in extract_recorded_test_data(code)] == ["Email address", "Search"]
+
+    def test_login_submitted_with_enter_marks_username(self) -> None:
+        code = _spec(
+            "await page.getByLabel('Username').fill('someone');",
+            "await page.getByLabel('Password').fill('pw');",
+            "await page.getByLabel('Password').press('Enter');",
+            "await page.getByLabel('Email').fill('note@corp.test');",
+        )
+        assert _login_names(code) == ["Username"]
+
+    def test_signup_form_email_stays_editable(self) -> None:
+        with_confirm = _spec(
+            "await page.getByLabel('Email').fill('new@corp.test');",
+            "await page.getByLabel('Password').fill('pw1');",
+            "await page.getByLabel('Confirm password').fill('pw1');",
+            "await page.getByRole('button', { name: 'Create account' }).click();",
+        )
+        with_name = _spec(
+            "await page.getByLabel('First name').fill('Ana');",
+            "await page.getByLabel('Email').fill('new@corp.test');",
+            "await page.getByLabel('Password').fill('pw1');",
+            "await page.getByRole('button', { name: 'Sign up' }).click();",
+        )
+        assert _login_names(with_confirm) == []
+        assert _login_names(with_name) == []
+
+    def test_contact_and_password_reset_email_stay_editable(self) -> None:
+        contact = _spec(
+            "await page.getByLabel('Email').fill('me@corp.test');",
+            "await page.getByLabel('Message').fill('hello');",
+            "await page.getByRole('button', { name: 'Send' }).click();",
+        )
+        reset = _spec(
+            "await page.getByLabel('Email').fill('me@corp.test');",
+            "await page.getByRole('button', { name: 'Send reset link' }).click();",
+            "await page.getByLabel('New password').fill('pw2');",
+            "await page.getByLabel('Confirm new password').fill('pw2');",
+            "await page.getByRole('button', { name: 'Save' }).click();",
+        )
+        assert _login_names(contact) == []
+        assert _login_names(reset) == []
+
+    def test_marking_keeps_the_order_mapping_and_unchanged_code(self) -> None:
+        fields = extract_recorded_test_data(PUBLIC_LOGIN)
+        new_code, changes = swap_recorded_values(PUBLIC_LOGIN, fields)
+        assert new_code == PUBLIC_LOGIN and changes == []
+
+        fields[2]["value"] = "42"
+        new_code, changes = swap_recorded_values(PUBLIC_LOGIN, fields)
+        assert new_code == PUBLIC_LOGIN.replace("fill('11111')", "fill('42')")
+        assert changes == [("11111", "42")]
 
 
 def test_update_recorded_steps_rewrites_changed_fill_chips_in_order() -> None:

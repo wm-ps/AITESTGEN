@@ -285,6 +285,50 @@ def test_scenario_generation_activity_strips_existing_credential_test_data(
     assert change_password_fields == {"new password", "confirm new password"}
 
 
+def test_scenario_generation_activity_marks_login_email_but_not_signup_or_negative(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A login Scenario's own Email is kept but marked `login` (hidden from
+    the user and the AI); a signup Email and a negative-login Email are the
+    values under test and stay plain, editable fields."""
+    init_db()
+    journey = _seed_journey()
+
+    def _email_case(name: str) -> ScenarioCandidate:
+        return ScenarioCandidate(
+            name=name,
+            type="happy",
+            steps=[name, "Submit"],
+            expected_result="Done",
+            test_data=[TestDataFieldCandidate(name="Email", mandatory=True)],
+        )
+
+    candidates = [
+        _email_case("Login with valid credentials"),
+        _email_case("Sign up with a new account"),
+        _email_case("Login with an unregistered email"),
+    ]
+    monkeypatch.setattr(
+        activities_module, "HostedAIProvider", lambda: _FakeAIProvider(candidates)
+    )
+
+    asyncio.run(
+        activities_module.scenario_generation_activity(
+            ScenarioGenerationActivityInput(journey_id=str(journey.external_id))
+        )
+    )
+
+    with Session(engine) as session:
+        by_name = {
+            s.name: s.test_data
+            for s in session.exec(select(Scenario).where(Scenario.journey_id == journey.id)).all()
+        }
+
+    assert [f.get("login") for f in by_name["Login with valid credentials"]] == [True]
+    assert [f.get("login") for f in by_name["Sign up with a new account"]] == [None]
+    assert [f.get("login") for f in by_name["Login with an unregistered email"]] == [None]
+
+
 def test_scenario_generation_activity_is_idempotent_on_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

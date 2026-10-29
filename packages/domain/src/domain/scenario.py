@@ -118,6 +118,10 @@ class Scenario(SQLModel, table=True):
     )
 
     def test_data_complete(self) -> bool:
+        # A login field (`domain.login_fields`) is filled from the
+        # Application's credentials at run time, never by the user.
         return all(
-            bool(field.get("value")) for field in self.test_data if field.get("mandatory")
+            bool(field.get("value"))
+            for field in self.test_data
+            if field.get("mandatory") and field.get("login") is not True
         )

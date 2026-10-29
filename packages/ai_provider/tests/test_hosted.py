@@ -1787,3 +1787,17 @@ async def test_explain_test_failure_returns_none_rather_than_a_guess(
     _monkeypatch_post(monkeypatch, body)
 
     assert await HostedAIProvider().explain_test_failure("Error: something") is None
+
+
+def test_login_fields_never_reach_the_prompt_test_data() -> None:
+    from ai_provider.hosted import _describe_changed_test_data, _describe_test_data
+
+    fields = [
+        {"name": "Email", "mandatory": True, "value": "me@corp.test", "login": True},
+        {"name": "Amount", "mandatory": True, "value": "5"},
+    ]
+    scenario = Scenario(
+        journey_id=uuid.uuid4(), type="happy", name="Login", steps=[], test_data=fields
+    )
+    assert _describe_test_data(scenario) == "- Amount: 5"
+    assert _describe_changed_test_data(fields) == "- Amount: 5"

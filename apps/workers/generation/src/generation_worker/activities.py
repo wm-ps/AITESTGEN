@@ -41,6 +41,7 @@ from domain import (
     TestSuite,
     ValidationRule,
 )
+from domain.login_fields import is_generated_login_field, visible_fields
 from domain.test_asset import supersede_test_asset  # re-exported: heal imports it from here
 from safety_classifier import classify_scenario_steps
 from sqlalchemy import func, update
@@ -769,6 +770,16 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
                                 if candidate.type == "happy"
                                 else None
                             ),
+                            # A login Scenario's own username/email: kept so
+                            # generation still knows the field, but hidden from
+                            # the user and the AI (`domain.login_fields`).
+                            **(
+                                {"login": True}
+                                if is_generated_login_field(
+                                    f.name, candidate.name, candidate_intent_segments
+                                )
+                                else {}
+                            ),
                         }
                         for f in candidate.test_data
                         if not _is_existing_credential_field(f.name, candidate_intent_segments)
@@ -1189,7 +1200,7 @@ async def regenerate_test_asset_activity(input: RegenerateTestAssetActivityInput
         field_input_types=field_input_types,
         log_label=f"RegenerateTestAssetActivity: scenario_id={input.scenario_id}",
         previous_code=previous_code,
-        changed_test_data=scenario.test_data,
+        changed_test_data=visible_fields(scenario.test_data),
     )
     tagged_code = spec_linter.apply_auth_tag(code.code, requires_auth)
 

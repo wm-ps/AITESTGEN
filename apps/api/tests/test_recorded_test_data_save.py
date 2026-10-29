@@ -12,7 +12,7 @@ from api import main as api_main
 from api.db import engine, init_db
 from api.main import app
 from api.scripts.seed_dev_data import seed
-from domain import DiscoveryRun, Journey, Scenario, TestAsset, TestSuite
+from domain import Application, DiscoveryRun, Journey, Scenario, TestAsset, TestSuite
 from fastapi.testclient import TestClient
 from hvac.exceptions import VaultError
 from secrets_client.vault_client import VAULT_ADDR, VAULT_TOKEN
@@ -147,6 +147,22 @@ def _recorded_test(
         return str(scenario.external_id), asset
 
 
+def _recorded_test_with_login(client: TestClient) -> tuple[str, TestAsset, str]:
+    """The same recording with its username marked as a login field;
+    returns the Application's external id too."""
+    fields = [{**_RECORDED_FIELDS[0], "login": True}, dict(_RECORDED_FIELDS[1])]
+    scenario_id, asset = _recorded_test(client, fields=fields)
+    with Session(engine) as session:
+        scenario = session.exec(
+            select(Scenario).where(Scenario.external_id == uuid.UUID(scenario_id))
+        ).one()
+        journey = session.get(Journey, scenario.journey_id)
+        assert journey is not None
+        application = session.get(Application, journey.application_id)
+        assert application is not None
+        return scenario_id, asset, str(application.external_id)
+
+
 def _assets(prior: TestAsset) -> list[TestAsset]:
     with Session(engine) as session:
         return list(
@@ -237,3 +253,46 @@ def test_recorded_fields_out_of_step_with_code_are_refused_with_nothing_written(
     assert response.status_code == 409
     assert "changed since it was recorded" in response.json()["detail"]
     assert [(a.id, a.current, a.code) for a in _assets(prior)] == [(prior.id, True, _RECORDED_CODE)]
+
+
+def test_login_field_is_hidden_from_the_scenario_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _signed_in_client()
+    scenario_id, _, application_id = _recorded_test_with_login(client)
+
+    listed = client.get(f"/applications/{application_id}/scenarios")
+    assert listed.status_code == 200, listed.text
+    [read] = [s for s in listed.json() if s["id"] == scenario_id]
+    assert [f["name"] for f in read["test_data"]] == ["Amount (USD)"]
+    assert read["has_login_fields"] is True
+    assert read["test_data_complete"] is True
+
+
+def test_login_field_cannot_be_edited(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _signed_in_client()
+    scenario_id, prior, _ = _recorded_test_with_login(client)
+    _block_temporal(monkeypatch)
+
+    patched = client.patch(
+        f"/scenarios/{scenario_id}/test-data", json={"name": "User Name", "value": "other-user"}
+    )
+
+    assert patched.status_code == 422
+    with Session(engine) as session:
+        scenario = session.exec(
+            select(Scenario).where(Scenario.external_id == uuid.UUID(scenario_id))
+        ).one()
+        assert scenario.test_data[0]["value"] == "someone"
+    assert [a.id for a in _assets(prior)] == [prior.id]
+
+
+def test_marked_login_field_keeps_the_recorded_order_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _signed_in_client()
+    scenario_id, prior, _ = _recorded_test_with_login(client)
+    _block_temporal(monkeypatch)
+
+    assert _save(client, scenario_id, "Amount (USD)", "500").status_code == 202
+
+    new = _assets(prior)[-1]
+    assert new.code == _RECORDED_CODE.replace("fill('25')", "fill('500')")

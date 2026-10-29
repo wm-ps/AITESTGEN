@@ -231,7 +231,10 @@ const SOURCE_FILTER_TABS: { value: TestCaseSourceFilter; label: string }[] = [
 // has saved successfully does this trigger a targeted AI regeneration of
 // the Scenario's current TestAsset, so "Save" always means "and update the
 // compiled test to match."
-function TestDataEditor({
+// Login fields are never listed (the API leaves them out) — this says why.
+const LOGIN_FIELDS_NOTE = "Login details come from this application's settings."
+
+export function TestDataEditor({
   scenario,
   onScenarioUpdated,
   onDone,
@@ -364,6 +367,9 @@ function TestDataEditor({
           </label>
         ))}
       </div>
+      {scenario.has_login_fields && (
+        <p style={{ color: 'var(--fg-3)', fontSize: 12, margin: 0 }}>{LOGIN_FIELDS_NOTE}</p>
+      )}
       {error && <p style={{ color: 'var(--danger-strong)', fontSize: 12, margin: 0 }}>{error}</p>}
       {canEdit && (
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -506,7 +512,13 @@ function AssetCard({
               type="button"
               onClick={() => setShowTestData((o) => !o)}
               disabled={scenario.test_data.length === 0}
-              title={scenario.test_data.length === 0 ? 'This test case has no test data fields' : undefined}
+              title={
+                scenario.test_data.length === 0
+                  ? scenario.has_login_fields
+                    ? LOGIN_FIELDS_NOTE
+                    : 'This test case has no test data fields'
+                  : undefined
+              }
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',

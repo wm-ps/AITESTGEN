@@ -78,7 +78,11 @@ export type JourneyStepRead = components['schemas']['JourneyStepRead']
 // `test_case_number` isn't in api-types.gen.ts yet (regenerate via `npm run
 // generate:api-types` once the API is running) — added by hand. Test Case
 // Number feature: persistent, sequential, per-Application display id.
-export type ScenarioRead = components['schemas']['ScenarioRead'] & { test_case_number: number }
+export type ScenarioRead = components['schemas']['ScenarioRead'] & {
+  test_case_number: number
+  // True when login fields exist but are hidden (they come from the app's settings).
+  has_login_fields?: boolean
+}
 // `description` isn't in api-types.gen.ts yet (regenerate via `npm run
 // generate:api-types` once the API is running) — added by hand.
 // 'discovery' (normal Discovery -> Journey -> Scenario pipeline), 'nl'

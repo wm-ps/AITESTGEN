@@ -52,6 +52,7 @@ from domain import (
     apply_test_run_cancel,
     lock_test_run,
 )
+from domain.login_fields import is_login_field, visible_fields
 from domain.recorded_test_data import RecordedFieldsChanged, apply_recorded_test_data
 import hvac.exceptions
 from explorer_core import ExplorerRun
@@ -2381,8 +2382,11 @@ class ScenarioRead(BaseModel):
     name: str
     steps: list[str]
     expected_result: str
+    # Login fields (`domain.login_fields`) are never listed — they come from
+    # the Application's settings — so the editor can say so instead.
     test_data: list[ScenarioTestDataFieldRead]
     test_data_complete: bool
+    has_login_fields: bool = False
 
 
 class ScenarioRenamePayload(BaseModel):
@@ -2406,8 +2410,11 @@ def _to_scenario_read(
         name=scenario.name,
         steps=scenario.steps,
         expected_result=scenario.expected_result,
-        test_data=[ScenarioTestDataFieldRead(**field) for field in scenario.test_data],
+        test_data=[
+            ScenarioTestDataFieldRead(**field) for field in visible_fields(scenario.test_data)
+        ],
         test_data_complete=scenario.test_data_complete(),
+        has_login_fields=any(is_login_field(field) for field in scenario.test_data),
     )
 
 
@@ -2606,7 +2613,8 @@ def update_scenario_test_data(
     scenario, journey = _get_org_scenario(session, organization_id, external_id)
     updated_fields = [dict(field) for field in scenario.test_data]
     for field in updated_fields:
-        if field["name"] == payload.name:
+        # A login field is the same as unknown here: it isn't the user's to edit.
+        if field["name"] == payload.name and not is_login_field(field):
             field["value"] = payload.value
             break
     else:
