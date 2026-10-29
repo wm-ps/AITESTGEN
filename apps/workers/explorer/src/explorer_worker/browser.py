@@ -295,6 +295,16 @@ def _role(role: str, name: str, exact: bool = True) -> dict[str, Any]:
     return {"by": "role", "role": role, "name": name, "exact": exact}
 
 
+def drawn_placeholder(text: str) -> str:
+    """A typeable element whose placeholder text is drawn by the page from an
+    attribute (`data-placeholder` / `aria-placeholder`), which Playwright's
+    placeholder lookup doesn't read. The exported test uses the same locator."""
+    return ", ".join(
+        f'[contenteditable="true"][{attr}="{text}"], [contenteditable=""][{attr}="{text}"]'
+        for attr in ("data-placeholder", "aria-placeholder")
+    )
+
+
 def field_after_caption(caption: str) -> str:
     """The first field after text reading exactly `caption`: forms that put
     a caption above a field without linking them (no `<label for>`). The
@@ -783,6 +793,10 @@ class Eyes:
             {"by": "placeholder", "text": label},
             {"by": "label", "text": label, "exact": True},
             *([{"by": "css", "selector": field_after_caption(label)}] if '"' not in label else []),
+            # Last: a typeable <div> (chat and rich-text boxes) whose placeholder
+            # is drawn from an attribute, not a real placeholder — e.g. an AI
+            # chat box named "Chat input" showing "Ask a question...".
+            *([{"by": "css", "selector": drawn_placeholder(label)}] if '"' not in label else []),
         ]
         for candidate in specs:
             try:

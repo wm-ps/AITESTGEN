@@ -18,11 +18,12 @@ import {
   faPause,
   faTowerBroadcast,
   faUserCheck,
+  faWandMagicSparkles,
 } from '@fortawesome/free-solid-svg-icons'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import { ApiError } from '../api'
 import { AppIdentityLine } from '../components/AppIdentityLine'
-import { LoadingDots } from '../components/LoadingDots'
+import { BouncingDots, LoadingDots } from '../components/LoadingDots'
 import {
   explorerApi,
   WORKING_STATUSES,
@@ -246,6 +247,7 @@ export function ExplorerTab({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <h2 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Explorer</h2>
+            {run?.prompt && <AuthoringPill prompt={run.prompt} working={working} />}
           </div>
           <AppIdentityLine name={applicationName} url={applicationUrl} />
           {run && (
@@ -523,5 +525,33 @@ function StartCard({ applicationId, applicationName, busy, onStart, onCancel }: 
         </div>
       </div>
     </div>
+  )
+}
+
+// An authoring run (Explorer following the user's own request) says so next
+// to the title on every tab; hovering shows the request.
+function AuthoringPill({ prompt, working }: { prompt: string; working: boolean }) {
+  return (
+    <span
+      title={`Authoring your request: ${prompt}`}
+      aria-label={working ? 'Authoring in progress' : 'Authoring'}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '3px 10px',
+        borderRadius: 1000,
+        fontSize: 12,
+        fontWeight: 600,
+        color: 'var(--accent-2)',
+        background: 'var(--accent-wash)',
+        border: '1px solid color-mix(in srgb, var(--accent-2) 30%, transparent)',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <FontAwesomeIcon icon={faWandMagicSparkles} style={{ fontSize: 10 }} />
+      Authoring
+      {working && <BouncingDots size={3} />}
+    </span>
   )
 }

@@ -60,6 +60,18 @@ def path_to(run_id: uuid.UUID, screen: str | None) -> list[dict[str, str]] | Non
     return [dict(step) for step in min(routes, key=len)] if routes else None
 
 
+# A step that makes no move and isn't done ("still loading, I'll wait") gets
+# this many more looks, IDLE_WAIT_MS apart, before the walk ends as done.
+IDLE_LOOKS = 3
+IDLE_WAIT_MS = 3000
+
+
+def waiting_for_screen(plan: dict[str, Any], idle_looks: int) -> bool:
+    """The model made no move and didn't say it's done: the screen isn't
+    ready yet, so look again (up to IDLE_LOOKS times) instead of ending."""
+    return not plan.get("done") and not plan.get("advance") and idle_looks < IDLE_LOOKS
+
+
 def edge_reached(fit: str | None, obey_goal: bool) -> bool:
     """Does reaching a screen with this place against the run's Goal end the
     walk? A mission the user added themselves (obey_goal=False) goes on."""
@@ -145,6 +157,7 @@ async def pursue(
     sent: set[str] = set()  # final Send/Submit buttons already pressed
     learned: list[str] = []  # answers you gave during this pursuit
     signed_back_in = False
+    idle_looks = 0  # looks again while the screen isn't ready (waiting_for_screen)
     visit = await eyes.look(eyes.page.url, None, 0)
     result.actions.append({"do": "goto", "url": eyes.page.url})
     step_name = await mind.take_in(visit, f"Start: {goal}")
@@ -375,6 +388,21 @@ async def pursue(
             visit = await eyes.look(eyes.page.url, None, 0)
             step_name = await mind.take_in(visit, None)
             landed.append(arrived(step_name))
+            continue
+        if waiting_for_screen(plan, idle_looks):
+            # "Still loading, I'll wait": no move and not done is not the end
+            # of the task (a walk once stopped on a list still loading and
+            # never reached the rest). Look again, a few times at most.
+            idle_looks += 1
+            journal.event(
+                "thought",
+                f"Waiting for {step_name}",
+                f"It isn't ready yet — looking again ({idle_looks} of {IDLE_LOOKS}).",
+            )
+            await eyes.page.wait_for_timeout(IDLE_WAIT_MS)
+            await eyes.settle()
+            visit = await eyes.look(eyes.page.url, None, 0)
+            step_name = await mind.take_in(visit, None)
             continue
         if plan.get("done") or not advance:
             result.ended = "done"

@@ -133,7 +133,7 @@ describe('App', () => {
     fireEvent.change(screen.getByLabelText('Username'), { target: { value: 'qa-account' } })
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'qa-password' } })
     // Start discovery checks the URL itself (ConnectAppForm), then the login.
-    fireEvent.click(screen.getByRole('button', { name: 'Start exploration' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Start' }))
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Journeys' })).toBeTruthy()

@@ -19,6 +19,7 @@ QUEUED_MISSIONS_ACTIVITY = "authoring_queued_missions"
 FINISH_EXPLORING_ACTIVITY = "authoring_finish_exploring"
 RETRY_BLANK_ACTIVITY = "authoring_retry_if_nothing_seen"
 DONE_ACTIVITY = "authoring_say_done"
+PLANNED_TESTS_ACTIVITY = "authoring_planned_tests"
 PLAN_TESTS_ACTIVITY = "authoring_plan_tests"
 PROMOTE_ACTIVITY = "authoring_add_test_cases"
 
@@ -59,6 +60,11 @@ async def queued_missions_activity(run_id: str) -> list[str]:
 @activity.defn(name=RETRY_BLANK_ACTIVITY)
 async def retry_blank_activity(run_id: str) -> bool:
     return plan.retry_if_nothing_seen(uuid.UUID(run_id))
+
+
+@activity.defn(name=PLANNED_TESTS_ACTIVITY)
+async def planned_tests_activity(run_id: str) -> list[str]:
+    return plan.planned_tests(uuid.UUID(run_id))
 
 
 @activity.defn(name=DONE_ACTIVITY)
@@ -103,6 +109,7 @@ ACTIVITIES = [
     finish_exploring_activity,
     retry_blank_activity,
     done_activity,
+    planned_tests_activity,
     plan_tests_activity,
     promote_activity,
 ]

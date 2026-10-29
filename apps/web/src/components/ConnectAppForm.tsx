@@ -40,11 +40,11 @@ const fieldInputStyle: React.CSSProperties = {
 const CREDENTIAL_POLL_MS = 1000
 const CREDENTIAL_POLL_MAX_ATTEMPTS = 150
 const INVALID_CREDENTIALS_MESSAGE =
-  'The username or password is incorrect. Enter valid credentials and click Start exploration again.'
+  'The username or password is incorrect. Enter valid credentials and click Start again.'
 const UNCERTAIN_CREDENTIALS_MESSAGE =
-  "We couldn't confirm these credentials. Click Start exploration to validate again."
+  "We couldn't confirm these credentials. Click Start to validate again."
 const DISCOVERY_NOT_STARTED_MESSAGE =
-  "Exploration couldn't start, so the application was not added. Click Start exploration to try again."
+  "Exploration couldn't start, so the application was not added. Click Start to try again."
 
 // Anything that isn't a proved `valid` / `invalid` (request error, worker
 // unavailable, timeout) collapses to `uncertain` — discovery never starts on
@@ -99,7 +99,7 @@ export function ConnectAppForm({
   // the application — the submit button's label follows it so the user can
   // tell which one they're about to do.
   const [discoveryRequired, setDiscoveryRequired] = useState(application ? hasDiscovery(application) : true)
-  const submitLabel = discoveryRequired ? 'Start exploration' : 'Add application'
+  const submitLabel = discoveryRequired ? 'Start' : 'Add application'
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   // Shown under the Username/Password fields — cleared on any edit to the
