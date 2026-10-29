@@ -27,6 +27,7 @@ const MONO = 'var(--font-mono)'
 
 const RESULT: Record<ActivityOutcome, { label: string; color: string; tint: string }> = {
   running: { label: 'Running', color: 'var(--accent-hi)', tint: 'rgba(15,118,110,0.10)' },
+  waiting: { label: 'Needs answer', color: 'var(--warn)', tint: 'rgba(217,119,6,0.10)' },
   done: { label: 'Done', color: 'var(--ok)', tint: 'rgba(13,138,100,0.10)' },
   failed: { label: 'Failed', color: 'var(--bad)', tint: 'rgba(201,48,73,0.08)' },
   changed: { label: 'Changed', color: 'var(--fg-3)', tint: 'var(--chip)' },
@@ -35,10 +36,12 @@ const RESULT: Record<ActivityOutcome, { label: string; color: string; tint: stri
 
 const CATEGORY_LABEL: Record<ActivityCategory, string> = {
   discovery: 'Exploration',
+  questions: 'Questions',
   scenarios: 'Scenarios',
   test_cases: 'Test cases',
   test_runs: 'Test runs',
   settings: 'Settings & team',
+  account: 'Sign-ins & passwords',
 }
 
 const TIME_OPTIONS = [
@@ -122,7 +125,9 @@ function appLabel(item: ActivityItemRead): string {
 // One plain next step for the most common failures — never a guess at the
 // cause, just where to look.
 function suggestedNextStep(item: ActivityItemRead): string | null {
+  if (item.outcome === 'waiting') return "Open the application and answer it in Explorer's Questions tab."
   if (item.outcome !== 'failed') return null
+  if (item.category === 'account') return 'If this was not them, check the account on the Team page.'
   const reason = `${item.reason ?? ''} ${item.details.failure_reason ?? ''}`.toLowerCase()
   if (/login|session|credential|unauthori[sz]ed|401/.test(reason)) {
     return "Check the application's saved login credentials, then try again."
@@ -412,7 +417,7 @@ function ActivityFeed({ onOpen }: { onOpen: (item: ActivityItemRead) => void }) 
         <div style={{ minWidth: 0 }}>
           <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Activity</h1>
           <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 4 }}>
-            Every run, exploration, generation and settings change in this workspace, {oldestFirst ? 'oldest' : 'newest'} first.
+            Every run, exploration, question, sign-in and settings change in this workspace, {oldestFirst ? 'oldest' : 'newest'} first.
           </div>
         </div>
         <div style={{ flex: 1 }} />
@@ -674,9 +679,12 @@ function ActivityDetail({ item, onClose, onOpen }: { item: ActivityItemRead; onC
           {item.kind === 'test_run' && item.application_id && item.test_run_id && !item.application_deleted && (
             <TestRunDetail applicationId={item.application_id} testRunId={item.test_run_id} running={item.outcome === 'running'} />
           )}
+          {item.details.info && item.details.info.length > 0 && <InfoList info={item.details.info} />}
           {item.kind === 'discovery' && <DiscoveryDetail item={item} />}
+          {item.kind === 'recording' && item.details.failure_reason && <ErrorBlock title="Exact error" text={item.details.failure_reason} />}
           {item.details.journeys && item.details.journeys.length > 0 && <JourneyItems journeys={item.details.journeys} />}
           {item.details.changes && item.details.changes.length > 0 && <ChangesTable changes={item.details.changes} />}
+          {item.details.answers && item.details.answers.length > 0 && <Answers answers={item.details.answers} />}
         </div>
 
         {(canOpen || item.application_deleted) && (
@@ -914,6 +922,35 @@ function JourneyItems({ journeys }: { journeys: NonNullable<ActivityItemRead['de
               <ResultLabel outcome={j.status} />
             </div>
             {j.error && <ErrorBlock title="Exact error" text={j.error} />}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function InfoList({ info }: { info: NonNullable<ActivityItemRead['details']['info']> }) {
+  return (
+    <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+      {info.map((f, i) => (
+        <div key={f.label} style={{ display: 'flex', gap: 12, padding: '10px 14px', borderBottom: i < info.length - 1 ? '1px solid var(--row-line)' : undefined }}>
+          <div style={{ width: '32%', flex: 'none', fontSize: 12.5, color: 'var(--fg-4)' }}>{f.label}</div>
+          <div style={{ flex: 1, minWidth: 0, fontSize: 13, color: 'var(--fg-1)', overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{f.value}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function Answers({ answers }: { answers: NonNullable<ActivityItemRead['details']['answers']> }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={sectionLabelStyle}>Answers ({answers.length})</div>
+      <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+        {answers.map((a, i) => (
+          <div key={i} style={{ padding: '11px 14px', borderBottom: i < answers.length - 1 ? '1px solid var(--row-line)' : undefined }}>
+            <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>{a.question}</div>
+            <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--fg-1)', marginTop: 3 }}>{a.answer}</div>
           </div>
         ))}
       </div>

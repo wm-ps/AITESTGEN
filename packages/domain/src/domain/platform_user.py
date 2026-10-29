@@ -23,7 +23,7 @@ fuller version would add an Application-scoped membership table.
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -60,6 +60,16 @@ class PlatformUser(SQLModel, table=True):
     # session's idle window) — never set anywhere else, so it always
     # reflects real session activity, not just login time.
     last_active_at: datetime | None = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    # Signed into every session cookie; bumping it (logout, password reset)
+    # invalidates every cookie issued before — `api.auth.current_user`
+    # rejects a cookie whose version no longer matches.
+    session_version: int = Field(default=0, sa_column=Column(Integer, nullable=False, server_default="0"))
+    # Account lockout after repeated wrong passwords (`api.main.login`).
+    failed_logins: int = Field(default=0, sa_column=Column(Integer, nullable=False, server_default="0"))
+    locked_until: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )

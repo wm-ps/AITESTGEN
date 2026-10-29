@@ -54,7 +54,7 @@ def _add_member(admin: TestClient, monkeypatch: pytest.MonkeyPatch, *, role: str
     admin.post("/invites", json={"email": email, "role": role})
     token = captured[-1]
     TestClient(app).post(
-        "/invites/accept", json={"token": token, "name": "Teammate", "password": "pw123456"}
+        "/invites/accept", json={"token": token, "name": "Teammate", "password": "Vantage-test-pw-k7q2x"}
     )
     return email
 
@@ -76,7 +76,7 @@ def test_list_team_requires_admin(monkeypatch: pytest.MonkeyPatch) -> None:
     member_email = _add_member(admin, monkeypatch)
 
     member_client = TestClient(app)
-    member_client.post("/auth/login", json={"email": member_email, "password": "pw123456"})
+    member_client.post("/auth/login", json={"email": member_email, "password": "Vantage-test-pw-k7q2x"})
     response = member_client.get("/team")
 
     assert response.status_code == 403

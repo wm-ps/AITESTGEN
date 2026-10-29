@@ -1,6 +1,7 @@
 """ActivityEvent — one row on the admin Activity page that no other table
 already records: who changed a setting, policy, credential, teammate or
-schedule, and who started scenario/test case generation.
+schedule, who started scenario/test case generation, sign-ins (and failed
+ones), password resets, and who answered or acted on Explorer.
 
 Discovery runs and test runs are deliberately *not* copied in here — their
 own `DiscoveryRun`/`TestRun` rows already carry status, counts and failure
@@ -21,8 +22,11 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
-ActivityCategory = Literal["discovery", "scenarios", "test_cases", "test_runs", "settings"]
-ActivityOutcome = Literal["running", "done", "failed", "changed", "stopped"]
+ActivityCategory = Literal[
+    "discovery", "questions", "scenarios", "test_cases", "test_runs", "settings", "account"
+]
+# "waiting" = needs a person (an unanswered Explorer question).
+ActivityOutcome = Literal["running", "waiting", "done", "failed", "changed", "stopped"]
 
 
 class ActivityEvent(SQLModel, table=True):

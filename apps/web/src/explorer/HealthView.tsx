@@ -3,6 +3,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import { faBan, faBug, faChevronDown, faFileArrowDown, faLinkSlash, faServer } from '@fortawesome/free-solid-svg-icons'
 import { LoadingDots } from '../components/LoadingDots'
+import { useCanEdit } from '../PermissionsContext'
 import { explorerApi, shotUrl, type ExplorerHealthIssue, type ExplorerQuestion, type ExplorerScreen } from './explorerApi'
 import { glassCard, IconTile, Pill } from './ui'
 
@@ -71,6 +72,7 @@ export function HealthView({
   const bugs = possibleBugs(issues)
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
+  const canEdit = useCanEdit()
   // Where it is and how Explorer got there, in one short line.
   const where = (issue: ExplorerHealthIssue) => {
     const screen = screens.find((s) => (issue.shot_id && s.shot_id === issue.shot_id) || s.url === issue.url)
@@ -78,7 +80,7 @@ export function HealthView({
     return screen.reached_by ? `On ${screen.name} · reached by ${screen.reached_by}` : `On ${screen.name}`
   }
   const askFor = (issue: ExplorerHealthIssue) =>
-    issue.shot_id ? questions.find((q) => q.kind === 'rule' && q.status === 'open' && q.shot_id === issue.shot_id) : undefined
+    canEdit && issue.shot_id ? questions.find((q) => q.kind === 'rule' && q.status === 'open' && q.shot_id === issue.shot_id) : undefined
 
   const act = async (key: string, run: () => Promise<void>) => {
     setBusy(key)
@@ -151,7 +153,7 @@ export function HealthView({
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2 }}>
                     {q && action("It's a bug", () => explorerApi.answer(q.id, "It's a bug").then(() => undefined), true)}
                     {q && action("It's correct", () => explorerApi.answer(q.id, "It's correct — that's how it should work").then(() => undefined))}
-                    {action('False alarm', () => explorerApi.falseAlarm(issue.id))}
+                    {canEdit && action('False alarm', () => explorerApi.falseAlarm(issue.id))}
                   </div>
                 </div>
               </div>

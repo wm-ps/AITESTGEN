@@ -1,4 +1,4 @@
-import { API_BASE, request } from '../api'
+import { API_BASE, request, userActivityHeaders } from '../api'
 
 // Vantage Explorer — standalone module (docs/vantage-explorer/PLAN.md).
 
@@ -264,6 +264,7 @@ export const explorerApi = {
       method: 'POST',
       body: form,
       credentials: 'include',
+      headers: userActivityHeaders(),
     })
     if (!response.ok) {
       const body = await response.json().catch(() => null)

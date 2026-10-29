@@ -60,7 +60,7 @@ def test_admin_can_send_and_invitee_can_accept(monkeypatch: pytest.MonkeyPatch) 
 
     accept_client = TestClient(app)
     accept_response = accept_client.post(
-        "/invites/accept", json={"token": token, "name": "New Person", "password": "pw123456"}
+        "/invites/accept", json={"token": token, "name": "New Person", "password": "Vantage-test-pw-k7q2x"}
     )
     assert accept_response.status_code == 200
     body = accept_response.json()
@@ -76,8 +76,8 @@ def test_accepting_twice_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     token = captured[0]
 
     client = TestClient(app)
-    client.post("/invites/accept", json={"token": token, "name": "A", "password": "pw123456"})
-    second = client.post("/invites/accept", json={"token": token, "name": "B", "password": "pw123456"})
+    client.post("/invites/accept", json={"token": token, "name": "A", "password": "Vantage-test-pw-k7q2x"})
+    second = client.post("/invites/accept", json={"token": token, "name": "B", "password": "Vantage-test-pw-k7q2x"})
     assert second.status_code == 400
 
 
@@ -85,7 +85,7 @@ def test_unknown_token_rejected() -> None:
     init_db()
     client = TestClient(app)
     response = client.post(
-        "/invites/accept", json={"token": "not-a-real-token", "name": "A", "password": "pw123456"}
+        "/invites/accept", json={"token": "not-a-real-token", "name": "A", "password": "Vantage-test-pw-k7q2x"}
     )
     assert response.status_code == 400
 
@@ -99,7 +99,7 @@ def test_non_admin_cannot_send_invite(monkeypatch: pytest.MonkeyPatch) -> None:
 
     member_client = TestClient(app)
     member_client.post(
-        "/invites/accept", json={"token": token, "name": "Member", "password": "pw123456"}
+        "/invites/accept", json={"token": token, "name": "Member", "password": "Vantage-test-pw-k7q2x"}
     )
 
     response = member_client.post("/invites", json={"email": "someone@example.com"})
@@ -119,6 +119,6 @@ def test_revoke_invite_prevents_acceptance(monkeypatch: pytest.MonkeyPatch) -> N
 
     client = TestClient(app)
     response = client.post(
-        "/invites/accept", json={"token": token, "name": "A", "password": "pw123456"}
+        "/invites/accept", json={"token": token, "name": "A", "password": "Vantage-test-pw-k7q2x"}
     )
     assert response.status_code == 400

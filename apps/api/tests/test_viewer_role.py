@@ -60,7 +60,7 @@ def _invite(
     assert admin.post("/invites", json={"email": email, "role": role}).status_code == 201
     client = TestClient(app)
     accepted = client.post(
-        "/invites/accept", json={"token": captured[-1], "name": "Teammate", "password": "pw123456"}
+        "/invites/accept", json={"token": captured[-1], "name": "Teammate", "password": "Vantage-test-pw-k7q2x"}
     )
     assert accepted.status_code == 200, accepted.text
     assert accepted.json()["role"] == role

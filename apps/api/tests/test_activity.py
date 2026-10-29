@@ -50,10 +50,10 @@ def _add_member(admin: TestClient, monkeypatch: pytest.MonkeyPatch, role: str) -
     email = f"{role}-{uuid.uuid4()}@example.com"
     admin.post("/invites", json={"email": email, "role": role})
     TestClient(app).post(
-        "/invites/accept", json={"token": captured[-1], "name": "Teammate", "password": "pw123456"}
+        "/invites/accept", json={"token": captured[-1], "name": "Teammate", "password": "Vantage-test-pw-k7q2x"}
     )
     client = TestClient(app)
-    client.post("/auth/login", json={"email": email, "password": "pw123456"})
+    client.post("/auth/login", json={"email": email, "password": "Vantage-test-pw-k7q2x"})
     return client
 
 
@@ -174,3 +174,15 @@ def test_paging_never_skips_rows_in_either_direction() -> None:
 
         assert walk(oldest_first=False) == ["event 1", "event 2", "event 3"]
         assert walk(oldest_first=True) == ["event 3", "event 2", "event 1"]
+
+
+def test_sign_ins_and_failed_sign_ins_are_recorded() -> None:
+    admin, _ = _admin_client("Org Activity Sign-ins")
+    email = admin.get("/auth/me").json()["email"]
+    assert TestClient(app).post("/auth/login", json={"email": email, "password": "nope"}).status_code == 401
+
+    rows = admin.get("/activity", params={"category": "account"}).json()["items"]
+    assert [(r["summary"], r["outcome"]) for r in rows[:2]] == [
+        (f"Failed sign-in for {email} (wrong password)", "failed"),
+        ("Activity Admin signed in", "done"),
+    ]

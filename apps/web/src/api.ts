@@ -286,13 +286,13 @@ export type TestRunRead = {
 }
 // Admin Activity page (`apps/api/src/api/activity.py`) — added by hand, same
 // convention as the types above.
-export type ActivityCategory = 'discovery' | 'scenarios' | 'test_cases' | 'test_runs' | 'settings'
-export type ActivityOutcome = 'running' | 'done' | 'failed' | 'changed' | 'stopped'
+export type ActivityCategory = 'discovery' | 'questions' | 'scenarios' | 'test_cases' | 'test_runs' | 'settings' | 'account'
+export type ActivityOutcome = 'running' | 'waiting' | 'done' | 'failed' | 'changed' | 'stopped'
 export type ActivityChange = { field: string; before: string; after: string }
 export type ActivityJourneyStatus = { name: string; status: ActivityOutcome; error: string | null }
 export type ActivityItemRead = {
   id: string
-  kind: 'event' | 'discovery' | 'test_run'
+  kind: 'event' | 'discovery' | 'test_run' | 'recording' | 'question'
   created_at: string
   category: ActivityCategory
   outcome: ActivityOutcome
@@ -313,6 +313,9 @@ export type ActivityItemRead = {
     stop_reason?: string | null
     failure_reason?: string | null
     errors?: { code: string; message: string }[]
+    answers?: { question: string; answer: string }[]
+    // Label/value facts: onboarding details, an AI authoring request, a recording.
+    info?: { label: string; value: string }[]
     [key: string]: unknown
   }
 }
@@ -472,16 +475,30 @@ class ApiError extends Error {
   }
 }
 
+// The API keeps a session alive only on requests that carry this header
+// (IDLE_TIMEOUT, apps/api/src/api/auth.py). It's sent when the user clicked,
+// typed or scrolled within the last minute, so background polling of a
+// running job never keeps an unattended tab signed in.
+let lastInteractionAt = Date.now()
+for (const event of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+  window.addEventListener(event, () => (lastInteractionAt = Date.now()), { capture: true, passive: true })
+}
+
+export function userActivityHeaders(): Record<string, string> {
+  return Date.now() - lastInteractionAt < 60_000 ? { 'X-User-Activity': '1' } : {}
+}
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...userActivityHeaders() },
     ...init,
   })
   if (!response.ok) {
     const body = await response.json().catch(() => null)
     // A 401 here always means the session cookie itself was rejected (bad
-    // signature or the 1-hour idle window expired) — /auth/login's own 401
+    // signature, 15-minute idle timeout, 12-hour limit, or signed out
+    // elsewhere) — /auth/login's own 401
     // is a wrong-password rejection, not a session expiry, so it's excluded.
     if (response.status === 401 && path !== '/auth/login') {
       window.dispatchEvent(new CustomEvent('auth:expired'))

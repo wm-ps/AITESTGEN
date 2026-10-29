@@ -13,7 +13,7 @@ from domain import PasswordReset, PlatformUser
 from mailer import EMAIL_HEADER, FRONTEND_BASE_URL, send_email, smtp_configured
 from sqlmodel import Session, select
 
-from api.auth import hash_password
+from api.auth import end_all_sessions, hash_password
 from api.invites import _hash_token
 
 logger = logging.getLogger(__name__)
@@ -114,6 +114,11 @@ def get_reset_target(session: Session, token: str) -> PlatformUser:
 def reset_password(session: Session, token: str, new_password: str) -> PlatformUser:
     reset, user = _valid_reset(session, token)
     user.hashed_password = hash_password(new_password)
+    # Whoever knew the old password may hold a live session — end them all,
+    # and lift any lockout the reset was meant to get past.
+    end_all_sessions(user)
+    user.failed_logins = 0
+    user.locked_until = None
     reset.used_at = datetime.now(UTC)
     session.add(user)
     session.add(reset)
