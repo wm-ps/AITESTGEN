@@ -2,13 +2,21 @@
 
 import asyncio
 import contextlib
+import json
 import logging
 import uuid
 from collections.abc import AsyncIterator
 
+from secrets_client.vault_client import SecretRef, VaultSecretsClient
 from temporalio import activity
+from workflows import (
+    VERIFY_CREDENTIALS_ACTIVITY_NAME,
+    VerifyCredentialsActivityInput,
+    VerifyCredentialsResult,
+)
 
 from explorer_worker import breadth, hunt, missions, promote, reel, resume, tests_stage
+from explorer_worker.browser import Eyes
 from explorer_worker.journal import Journal
 from explorer_worker.understand import understand_app
 
@@ -58,6 +66,48 @@ def _fail_run(run_id: uuid.UUID, exc: Exception) -> str:
     journal.event("error", "Exploration stopped unexpectedly", reason)
     journal.update_run(status="failed", headline="Exploration stopped unexpectedly", error=reason)
     return "failed"
+
+
+@activity.defn(name=VERIFY_CREDENTIALS_ACTIVITY_NAME)
+async def verify_credentials_activity(
+    input: VerifyCredentialsActivityInput,
+) -> VerifyCredentialsResult:
+    """"Start discovery" pre-flight: sign in the same way Explorer will, with
+    the entered login. `input.secret_ref` is a temporary Vault entry the API
+    wrote just for this check — always deleted here, win or lose. One attempt
+    only: a retried bad login counts against the app's lockout policy."""
+    vault = VaultSecretsClient()
+    ref = SecretRef(path=input.secret_ref)
+    eyes = Eyes(input.url)
+    try:
+        creds = json.loads(await asyncio.to_thread(vault.resolve, ref))
+        async with kept_alive():
+            await eyes.open()
+            signed_in = await eyes._sign_in_once(  # pyright: ignore[reportPrivateUsage]
+                input.login_url or input.url,
+                str(creds.get("username") or ""),
+                str(creds.get("password") or ""),
+            )
+        if signed_in is None:
+            return VerifyCredentialsResult(
+                status="uncertain", detail="The app had a server error while signing in."
+            )
+        if not signed_in:
+            return VerifyCredentialsResult(
+                status="invalid", detail="Could not get past the sign-in screen with these details."
+            )
+        return VerifyCredentialsResult(status="valid")
+    except Exception:
+        logger.exception("explorer credential check crashed")
+        return VerifyCredentialsResult(
+            status="uncertain", detail="Could not complete the login check."
+        )
+    finally:
+        await eyes.close()
+        try:
+            await asyncio.to_thread(vault.delete, ref)
+        except Exception:
+            logger.exception("explorer credential check could not delete the temporary login")
 
 
 @activity.defn(name=UNDERSTAND_ACTIVITY)

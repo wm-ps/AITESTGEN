@@ -30,6 +30,12 @@ const RUNS_PER_PAGE = 10
 const RESULTS_PER_PAGE = 10
 
 // Same arrow-left glyph as TopBar's own back button, not a text "←" glyph.
+// A run of chosen test cases shows the name it was given; a whole-suite run
+// shows its number.
+export function runTitle(run: TestRunRead): string {
+  return run.suite_name?.trim() || `Run #${run.run_number}`
+}
+
 function BackIcon() {
   return (
     <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -345,31 +351,16 @@ const RESULT_GRID_TEMPLATE = '50% 1fr 1fr'
 // Results/Pass rate/chevron grid.
 const RUN_ROW_GRID_TEMPLATE = 'minmax(140px,1.3fr) minmax(110px,0.9fr) 90px minmax(130px,1.4fr) 84px 20px'
 
-// Not a stored TestResult field — a result only reads as self-healed once it
-// ended up passed *after* auto-heal touched it (healed_test_asset_id set).
-function isSelfHealed(result: TestResultRead): boolean {
-  return result.status === 'passed' && result.healed_test_asset_id != null
-}
+type ResultBucket = 'passed' | 'failed'
 
-type ResultBucket = 'passed' | 'healed' | 'failed'
-
-// Every finished result lands in exactly one bucket: Self-healed, else Passed /
-// Failed by its own status, so the buckets always sum to the run's finished
-// results. Pending/blocked/cancelled results have no bucket. Flaky is not a
-// bucket — `is_flaky` is a separate overlay count (see `RunDetail`).
+// Every finished result lands in exactly one bucket, Passed / Failed by its own
+// status, so the buckets always sum to the run's finished results. A
+// self-healed test is just a passed one, so it counts as Passed. Pending/
+// blocked/cancelled results have no bucket. Flaky is not a bucket — `is_flaky`
+// is a separate overlay count (see `RunDetail`).
 function resultBucket(result: TestResultRead): ResultBucket | null {
-  if (isSelfHealed(result)) return 'healed'
   if (result.status !== 'passed' && !NON_PASSED_STATUSES.has(result.status)) return null
   return result.status === 'passed' ? 'passed' : 'failed'
-}
-
-// "Pass Fail Pass" trail behind a Flaky flag, oldest to newest, this run last.
-function flakyTitle(history: boolean[] | null | undefined): string {
-  const base = 'Flip-flops between passing and failing across its recent runs.'
-  if (!history || history.length === 0) return base
-  const flips = history.filter((o, i) => i > 0 && o !== history[i - 1]).length
-  const trail = history.map((o) => (o ? 'Pass' : 'Fail')).join(' → ')
-  return `${base} ${flips} flips in the last ${history.length} results (as of this run, oldest to newest): ${trail}`
 }
 
 // Same "Test Case" / "Duration" / "Status" columns as the Test Suite tab's
@@ -636,7 +627,7 @@ function TestResultRow({
           {/* An overlay next to the status, not a bucket: a flaky result
               also counts as Passed or Failed in the summary. */}
           {liveResult.is_flaky && (
-            <span title={flakyTitle(liveResult.flaky_history)} style={healChipStyle('var(--flaky)')}>
+            <span style={healChipStyle('var(--flaky)')}>
               Flaky
             </span>
           )}
@@ -905,15 +896,14 @@ function donutArc(fraction: number): string {
 type ResultSegment = ResultBucket
 
 // Bucket display order, colour and label — shared by the summary tiles, the
-// donut arcs and its legend so the three can't drift apart.
+// donut arcs and its legend so they can't drift apart.
 const RESULT_SEGMENTS: { key: ResultSegment; color: string; label: string }[] = [
   { key: 'passed', color: 'var(--good-strong)', label: 'Passed' },
-  { key: 'healed', color: 'var(--warn-strong)', label: 'Self-healed' },
   { key: 'failed', color: 'var(--danger-strong)', label: 'Failed' },
 ]
 
 // "Result split" donut — one arc per bucket stacked around one ring
-// (rotated -90deg so the first arc starts at 12 o'clock), same three
+// (rotated -90deg so the first arc starts at 12 o'clock), same two
 // buckets as the summary tiles above it. Sized up from the original 132px —
 // the card around it has room to spare — and interactive: hovering an arc
 // (or the matching legend row, via `hovered`/`onHover` from the parent)
@@ -974,7 +964,7 @@ function ResultSplitDonut({
 }
 
 // One stacked bar per Journey (a Journey's Scenarios compile into one spec
-// file/suite) — same pass/self-healed/failed buckets as the Result split
+// file/suite) — same pass/failed buckets as the Result split
 // donut, just broken out per suite instead of aggregated across the run.
 // Recharts (real Tooltip/hover, not a hand-rolled one) so each bar segment
 // says what it is on hover instead of the bar's bare total being the only
@@ -1012,7 +1002,7 @@ function ResultsBySuite({ results }: { results: TestResultRead[] }) {
   const bySuite = new Map<string, Record<ResultBucket, number>>()
   for (const r of results) {
     const key = r.journey_name || 'Other'
-    const bucket = bySuite.get(key) ?? { passed: 0, healed: 0, failed: 0 }
+    const bucket = bySuite.get(key) ?? { passed: 0, failed: 0 }
     const kind = resultBucket(r)
     if (kind) bucket[kind] += 1
     bySuite.set(key, bucket)
@@ -1027,7 +1017,6 @@ function ResultsBySuite({ results }: { results: TestResultRead[] }) {
     name: name.length > maxNameChars ? `${name.slice(0, maxNameChars - 1)}…` : name,
     fullName: name,
     Passed: v.passed,
-    'Self-healed': v.healed,
     Failed: v.failed,
   }))
   return (
@@ -1054,7 +1043,6 @@ function ResultsBySuite({ results }: { results: TestResultRead[] }) {
             <YAxis tick={{ fontSize: 10, fill: 'var(--fg-5)' }} tickLine={false} axisLine={false} allowDecimals={false} width={26} />
             <Tooltip content={ResultsBySuiteTooltip} cursor={{ fill: 'var(--hover)' }} />
             <Bar dataKey="Passed" stackId="a" fill="var(--good-strong)" radius={0} />
-            <Bar dataKey="Self-healed" stackId="a" fill="var(--warn-strong)" radius={0} />
             <Bar dataKey="Failed" stackId="a" fill="var(--danger-strong)" radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
@@ -1082,7 +1070,7 @@ function RunDetail({
   const [resultSortKey, setResultSortKey] = useState<ResultSortKey | null>(null)
   const [resultSortDir, setResultSortDir] = useState<'asc' | 'desc'>('asc')
   const results = run.results ?? []
-  const bucketCounts: Record<ResultBucket, number> = { passed: 0, healed: 0, failed: 0 }
+  const bucketCounts: Record<ResultBucket, number> = { passed: 0, failed: 0 }
   for (const r of results) {
     const kind = resultBucket(r)
     if (kind) bucketCounts[kind] += 1
@@ -1138,7 +1126,7 @@ function RunDetail({
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 20, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.01em' }}>Run #{run.run_number}</span>
+            <span style={{ fontSize: 20, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.01em' }}>{runTitle(run)}</span>
             <StatusPill status={run.status} label={testRunStatusLabel(run.status)} variant="flat" />
           </div>
           <div className="caption" style={{ fontSize: 13, marginTop: 5 }}>
@@ -1185,7 +1173,6 @@ function RunDetail({
               label="Flaky"
               value={String(flakyCount)}
               valueColor="var(--flaky-strong)"
-              hint="Tests that flip-flopped between passing and failing recently. Also counted in Passed or Failed. Click to filter the list."
               active={flakyOnly}
               onClick={() => {
                 setFlakyOnly((v) => !v)
@@ -1369,7 +1356,7 @@ function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           {isActive ? <StatusPill status={run.status} label="" variant="inline" /> : <RunHealthIcon tier={run.health.tier} />}
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={run.name}>
-            Run #{run.run_number}
+            {runTitle(run)}
           </span>
         </div>
         <div className="caption" style={{ fontSize: 10.5, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -1646,7 +1633,7 @@ export function RunsTab({
           illustration={<RunsIllustration />}
           variant="scene"
           title="No test runs yet"
-          subtitle="Once discovery finishes and test cases are generated, every execution shows up here with results, traces and per-case re-runs."
+          subtitle="Once exploration finishes and test cases are generated, every execution shows up here with results, traces and per-case re-runs."
         />
       ) : (
         <div style={{ ...mainPanelStyle, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>

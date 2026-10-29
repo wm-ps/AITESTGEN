@@ -261,6 +261,8 @@ export type TestRunRead = {
   id: string
   run_number: number
   name: string
+  // The name given to a run of chosen test cases; null for a whole-suite run.
+  suite_name?: string | null
   status: TestRunStatus
   trigger: string
   pass_rate: number | null

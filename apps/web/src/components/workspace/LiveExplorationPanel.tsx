@@ -362,7 +362,7 @@ export function LiveExplorationPanel({
               {submitting ? 'Submitting…' : 'Explore and generate'}
             </button>
             <span style={{ fontSize: 10.5, color: 'var(--fg-4)' }}>
-              No prior discovery is needed — a live agent explores the application itself.
+              No prior exploration is needed — a live agent explores the application itself.
             </span>
           </div>
         </form>

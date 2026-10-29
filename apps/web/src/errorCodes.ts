@@ -13,8 +13,8 @@ export const SERVICE_ERROR_COPY: Record<ServiceErrorCode, { title: string; messa
     message: "We're having trouble reaching the server. Please try again in a moment.",
   },
   DISCOVERY_UNAVAILABLE: {
-    title: 'Discovery unavailable',
-    message: 'The discovery service is not responding right now. Please try again in a moment.',
+    title: 'Exploration unavailable',
+    message: 'The exploration service is not responding right now. Please try again in a moment.',
   },
   GENERATION_UNAVAILABLE: {
     title: 'Generation unavailable',

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { ExplorerTab } from './ExplorerTab'
 import type { ExplorerQuestion, ExplorerRun } from './explorerApi'
@@ -96,5 +96,42 @@ describe('ExplorerTab', () => {
     expect(screen.getByRole('tab', { name: /What it learned/ }).getAttribute('aria-selected')).toBe('true')
     fireEvent.keyDown(screen.getByRole('tab', { name: /What it learned/ }), { key: 'ArrowLeft' })
     expect(screen.getByRole('tab', { name: /Live/ }).getAttribute('aria-selected')).toBe('true')
+  })
+})
+
+describe('ExplorerTab authoring run', () => {
+  it('hands over to Test cases once a watched authoring run finishes, not before', async () => {
+    const { explorerApi } = await import('./explorerApi')
+    const authoring = { ...run, prompt: 'Search policy POL-1', brief: { app_name: 'FNOL' } }
+    vi.mocked(explorerApi.latestRun).mockResolvedValueOnce({ ...authoring, status: 'testing' as const })
+    vi.mocked(explorerApi.getRun).mockResolvedValue({ ...authoring, status: 'tested' as const, counts: { ...run.counts, tests_proven: 1 } })
+    const onAuthoringDone = vi.fn()
+    render(<ExplorerTab applicationId="a1" applicationName="FNOL" applicationUrl="https://x" onAuthoringDone={onAuthoringDone} />)
+    await screen.findByRole('button', { name: 'Questions, 1 open' })
+    expect(onAuthoringDone).not.toHaveBeenCalled()
+    await waitFor(() => expect(onAuthoringDone).toHaveBeenCalledTimes(1), { timeout: 5000 })
+    vi.mocked(explorerApi.getRun).mockResolvedValue(run)
+  })
+
+  it('stays on Explorer when the authoring run added no test cases', async () => {
+    const { explorerApi } = await import('./explorerApi')
+    const authoring = { ...run, prompt: 'Check Brad Smith', brief: { app_name: 'SalesVision' } }
+    vi.mocked(explorerApi.latestRun).mockResolvedValueOnce({ ...authoring, status: 'testing' as const })
+    vi.mocked(explorerApi.getRun).mockResolvedValue({ ...authoring, status: 'tested' as const })
+    const onAuthoringDone = vi.fn()
+    render(<ExplorerTab applicationId="a1" applicationName="SalesVision" applicationUrl="https://x" onAuthoringDone={onAuthoringDone} />)
+    await waitFor(() => expect(explorerApi.getRun).toHaveBeenCalled(), { timeout: 5000 })
+    await new Promise((r) => setTimeout(r, 300))
+    expect(onAuthoringDone).not.toHaveBeenCalled()
+    vi.mocked(explorerApi.getRun).mockResolvedValue(run)
+  })
+
+  it('stays put when an authoring run that already finished is opened', async () => {
+    const { explorerApi } = await import('./explorerApi')
+    vi.mocked(explorerApi.latestRun).mockResolvedValueOnce({ ...run, prompt: 'Search policy POL-1' })
+    const onAuthoringDone = vi.fn()
+    render(<ExplorerTab applicationId="a1" applicationName="FNOL" applicationUrl="https://x" onAuthoringDone={onAuthoringDone} />)
+    await screen.findByRole('button', { name: 'Questions, 1 open' })
+    expect(onAuthoringDone).not.toHaveBeenCalled()
   })
 })

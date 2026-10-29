@@ -27,7 +27,7 @@ const POLL_INTERVAL_MS = 15000
 // this app's own applicationStage() outcomes; Execution is the one active
 // state that stage doesn't carry (a run can still be going after the suite
 // is otherwise complete), so it's checked independently and wins ties.
-const PIPE_STAGE_LABELS = ['Discovery', 'Scenarios', 'Test cases', 'Execution'] as const
+const PIPE_STAGE_LABELS = ['Exploration', 'Scenarios', 'Test cases', 'Execution'] as const
 
 function activePipelineIndex(app: HomeApplicationRead): number | null {
   const { isRunning, scenariosGenerating, suiteGenerating, testRunRunning } = applicationStage(app)
@@ -159,7 +159,7 @@ export function Overview({
       <div>
         <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Overview</h1>
         <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 4 }}>
-          Discovers your application from a deployed URL and generates its Playwright test suite.
+          Explores your application from a deployed URL and generates its Playwright test suite.
         </div>
       </div>
 
@@ -220,7 +220,7 @@ export function Overview({
                 : stageIndex === 1
                   ? `${app.scenario_journeys_covered}/${app.journey_count} journeys`
                   : stageIndex === 0
-                    ? 'Discovery in progress'
+                    ? 'Exploration in progress'
                     : stageIndex === 2
                       ? 'Generating test cases'
                       : 'Run in progress'
@@ -490,45 +490,91 @@ export function Overview({
                 label: 'Self-healed locators',
                 value: stats == null ? '—' : String(stats.self_healed_count),
                 sub: 'In the last 7 days',
+                aside: {
+                  icon: faShuffle,
+                  label: 'Flaky tests',
+                  value: String(totalFlaky),
+                  // Hover on the count: one "App : n" line per affected app.
+                  valueRows:
+                    totalFlaky > 0
+                      ? apps
+                          .filter((a) => (a.last_test_run_flaky_count ?? 0) > 0)
+                          .map((a) => `${a.name} : ${a.last_test_run_flaky_count}`)
+                      : undefined,
+                  sub:
+                    totalFlaky === 0
+                      ? 'None in latest runs'
+                      : `Across ${flakyAppCount} application${flakyAppCount === 1 ? '' : 's'}`,
+                },
               },
               {
                 id: 'discovery',
                 icon: faCompass,
-                label: 'Last discovery',
+                label: 'Last exploration',
                 value: lastDiscoveryAt == null ? '—' : relativeTime(lastDiscoveryAt),
                 sub: `${appsDiscoveredUnderAWeek} of ${apps.length} apps under 7 days`,
               },
-              {
-                id: 'flaky',
-                icon: faShuffle,
-                label: 'Flaky tests',
-                value: String(totalFlaky),
-                // Quiet at 0 — only colour it when there is something to look at.
-                valueColor: totalFlaky > 0 ? 'var(--flaky-strong)' : undefined,
-                // Hover on the count: one "App : n" line per affected app.
-                valueTitle:
-                  totalFlaky > 0
-                    ? apps
-                        .filter((a) => (a.last_test_run_flaky_count ?? 0) > 0)
-                        .map((a) => `${a.name} : ${a.last_test_run_flaky_count}`)
-                        .join('\n')
-                    : undefined,
-                sub:
-                  totalFlaky === 0
-                    ? 'None in latest runs'
-                    : `Across ${flakyAppCount} application${flakyAppCount === 1 ? '' : 's'}`,
-              },
             ]
 
-            function MiniTile({ icon, label, value, sub, flex, valueColor, valueTitle }: { icon: typeof faCompass; label: string; value: string; sub: string; flex?: number; valueColor?: string; valueTitle?: string }) {
+            type TileStat = { icon: typeof faCompass; label: string; value: string; sub: string; valueColor?: string; valueRows?: string[] }
+
+            function TileStatBlock({ icon, label, value, sub, valueColor, valueRows }: TileStat) {
+              const [hover, setHover] = useState(false)
               return (
-                <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, padding: '16px 18px', flex, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <FontAwesomeIcon icon={icon} style={{ fontSize: 12, color: 'var(--accent-hi)' }} />
                     <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>{label}</span>
                   </div>
-                  <div title={valueTitle} style={{ fontSize: 22, lineHeight: '28px', color: valueColor ?? 'var(--fg)', marginTop: 8, fontWeight: 600, ...(valueTitle ? { cursor: 'help', width: 'fit-content' } : {}) }}>{value}</div>
+                  <div
+                    onMouseEnter={valueRows ? () => setHover(true) : undefined}
+                    onMouseLeave={valueRows ? () => setHover(false) : undefined}
+                    style={{ position: 'relative', fontSize: 22, lineHeight: '28px', color: valueColor ?? 'var(--fg)', marginTop: 8, fontWeight: 600, ...(valueRows ? { cursor: 'pointer', width: 'fit-content' } : {}) }}
+                  >
+                    {value}
+                    {valueRows && hover && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          left: 0,
+                          bottom: '100%',
+                          marginBottom: 6,
+                          zIndex: 5,
+                          pointerEvents: 'none',
+                          background: 'var(--panel)',
+                          border: '1px solid var(--border-2)',
+                          borderRadius: 8,
+                          boxShadow: 'var(--panel-shadow)',
+                          padding: '6px 10px',
+                          fontSize: 11.5,
+                          fontWeight: 400,
+                          lineHeight: '16px',
+                          color: 'var(--fg-2)',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {valueRows.map((r) => (
+                          <div key={r}>{r}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 2 }}>{sub}</div>
+                </div>
+              )
+            }
+
+            function MiniTile({ flex, aside, ...stat }: TileStat & { flex?: number; aside?: TileStat }) {
+              return (
+                <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, padding: '16px 18px', flex, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 18 }}>
+                  <div style={{ flex: 1, minWidth: 140 }}>
+                    <TileStatBlock {...stat} />
+                  </div>
+                  {aside && (
+                    <div style={{ flex: 1, minWidth: 140, paddingLeft: 18, borderLeft: '1px solid var(--border-1)' }}>
+                      <TileStatBlock {...aside} />
+                    </div>
+                  )}
                 </div>
               )
             }

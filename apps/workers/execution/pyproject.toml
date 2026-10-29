@@ -7,6 +7,7 @@ dependencies = [
     "temporalio>=1.9",
     "workflows",
     "domain",
+    "explorer-core",
     "secrets-client",
     "object-store",
     "mailer",
@@ -33,6 +34,8 @@ dev = [
 [tool.uv.sources]
 workflows = { workspace = true }
 domain = { workspace = true }
+# Application purge (cleanup_activities.py) deletes Explorer's tables too.
+explorer-core = { workspace = true }
 secrets-client = { workspace = true }
 object-store = { workspace = true }
 mailer = { workspace = true }

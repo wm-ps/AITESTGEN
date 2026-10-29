@@ -3,6 +3,7 @@ screenshots, understood screens, health issues, run status. Short-lived DB
 sessions per write so the Live screen sees progress immediately."""
 
 import logging
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -21,6 +22,17 @@ from explorer_core.notify import send_pause_email
 from sqlmodel import Session, col, select
 
 from explorer_worker.db import engine
+from explorer_worker.sense import url_pattern
+
+_URL = re.compile(r"https?://\S+")
+_NUMBER = re.compile(r"\d+")
+
+
+def _failure_key(detail: str | None) -> str:
+    """What failed, minus what changes per call: request URLs become their
+    place, other numbers (ids, timestamps, line:col) are dropped."""
+    text = _URL.sub(lambda m: url_pattern(m.group()), detail or "")
+    return _NUMBER.sub("#", text)
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +72,11 @@ class Journal:
                 # says so too, instead of "running" forever.
                 _fail_discovery(session, run.application_id, run.error or run.headline)
             session.commit()
+
+    def run_brief(self) -> dict[str, Any]:
+        with Session(engine) as session:
+            run = session.get(ExplorerRun, self.run_id)
+            return dict(run.brief or {}) if run else {}
 
     def status(self) -> str | None:
         with Session(engine) as session:
@@ -157,6 +174,8 @@ class Journal:
                 ).first()
             if existing is not None:
                 existing.visits += 1
+                if existing.goal_fit is None and values.get("goal_fit"):
+                    existing.goal_fit = values["goal_fit"]  # the first verdict wins
                 if values.get("reached_by") == "Start page":
                     # a screen copied from an earlier run may be this run's start
                     existing.reached_by = "Start page"
@@ -173,6 +192,22 @@ class Journal:
             session.add(row)
             session.commit()
             return row.id, True
+
+    def goal_fit_of(self, screen_id: uuid.UUID) -> str | None:
+        with Session(engine) as session:
+            screen = session.get(ExplorerScreen, screen_id)
+            return screen.goal_fit if screen else None
+
+    def set_goal_fit(self, fits: dict[str, str]) -> None:
+        """Each named screen's place against the run's Goal (explorer_core.GOAL_FITS)."""
+        with Session(engine) as session:
+            for screen in session.exec(
+                select(ExplorerScreen).where(ExplorerScreen.run_id == self.run_id)
+            ).all():
+                if screen.name in fits:
+                    screen.goal_fit = fits[screen.name]
+                    session.add(screen)
+            session.commit()
 
     def transition(self, from_id: uuid.UUID, to_id: uuid.UUID, action: str) -> None:
         """One App Map edge per (from, to, action) — repeats aren't stored."""
@@ -226,22 +261,35 @@ class Journal:
     ) -> bool:
         """Returns True when this is a new problem (repeats just count up).
         Background/server errors are the same problem wherever they show up,
-        so they match on what failed; page problems match on the page."""
+        so they match on what failed (ids and query values ignored); page
+        problems match on the place (`/offers/17` = `/offers/9`). What the
+        AI writes matches in other words too — it rewords the same issue."""
+        from explorer_worker.memory import similar  # memory imports journal
+
         detail = (detail or "")[:1000] or None
-        same_place = (
-            ExplorerHealthIssue.detail == detail
-            if kind in ("server_error", "background_error")
-            else ExplorerHealthIssue.url == url
-        )
+        title = title[:300]
         with Session(engine) as session:
-            existing = session.exec(
+            rows = session.exec(
                 select(ExplorerHealthIssue).where(
                     ExplorerHealthIssue.run_id == self.run_id,
                     ExplorerHealthIssue.kind == kind,
-                    ExplorerHealthIssue.title == title[:300],
-                    same_place,
                 )
-            ).first()
+            ).all()
+            if kind in ("server_error", "background_error"):
+                failed = _failure_key(detail)
+                existing = next((r for r in rows if r.title == title and _failure_key(r.detail) == failed), None)
+            else:
+                place = url_pattern(url)
+                reworded = kind in ("looks_wrong", "wording")
+                existing = next(
+                    (
+                        r
+                        for r in rows
+                        if url_pattern(r.url) == place
+                        and (r.title == title or (reworded and similar(r.title, title)))
+                    ),
+                    None,
+                )
             if existing is not None:
                 existing.occurrences += 1
                 session.add(existing)
@@ -252,7 +300,7 @@ class Journal:
                     run_id=self.run_id,
                     kind=kind,
                     severity=severity,
-                    title=title[:300],
+                    title=title,
                     detail=detail,
                     url=url,
                     shot_id=shot_id,

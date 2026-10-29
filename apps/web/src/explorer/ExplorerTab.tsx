@@ -8,18 +8,21 @@ import {
   faFileLines,
   faHourglassEnd,
   faHeartPulse,
+  faImages,
   faLayerGroup,
+  faLightbulb,
   faListCheck,
   faPlay,
   faScaleBalanced,
-  faSignal,
   faStop,
   faPause,
+  faTowerBroadcast,
   faUserCheck,
 } from '@fortawesome/free-solid-svg-icons'
+import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import { ApiError } from '../api'
 import { AppIdentityLine } from '../components/AppIdentityLine'
-import { LoadingDots, Spinner } from '../components/LoadingDots'
+import { LoadingDots } from '../components/LoadingDots'
 import {
   explorerApi,
   WORKING_STATUSES,
@@ -48,11 +51,14 @@ export function ExplorerTab({
   applicationName,
   applicationUrl,
   onGenerateTests,
+  onAuthoringDone,
 }: {
   applicationId: string
   applicationName: string
   applicationUrl: string
   onGenerateTests?: () => Promise<void>
+  // An authoring run watched here finished (its test cases are written).
+  onAuthoringDone?: () => void
 }) {
   const [run, setRun] = useState<ExplorerRun | null | undefined>(undefined)
   const [events, setEvents] = useState<ExplorerEvent[]>([])
@@ -72,6 +78,15 @@ export function ExplorerTab({
   const cursor = useRef(0)
 
   const working = run ? WORKING_STATUSES.includes(run.status) : false
+
+  // Authoring ends on its test cases: once a run watched here finishes with
+  // some, hand over to Test cases (an already-finished run opened later, or
+  // one that added nothing, stays here showing why).
+  const wasWorking = useRef(false)
+  useEffect(() => {
+    if (run?.prompt && wasWorking.current && run.status === 'tested' && run.counts.tests_proven > 0) onAuthoringDone?.()
+    wasWorking.current = working
+  }, [run?.status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load the latest run for this app on open.
   useEffect(() => {
@@ -292,7 +307,7 @@ export function ExplorerTab({
 
       {run === undefined ? (
         <div style={{ ...glassCard, padding: 28, display: 'flex', gap: 10, alignItems: 'center', color: 'var(--fg-3)', fontSize: 13.5 }}>
-          <Spinner size={14} /> Loading Explorer…
+          <LoadingDots label="Loading Explorer" />
         </div>
       ) : run === null || startingFresh ? (
         <StartCard applicationId={applicationId} applicationName={applicationName} busy={starting} onStart={start} onCancel={run ? () => setStartingFresh(false) : undefined} />
@@ -322,10 +337,10 @@ export function ExplorerTab({
             view={view}
             onChange={setView}
             items={[
-              { key: 'live', label: 'Live', icon: faSignal, badge: working ? 'live' : undefined },
-              { key: 'summary', label: 'What it learned', icon: faFileLines, badge: run.status === 'awaiting_confirmation' ? 'review' : undefined },
-              { key: 'screens', label: 'Screens', icon: faLayerGroup, count: run.counts.screens },
-              { key: 'scenarios', label: 'Scenarios', icon: faListCheck, count: run.counts.tests_proven + run.counts.tests_known_bugs },
+              { key: 'live', label: 'Live', badge: working ? 'live' : undefined },
+              { key: 'summary', label: 'What it learned', badge: run.status === 'awaiting_confirmation' ? 'review' : undefined },
+              { key: 'screens', label: 'Screens', count: run.counts.screens },
+              { key: 'scenarios', label: 'Scenarios', count: run.counts.tests_proven + run.counts.tests_known_bugs },
             ]}
           />
           <div key={view} style={{ animation: 'aitg-fade-up 240ms ease' }}>
@@ -347,7 +362,7 @@ export function ExplorerTab({
                 }}
               />
             )}
-            {view === 'screens' && <ScreensView map={appMap} onOpenShot={openShot} />}
+            {view === 'screens' && <ScreensView map={appMap} issues={issues} onOpenShot={openShot} />}
             {view === 'scenarios' && <ScenariosView run={run} tests={tests} screens={appMap?.screens ?? []} onOpenShot={openShot} onGenerateTests={onGenerateTests} onVerdict={async (testId, verdict) => {
               setRun(await explorerApi.verdict(testId, verdict))
               setTests(await explorerApi.tests(run.id))
@@ -365,7 +380,7 @@ export function ExplorerTab({
                 />
                 <KnowledgePanel applicationId={applicationId} />
                 {/* Last and folded: worth a look, never the headline. */}
-                <HealthView issues={issues} questions={questions ?? []} onAnswered={refreshAfterAnswer} onOpenShot={openShot} />
+                <HealthView issues={issues} screens={appMap?.screens ?? []} questions={questions ?? []} onAnswered={refreshAfterAnswer} onOpenShot={openShot} />
               </div>
             )}
           </div>
@@ -377,18 +392,30 @@ export function ExplorerTab({
   )
 }
 
-// A segmented control: every tab the same width and weight, so the bar
-// never jumps when you switch or a count changes. Arrow keys move between
-// tabs. Only a tab that needs you (or is live) gets a dot.
-function Tabs({ view, onChange, items }: { view: View; onChange: (v: View) => void; items: { key: View; label: string; icon: typeof faSignal; count?: number; badge?: 'live' | 'review' }[] }) {
+const TAB_ICONS: Partial<Record<View, IconDefinition>> = {
+  live: faTowerBroadcast,
+  summary: faLightbulb,
+  screens: faImages,
+  scenarios: faListCheck,
+}
+
+// Page navigation bar: a full-width white strip anchored under the header.
+// Each tab is icon + label (+ count); the active one is a soft accent pill,
+// the rest get a grey pill on hover. No underlines. Arrow
+// keys move between tabs. Only a tab that needs you (or is live) gets a dot.
+function Tabs({ view, onChange, items }: { view: View; onChange: (v: View) => void; items: { key: View; label: string; count?: number; badge?: 'live' | 'review' }[] }) {
   const move = (from: number, step: number) => {
     const next = items[(from + step + items.length) % items.length]
     onChange(next.key)
     document.getElementById(`explorer-tab-${next.key}`)?.focus()
   }
   return (
-    <div role="tablist" aria-label="Explorer" style={{ display: 'flex', gap: 4, padding: 4, marginBottom: 20, borderRadius: 12, background: 'var(--chip)', border: '1px solid var(--line)' }}>
-      <style>{'.explorer-tab:hover{color:var(--fg)!important}.explorer-tab:focus-visible{outline:2px solid var(--accent-2);outline-offset:1px}'}</style>
+    <div role="tablist" aria-label="Explorer" style={{ ...glassCard, borderRadius: 12, display: 'flex', gap: 2, marginBottom: 20, padding: '0 8px', overflowX: 'auto' }}>
+      <style>{
+        '.explorer-tab-inner{transition:background 150ms ease,color 150ms ease}' +
+        '.explorer-tab[aria-selected="false"]:hover .explorer-tab-inner{background:var(--panel-2);color:var(--fg)}' +
+        '.explorer-tab:focus-visible{outline:none}.explorer-tab:focus-visible .explorer-tab-inner{outline:2px solid var(--accent-2);outline-offset:-2px}'
+      }</style>
       {items.map((item, i) => {
         const active = item.key === view
         return (
@@ -406,34 +433,41 @@ function Tabs({ view, onChange, items }: { view: View; onChange: (v: View) => vo
               if (e.key === 'ArrowLeft') move(i, -1)
             }}
             style={{
-              flex: '1 1 0',
-              minWidth: 0,
-              display: 'inline-flex',
+              position: 'relative',
+              flex: 'none',
+              display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              gap: 8,
-              height: 36,
-              padding: '0 12px',
+              height: 48,
+              padding: '0 2px',
               border: 'none',
-              borderRadius: 9,
-              background: active ? 'white' : 'transparent',
-              boxShadow: active ? '0 1px 3px rgba(15,23,42,0.12)' : 'none',
+              background: 'transparent',
               fontFamily: 'inherit',
-              fontSize: 13.5,
-              fontWeight: 600,
-              color: active ? 'var(--fg)' : 'var(--fg-4)',
               cursor: 'pointer',
-              whiteSpace: 'nowrap',
-              transition: 'background 150ms ease, color 150ms ease',
             }}
           >
-            <FontAwesomeIcon icon={item.icon} style={{ fontSize: 12, color: active ? 'var(--accent-2)' : 'var(--fg-5)' }} />
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.label}</span>
-            {item.count !== undefined && (
-              <span style={{ fontSize: 11, fontWeight: 600, lineHeight: '17px', minWidth: 18, textAlign: 'center', padding: '0 6px', borderRadius: 1000, color: active ? 'var(--accent-2)' : 'var(--fg-4)', background: active ? 'var(--accent-wash)' : 'white' }}>{item.count}</span>
-            )}
-            {item.badge === 'live' && <span aria-label="Live" style={{ width: 7, height: 7, flex: 'none', borderRadius: 1000, background: 'var(--bad)', animation: 'v2-pulse 1.4s ease-in-out infinite' }} />}
-            {item.badge === 'review' && <span aria-label="Needs you" style={{ width: 8, height: 8, flex: 'none', borderRadius: 1000, background: 'var(--warn-2)', animation: 'explorer-attention 1.6s ease-out infinite' }} />}
+            <span
+              className="explorer-tab-inner"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '7px 12px',
+                borderRadius: 8,
+                background: active ? 'var(--accent-wash)' : 'transparent',
+                fontSize: 13.5,
+                fontWeight: active ? 600 : 500,
+                color: active ? 'var(--accent-2)' : 'var(--fg-4)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <FontAwesomeIcon icon={TAB_ICONS[item.key] ?? faCompass}style={{ fontSize: 12.5, opacity: active ? 1 : 0.75 }} />
+              {item.label}
+              {item.count !== undefined && (
+                <span style={{ minWidth: 20, padding: '0 6px', borderRadius: 1000, fontSize: 11.5, fontWeight: 600, lineHeight: '18px', textAlign: 'center', background: active ? 'var(--panel)' : 'var(--panel-2)', color: active ? 'var(--accent-2)' : 'var(--fg-5)' }}>{item.count}</span>
+              )}
+              {item.badge === 'live' && <span aria-label="Live" style={{ width: 7, height: 7, flex: 'none', borderRadius: 1000, background: 'var(--bad)', animation: 'v2-pulse 1.4s ease-in-out infinite' }} />}
+              {item.badge === 'review' && <span aria-label="Needs you" style={{ width: 8, height: 8, flex: 'none', borderRadius: 1000, background: 'var(--warn-2)', animation: 'explorer-attention 1.6s ease-out infinite' }} />}
+            </span>
           </button>
         )
       })}

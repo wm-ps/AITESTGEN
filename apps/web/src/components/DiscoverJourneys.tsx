@@ -252,7 +252,7 @@ export function DiscoverJourneys({
       const application = await api.pauseDiscovery(applicationId)
       setStatusOverride(application.discovery_status)
     } catch {
-      setPauseResumeError('Could not pause discovery. Try again.')
+      setPauseResumeError('Could not pause exploration. Try again.')
     } finally {
       setPauseResumeBusy(false)
     }
@@ -265,7 +265,7 @@ export function DiscoverJourneys({
       const application = await api.resumeDiscovery(applicationId)
       setStatusOverride(application.discovery_status)
     } catch {
-      setPauseResumeError('Could not resume discovery. Try again.')
+      setPauseResumeError('Could not resume exploration. Try again.')
     } finally {
       setPauseResumeBusy(false)
     }
@@ -407,7 +407,7 @@ export function DiscoverJourneys({
             <h2 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Journeys</h2>
             <AppIdentityLine name={applicationName} url={applicationUrl} />
             <div className="caption" style={{ fontSize: 13, marginTop: 3 }}>
-              {journeys.length} journey{journeys.length === 1 ? '' : 's'} discovered
+              {journeys.length} journey{journeys.length === 1 ? '' : 's'} explored
             </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-5)', flexShrink: 0 }}>
@@ -442,7 +442,7 @@ export function DiscoverJourneys({
                 onClick={status === 'running' ? handlePause : handleResume}
                 disabled={pauseResumeBusy}
               >
-                {status === 'running' ? 'Pause Discovery' : 'Resume Discovery'}
+                {status === 'running' ? 'Pause Exploration' : 'Resume Exploration'}
               </button>
             )}
             {canEdit && journeys.length > 0 && (
@@ -480,14 +480,14 @@ export function DiscoverJourneys({
           </p>
         ) : sessionExpired ? (
           <p className="caption" role="alert" style={{ color: 'var(--danger)' }}>
-            Session expired mid-discovery. Re-authenticate to continue discovery.
+            Session expired mid-exploration. Re-authenticate to continue exploration.
           </p>
         ) : discoveryWorkerDown ? (
           <ServiceErrorNote code="DISCOVERY_UNAVAILABLE" />
         ) : (
           status === 'failed' && (
             <p className="caption" role="alert" style={{ color: 'var(--danger)' }}>
-              Discovery Run failed.
+              Exploration Run failed.
             </p>
           )
         )}
@@ -502,7 +502,7 @@ export function DiscoverJourneys({
 
         {!onOpenExplorer && status === 'paused' && (
           <p className="caption" style={{ color: 'var(--warn-strong)' }}>
-            Discovery paused. Resume to continue exploring from where it left off.
+            Exploration paused. Resume to continue exploring from where it left off.
           </p>
         )}
 

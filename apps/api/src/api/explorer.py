@@ -32,6 +32,7 @@ from explorer_core import (
     ExplorerTestCase,
     ExplorerTransition,
     explorer_workflow_id,
+    run_workflow_name,
 )
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile
 from pydantic import BaseModel
@@ -81,6 +82,8 @@ class RunRead(BaseModel):
     brief: dict[str, Any] | None
     brief_confirmed_at: datetime | None
     notes: str | None
+    # Authoring: the user's request this run follows (None for exploring).
+    prompt: str | None = None
     error: str | None
     created_at: datetime
     updated_at: datetime
@@ -244,6 +247,7 @@ def _to_read(session: Session, run: ExplorerRun, application: Application) -> Ru
         brief=run.brief,
         brief_confirmed_at=run.brief_confirmed_at,
         notes=run.notes,
+        prompt=run.prompt,
         error=run.error,
         created_at=run.created_at,
         updated_at=run.updated_at,
@@ -274,11 +278,17 @@ def latest_run(
     application_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep
 ) -> RunRead | None:
     application = _owned_application(session, application_id, org_id)
-    run = session.exec(
+    runs = session.exec(
         select(ExplorerRun)
         .where(ExplorerRun.application_id == application.id)
         .order_by(col(ExplorerRun.created_at).desc())
-    ).first()
+    ).all()
+    # The newest run, unless it is an authoring run that is over (its results
+    # live in Test cases): then the latest exploration, if there is one. A
+    # paused or failed authoring run still shows, so it can be resumed.
+    run = runs[0] if runs else None
+    if run is not None and run.prompt and run.status in ("tested", "stopped", "expired"):
+        run = next((r for r in runs if not r.prompt), run)
     return _to_read(session, run, application) if run else None
 
 
@@ -506,6 +516,15 @@ _EXPIRED = (
 )
 
 
+def unanswered_questions(brief: dict[str, Any] | None) -> int:
+    """The App Summary's own questions still waiting for an answer."""
+    return sum(
+        1
+        for item in (brief or {}).get("questions_for_you") or []
+        if isinstance(item, dict) and not str(item.get("answer") or "").strip()
+    )
+
+
 @router.post("/runs/{run_id}/confirm", response_model=RunRead)
 async def confirm_brief(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep) -> RunRead:
     run, application = _owned_run(session, run_id, org_id)
@@ -513,6 +532,10 @@ async def confirm_brief(run_id: uuid.UUID, session: SessionDep, org_id: CurrentO
         raise HTTPException(status_code=409, detail=_EXPIRED)
     if run.status != "awaiting_confirmation":
         raise HTTPException(status_code=409, detail="nothing to confirm right now")
+    if unanswered_questions(run.brief):
+        raise HTTPException(
+            status_code=409, detail="Answer the questions first — they change what Explorer tests."
+        )
     client = await get_temporal_client()
     await client.get_workflow_handle(explorer_workflow_id(run.external_id)).signal(
         BRIEF_CONFIRMED_SIGNAL
@@ -556,7 +579,8 @@ async def stop_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdD
         raise HTTPException(status_code=409, detail="this run is not running")
     run.status, run.headline, run.updated_at = "stopped", "Stopped", datetime.now(UTC)
     session.add(run)
-    _mirror_discovery(session, application, "failed", "Explorer was stopped before it finished")
+    if not run.prompt:  # an authoring run is not the app's discovery
+        _mirror_discovery(session, application, "failed", "Explorer was stopped before it finished")
     session.add(
         ExplorerEvent(
             run_id=run.id, kind="phase", title="Stopped", detail="Exploration was stopped."
@@ -594,7 +618,8 @@ async def pause_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgId
         raise HTTPException(status_code=409, detail="this run is not running")
     run.status, run.headline, run.updated_at = "paused", "Paused", datetime.now(UTC)
     session.add(run)
-    _mirror_discovery(session, application, "paused")
+    if not run.prompt:  # an authoring run is not the app's discovery
+        _mirror_discovery(session, application, "paused")
     session.add(
         ExplorerEvent(
             run_id=run.id,
@@ -636,12 +661,13 @@ async def resume_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgI
     await _end_leftover_workflow(run, "Resumed by the user")
     run.status, run.headline, run.updated_at = "queued", "Resuming", datetime.now(UTC)
     session.add(run)
-    _mirror_discovery(session, application, "running")
+    if not run.prompt:  # an authoring run is not the app's discovery
+        _mirror_discovery(session, application, "running")
     session.commit()
     session.refresh(run)
     client = await get_temporal_client()
     await client.start_workflow(
-        EXPLORER_WORKFLOW_NAME,
+        run_workflow_name(run),
         args=[str(run.id), "resume"],
         id=explorer_workflow_id(run.external_id),
         task_queue=EXPLORER_TASK_QUEUE,
@@ -754,7 +780,7 @@ async def add_mission(
         # execution that goes straight to the mission pool.
         client = await get_temporal_client()
         await client.start_workflow(
-            EXPLORER_WORKFLOW_NAME,
+            run_workflow_name(run),
             args=[str(run.id), "missions"],
             id=explorer_workflow_id(run.external_id),
             task_queue=EXPLORER_TASK_QUEUE,
@@ -961,7 +987,7 @@ async def regenerate_tests(
     session.refresh(run)
     client = await get_temporal_client()
     await client.start_workflow(
-        EXPLORER_WORKFLOW_NAME,
+        run_workflow_name(run),
         args=[str(run.id), "tests"],
         id=explorer_workflow_id(run.external_id),
         task_queue=EXPLORER_TASK_QUEUE,
@@ -1023,7 +1049,7 @@ async def judge_possible_bug(
         # Send the now-proven scenario on to Journeys / Test cases.
         client = await get_temporal_client()
         await client.start_workflow(
-            EXPLORER_WORKFLOW_NAME,
+            run_workflow_name(run),
             args=[str(run.id), "send"],
             id=f"{explorer_workflow_id(run.external_id)}-send-{uuid.uuid4()}",
             task_queue=EXPLORER_TASK_QUEUE,

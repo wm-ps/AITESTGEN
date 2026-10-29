@@ -14,7 +14,7 @@ import {
   faLightbulb,
   faPause,
 } from '@fortawesome/free-solid-svg-icons'
-import { Spinner } from '../components/LoadingDots'
+import { BouncingDots } from '../components/LoadingDots'
 import {
   shotUrl,
   WORKING_STATUSES,
@@ -194,8 +194,7 @@ export function LiveView({
               <img key={shown.shot_id} src={shotUrl(shown.shot_id)} alt={shown.title} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top', animation: 'aitg-fade-up 360ms ease' }} />
             ) : (
               <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--fg-4)', fontSize: 13 }}>
-                {working && <Spinner size={14} />}
-                {working ? 'Opening the app…' : 'No screens captured'}
+                {working ? <>Opening the app <BouncingDots /></> : 'No screens captured'}
               </div>
             )}
             {working && !pinned && (
@@ -207,7 +206,7 @@ export function LiveView({
             {(pinned ?? latest) && (
               <div style={{ position: 'absolute', left: 14, right: 14, bottom: 14, background: 'rgba(15, 30, 29, 0.86)', backdropFilter: 'blur(8px)', color: 'white', borderRadius: 12, padding: '11px 14px', display: 'flex', gap: 12, alignItems: 'center' }}>
                 <span style={{ width: 28, height: 28, flex: 'none', borderRadius: 1000, background: 'var(--accent-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {working && !pinned ? <Spinner size={12} /> : <FontAwesomeIcon icon={faArrowRight} style={{ fontSize: 12 }} />}
+                  {working && !pinned ? <BouncingDots size={3} /> : <FontAwesomeIcon icon={faArrowRight} style={{ fontSize: 12 }} />}
                 </span>
                 <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
                   <span key={(pinned ?? latest)!.id} style={{ fontSize: 14, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', animation: 'aitg-fade-up 260ms ease' }}>
@@ -252,7 +251,7 @@ export function LiveView({
           <div style={{ overflowY: 'auto', padding: '0 10px 6px', display: 'flex', flexDirection: 'column' }}>
             {activity.length === 0 && (
               <div style={{ padding: '16px 8px', fontSize: 13, color: 'var(--fg-4)', display: 'flex', gap: 8, alignItems: 'center' }}>
-                {working && <Spinner size={12} />} Starting up…
+                Starting up {working && <BouncingDots />}
               </div>
             )}
             {activity.map((event, i) => {
@@ -451,7 +450,7 @@ function Stage({
             color: done ? 'white' : 'var(--accent-2)',
           }}
         >
-          {done ? <FontAwesomeIcon icon={faCheck} style={{ fontSize: 10 }} /> : active && working ? <Spinner size={10} /> : active ? <span style={{ width: 8, height: 8, borderRadius: 1000, background: 'var(--accent-2)' }} /> : null}
+          {done ? <FontAwesomeIcon icon={faCheck} style={{ fontSize: 10 }} /> : active && working ? <BouncingDots size={2.5} /> : active ? <span style={{ width: 8, height: 8, borderRadius: 1000, background: 'var(--accent-2)' }} /> : null}
         </span>
         {!last && <span style={{ width: 2, flex: 1, minHeight: 22, background: done ? 'var(--accent-2)' : 'var(--line)', transition: 'background 400ms ease' }} />}
       </div>

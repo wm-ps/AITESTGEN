@@ -15,7 +15,7 @@ export const ROLE_OPTIONS: { key: Role; label: string; hint: string }[] = [
   {
     key: 'admin',
     label: 'Admin',
-    hint: 'Everything a member can do, plus saved credentials and discovery limits.',
+    hint: 'Everything a member can do, plus saved credentials and exploration limits.',
   },
   {
     key: 'viewer',

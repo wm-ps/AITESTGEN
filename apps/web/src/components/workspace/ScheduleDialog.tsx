@@ -195,7 +195,7 @@ export function ScheduleDialog({
               {initial ? 'Edit schedule' : 'New schedule'}
             </div>
             <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 3 }}>
-              Run discovery or test cases automatically on a cadence.
+              Run exploration or test cases automatically on a cadence.
             </div>
           </div>
           <button

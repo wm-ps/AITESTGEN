@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faBullseye, faCircleCheck, faCircleQuestion, faListOl, faPen, faPlus, faTrashCan } from '@fortawesome/free-solid-svg-icons'
+import { faBullseye, faCircleCheck, faCircleQuestion, faPen } from '@fortawesome/free-solid-svg-icons'
 import { LoadingDots } from '../components/LoadingDots'
-import { shotUrl, type AppBrief, type ExplorerRun, type ExplorerScreen } from './explorerApi'
+import { type AppBrief, type ExplorerRun, type ExplorerScreen } from './explorerApi'
 import { glassCard, Pill, SectionTitle } from './ui'
 
-// Only what Explorer can stand behind: what the app is, the tasks it will
-// test, and the questions it needs answered. Its guesses about the business
+// Only what Explorer can stand behind: what the app is, the questions it
+// needs answered, and which screens to cover (the whole app unless you untick
+// some). Its own task list stays internal: it read as a narrower scope than
+// "test everything" and confused people. Its guesses about the business
 // (who uses it, business objects and their statuses, expected rules, parts
 // that may appear sometimes) are left out of view — they were too often wrong.
 
@@ -36,6 +38,9 @@ export function SummaryView({
   const [draft, setDraft] = useState<AppBrief>(run.brief ?? {})
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState<'save' | 'confirm' | null>(null)
+  // Confirm pressed with a question still open: say why nothing happened.
+  const [confirmBlocked, setConfirmBlocked] = useState(false)
+  const questionsRef = useRef<HTMLDivElement>(null)
   const editable = run.status === 'awaiting_confirmation'
 
   useEffect(() => {
@@ -43,11 +48,6 @@ export function SummaryView({
   }, [run.brief, editing])
 
   const set = <K extends keyof AppBrief>(key: K, value: AppBrief[K]) => setDraft((d) => ({ ...d, [key]: value }))
-  const updateTask = (index: number, patch: object) => {
-    const list = [...(draft.key_tasks ?? [])]
-    list[index] = { ...list[index], ...patch }
-    set('key_tasks', list)
-  }
 
   const save = async (next: AppBrief = draft) => {
     setBusy('save')
@@ -83,11 +83,6 @@ export function SummaryView({
   // One tile per screen name; screens behind a choice show under their own name too.
   const tiles = [...new Map(screens.map((s) => [s.name, s])).values()]
   const skipped = new Set(b.skip_screens ?? [])
-  const toggleScreen = (name: string) => {
-    const next = { ...draft, skip_screens: skipped.has(name) ? [...skipped].filter((n) => n !== name) : [...skipped, name] }
-    setDraft(next)
-    if (!editing) void onSave(next)
-  }
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -127,6 +122,11 @@ export function SummaryView({
                   className="button-primary"
                   disabled={busy !== null}
                   onClick={async () => {
+                    if (unanswered > 0) {
+                      setConfirmBlocked(true)
+                      questionsRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+                      return
+                    }
                     setBusy('confirm')
                     try {
                       await onConfirm()
@@ -138,14 +138,63 @@ export function SummaryView({
                 >
                   {busy === 'confirm' ? <LoadingDots label="Confirming" /> : (<><FontAwesomeIcon icon={faCircleCheck} /> Looks right — confirm</>)}
                 </button>
+                {confirmBlocked && unanswered > 0 && (
+                  <span role="alert" style={{ alignSelf: 'center', fontSize: 12.5, fontWeight: 600, color: 'var(--warn-2)' }}>
+                    Answer the questions first — they change what Explorer tests.
+                  </span>
+                )}
               </>
             )}
           </div>
         )}
       </div>
 
+      <div style={{ ...glassCard, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <SectionTitle
+          icon={faBullseye}
+          aside={tiles.length > 0 ? <span style={{ fontSize: 12, color: 'var(--fg-5)' }}>{tiles.length - tiles.filter((t) => skipped.has(t.name)).length} of {tiles.length} screens included</span> : undefined}
+        >
+          Goal
+        </SectionTitle>
+        {editable ? (
+          <>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <label htmlFor="explorer-focus" style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>
+                Goal for this run <span style={{ fontWeight: 400, color: 'var(--fg-5)' }}>(optional)</span>
+              </label>
+              <textarea
+                id="explorer-focus"
+                rows={2}
+                value={b.focus ?? ''}
+                onChange={(e) => set('focus', e.target.value)}
+                onBlur={() => { if (!editing && (b.focus ?? '') !== (run.brief?.focus ?? '')) void onSave(draft) }}
+                placeholder="Describe what Explorer should focus on, or leave empty to cover the whole app"
+                style={{ ...inputStyle, resize: 'vertical' }}
+              />
+            </div>
+            {tiles.length > 0 && (
+              <PagesToLeaveOut
+                pages={tiles.map((t) => t.name)}
+                selected={[...skipped]}
+                onChange={(names) => {
+                  const next = { ...draft, skip_screens: names }
+                  setDraft(next)
+                  if (!editing) void onSave(next)
+                }}
+              />
+            )}
+          </>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13.5, color: 'var(--fg-2)' }}>
+            <div><span style={{ fontWeight: 600 }}>Goal:</span> {b.focus?.trim() || 'The whole app'}</div>
+            <div><span style={{ fontWeight: 600 }}>Left out:</span> {skipped.size ? [...skipped].join(', ') : 'Nothing'}</div>
+          </div>
+        )}
+      </div>
+
       {questions.length > 0 && (
         <div
+          ref={questionsRef}
           style={{
             ...glassCard,
             padding: '18px 20px',
@@ -166,96 +215,11 @@ export function SummaryView({
           </SectionTitle>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
             {questions.map((q, n) => (
-              <SummaryQuestion key={q.i} number={n + 1} question={q.question} options={q.options} answer={q.answer} editable={editable} onAnswer={(a) => answer(q.i, a)} />
+              <SummaryQuestion key={q.i} number={n + 1} question={q.question} screen={q.screen} changes={q.changes} options={q.options} answer={q.answer} editable={editable} onAnswer={(a) => answer(q.i, a)} />
             ))}
           </div>
         </div>
       )}
-
-      <div style={{ ...glassCard, padding: '18px 20px' }}>
-        <SectionTitle
-          icon={faListOl}
-          aside={editing ? (
-            <button type="button" className="button-secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => set('key_tasks', [...(b.key_tasks ?? []), { name: '', why_it_matters: '' }])}>
-              <FontAwesomeIcon icon={faPlus} style={{ fontSize: 10, marginRight: 5 }} /> Add task
-            </button>
-          ) : undefined}
-        >
-          What Explorer will test
-        </SectionTitle>
-        <div style={{ display: 'flex', flexDirection: 'column' }}>
-          {(b.key_tasks ?? []).map((task, i) => (
-            <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '10px 0', borderTop: i ? '1px solid var(--line)' : 'none' }}>
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--accent-2)', fontWeight: 700 }}>{String(i + 1).padStart(2, '0')}</span>
-              {editing ? (
-                <>
-                  <input aria-label="Task name" placeholder="Enter the task" value={task.name} onChange={(e) => updateTask(i, { name: e.target.value })} style={inputStyle} />
-                  <button type="button" aria-label="Remove" onClick={() => set('key_tasks', (b.key_tasks ?? []).filter((_, k) => k !== i))} style={{ flex: 'none', width: 28, height: 28, border: '1px solid var(--line)', borderRadius: 8, background: 'white', color: 'var(--fg-4)', cursor: 'pointer' }}>
-                    <FontAwesomeIcon icon={faTrashCan} style={{ fontSize: 11 }} />
-                  </button>
-                </>
-              ) : (
-                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)' }}>{task.name}</span>
-              )}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div style={{ ...glassCard, padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <SectionTitle
-          icon={faBullseye}
-          aside={tiles.length > 0 ? <span style={{ fontSize: 12, color: 'var(--fg-5)' }}>{tiles.length - tiles.filter((t) => skipped.has(t.name)).length} of {tiles.length} screens included</span> : undefined}
-        >
-          What to cover
-        </SectionTitle>
-        {editable ? (
-          <>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              <label htmlFor="explorer-focus" style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>
-                Goal for this run <span style={{ fontWeight: 400, color: 'var(--fg-5)' }}>(optional)</span>
-              </label>
-              <textarea
-                id="explorer-focus"
-                rows={2}
-                value={b.focus ?? ''}
-                onChange={(e) => set('focus', e.target.value)}
-                onBlur={() => { if (!editing && (b.focus ?? '') !== (run.brief?.focus ?? '')) void onSave(draft) }}
-                placeholder="Describe what Explorer should focus on, or leave empty to cover the whole app"
-                style={{ ...inputStyle, resize: 'vertical' }}
-              />
-            </div>
-            {tiles.length > 0 && (
-              <div style={{ fontSize: 12.5, color: 'var(--fg-4)' }}>
-                Untick screens Explorer should leave alone. It won't plan missions or scenarios for them.
-              </div>
-            )}
-          </>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13.5, color: 'var(--fg-2)' }}>
-            <div><span style={{ fontWeight: 600 }}>Goal:</span> {b.focus?.trim() || 'The whole app'}</div>
-            <div><span style={{ fontWeight: 600 }}>Left out:</span> {skipped.size ? [...skipped].join(', ') : 'Nothing'}</div>
-          </div>
-        )}
-        {editable && tiles.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
-            {tiles.map((t) => {
-              const on = !skipped.has(t.name)
-              return (
-                <label key={t.name} style={{ display: 'flex', flexDirection: 'column', borderRadius: 10, overflow: 'hidden', cursor: 'pointer', border: `1px solid ${on ? 'color-mix(in srgb, var(--accent-2) 35%, transparent)' : 'var(--line)'}`, background: 'white', opacity: on ? 1 : 0.55, transition: 'all 150ms ease' }}>
-                  <span style={{ aspectRatio: '16 / 10', background: 'var(--bg-2)', overflow: 'hidden' }}>
-                    {t.shot_id && <img src={shotUrl(t.shot_id)} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', objectPosition: 'top', filter: on ? 'none' : 'grayscale(1)' }} />}
-                  </span>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px' }}>
-                    <input type="checkbox" checked={on} onChange={() => toggleScreen(t.name)} style={{ accentColor: 'var(--accent-2)', flex: 'none' }} />
-                    <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={t.name}>{t.name}</span>
-                  </span>
-                </label>
-              )
-            })}
-          </div>
-        )}
-      </div>
     </div>
   )
 }
@@ -266,6 +230,8 @@ export function SummaryView({
 function SummaryQuestion({
   number,
   question,
+  screen,
+  changes,
   options,
   answer,
   editable,
@@ -273,6 +239,8 @@ function SummaryQuestion({
 }: {
   number: number
   question: string
+  screen?: string
+  changes?: string
   options: string[]
   answer?: string
   editable: boolean
@@ -309,7 +277,11 @@ function SummaryQuestion({
     <div style={{ display: 'flex', gap: 12, padding: '12px 0', borderTop: number > 1 ? '1px solid var(--line)' : 'none' }}>
       <span style={{ flex: 'none', width: 22, height: 22, borderRadius: 1000, background: 'var(--accent-wash)', color: 'var(--accent-2)', fontSize: 12, fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{number}</span>
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)', lineHeight: '20px' }}>{question}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {screen && <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-5)' }}>On {screen}</span>}
+          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)', lineHeight: '20px' }}>{question}</div>
+          {changes && <span style={{ fontSize: 12.5, color: 'var(--fg-4)' }}>Your answer: {changes}</span>}
+        </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {editable ? (
             <>
@@ -343,6 +315,173 @@ function SummaryQuestion({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+// "Pages to leave out": type a page's name, pick it from the suggestions, and
+// it becomes a chip. Explorer plans no missions or scenarios for those pages
+// (the same `skip_screens` list the old screenshot checkboxes set). Optional.
+// The suggestions sit in the page flow right under the field (never over the
+// content below); the shell carries the one focus ring (field-shell/data-bare).
+function PagesToLeaveOut({
+  pages,
+  selected,
+  onChange,
+}: {
+  pages: string[]
+  selected: string[]
+  onChange: (names: string[]) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [active, setActive] = useState(0)
+  const q = query.trim().toLowerCase()
+  const matches = q ? pages.filter((p) => !selected.includes(p) && p.toLowerCase().includes(q)).slice(0, 8) : []
+  const add = (name: string) => {
+    onChange([...selected, name])
+    setQuery('')
+    setActive(0)
+  }
+  const highlight = (name: string) => {
+    const at = name.toLowerCase().indexOf(q)
+    if (at < 0) return name
+    return (
+      <>
+        {name.slice(0, at)}
+        <strong style={{ color: 'var(--accent)', fontWeight: 700 }}>{name.slice(at, at + q.length)}</strong>
+        {name.slice(at + q.length)}
+      </>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+        <label htmlFor="explorer-leave-out" style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>
+          Pages to leave out <span style={{ fontWeight: 400, color: 'var(--fg-5)' }}>(optional)</span>
+        </label>
+        {selected.length > 0 && (
+          <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--fg-4)' }}>
+            {selected.length} page{selected.length === 1 ? '' : 's'} left out
+          </span>
+        )}
+      </div>
+      <div
+        className="field-shell"
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 6,
+          padding: '6px 8px',
+          minHeight: 40,
+          border: '1px solid var(--border-2)',
+          borderRadius: 8,
+          background: 'var(--panel)',
+          boxSizing: 'border-box',
+          transition: 'border-color 120ms ease, box-shadow 120ms ease',
+        }}
+      >
+        {selected.map((name) => (
+          <span
+            key={name}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 4,
+              padding: '3px 4px 3px 10px',
+              borderRadius: 1000,
+              background: 'var(--accent-wash)',
+              border: '1px solid color-mix(in srgb, var(--accent) 25%, transparent)',
+              fontSize: 12.5,
+              fontWeight: 600,
+              color: 'var(--accent-2)',
+            }}
+          >
+            {name}
+            <button
+              type="button"
+              aria-label={`Remove ${name}`}
+              onClick={() => onChange(selected.filter((n) => n !== name))}
+              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, border: 'none', borderRadius: 1000, background: 'transparent', cursor: 'pointer', color: 'var(--accent-2)', fontSize: 14, lineHeight: 1, padding: 0 }}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          id="explorer-leave-out"
+          data-bare
+          role="combobox"
+          aria-expanded={q.length > 0}
+          aria-controls="explorer-leave-out-options"
+          aria-activedescendant={matches[active] ? `explorer-leave-out-${active}` : undefined}
+          autoComplete="off"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setActive(0)
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowDown' && matches.length) {
+              e.preventDefault()
+              setActive((i) => (i + 1) % matches.length)
+            } else if (e.key === 'ArrowUp' && matches.length) {
+              e.preventDefault()
+              setActive((i) => (i - 1 + matches.length) % matches.length)
+            } else if (e.key === 'Enter' && matches.length) {
+              e.preventDefault()
+              add(matches[Math.min(active, matches.length - 1)])
+            } else if (e.key === 'Escape') {
+              setQuery('')
+            } else if (e.key === 'Backspace' && !query && selected.length) {
+              onChange(selected.slice(0, -1))
+            }
+          }}
+          placeholder={selected.length ? 'Type to add another page' : 'Type a page name to leave it out'}
+          style={{ flex: 1, minWidth: 180, height: 26, border: 'none', outline: 'none', background: 'transparent', font: 'inherit', fontSize: 13.5, color: 'var(--fg-1)', padding: '0 4px' }}
+        />
+      </div>
+      {q.length > 0 && (
+        <div
+          id="explorer-leave-out-options"
+          role="listbox"
+          style={{ border: '1px solid var(--line)', borderRadius: 10, background: 'var(--panel)', padding: 4, display: 'flex', flexDirection: 'column', gap: 2 }}
+        >
+          {matches.length === 0 ? (
+            <div style={{ padding: '8px 10px', fontSize: 12.5, color: 'var(--fg-4)' }}>No page matches “{query.trim()}”</div>
+          ) : (
+            matches.map((name, i) => (
+              <div
+                key={name}
+                id={`explorer-leave-out-${i}`}
+                role="option"
+                aria-label={name}
+                aria-selected={i === active}
+                onMouseDown={(e) => e.preventDefault()}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => add(name)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 10,
+                  padding: '8px 10px',
+                  borderRadius: 7,
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  color: 'var(--fg-1)',
+                  background: i === active ? 'var(--accent-wash)' : 'transparent',
+                  transition: 'background 100ms ease',
+                }}
+              >
+                <span>{highlight(name)}</span>
+                {i === active && <span aria-hidden="true" style={{ fontSize: 11.5, color: 'var(--accent-2)', fontWeight: 600 }}>Leave out ↵</span>}
+              </div>
+            ))
+          )}
+        </div>
+      )}
+      <div style={{ fontSize: 12, color: 'var(--fg-4)' }}>Explorer won't plan missions or scenarios for these pages.</div>
     </div>
   )
 }

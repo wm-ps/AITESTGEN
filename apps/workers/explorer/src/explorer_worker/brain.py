@@ -39,6 +39,7 @@ Understand it like a person would and reply with ONLY this JSON object:
   "actions": [{"label": "exact visible text", "kind": "navigate|create|edit|delete|submit|filter|search|export|other", "risky": true}],
   "hidden_hints": ["plain guess about a part of this screen that probably only appears under some condition, and why — e.g. 'An approval section may appear for large amounts (there is an Amount field and an empty Approvals panel)'"],
   "is_error_page": false,
+  "is_blank": false,
   "error_text": null,
   "wording_problems": [{"text": "exact text", "why": "spelling/grammar/unclear"}],
   "looks_wrong": [{"what": "...", "why": "which common-sense rule it breaks"}],
@@ -46,6 +47,7 @@ Understand it like a person would and reply with ONLY this JSON object:
   "starts_flow": [{"label": "exact visible text of a button/link that STARTS a business task, e.g. 'New order', 'Add employee', 'Apply now'", "goal": "the task in plain words, e.g. 'Place a new order'", "value": 1}],
   "created_records": [{"what": "e.g. 'Order number'", "value": "the exact identifier shown, character for character", "context": "plain words, e.g. 'given after placing an order'"}]
 }
+'is_blank' = the loaded screen shows no content of its own: an empty page, or only the app's frame/menu around an empty area (a loading indicator is NOT blank).
 'created_records' lists ONLY identifiers the app has just generated for a record (a reference, confirmation, order or ticket number shown after creating something, or the number of a record listed for this user) — never values the user typed in, and never placeholder or example text. They are reused later as test data.
 If this is a screen listed under 'Screens already understood' (same purpose — only the \
 data, filled-in values or messages differ), reuse its EXACT name, view_kind and mode. \
@@ -80,9 +82,17 @@ async def perceive(
     known: list[str],
     notes: str | None,
     already_noted: list[str] | None = None,
+    goal_rule: str | None = None,
 ) -> dict[str, Any]:
     user = (
-        f"Screen address: {inventory.get('url')}\n"
+        (
+            f"The user's goal (strict): {goal_rule}\nAlso reply with \"goal_fit\": "
+            "\"inside | on_the_way | past_stop | outside\" — where this screen sits "
+            "against that goal (on_the_way = must be passed through to reach it).\n"
+            if goal_rule
+            else ""
+        )
+        + f"Screen address: {inventory.get('url')}\n"
         f"Screens already understood: {', '.join(known) or 'none yet'}\n"
         f"Problems already noted: {'; '.join((already_noted or [])[-40:]) or 'none'}\n"
         + (f"What the user told us about the app: {notes}\n" if notes else "")
@@ -151,11 +161,19 @@ Summary a client will read and correct. Reply with ONLY this JSON object:
   "key_tasks": [{"name": "e.g. Place an order", "why_it_matters": "plain sentence", "steps": ["short steps a user takes"]}],
   "rules_we_expect": [{"rule": "plain rule, e.g. 'An email address must contain @'", "source": "common sense | seen in the app | your notes", "confidence": "high | medium | low"}],
   "hidden_parts_suspected": [{"where": "screen name", "what": "what probably appears only sometimes", "why": "plain reason"}],
-  "questions_for_you": [{"question": "a short multiple-choice question whose answer would most change how we test", "options": ["...", "..."]}]
+  "questions_for_you": [{"screen": "the exact screen name from the list this is about", "question": "a short multiple-choice question", "changes": "one plain sentence: what you will do differently depending on the answer", "options": ["...", "..."]}]
 }
 Rules: base 'rules_we_expect' on common sense and industry norms, not just on what \
 the app happened to do — mark rules only seen in the app as 'seen in the app' with low \
-confidence. At most 5 questions, only important ones. Be specific to THIS app."""
+confidence. Be specific to THIS app.
+Questions: ask ONLY what changes where you go or what you do next, tied to a screen you \
+actually saw. Good: whether a risky action on a named screen (delete, deploy, activate, \
+send, import) is safe to press in this environment; a value a named screen needs that \
+you could not find (an existing record id, a valid code); how to get past a screen \
+that blocked you; whether a whole area should be left alone. Never ask about business \
+meaning, wording, currencies, policies or how things "should" work — you can check \
+those while testing. If no answer would change your next steps, return no questions. \
+At most 4."""
 )
 
 
@@ -264,12 +282,53 @@ async def decide_step(
 def scope(brief: dict[str, Any]) -> str:
     """What the user chose to cover at review — it overrides everything else."""
     focus = str(brief.get("focus") or "").strip()
+    rule = str((brief.get("scope") or {}).get("rule") or "").strip()
     skip = [str(n) for n in brief.get("skip_screens") or []]
-    return (f"The user's goal for this run (follow it first): {focus}\n" if focus else "") + (
+    goal = (
+        f"The user's goal for this run is a STRICT rule: {rule} Plan nothing outside it.\n"
+        if rule
+        else f"The user's goal for this run (follow it first): {focus}\n"
+        if focus
+        else ""
+    )
+    return goal + (
         f"The user left these screens out — never plan anything on or for them: {', '.join(skip)}\n"
         if skip
         else ""
     )
+
+
+_GOAL_SYSTEM = (
+    STANCE
+    + """
+
+The user wrote a goal for this run that limits what Explorer may explore and test. \
+Restate it as a strict rule, and place every known screen against it. Reply with ONLY:
+{"rule": "the goal as a strict rule in one or two plain sentences, naming the stop \
+screen if there is one", "fits": {"<exact screen name>": "inside | on_the_way | past_stop | outside"}}
+- inside: part of what the goal covers (the stop screen itself is inside, and is tested fully).
+- on_the_way: outside the goal but must be passed through to reach it (e.g. a home page).
+- past_stop: comes after the goal's stop point.
+- outside: anything else the goal does not cover.
+Match by meaning, not wording ("policy search" is the screen where a policy is found). \
+Read the goal literally: "only/just X up to Y" — everything outside flow X is outside, \
+screens after Y are past_stop; a stop point without "only" cuts just that path and the \
+rest stays inside; branches inside the named flow before the stop are inside; "leave \
+out Z" makes Z outside and everything else inside."""
+)
+
+
+async def read_goal(goal: str, screens: list[dict[str, Any]]) -> dict[str, Any]:
+    user = (
+        f"The user's goal: {goal}\n"
+        f"Known screens: {json.dumps(screens, ensure_ascii=False)[:30000]}"
+    )
+    reply = await ask_json(_GOAL_SYSTEM, user, model=THINKING_MODEL)
+    fits = reply.get("fits")
+    return {
+        "rule": str(reply.get("rule") or goal).strip()[:600],
+        "fits": fits if isinstance(fits, dict) else {},
+    }
 
 
 _MISSIONS_SYSTEM = (
@@ -520,6 +579,7 @@ async def plan_tests(
     notes: str | None,
     *,
     may_save: bool = False,
+    approved: list[str] | None = None,
     only: list[str] | None = None,
     sign_in: bool = True,
 ) -> list[dict[str, Any]]:
@@ -543,6 +603,13 @@ async def plan_tests(
         "deletes or changes a password (those always wait for a person). Do not plan tests "
         "that need such a press, except validation tests where the app rejects the input "
         "before anything is saved.\n"
+        + (
+            "Exception — the user approved pressing these buttons on this test environment, so "
+            "plan tests that press them, including the task completed end to end with its "
+            f"result checked: {json.dumps(approved, ensure_ascii=False)}\n"
+            if approved
+            else ""
+        )
         + f"Confirmed App Summary: {json.dumps(brief, ensure_ascii=False)[:20000]}\n"
         f"Known screens: {json.dumps(screens, ensure_ascii=False)[:40000]}\n"
         f"Ways between screens: {json.dumps(links, ensure_ascii=False)[:8000]}\n"

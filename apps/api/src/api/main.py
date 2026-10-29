@@ -137,12 +137,14 @@ from api.auth import (
 from api.coverage_report import build_coverage_report
 from api.db import engine, get_session
 from api.discovery import (
+    discovery_task_queue,
     discovery_workers_available,
     pause_discovery_run,
     resume_discovery_run,
     start_discovery_run,
 )
 from api.explorer import router as explorer_router
+from api.authoring import router as authoring_router
 from api.invites import InviteAcceptError, accept_invite, create_invite, send_invite_email
 from api.password_reset import (
     PasswordResetError,
@@ -218,6 +220,8 @@ SessionDep = Annotated[Session, Depends(get_session)]
 app.include_router(activity_router)
 # Vantage Explorer (docs/vantage-explorer/PLAN.md) — standalone module.
 app.include_router(explorer_router)
+# Authoring: test cases from a user's request, run by Explorer (authoring.py).
+app.include_router(authoring_router)
 
 
 @app.get("/health")
@@ -778,7 +782,11 @@ def _to_application_read(
         discovery_engine=(
             "explorer"
             if session.exec(
-                select(ExplorerRun.id).where(ExplorerRun.application_id == application.id)
+                select(ExplorerRun.id).where(
+                    ExplorerRun.application_id == application.id,
+                    # Authoring runs on Explorer too, but doesn't make it the app's discovery.
+                    col(ExplorerRun.prompt).is_(None),
+                )
             ).first()
             is not None
             else "crawler"
@@ -961,18 +969,20 @@ def _verify_credentials_workflow_id(organization_id: uuid.UUID, check_id: uuid.U
 
 
 # "Start discovery" pre-flight: a real browser login with the entered
-# credentials, run by the discovery worker (the only process with Chromium).
-# Start + poll like the Scenarios tab's regenerate/auto-fill — the login can
-# take over a minute, too long for one blocking request. `create_application`
-# doesn't run this check, so direct API callers aren't gated on credentials
-# (it does refuse to save an app when no discovery worker is available).
+# credentials, run by whichever worker will run discovery (Explorer by
+# default, see `discovery_task_queue`). Start + poll like the Scenarios tab's
+# regenerate/auto-fill — the login can take over a minute, too long for one
+# blocking request. `create_application` doesn't run this check, so direct API
+# callers aren't gated on credentials (it does refuse to save an app when no
+# discovery worker is available).
 @app.post("/applications/verify-credentials", response_model=CredentialCheckStarted, status_code=202)
 async def start_credential_check(
     payload: CredentialCheckPayload,
     organization_id: CurrentOrgIdDep,
 ) -> CredentialCheckStarted:
     client = await get_temporal_client()
-    if not await has_pollers(client, DISCOVERY_TASK_QUEUE):
+    queue = discovery_task_queue()
+    if not await has_pollers(client, queue):
         raise HTTPException(status_code=503, detail="DISCOVERY_UNAVAILABLE")
 
     # Stored in Vault, never passed as workflow input — Temporal persists
@@ -993,7 +1003,7 @@ async def start_credential_check(
                 login_url=payload.login_url or None,
             ),
             id=_verify_credentials_workflow_id(organization_id, check_id),
-            task_queue=DISCOVERY_TASK_QUEUE,
+            task_queue=queue,
         )
     except Exception:
         # ponytail: if the worker dies after the workflow starts but before
@@ -1388,11 +1398,14 @@ def _require_crawler_discovery(session: Session, application: Application) -> No
     discovers (every app started since Explorer replaced discovery) is paused
     and resumed from Explorer itself — resuming here would start the crawler."""
     if session.exec(
-        select(ExplorerRun.id).where(ExplorerRun.application_id == application.id)
+        select(ExplorerRun.id).where(
+            ExplorerRun.application_id == application.id,
+            col(ExplorerRun.prompt).is_(None),  # authoring isn't the app's discovery
+        )
     ).first() is not None:
         raise HTTPException(
             status_code=409,
-            detail="Explorer discovers this application: pause or resume it from the Explorer tab.",
+            detail="Explorer explores this application: pause or resume it from the Explorer tab.",
         )
 
 
@@ -1408,7 +1421,7 @@ async def pause_discovery(
     _require_crawler_discovery(session, application)
     discovery_run = _latest_discovery_run(session, application.id)
     if discovery_run is None or discovery_run.status != "running":
-        raise HTTPException(status_code=409, detail="discovery run is not running")
+        raise HTTPException(status_code=409, detail="exploration run is not running")
     discovery_run = await pause_discovery_run(session, discovery_run)
     return _to_application_read(session, application, discovery_run)
 
@@ -1672,7 +1685,7 @@ async def delete_application(
     application = _get_org_application(session, organization_id, external_id)
     discovery_run = _latest_discovery_run(session, application.id)
     if discovery_run is not None and discovery_run.status == "running":
-        raise HTTPException(status_code=409, detail="discovery run is still in progress")
+        raise HTTPException(status_code=409, detail="exploration run is still in progress")
     application.deleted_at = datetime.now(UTC)
     session.add(application)
     record_activity(
@@ -1726,7 +1739,7 @@ async def resume_discovery(
     _require_crawler_discovery(session, application)
     discovery_run = _latest_discovery_run(session, application.id)
     if discovery_run is None or discovery_run.status != "paused":
-        raise HTTPException(status_code=409, detail="discovery run is not paused")
+        raise HTTPException(status_code=409, detail="exploration run is not paused")
     discovery_run = await resume_discovery_run(session, application)
     return _to_application_read(session, application, discovery_run)
 
@@ -1752,7 +1765,7 @@ def list_captures(
         or application is None
         or application.organization_id != organization_id
     ):
-        raise HTTPException(status_code=404, detail="discovery run not found")
+        raise HTTPException(status_code=404, detail="exploration run not found")
 
     # There is no single "capture" table (Story 2.2 rework, no generic
     # Evidence) — the live feed is a union across the typed capture tables,
@@ -1822,7 +1835,7 @@ def get_discovery_report(
         or application is None
         or application.organization_id != organization_id
     ):
-        raise HTTPException(status_code=404, detail="discovery run not found")
+        raise HTTPException(status_code=404, detail="exploration run not found")
     return build_coverage_report(session, discovery_run)
 
 
@@ -3750,6 +3763,8 @@ class TestRunRead(BaseModel):
     id: uuid.UUID
     run_number: int
     name: str
+    # The name the user gave a run of chosen test cases; None for a whole-suite run.
+    suite_name: str | None = None
     status: str
     trigger: str
     pass_rate: float | None
@@ -3816,6 +3831,7 @@ def _to_test_run_read(
         id=test_run.external_id,
         run_number=test_run.run_number,
         name=f"#{test_run.run_number} - {test_run.suite_name or 'All test cases'}",
+        suite_name=test_run.suite_name,
         status=test_run.status,
         trigger=_trigger_label(test_run),
         pass_rate=pass_rate,

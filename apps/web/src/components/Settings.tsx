@@ -153,8 +153,8 @@ function CredentialsPanel() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Saved credentials</div>
           <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
-            Stored encrypted at project level and reused for discovery, generation and every run. Turn Sign-in
-            off for an app that has no login — discovery and tests then open it directly.
+            Stored encrypted at project level and reused for exploration, generation and every run. Turn Sign-in
+            off for an app that has no login — exploration and tests then open it directly.
           </div>
         </div>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 30, padding: '0 12px', borderRadius: 8, border: '1px solid var(--border-2)', background: 'var(--panel-2)', fontSize: 12, fontWeight: 500, color: 'var(--fg-2)', flex: 'none' }}>
@@ -348,7 +348,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
           </div>
           <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--fg)' }}>Access denied</div>
           <p style={{ fontSize: 13.5, margin: '8px auto 0', maxWidth: 360, lineHeight: 1.5, color: 'var(--fg-3)' }}>
-            Discovery settings are limited to organization admins. Ask an admin on your team for access.
+            Exploration settings are limited to organization admins. Ask an admin on your team for access.
           </p>
           <button
             type="button"
@@ -390,18 +390,18 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
     <div style={{ maxWidth: 1560, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div>
         <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Settings</h1>
-        <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 4 }}>Discovery limits, credentials and schedules.</div>
+        <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 4 }}>Exploration limits, credentials and schedules.</div>
       </div>
 
       <form onSubmit={handleSubmit} style={panelStyle}>
         <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
           <div>
-            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Discovery limits</div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Exploration limits</div>
             <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>Applied to every new application unless overridden per run.</div>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 16 }}>
-            <Field label="Maximum discovery time">
+            <Field label="Maximum exploration time">
               <select
                 value={settings.max_discovery_duration_minutes ?? 'unlimited'}
                 onChange={(e) =>
@@ -538,7 +538,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--fg-1)' }}>Auto-clean up removed projects</div>
               <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 2 }}>
-                Deletes discovery data, generated test cases, screenshots and run history for a project once it is removed.
+                Deletes exploration data, generated test cases, screenshots and run history for a project once it is removed.
               </div>
             </div>
             <select

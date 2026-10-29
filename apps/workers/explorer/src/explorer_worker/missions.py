@@ -24,6 +24,7 @@ from sqlmodel import Session, col, select
 from explorer_worker import brain
 from explorer_worker.browser import Eyes
 from explorer_worker.db import engine
+from explorer_worker.goal import ensure_scope, missions_in_goal, screens_in_goal
 from explorer_worker.journal import Journal
 from explorer_worker.memory import ask, remember_record
 from explorer_worker.mind import Mind
@@ -95,10 +96,17 @@ async def plan_missions(run_id: uuid.UUID) -> int:
     journal.event(
         "phase", "Planning missions", "Turning the confirmed App Summary into goals to explore."
     )
+    if await ensure_scope(run_id):
+        brief = journal.run_brief()  # now holds the goal's strict rule
     skip = set(brief.get("skip_screens") or [])  # left out by you at review
-    screens = [s for s in _screens_payload(journal) if s.get("name") not in skip]
+    # With a goal, only screens inside it are planned for (all of them without one).
+    allowed = {s.name for s in screens_in_goal(journal.screen_rows())} - skip
+    screens = [s for s in _screens_payload(journal) if s.get("name") in allowed]
     planned = await brain.plan_missions(brief, branch_points, screens, notes)
-    planned = [m for m in planned if m.get("start_screen") not in skip]
+    planned = missions_in_goal(
+        [m for m in planned if m.get("start_screen") not in skip],
+        {s.name: s.goal_fit for s in journal.screen_rows()},
+    )
     # Most important first, then only as many as the app's size warrants.
     planned.sort(key=lambda m: -(m.get("priority") if isinstance(m.get("priority"), int) else 3))
     cap = mission_cap(len(screens))
@@ -189,6 +197,7 @@ async def run_mission(
         if mission is None or mission.status != "queued":
             return "not-queued"
         title, goal, kind = mission.title, mission.goal, mission.kind
+        added_by = mission.added_by
         instructions, condition, expected = (
             mission.instructions,
             mission.condition,
@@ -231,7 +240,12 @@ async def run_mission(
             if start_screen and start_screen in known:
                 await eyes.goto(known[start_screen])
             mind = Mind(
-                journal, target.notes, heartbeat, condition=condition, home_url=target.app_url
+                journal,
+                target.notes,
+                heartbeat,
+                condition=condition,
+                home_url=target.app_url,
+                goal_rule=(await ensure_scope(run_id) or {}).get("rule"),
             )
 
             def stop_requested() -> bool:
@@ -278,6 +292,8 @@ async def run_mission(
                     non_production=target.non_production,
                     ask=asker,
                     lead_in=lead_in,
+                    # A mission you added yourself is carried out even outside the goal.
+                    obey_goal=added_by != "user",
                 )
                 steps_taken += result.steps
                 ends.append(result.ended)
@@ -472,6 +488,7 @@ def _queue_follow_ups(
             planned_from,
             {m.title for m in missions},
         )
+        new = missions_in_goal(new, {s.name: s.goal_fit for s in screens})
         # ponytail: two missions finishing at the same moment may both add the
         # same follow-up; a unique (run_id, title) constraint if that shows up.
         room = max(0, MAX_MISSIONS - len(missions))

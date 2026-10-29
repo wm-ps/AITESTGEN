@@ -494,7 +494,7 @@ export function ReviewScenarios({
                 ? 'Add journeys back to generate new scenarios.'
                 : fromExplorer
                   ? 'Scenarios appear here once Explorer has proven its tests.'
-                  : 'Scenarios appear here once discovered journeys are turned into drafted test scenarios.'
+                  : 'Scenarios appear here once explored journeys are turned into drafted test scenarios.'
             }
           />
         ) : !isComplete && generationUnavailable ? (
@@ -540,7 +540,7 @@ export function ReviewScenarios({
             <GenerationLoader
               icon={Brain}
               title="Modelling scenarios…"
-              body="Each settled journey is broken into scenarios with their own steps and test data. They appear here as discovery completes."
+              body="Each settled journey is broken into scenarios with their own steps and test data. They appear here as exploration completes."
               bullets={['Reading journeys', 'Drafting scenarios', 'Deriving test data']}
               percent={journeys.length > 0 ? (journeysCovered / journeys.length) * 100 : undefined}
               caption={
@@ -736,7 +736,7 @@ export function ReviewScenarios({
                                             Clear
                                           </button>
                                           <span style={{ flex: 1 }} />
-                                          <span style={{ fontSize: 11, color: 'var(--fg-4)' }}>Blank fields are generated from the discovered form constraints</span>
+                                          <span style={{ fontSize: 11, color: 'var(--fg-4)' }}>Blank fields are generated from the explored form constraints</span>
                                         </div>
                                         )}
                                         {autofillError && autofillingId === null && (

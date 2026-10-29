@@ -27,6 +27,7 @@ from explorer_core import (
     TEST_KINDS,
     ExplorerHealthIssue,
     ExplorerMission,
+    ExplorerQuestion,
     ExplorerRecording,
     ExplorerRun,
     ExplorerScreen,
@@ -38,6 +39,7 @@ from sqlmodel import Session, col, select
 from explorer_worker import brain, quality
 from explorer_worker.browser import Visit
 from explorer_worker.db import engine
+from explorer_worker.goal import ensure_scope, screens_in_goal
 from explorer_worker.journal import Journal
 from explorer_worker.mind import Mind
 from explorer_worker.missions import fast_forward, one_at_a_time
@@ -120,10 +122,15 @@ class QuietMind(Mind):
         # Screens a route may be saved for (see `route_screens`); empty = none.
         self.screen_ids: dict[str, uuid.UUID] = {}
         self.visited: set[str] = set()  # address patterns this walk was on
+        # Address pattern -> the screen's place against the run's Goal
+        # (explorer_worker.goal); empty = no goal.
+        self.goal_fits: dict[str, str] = {}
+        self.last_goal_fit: str | None = None
 
     async def take_in(self, visit: Visit, reached_by: str | None, action: str | None = None) -> str:
         self.heartbeat()
         self.visited.add(url_pattern(visit.url))
+        self.last_goal_fit = self.goal_fits.get(url_pattern(visit.url))
         self.last_screen_id = self.screen_ids.get(url_pattern(visit.url))
         headings = visit.inventory.get("headings") or []
         name = str(headings[0] if headings else visit.inventory.get("title") or "screen")[:80]
@@ -172,6 +179,36 @@ def reached_screen(screens: list[ExplorerScreen], name: str | None, visited: set
     return any(pattern in visited for pattern in own)
 
 
+_RISK_QUESTION = re.compile(r"May I press “(.+?)”")
+
+
+def approved_labels(answers: list[tuple[str, str | None]]) -> set[str]:
+    """(risk question, answer) -> the buttons the user said "Yes, press it" to."""
+    labels: set[str] = set()
+    for question, answer in answers:
+        found = _RISK_QUESTION.search(question or "")
+        if found and str(answer or "").strip().lower().startswith("yes"):
+            labels.add(found.group(1).strip())
+    return labels
+
+
+def approved_presses(run_id: uuid.UUID) -> set[str]:
+    with Session(engine) as session:
+        rows = session.exec(
+            select(ExplorerQuestion.question, ExplorerQuestion.answer).where(
+                ExplorerQuestion.run_id == run_id, ExplorerQuestion.kind == "risk"
+            )
+        ).all()
+    return approved_labels([(q, a if isinstance(a, str) else None) for q, a in rows])
+
+
+def goal_fits_by_address(screens: list[ExplorerScreen]) -> dict[str, str]:
+    """Address pattern -> that screen's place against the run's Goal, for the
+    addresses that show exactly one screen (like `route_screens`)."""
+    fits = {s.id: s.goal_fit for s in screens if s.goal_fit}
+    return {pattern: fits[sid] for pattern, sid in route_screens(screens).items() if sid in fits}
+
+
 def route_screens(screens: list[ExplorerScreen]) -> dict[str, uuid.UUID]:
     """Address pattern -> screen, for the addresses that show exactly one
     screen: there, a scenario's walk can be saved as that screen's route. An
@@ -185,6 +222,7 @@ def route_screens(screens: list[ExplorerScreen]) -> dict[str, uuid.UUID]:
 
 async def plan_tests(run_id: uuid.UUID) -> int:
     journal = Journal(run_id)
+    await ensure_scope(run_id)  # with a goal, the brief below holds its strict rule
     with Session(engine) as session:
         run = session.get(ExplorerRun, run_id)
         if run is None or run.status in ("stopped", "paused"):
@@ -195,11 +233,11 @@ async def plan_tests(run_id: uuid.UUID) -> int:
         names = {s.id: s.name for s in screens}
         # States the hunt faked (no data, server error, a year from now) can't
         # be reached by a test: plan only on screens a user can really open.
-        # Screens you left out at review get no scenarios.
+        # Screens you left out at review, or outside your goal, get no scenarios.
         skip = set(brief.get("skip_screens") or [])
         screens = [
             s
-            for s in screens
+            for s in screens_in_goal(screens)
             if not (s.condition or "").startswith("Simulated") and s.name not in skip
         ]
         links = [
@@ -255,6 +293,9 @@ async def plan_tests(run_id: uuid.UUID) -> int:
     gate = asyncio.Semaphore(4)
     target = load_target(run_id)
     may_save = target.non_production
+    # Buttons you said "Yes, press it" to while Explorer explored: on a test
+    # environment, scenarios may plan and press them too.
+    approved = sorted(approved_presses(run_id)) if may_save else []
 
     async def plan_part(index: int, only: list[str]) -> list[dict[str, Any]]:
         async with gate:
@@ -266,6 +307,7 @@ async def plan_tests(run_id: uuid.UUID) -> int:
                 bugs,
                 notes,
                 may_save=may_save,
+                approved=approved,
                 only=only,
                 # An app with no login gets no sign-in scenarios.
                 sign_in=index == 0 and target.requires_login,
@@ -588,12 +630,23 @@ async def build_and_prove(
     # ponytail: a screen that IS the sign-in landing page still can't be
     # proven this way; reloading it isn't an act.
     try:
+        entry_text, entry_url = "", ""
         if signed_out:
             await eyes.goto(start_url)
             lead_in = None
         else:
             await eyes.goto(target.app_url)
             eyes.remember_entry()
+            # What showed before the test did anything: the entry point, taken
+            # before skipping ahead. Reaching the screen is the test's own act,
+            # so its content can prove a "this screen shows X" check (the
+            # broken-on-purpose run, without the last click in, still has to
+            # make that proof vanish).
+            assert eyes.page is not None
+            entry_text = await eyes.page.evaluate(
+                "() => document.body ? document.body.innerText : ''"
+            )
+            entry_url = eyes.page.url
             lead_in = await fast_forward(eyes, journal, run_id, start_screen)
         # Unless the scenario is about resuming, a saved-progress prompt left
         # by an earlier run is answered with start over: the recorded route
@@ -637,12 +690,11 @@ async def build_and_prove(
                 # sending the visitor to sign in is the very thing it checks).
                 start_text, start_url_now = "", ""
             else:
-                start_text = await eyes.page.evaluate(
-                    "() => document.body ? document.body.innerText : ''"
-                )
-                start_url_now = eyes.page.url
+                start_text, start_url_now = entry_text, entry_url
             eyes.mark_calls()  # an API proof counts only what the test itself caused
             mind = QuietMind(journal, target.notes, heartbeat)
+            if await ensure_scope(run_id):
+                mind.goal_fits = goal_fits_by_address(journal.screen_rows())
             if not signed_out and eyes.starts_fresh:
                 # A clean walk in (not signed out, not continuing a draft) is a
                 # route the next scenario on the same screen can replay.
@@ -666,6 +718,7 @@ async def build_and_prove(
                 # Lets "open its address directly" tests do exactly that.
                 known_screens={},  # never jump to a screen by its address
                 stay_signed_out=signed_out,
+                approved_presses=approved_presses(run_id) if target.non_production else set(),
             )
             assert eyes.page is not None
             final = await eyes.look(eyes.page.url, None, 0)

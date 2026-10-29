@@ -31,7 +31,7 @@ export type AppBrief = {
   key_tasks?: { name: string; why_it_matters?: string; steps?: string[] }[]
   rules_we_expect?: { rule: string; source: string; confidence: string }[]
   hidden_parts_suspected?: { where: string; what: string; why: string }[]
-  questions_for_you?: { question: string; options: string[]; answer?: string }[]
+  questions_for_you?: { question: string; options: string[]; answer?: string; screen?: string; changes?: string }[]
   // Set by you at review: what to focus on, and screens to leave out.
   focus?: string
   skip_screens?: string[]
@@ -47,6 +47,8 @@ export type ExplorerRun = {
   brief: AppBrief | null
   brief_confirmed_at: string | null
   notes: string | null
+  // Authoring: the user's request this run follows; null when exploring.
+  prompt?: string | null
   error: string | null
   created_at: string
   updated_at: string
@@ -218,6 +220,12 @@ export const explorerApi = {
     request<ExplorerRun>(`/explorer/applications/${applicationId}/runs`, {
       method: 'POST',
       body: JSON.stringify({ notes: '' }),
+    }),
+  // Authoring: Explorer follows the user's request (its own path, same screen).
+  startAuthoring: (applicationId: string, prompt: string) =>
+    request<ExplorerRun>(`/explorer/applications/${applicationId}/author`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
     }),
   getRun: (runId: string) => request<ExplorerRun>(`/explorer/runs/${runId}`),
   events: (runId: string, after: number) =>

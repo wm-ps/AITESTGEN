@@ -106,6 +106,9 @@ class ExplorerRun(SQLModel, table=True):
     )
     # Optional extra knowledge the user typed in on the Start card.
     notes: str | None = Field(default=None)
+    # Authoring: the user's request this run follows instead of exploring by
+    # itself (explorer_worker.authoring). None = a normal Explorer run.
+    prompt: str | None = Field(default=None)
     # Who started it — emailed whenever the run needs them (explorer_core.notify).
     started_by_id: uuid.UUID | None = Field(
         default=None,
@@ -202,7 +205,15 @@ class ExplorerScreen(SQLModel, table=True):
     route: list[dict[str, Any]] | None = Field(
         default=None, sa_column=Column(JSONB, nullable=True)
     )
+    # Where this screen sits against the run's Goal (one of GOAL_FITS);
+    # None = the run has no goal, or it isn't judged yet (counts as inside).
+    goal_fit: str | None = Field(default=None)
     created_at: datetime = _ts()
+
+
+# inside the goal (stop screen included) | passed through to reach it |
+# after the stop point | outside it.
+GOAL_FITS = ("inside", "on_the_way", "past_stop", "outside")
 
 
 class ExplorerHealthIssue(SQLModel, table=True):

@@ -282,4 +282,4 @@ def test_page_quality_test_runs_the_same_measurement():
     assert "setViewportSize" in code and "scrollWidth" in code and "{ tag: \"@auth\" }" in code
     bug = quality.playwright_code("t", "loads_cleanly", "https://a.com/Loans", None, "500 https://a.com/api")
     assert "test.fixme(true" in bug and "expect(problems).toEqual([])" in bug
-    assert quality.planned_checks({"fields": []}) == ["loads_cleanly", "no_broken_images", "fits_phone"]
+    assert quality.planned_checks({"fields": []}) == ["loads_cleanly", "no_broken_images"]

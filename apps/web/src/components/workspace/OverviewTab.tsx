@@ -121,12 +121,12 @@ function PassRateByRunBars({ trend }: { trend: OverviewRead['trend'] }) {
 type QuickActionTarget = 'journeys' | 'scenarios' | 'record' | 'suite' | 'runs' | 'schedules' | 'export'
 
 const QUICK_ACTIONS: { target: QuickActionTarget; label: string; hint: string; icon: () => React.JSX.Element }[] = [
-  { target: 'journeys', label: 'View journeys', hint: 'See every discovered page flow.', icon: DiscoveryIcon },
+  { target: 'journeys', label: 'View journeys', hint: 'See every explored page flow.', icon: DiscoveryIcon },
   { target: 'scenarios', label: 'Review scenarios', hint: 'Approve or edit drafted test scenarios.', icon: LayersIcon },
   { target: 'record', label: 'Record and play', hint: 'Capture a flow by hand and replay it as a test.', icon: RecordIcon },
   { target: 'suite', label: 'View test cases', hint: "See this application's generated Playwright test cases.", icon: CheckCircleIcon },
   { target: 'runs', label: 'View test runs', hint: 'Browse past executions and results.', icon: RunHistoryIcon },
-  { target: 'schedules', label: 'Schedules', hint: 'Automate discovery and test runs on a cadence.', icon: ClockPauseIcon },
+  { target: 'schedules', label: 'Schedules', hint: 'Automate exploration and test runs on a cadence.', icon: ClockPauseIcon },
   { target: 'export', label: 'Download project', hint: 'Get the generated Playwright project as a .zip.', icon: DownloadProjectIcon },
 ]
 
@@ -315,7 +315,7 @@ export function OverviewTab({
           <StatTile
             label="Journeys mapped"
             value={overview.journey_count}
-            sub={overview.last_discovery_started_at ? `Last discovery ${formatDateTime(overview.last_discovery_started_at)}` : 'No discovery yet'}
+            sub={overview.last_discovery_started_at ? `Last exploration ${formatDateTime(overview.last_discovery_started_at)}` : 'No exploration yet'}
           />
         )}
         <StatTile label="Test cases" value={overview.total_tests} sub={`${overview.not_run} not yet run`} />
@@ -325,12 +325,7 @@ export function OverviewTab({
           sub={`Latest run · ${formatDuration(overview.latest_run.duration_ms)}`}
         />
         <StatTile label="Open failures" value={overview.failed} sub={`${blocked_count} skipped`} />
-        <StatTile
-          label="Flaky"
-          value={overview.latest_run.flaky_count}
-          sub="In the latest run"
-          valueColor="var(--flaky-strong)"
-        />
+        <StatTile label="Flaky" value={overview.latest_run.flaky_count} sub="In the latest run" />
       </div>
 
       <div

@@ -76,10 +76,10 @@ describe('Workspace', () => {
 
     await screen.findByText('View journeys')
     expect(screen.getByText('Review scenarios')).toBeInTheDocument()
-    expect(screen.getByText('Automate discovery and test runs on a cadence.')).toBeInTheDocument()
+    expect(screen.getByText('Automate exploration and test runs on a cadence.')).toBeInTheDocument()
   })
 
-  it('hides the Journeys/Scenarios shortcuts on Overview when discovery is disabled', async () => {
+  it('hides the Journeys/Scenarios shortcuts on Overview when exploration is disabled', async () => {
     stubEmptyOverview()
     render(
       <Workspace applicationId="app-1" activeTab="overview" onActiveTabChange={() => {}} discoveryEnabled={false} />,

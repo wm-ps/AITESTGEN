@@ -7,6 +7,9 @@ import re
 import uuid
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
+
+from explorer_core import GOAL_FITS
 
 from explorer_worker import brain
 from explorer_worker.browser import Visit
@@ -23,6 +26,7 @@ class Mind:
         heartbeat: Callable[[], None],
         condition: str | None = None,
         home_url: str | None = None,
+        goal_rule: str | None = None,
     ) -> None:
         self.journal = journal
         self.notes = notes
@@ -32,6 +36,10 @@ class Mind:
         self.home_pattern = url_pattern(home_url) if home_url else None
         self.understood = [s.name for s in journal.screen_rows()]
         self.last_screen_id: uuid.UUID | None = None
+        # The run's Goal as a strict rule (explorer_worker.goal), and where the
+        # screen just reached sits against it; None = no goal.
+        self.goal_rule = goal_rule
+        self.last_goal_fit: str | None = None
         self.last_reading: dict[str, Any] = {}
         self.new_screens = 0
         # Records the app created during this pursuit, usable right away.
@@ -54,11 +62,32 @@ class Mind:
         else:
             already_noted = [i.title for i in journal.health_rows()]
             reading = await brain.perceive(
-                visit.shot, visit.inventory, self.understood, self.notes, already_noted
+                visit.shot,
+                visit.inventory,
+                self.understood,
+                self.notes,
+                already_noted,
+                goal_rule=self.goal_rule,
             )
             if key:
                 _READINGS[(journal.run_id, key)] = reading
         name = str(reading.get("screen_name") or "Untitled screen")[:120]
+        if reading.get("is_blank") or reading.get("is_error_page"):
+            # A blank or error page is a bug, not a screen: counting it would
+            # only inflate the screen total (seen on Catalog BO's sign-in return).
+            # The sign-in hand-back (`?code=…&state=…`) is blank by design.
+            if reading.get("is_blank") and not _is_sign_in_return(visit.url):
+                journal.health_issue(
+                    "looks_wrong",
+                    "medium",
+                    f"Blank page at {url_pattern(visit.url)}",
+                    f"Reached by {action or reached_by or 'opening it'}; nothing is shown.",
+                    visit.url,
+                    shot_id,
+                )
+            _record_health(journal, visit, {} if known is not None else reading, shot_id)
+            journal.event("thought", f"Not a screen: {name}", "Logged as a possible bug.", shot_id)
+            return name
         signature = screen_signature(
             reading.get("entity"), str(reading.get("view_kind")), reading.get("mode"), name
         )
@@ -78,9 +107,15 @@ class Mind:
                 "reached_by": reached_by,
                 "shot_id": shot_id,
                 "condition": self.condition,
+                "goal_fit": (
+                    reading.get("goal_fit")
+                    if self.goal_rule and reading.get("goal_fit") in GOAL_FITS
+                    else None
+                ),
             },
             home_pattern=self.home_pattern,
         )
+        self.last_goal_fit = journal.goal_fit_of(screen_id) if self.goal_rule else None
         if self.last_screen_id is not None and screen_id != self.last_screen_id:
             journal.transition(self.last_screen_id, screen_id, action or reached_by or "")
         self.last_screen_id = screen_id
@@ -129,6 +164,16 @@ class Mind:
         if self.on_screen is not None:
             self.on_screen(visit, name)
         return name
+
+
+def _is_sign_in_return(url: str) -> bool:
+    """An OAuth/OIDC sign-in hand-back: `code` and `state` in the query
+    (or in a hash route's query)."""
+    parts = urlsplit(url)
+    keys = parse_qs(parts.query, keep_blank_values=True).keys() | parse_qs(
+        parts.fragment.partition("?")[2], keep_blank_values=True
+    ).keys()
+    return {"code", "state"} <= keys
 
 
 def _record_health(

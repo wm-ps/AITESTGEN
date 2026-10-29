@@ -60,12 +60,12 @@ describe('SchedulesTab', () => {
     // ("New schedule") duplicates the trigger button's, so disambiguate via
     // the dialog's unique subtitle instead of the (now ambiguous) heading text.
     await waitFor(() =>
-      expect(screen.getByText('Run discovery or the suite automatically on a cadence.')).toBeInTheDocument(),
+      expect(screen.getByText('Run exploration or the suite automatically on a cadence.')).toBeInTheDocument(),
     )
 
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() =>
-      expect(screen.queryByText('Run discovery or the suite automatically on a cadence.')).not.toBeInTheDocument(),
+      expect(screen.queryByText('Run exploration or the suite automatically on a cadence.')).not.toBeInTheDocument(),
     )
   })
 

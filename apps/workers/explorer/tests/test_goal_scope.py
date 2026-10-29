@@ -1,0 +1,179 @@
+"""The run's Goal as a strict scope (explorer_worker.goal): read once after
+the App Summary is confirmed, reused after that; an empty goal changes
+nothing."""
+
+import asyncio
+import uuid
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+from explorer_worker import brain, goal
+
+RUN = uuid.uuid4()
+
+
+class FakeJournal:
+    def __init__(self, brief: dict[str, Any]) -> None:
+        self.run_id = RUN
+        self.brief = brief
+        self.fits: dict[str, str] = {}
+
+    def run_brief(self) -> dict[str, Any]:
+        return self.brief
+
+    def update_run(self, **changes: Any) -> None:
+        self.brief = changes.get("brief", self.brief)
+
+    def set_goal_fit(self, fits: dict[str, str]) -> None:
+        self.fits = fits
+
+    def event(self, *args: object) -> None:
+        pass
+
+    def screen_rows(self) -> list[object]:
+        names = ["Find your policy", "Policy selection", "Check a claim"]
+        return [SimpleNamespace(name=n, entity=None, view_kind="form", purpose=None) for n in names]
+
+
+@pytest.fixture
+def journal(monkeypatch: pytest.MonkeyPatch) -> FakeJournal:
+    j = FakeJournal({"focus": "Only the claim reporting flow, up to policy search"})
+    monkeypatch.setattr(goal, "Journal", lambda run_id: j)
+    return j
+
+
+def _model(monkeypatch: pytest.MonkeyPatch, fits: dict[str, str]) -> list[str]:
+    calls: list[str] = []
+
+    async def read_goal(text: str, screens: list[dict[str, Any]]) -> dict[str, Any]:
+        calls.append(text)
+        return {"rule": "Only claim reporting, up to Find your policy.", "fits": fits}
+
+    monkeypatch.setattr(brain, "read_goal", read_goal)
+    return calls
+
+
+def test_empty_goal_has_no_scope(monkeypatch: pytest.MonkeyPatch, journal: FakeJournal) -> None:
+    journal.brief = {"focus": "  "}
+    calls = _model(monkeypatch, {})
+    assert asyncio.run(goal.ensure_scope(RUN)) is None
+    assert calls == []
+
+
+def test_scope_is_created_once_and_reused(monkeypatch: pytest.MonkeyPatch, journal: FakeJournal) -> None:
+    calls = _model(monkeypatch, {"Find your policy": "inside"})
+    first = asyncio.run(goal.ensure_scope(RUN))
+    second = asyncio.run(goal.ensure_scope(RUN))
+    assert first == second == journal.brief["scope"]
+    assert calls == ["Only the claim reporting flow, up to policy search"]
+
+
+def test_stop_point_matched_by_meaning_is_kept_from_the_model(
+    monkeypatch: pytest.MonkeyPatch, journal: FakeJournal
+) -> None:
+    _model(
+        monkeypatch,
+        {"Find your policy": "inside", "Policy selection": "past_stop", "Check a claim": "outside", "Bogus": "maybe"},
+    )
+    scope = asyncio.run(goal.ensure_scope(RUN))
+    assert scope is not None
+    assert journal.fits == {"Find your policy": "inside", "Policy selection": "past_stop", "Check a claim": "outside"}
+    assert scope["rule"] == "Only claim reporting, up to Find your policy."
+
+
+def test_in_goal_and_stops_walk() -> None:
+    assert goal.in_goal(None) and goal.in_goal("inside")
+    assert not any(goal.in_goal(f) for f in ("on_the_way", "past_stop", "outside"))
+    assert goal.stops_walk("past_stop") and goal.stops_walk("outside")
+    assert not goal.stops_walk("on_the_way") and not goal.stops_walk(None)
+
+
+def test_scope_text_is_strict_only_with_a_goal() -> None:
+    text = brain.scope({"focus": "x", "scope": {"rule": "Only claim reporting up to Find your policy."}})
+    assert "STRICT" in text and "Only claim reporting up to Find your policy." in text
+    assert brain.scope({}) == ""
+
+
+def test_quiet_mind_knows_a_known_screens_goal_fit() -> None:
+    from explorer_worker.sense import url_pattern
+    from explorer_worker.tests_stage import QuietMind
+
+    class _J:
+        def event(self, *a: object) -> None: ...
+        def shot(self, data: bytes) -> None: ...
+        def screen_rows(self) -> list[object]:
+            return []
+
+    mind = QuietMind(_J(), None, lambda: None)  # type: ignore[arg-type]
+    mind.goal_fits = {url_pattern("https://app#/PolicySelection"): "past_stop"}
+    here = SimpleNamespace(url="https://app#/PolicySelection", inventory={"headings": ["Pick"]}, shot=b"")
+    asyncio.run(mind.take_in(here, None))  # type: ignore[arg-type]
+    assert mind.last_goal_fit == "past_stop"
+    elsewhere = SimpleNamespace(url="https://app#/Other", inventory={}, shot=b"")
+    asyncio.run(mind.take_in(elsewhere, None))  # type: ignore[arg-type]
+    assert mind.last_goal_fit is None
+
+
+def _screens(*fits: str | None) -> list[SimpleNamespace]:
+    return [SimpleNamespace(name=f"S{i}", goal_fit=f) for i, f in enumerate(fits)]
+
+
+def test_only_screens_inside_the_goal_are_planned() -> None:
+    kept = goal.screens_in_goal(_screens("inside", None, "on_the_way", "past_stop", "outside"))
+    assert [s.goal_fit for s in kept] == ["inside", None]
+
+
+def test_without_a_goal_every_screen_is_planned() -> None:
+    assert len(goal.screens_in_goal(_screens(None, None, None))) == 3
+
+
+def test_follow_ups_only_on_screens_inside_the_goal() -> None:
+    planned = [{"title": "a", "start_screen": "S0"}, {"title": "b", "start_screen": "S1"}, {"title": "c"}]
+    fits = {"S0": "inside", "S1": "outside"}
+    assert [m["title"] for m in goal.missions_in_goal(planned, fits)] == ["a", "c"]
+
+
+def test_hunt_only_probes_screens_inside_the_goal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from explorer_worker import hunt
+
+    probed: list[str] = []
+    forms = [
+        SimpleNamespace(name="Find your policy", view_kind="form", condition=None, goal_fit="inside"),
+        SimpleNamespace(name="Contact details", view_kind="form", condition=None, goal_fit="past_stop"),
+    ]
+
+    class _J:
+        def __init__(self, run_id: object) -> None: ...
+        def status(self) -> str: return "hunting"
+        def screen_rows(self) -> list[object]: return forms
+        def update_run(self, **c: object) -> None: ...
+        def event(self, *a: object) -> None: ...
+
+    class _Eyes:
+        async def close(self) -> None: ...
+
+    async def opened(*a: object) -> _Eyes:
+        return _Eyes()
+
+    async def probe(eyes: object, journal: object, screen: SimpleNamespace, *rest: object) -> int:
+        probed.append(screen.name)
+        return 0
+
+    monkeypatch.setattr(hunt, "Journal", _J)
+    monkeypatch.setattr(hunt, "load_target", lambda run_id: None)
+    monkeypatch.setattr(hunt, "open_signed_in", opened)
+    monkeypatch.setattr(hunt, "_probe_choices", probe)
+    monkeypatch.setattr(hunt, "_probe_amounts", probe)
+    asyncio.run(hunt.hunt(RUN, lambda: None))
+    assert set(probed) == {"Find your policy"}
+
+
+def test_a_mission_naming_an_unknown_screen_still_runs() -> None:
+    # No goal: a planned mission whose start screen matches no stored name
+    # ("Policy search" vs "Policy Search") is kept, as before goals existed.
+    planned = [{"title": "a", "start_screen": "Policy search"}, {"title": "b", "start_screen": "Check a claim"}]
+    assert [m["title"] for m in goal.missions_in_goal(planned, {"Check a claim": None})] == ["a", "b"]
+    # With a goal, only a known screen outside it drops a mission.
+    fits = {"Check a claim": "outside"}
+    assert [m["title"] for m in goal.missions_in_goal(planned, fits)] == ["a"]

@@ -17,6 +17,7 @@ from sqlmodel import Session, col, select
 from explorer_worker import brain
 from explorer_worker.browser import Eyes
 from explorer_worker.db import engine
+from explorer_worker.goal import stops_walk
 from explorer_worker.journal import Journal
 from explorer_worker.mind import Mind
 from explorer_worker.samples import sample_file
@@ -57,6 +58,12 @@ def path_to(run_id: uuid.UUID, screen: str | None) -> list[dict[str, str]] | Non
         ).all()
     routes = [r for r in routes if r]
     return [dict(step) for step in min(routes, key=len)] if routes else None
+
+
+def edge_reached(fit: str | None, obey_goal: bool) -> bool:
+    """Does reaching a screen with this place against the run's Goal end the
+    walk? A mission the user added themselves (obey_goal=False) goes on."""
+    return obey_goal and stops_walk(fit)
 
 
 def is_shorter(path: list[dict[str, Any]], known: list[dict[str, Any]] | None) -> bool:
@@ -122,6 +129,8 @@ async def pursue(
     ask: Asker | None = None,
     lead_in: list[dict[str, str]] | None = None,
     stay_signed_out: bool = False,
+    obey_goal: bool = True,
+    approved_presses: set[str] | None = None,
 ) -> Pursuit:
     """`non_production` lets a mission press final Save/Submit/Create so it
     can make its own test data (PLAN.md Step 5); actions that need a human's
@@ -160,10 +169,40 @@ async def pursue(
 
     landed: list[str] = [arrived(step_name)]
 
+    async def ask_way_past(screen: str, what_happened: str) -> bool:
+        """Before giving up on a screen, ask the person once how to get past
+        it — usually a value only they know (an existing record, a code).
+        Without this a silent rejection ended every Catalog BO mission
+        "blocked" with no question asked."""
+        key = f"stuck:{screen}"
+        if ask is None or key in asked:
+            return False
+        asked.add(key)
+        answer = await ask(
+            "data",
+            f"I can't get past “{screen}”: {what_happened}. What should I enter or do there?",
+            f"Needed to: {goal}",
+            [],
+            journal.shot(visit.shot),
+        )
+        if not answer:
+            return False
+        learned.append(f"The user said, about getting past “{screen}”: {answer}")
+        result.history.append(f"{screen}: asked how to get past it, got an answer")
+        return True
+
     for _ in range(max_steps):
         heartbeat()
         if stop_requested():
             result.ended = "stopped"
+            break
+        if edge_reached(getattr(mind, "last_goal_fit", None), obey_goal):
+            # Past the goal's stop point, or outside the goal: never act here.
+            # "done", so a scenario that landed on the screen after its stop
+            # point still uses that screen as its proof.
+            result.ended = "done"
+            result.outcome = f"Reached the edge of your goal: {step_name}"
+            journal.event("phase", result.outcome, None, journal.shot(visit.shot))
             break
         if eyes.starts_fresh and await eyes.start_fresh_if_asked():
             # A "resume your saved progress?" prompt left by an earlier run:
@@ -191,6 +230,9 @@ async def pursue(
             landed.append(arrived(step_name))
             continue
         circling = going_in_circles(landed)
+        if circling and await ask_way_past(step_name, "I keep coming back to it"):
+            landed = landed[-1:]
+            continue
         if circling:
             # Never keep walking in circles: it learns nothing and burns the run.
             result.ended = "stuck"
@@ -353,8 +395,9 @@ async def pursue(
             result.outcome = f"Already pressed “{advance}” once; not pressing it again"
             journal.event("thought", "Not sending twice", result.outcome)
             break
-        approved = False
-        if ask is not None and (
+        # A button you already said "Yes, press it" to while Explorer explored.
+        approved = pre_approved(str(advance), approved_presses or set())
+        if not approved and ask is not None and (
             needs_ok or (is_final and not may_commit(f"{advance} ({goal})", non_production))
         ):
             answer = await ask(
@@ -409,6 +452,12 @@ async def pursue(
                 )[:600],
                 journal.shot(visit.shot),
             )
+            if stuck > MAX_RETRIES_ON_SAME_STEP and await ask_way_past(
+                step_name,
+                f"pressing “{advance}” " + (f"showed “{said[:120]}”" if said else "did nothing"),
+            ):
+                stuck = 0
+                continue
             if stuck > MAX_RETRIES_ON_SAME_STEP:
                 result.ended = "stuck"
                 result.outcome = f"Couldn't get past {step_name}" + (f": {said}" if said else "")
@@ -422,6 +471,12 @@ async def pursue(
     if not result.outcome:
         result.outcome = f"Stopped after {result.steps} steps on {step_name}"
     return result
+
+
+def pre_approved(label: str, approved: set[str]) -> bool:
+    """Did the user already approve pressing this button (a risk question
+    answered "Yes, press it")? Nothing approved: never."""
+    return bool(approved) and _same_button(label, approved)
 
 
 def _same_button(label: str, pressed: set[str]) -> bool:

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TestRunRead } from '../../api'
-import { RunsTab } from './RunsTab'
+import { RunsTab, runTitle } from './RunsTab'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -142,10 +142,10 @@ describe('RunsTab', () => {
     expect(retry).toBeEnabled()
   })
 
-  // Passed / Self-healed / Failed use each result's own status and sum to the
-  // finished results. Flaky is an overlay count: a flaky result is still
-  // counted as Passed or Failed.
-  it('keeps Passed / Self-healed / Failed on raw status and counts Flaky separately', async () => {
+  // Passed / Failed use each result's own status and sum to the finished
+  // results; a self-healed pass is just a pass. Flaky is an overlay count: a
+  // flaky result is still counted as Passed or Failed.
+  it('counts self-healed passes as Passed and Flaky separately', async () => {
     const base = { ...failedResult, error_message: null, heal_blocked_reason: null }
     stubRunDetail([
       { ...base, id: 'r1', scenario_name: 'Clean pass', status: 'passed' },
@@ -162,8 +162,8 @@ describe('RunsTab', () => {
     const tileValue = async (label: string) =>
       (await screen.findByText(label, { selector: 'div' })).nextElementSibling?.textContent
     await waitFor(async () => expect(await tileValue('Flaky')).toBe('2'))
-    expect(await tileValue('Passed')).toBe('2')
-    expect(await tileValue('Self-healed')).toBe('2')
+    expect(await tileValue('Passed')).toBe('4')
+    expect(screen.queryByText('Self-healed', { selector: 'div' })).toBeNull()
     expect(await tileValue('Failed')).toBe('3')
   })
 
@@ -473,5 +473,14 @@ describe('RunsTab', () => {
 
     expect(await screen.findByText('38 of 40 failed tests have the same cause')).toBeInTheDocument()
     expect(screen.getByText("Vantage couldn't sign in to the app — fix this first.")).toBeInTheDocument()
+  })
+})
+
+describe('runTitle', () => {
+  it('shows the name given to a run of chosen test cases, else the run number', () => {
+    const base = { run_number: 7 } as TestRunRead
+    expect(runTitle({ ...base, suite_name: 'test_authoring' })).toBe('test_authoring')
+    expect(runTitle({ ...base, suite_name: null })).toBe('Run #7')
+    expect(runTitle({ ...base, suite_name: '  ' })).toBe('Run #7')
   })
 })

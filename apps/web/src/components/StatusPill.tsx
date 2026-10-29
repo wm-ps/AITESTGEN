@@ -55,8 +55,8 @@ const STATUS_COLORS: Record<string, { background: string; foreground: string }> 
 }
 
 const LABELS: Record<string, string> = {
-  running: 'Discovery in Progress',
-  discovery_completed: 'Discovery completed',
+  running: 'Exploration in Progress',
+  discovery_completed: 'Exploration completed',
   journeys_generated: 'Journeys generated',
   scenarios_generated: 'Scenarios generated',
   generating_scenarios: 'Generating scenarios',

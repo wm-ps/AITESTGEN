@@ -188,7 +188,7 @@ describe('DiscoverJourneys', () => {
     })
   })
 
-  it('hides the business-stage import progress once Journeys have been discovered', async () => {
+  it('hides the business-stage import progress once Journeys have been explored', async () => {
     stubFetch()
     renderScreen()
 
@@ -198,7 +198,7 @@ describe('DiscoverJourneys', () => {
     expect(screen.queryByRole('progressbar')).toBeNull()
   })
 
-  it('shows the business-stage import progress while no Journeys have been discovered yet', async () => {
+  it('shows the business-stage import progress while no Journeys have been explored yet', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
@@ -377,7 +377,7 @@ describe('DiscoverJourneys', () => {
     expect(deleted).toBe(true)
   })
 
-  it('shows the "All journeys have been removed." empty state after deleting the last Journey, not the Discovery Progress spinner', async () => {
+  it('shows the "All journeys have been removed." empty state after deleting the last Journey, not the Exploration Progress spinner', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
     stubFetch()
     renderScreen()
@@ -417,7 +417,7 @@ describe('DiscoverJourneys', () => {
     renderScreen()
 
     await waitFor(() => {
-      expect(screen.getByText('1 journey discovered')).toBeTruthy()
+      expect(screen.getByText('1 journey explored')).toBeTruthy()
     })
     const button = screen.getByRole('button', {
       name: 'Review scenarios',
@@ -438,7 +438,7 @@ describe('DiscoverJourneys', () => {
     renderScreen()
 
     await waitFor(() => {
-      expect(screen.getByText('0 journeys discovered')).toBeTruthy()
+      expect(screen.getByText('0 journeys explored')).toBeTruthy()
     })
     // Nothing to review yet — the button doesn't render at all, not merely
     // disabled (see DiscoverJourneys.tsx: `{journeys.length > 0 && (...)}`).
@@ -456,7 +456,7 @@ describe('DiscoverJourneys', () => {
     renderScreen(() => {
       navigated = true
     })
-    await waitFor(() => screen.getByText('1 journey discovered'))
+    await waitFor(() => screen.getByText('1 journey explored'))
 
     fireEvent.click(screen.getByRole('button', { name: 'Review scenarios' }))
 

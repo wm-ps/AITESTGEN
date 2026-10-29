@@ -18,6 +18,7 @@ from domain import (
     Application,
     DiscoveryRun,
     DiscoverySettings,
+    ExecutionPolicy,
     Journey,
     Organization,
     Scenario,
@@ -26,6 +27,7 @@ from domain import (
     TestRun,
     TestSuite,
 )
+from explorer_core.models import ExplorerEvent, ExplorerRole, ExplorerRun
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
@@ -96,8 +98,19 @@ def _seed_application(*, deleted_at: datetime | None) -> Application:
         )
         session.add(test_asset)
 
+        policy = ExecutionPolicy(application_id=application.id)
+        explorer_run = ExplorerRun(application_id=application.id)
+        session.add(policy)
+        session.add(explorer_run)
+        session.add(
+            ExplorerRole(application_id=application.id, name="Admin", secret_ref="explorer/x")
+        )
+        session.flush()
+        session.add(ExplorerEvent(run_id=explorer_run.id, kind="note", title="hi"))
+
         test_run = TestRun(
             application_id=application.id,
+            execution_policy_id=policy.id,
             run_number=1,
             status="complete",
             environment_snapshot="staging",
@@ -157,6 +170,11 @@ def test_purge_removes_eligible_application_and_leaves_others_alone() -> None:
             ).first()
             is None
         )
+        for model in (ExecutionPolicy, ExplorerRun, ExplorerRole):
+            assert (
+                session.exec(select(model).where(model.application_id == eligible.id)).first()
+                is None
+            )
         assert (
             session.exec(select(Application).where(Application.id == untouched.id)).first()
             is not None

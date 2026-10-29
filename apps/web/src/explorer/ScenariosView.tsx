@@ -17,7 +17,7 @@ import {
   faUserCheck,
 } from '@fortawesome/free-solid-svg-icons'
 import { EmptyState, ScenariosIllustration } from '../components/EmptyState'
-import { LoadingDots, Spinner } from '../components/LoadingDots'
+import { BouncingDots, LoadingDots } from '../components/LoadingDots'
 import { proofUrl, shotUrl, type ExplorerRun, type ExplorerScreen, type ExplorerTestCase } from './explorerApi'
 import { glassCard, IconTile, Pill, type Tone } from './ui'
 
@@ -197,7 +197,7 @@ export function ScenariosView({
                     style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 14, padding: '11px 16px 11px 30px', border: 'none', background: 'transparent', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
                   >
                     {t.status === 'building' ? (
-                      <span style={{ width: 34, height: 34, flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><Spinner size={14} /></span>
+                      <span style={{ width: 34, height: 34, flex: 'none', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><BouncingDots /></span>
                     ) : (
                       <IconTile icon={kind.icon} tone={t.status === 'known_bug' ? 'warn' : t.status === 'proven' ? 'accent' : 'neutral'} size={34} />
                     )}

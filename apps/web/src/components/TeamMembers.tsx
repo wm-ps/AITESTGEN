@@ -231,7 +231,7 @@ export function TeamMembers({ user }: { user: UserRead }) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', border: '1px solid var(--border-2)', borderRadius: 10, background: 'var(--panel-2)' }}>
         <FontAwesomeIcon icon={faShieldHalved} style={{ fontSize: 13, color: "var(--ok)" }} />
-        <div style={{ flex: 1, fontSize: 12.5, color: 'var(--fg-3)' }}>Only admins can view saved credentials or change discovery limits.</div>
+        <div style={{ flex: 1, fontSize: 12.5, color: 'var(--fg-3)' }}>Only admins can view saved credentials or change exploration limits.</div>
       </div>
 
       {inviteOpen && <InviteTeammateModal onClose={() => setInviteOpen(false)} />}
