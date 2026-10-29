@@ -2481,6 +2481,11 @@ export interface components {
             /** Last Test Run Failed Count */
             last_test_run_failed_count: number | null;
             last_test_run_health: components["schemas"]["HealthRead"];
+            /**
+             * Last Test Run Flaky Count
+             * @default 0
+             */
+            last_test_run_flaky_count: number;
             /** Test Run Count */
             test_run_count: number;
             /** Recent Pass Rates */

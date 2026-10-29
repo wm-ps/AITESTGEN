@@ -8,13 +8,18 @@ import {
   faFileLines,
   faHourglassEnd,
   faHeartPulse,
+  faImages,
   faLayerGroup,
+  faLightbulb,
+  faListCheck,
   faPlay,
   faScaleBalanced,
   faStop,
   faPause,
+  faTowerBroadcast,
   faUserCheck,
 } from '@fortawesome/free-solid-svg-icons'
+import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import { ApiError } from '../api'
 import { AppIdentityLine } from '../components/AppIdentityLine'
 import { LoadingDots } from '../components/LoadingDots'
@@ -375,9 +380,17 @@ export function ExplorerTab({
   )
 }
 
-// Plain underline tabs: text only, the active one carries an accent
-// underline, counts are quiet grey numbers. Arrow keys move between tabs.
-// Only a tab that needs you (or is live) gets a dot.
+const TAB_ICONS: Partial<Record<View, IconDefinition>> = {
+  live: faTowerBroadcast,
+  summary: faLightbulb,
+  screens: faImages,
+  scenarios: faListCheck,
+}
+
+// Page navigation bar: a full-width white strip anchored under the header.
+// Each tab is icon + label (+ count); the active one is a soft accent pill,
+// the rest get a grey pill on hover. No underlines. Arrow
+// keys move between tabs. Only a tab that needs you (or is live) gets a dot.
 function Tabs({ view, onChange, items }: { view: View; onChange: (v: View) => void; items: { key: View; label: string; count?: number; badge?: 'live' | 'review' }[] }) {
   const move = (from: number, step: number) => {
     const next = items[(from + step + items.length) % items.length]
@@ -385,8 +398,12 @@ function Tabs({ view, onChange, items }: { view: View; onChange: (v: View) => vo
     document.getElementById(`explorer-tab-${next.key}`)?.focus()
   }
   return (
-    <div role="tablist" aria-label="Explorer" style={{ display: 'flex', gap: 28, marginBottom: 20, borderBottom: '1px solid var(--line)', overflowX: 'auto' }}>
-      <style>{'.explorer-tab:hover{color:var(--fg)!important}.explorer-tab:focus-visible{outline:2px solid var(--accent-2);outline-offset:2px;border-radius:4px}'}</style>
+    <div role="tablist" aria-label="Explorer" style={{ ...glassCard, borderRadius: 12, display: 'flex', gap: 2, marginBottom: 20, padding: '0 8px', overflowX: 'auto' }}>
+      <style>{
+        '.explorer-tab-inner{transition:background 150ms ease,color 150ms ease}' +
+        '.explorer-tab[aria-selected="false"]:hover .explorer-tab-inner{background:var(--panel-2);color:var(--fg)}' +
+        '.explorer-tab:focus-visible{outline:none}.explorer-tab:focus-visible .explorer-tab-inner{outline:2px solid var(--accent-2);outline-offset:-2px}'
+      }</style>
       {items.map((item, i) => {
         const active = item.key === view
         return (
@@ -404,29 +421,41 @@ function Tabs({ view, onChange, items }: { view: View; onChange: (v: View) => vo
               if (e.key === 'ArrowLeft') move(i, -1)
             }}
             style={{
+              position: 'relative',
               flex: 'none',
-              display: 'inline-flex',
+              display: 'flex',
               alignItems: 'center',
-              gap: 7,
-              height: 40,
-              padding: 0,
-              marginBottom: -1,
+              height: 48,
+              padding: '0 2px',
               border: 'none',
-              borderBottom: `2px solid ${active ? 'var(--accent-2)' : 'transparent'}`,
               background: 'transparent',
               fontFamily: 'inherit',
-              fontSize: 14,
-              fontWeight: active ? 600 : 500,
-              color: active ? 'var(--fg)' : 'var(--fg-4)',
               cursor: 'pointer',
-              whiteSpace: 'nowrap',
-              transition: 'color 150ms ease, border-color 150ms ease',
             }}
           >
-            <span>{item.label}</span>
-            {item.count !== undefined && <span style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--fg-5)' }}>{item.count}</span>}
-            {item.badge === 'live' && <span aria-label="Live" style={{ width: 7, height: 7, flex: 'none', borderRadius: 1000, background: 'var(--bad)', animation: 'v2-pulse 1.4s ease-in-out infinite' }} />}
-            {item.badge === 'review' && <span aria-label="Needs you" style={{ width: 8, height: 8, flex: 'none', borderRadius: 1000, background: 'var(--warn-2)', animation: 'explorer-attention 1.6s ease-out infinite' }} />}
+            <span
+              className="explorer-tab-inner"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '7px 12px',
+                borderRadius: 8,
+                background: active ? 'var(--accent-wash)' : 'transparent',
+                fontSize: 13.5,
+                fontWeight: active ? 600 : 500,
+                color: active ? 'var(--accent-2)' : 'var(--fg-4)',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <FontAwesomeIcon icon={TAB_ICONS[item.key] ?? faCompass}style={{ fontSize: 12.5, opacity: active ? 1 : 0.75 }} />
+              {item.label}
+              {item.count !== undefined && (
+                <span style={{ minWidth: 20, padding: '0 6px', borderRadius: 1000, fontSize: 11.5, fontWeight: 600, lineHeight: '18px', textAlign: 'center', background: active ? 'var(--panel)' : 'var(--panel-2)', color: active ? 'var(--accent-2)' : 'var(--fg-5)' }}>{item.count}</span>
+              )}
+              {item.badge === 'live' && <span aria-label="Live" style={{ width: 7, height: 7, flex: 'none', borderRadius: 1000, background: 'var(--bad)', animation: 'v2-pulse 1.4s ease-in-out infinite' }} />}
+              {item.badge === 'review' && <span aria-label="Needs you" style={{ width: 8, height: 8, flex: 'none', borderRadius: 1000, background: 'var(--warn-2)', animation: 'explorer-attention 1.6s ease-out infinite' }} />}
+            </span>
           </button>
         )
       })}
