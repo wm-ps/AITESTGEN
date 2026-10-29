@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { TestRunRead } from '../../api'
-import { RunsTab } from './RunsTab'
+import { RunsTab, runTitle } from './RunsTab'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -473,5 +473,14 @@ describe('RunsTab', () => {
 
     expect(await screen.findByText('38 of 40 failed tests have the same cause')).toBeInTheDocument()
     expect(screen.getByText("Vantage couldn't sign in to the app — fix this first.")).toBeInTheDocument()
+  })
+})
+
+describe('runTitle', () => {
+  it('shows the name given to a run of chosen test cases, else the run number', () => {
+    const base = { run_number: 7 } as TestRunRead
+    expect(runTitle({ ...base, suite_name: 'test_authoring' })).toBe('test_authoring')
+    expect(runTitle({ ...base, suite_name: null })).toBe('Run #7')
+    expect(runTitle({ ...base, suite_name: '  ' })).toBe('Run #7')
   })
 })

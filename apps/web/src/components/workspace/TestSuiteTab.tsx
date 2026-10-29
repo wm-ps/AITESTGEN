@@ -13,7 +13,8 @@ import { GenerationLoader } from '../GenerationLoader'
 import { LoadingDots } from '../LoadingDots'
 import { SkeletonRows } from '../Skeleton'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
-import { LiveExplorationPanel, requestIdStorageKey, TERMINAL_STATUSES } from './LiveExplorationPanel'
+import { requestIdStorageKey, TERMINAL_STATUSES } from './LiveExplorationPanel'
+import { AuthorPromptCard } from './AuthorPromptCard'
 import { useCanEdit } from '../../PermissionsContext'
 
 const ASSETS_PER_PAGE = 10
@@ -560,8 +561,14 @@ export function TestSuiteTab({
   highlightScenarioId = null,
   onHighlightConsumed,
   discoveryEnabled = true,
+  onAuthoringStarted,
+  initialSourceFilter = 'all',
 }: {
   applicationId: string
+  // Which source filter it opens on ('nl' after an authoring run finishes).
+  initialSourceFilter?: TestCaseSourceFilter
+  // An authoring run started: App shows it on the Explorer screen.
+  onAuthoringStarted?: () => void
   // false for an application added without discovery — only the empty-state
   // copy changes (there is no discovery to wait on).
   discoveryEnabled?: boolean
@@ -609,7 +616,7 @@ export function TestSuiteTab({
   // recorded test case is appended after every discovery-sourced one, so it
   // can land several pages in; filtering by source lets a user who just
   // created one jump straight to it instead of paging through the rest.
-  const [sourceFilter, setSourceFilter] = useState<TestCaseSourceFilter>('all')
+  const [sourceFilter, setSourceFilter] = useState<TestCaseSourceFilter>(initialSourceFilter)
   // Edit Test Data — fetched once per page load/refresh here (not once per
   // row) since every row needing this data would otherwise each fetch the
   // full per-Application scenario list independently, same reuse of
@@ -702,10 +709,6 @@ export function TestSuiteTab({
       applySourceCounts(body.source_counts)
       markLoaded(key)
     })
-  }
-
-  function refreshScenarios() {
-    return api.listScenarios(applicationId).then(setScenarios)
   }
 
   useEffect(() => {
@@ -917,12 +920,13 @@ export function TestSuiteTab({
         )}
       </div>
       {authoringOpen && canAuthor && (
-        <LiveExplorationPanel
+        // Authoring runs on Explorer now; LiveExplorationPanel is kept, unused.
+        <AuthorPromptCard
           applicationId={applicationId}
           onClose={() => setAuthoringOpen(false)}
-          onComplete={() => {
-            refreshAssets()
-            refreshScenarios()
+          onStarted={() => {
+            setAuthoringOpen(false)
+            onAuthoringStarted?.()
           }}
         />
       )}

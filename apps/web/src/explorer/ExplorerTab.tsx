@@ -51,11 +51,14 @@ export function ExplorerTab({
   applicationName,
   applicationUrl,
   onGenerateTests,
+  onAuthoringDone,
 }: {
   applicationId: string
   applicationName: string
   applicationUrl: string
   onGenerateTests?: () => Promise<void>
+  // An authoring run watched here finished (its test cases are written).
+  onAuthoringDone?: () => void
 }) {
   const [run, setRun] = useState<ExplorerRun | null | undefined>(undefined)
   const [events, setEvents] = useState<ExplorerEvent[]>([])
@@ -75,6 +78,15 @@ export function ExplorerTab({
   const cursor = useRef(0)
 
   const working = run ? WORKING_STATUSES.includes(run.status) : false
+
+  // Authoring ends on its test cases: once a run watched here finishes with
+  // some, hand over to Test cases (an already-finished run opened later, or
+  // one that added nothing, stays here showing why).
+  const wasWorking = useRef(false)
+  useEffect(() => {
+    if (run?.prompt && wasWorking.current && run.status === 'tested' && run.counts.tests_proven > 0) onAuthoringDone?.()
+    wasWorking.current = working
+  }, [run?.status]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load the latest run for this app on open.
   useEffect(() => {

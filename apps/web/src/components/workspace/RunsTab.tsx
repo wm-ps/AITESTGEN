@@ -30,6 +30,12 @@ const RUNS_PER_PAGE = 10
 const RESULTS_PER_PAGE = 10
 
 // Same arrow-left glyph as TopBar's own back button, not a text "←" glyph.
+// A run of chosen test cases shows the name it was given; a whole-suite run
+// shows its number.
+export function runTitle(run: TestRunRead): string {
+  return run.suite_name?.trim() || `Run #${run.run_number}`
+}
+
 function BackIcon() {
   return (
     <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1120,7 +1126,7 @@ function RunDetail({
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 20, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.01em' }}>Run #{run.run_number}</span>
+            <span style={{ fontSize: 20, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.01em' }}>{runTitle(run)}</span>
             <StatusPill status={run.status} label={testRunStatusLabel(run.status)} variant="flat" />
           </div>
           <div className="caption" style={{ fontSize: 13, marginTop: 5 }}>
@@ -1350,7 +1356,7 @@ function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
           {isActive ? <StatusPill status={run.status} label="" variant="inline" /> : <RunHealthIcon tier={run.health.tier} />}
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={run.name}>
-            Run #{run.run_number}
+            {runTitle(run)}
           </span>
         </div>
         <div className="caption" style={{ fontSize: 10.5, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

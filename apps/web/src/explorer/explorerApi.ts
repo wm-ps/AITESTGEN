@@ -47,6 +47,8 @@ export type ExplorerRun = {
   brief: AppBrief | null
   brief_confirmed_at: string | null
   notes: string | null
+  // Authoring: the user's request this run follows; null when exploring.
+  prompt?: string | null
   error: string | null
   created_at: string
   updated_at: string
@@ -218,6 +220,12 @@ export const explorerApi = {
     request<ExplorerRun>(`/explorer/applications/${applicationId}/runs`, {
       method: 'POST',
       body: JSON.stringify({ notes: '' }),
+    }),
+  // Authoring: Explorer follows the user's request (its own path, same screen).
+  startAuthoring: (applicationId: string, prompt: string) =>
+    request<ExplorerRun>(`/explorer/applications/${applicationId}/author`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt }),
     }),
   getRun: (runId: string) => request<ExplorerRun>(`/explorer/runs/${runId}`),
   events: (runId: string, after: number) =>

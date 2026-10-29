@@ -66,7 +66,10 @@ export function Workspace({
   openRunId = null,
   onOpenRunConsumed,
   discoveryEnabled = true,
+  showAuthored = false,
 }: {
+  // Open Test cases on its "Author test cases" filter (a finished authoring run).
+  showAuthored?: boolean
   applicationId: string
   applicationName: string
   applicationUrl: string
@@ -77,7 +80,7 @@ export function Workspace({
   // also jump to 'journeys'/'scenarios'/'record', which live in App.tsx's
   // `appTab` state, not this component's own `activeTab`. The caller
   // (App.tsx) already handles every value in that broader union.
-  onActiveTabChange: (tab: WorkspaceTab | 'journeys' | 'scenarios' | 'record') => void
+  onActiveTabChange: (tab: WorkspaceTab | 'journeys' | 'scenarios' | 'record' | 'explorer') => void
   // An Explorer-discovered app (no Journeys / Scenarios pages).
   byExplorer?: boolean
   // Reports the currently-visible tab list up to the caller (AppShell's
@@ -308,6 +311,8 @@ export function Workspace({
             highlightScenarioId={highlightScenarioId}
             onHighlightConsumed={onHighlightConsumed}
             discoveryEnabled={discoveryEnabled}
+            onAuthoringStarted={() => onActiveTabChange('explorer')}
+            initialSourceFilter={showAuthored ? 'nl' : 'all'}
           />
         )}
         {activeTab === 'schedules' && <SchedulesTab applicationId={applicationId} />}

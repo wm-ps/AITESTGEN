@@ -464,7 +464,7 @@ export function ConnectAppForm({
                   Autonomous exploration
                 </label>
                 <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
-                  Crawl the application to map journeys and scenarios automatically. Uncheck to only add the application
+                  Explore the application to map journeys and scenarios automatically. Uncheck to only add the application
                   and create test cases yourself.
                 </div>
               </div>

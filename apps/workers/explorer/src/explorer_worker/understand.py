@@ -547,6 +547,8 @@ def seed_from_previous_run(run_id: uuid.UUID, journal: Journal) -> int:
                 ExplorerRun.application_id == run.application_id,
                 ExplorerRun.id != run.id,
                 col(ExplorerRun.created_at) < run.created_at,
+                # An authoring run saw only its request's screens: never a map to start from.
+                col(ExplorerRun.prompt).is_(None),
             )
             .order_by(col(ExplorerRun.created_at).desc())
         ).all()

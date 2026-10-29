@@ -140,8 +140,14 @@ function App() {
   // consumed. Cleared on any navigation away from 'suite' or to another
   // application, so a stale one never fires on a later visit.
   const [highlightScenarioId, setHighlightScenarioId] = useState<string | null>(null)
+  // Set when a finished authoring run hands over: Test cases opens on its
+  // "Author test cases" filter. Cleared like the highlight above.
+  const [authoredFilter, setAuthoredFilter] = useState(false)
   useEffect(() => {
-    if (appTab !== 'suite') setHighlightScenarioId(null)
+    if (appTab !== 'suite') {
+      setHighlightScenarioId(null)
+      setAuthoredFilter(false)
+    }
   }, [appTab])
   useEffect(() => {
     setHighlightScenarioId(null)
@@ -457,7 +463,16 @@ function App() {
         />
       )}
       {view === 'app' && application && appTab === 'explorer' && (
-        <ExplorerTab applicationId={application.id} applicationName={application.name} applicationUrl={application.url} onGenerateTests={generateTests} />
+        <ExplorerTab
+          applicationId={application.id}
+          applicationName={application.name}
+          applicationUrl={application.url}
+          onGenerateTests={generateTests}
+          onAuthoringDone={() => {
+            setAuthoredFilter(true)
+            setAppTab('suite')
+          }}
+        />
       )}
       {view === 'app' && application && appTab === 'record' && (
         <RecordAndPlay
@@ -497,6 +512,7 @@ function App() {
             onHighlightConsumed={() => setHighlightScenarioId(null)}
             openRunId={openRunId}
             onOpenRunConsumed={() => setOpenRunId(null)}
+            showAuthored={authoredFilter}
           />
         )
       )}

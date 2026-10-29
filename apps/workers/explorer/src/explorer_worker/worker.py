@@ -33,6 +33,8 @@ from explorer_worker.activities import (
     understand_app_activity,
     verify_credentials_activity,
 )
+from explorer_worker.authoring.activities import ACTIVITIES as AUTHORING_ACTIVITIES
+from explorer_worker.authoring.workflow import AuthoringRunWorkflow
 from explorer_worker.workflow import ExplorerRunWorkflow
 
 TEMPORAL_ADDRESS = os.environ.get("TEMPORAL_ADDRESS", "localhost:7233")
@@ -47,7 +49,8 @@ async def main() -> None:
         client,
         task_queue=EXPLORER_TASK_QUEUE,
         # Also the "Start discovery" login pre-flight: Explorer does discovery.
-        workflows=[ExplorerRunWorkflow, VerifyCredentialsWorkflow],
+        # Authoring (a user's request) runs on Explorer too, on its own path.
+        workflows=[ExplorerRunWorkflow, AuthoringRunWorkflow, VerifyCredentialsWorkflow],
         activities=[
             promote_activity,
             fail_run_activity,
@@ -68,6 +71,7 @@ async def main() -> None:
             finish_testing_activity,
             resume_point_activity,
             verify_credentials_activity,
+            *AUTHORING_ACTIVITIES,
         ],
         max_concurrent_activities=MAX_CONCURRENT_ACTIVITIES,
     )

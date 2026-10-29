@@ -44,7 +44,7 @@ INTERNAL_VERIFICATION_TRIGGER_NAME = "Add Test Case"
 
 _FIELD_LABELS = {
     "max_pages": "max pages",
-    "max_discovery_duration_minutes": "max discovery duration (minutes)",
+    "max_discovery_duration_minutes": "max exploration duration (minutes)",
     "navigation_timeout_seconds": "page load timeout (seconds)",
     "interaction_level": "interaction level",
     "max_journeys": "max journeys",
@@ -194,7 +194,7 @@ def _discovery_items(session: Session, rows: list[tuple[DiscoveryRun, Applicatio
     for run, application in rows:
         outcome = _DISCOVERY_OUTCOMES.get(run.status, "running")
         live = run.source == "live_exploration"
-        what = "AI test case authoring" if live else "Discovery"
+        what = "AI test case authoring" if live else "Exploration"
         pages = page_counts.get(run.id, 0)
         journeys = journey_counts.get(run.id, 0)
         if outcome == "done":

@@ -143,6 +143,7 @@ from api.discovery import (
     start_discovery_run,
 )
 from api.explorer import router as explorer_router
+from api.authoring import router as authoring_router
 from api.invites import InviteAcceptError, accept_invite, create_invite, send_invite_email
 from api.password_reset import (
     PasswordResetError,
@@ -218,6 +219,8 @@ SessionDep = Annotated[Session, Depends(get_session)]
 app.include_router(activity_router)
 # Vantage Explorer (docs/vantage-explorer/PLAN.md) — standalone module.
 app.include_router(explorer_router)
+# Authoring: test cases from a user's request, run by Explorer (authoring.py).
+app.include_router(authoring_router)
 
 
 @app.get("/health")
@@ -778,7 +781,11 @@ def _to_application_read(
         discovery_engine=(
             "explorer"
             if session.exec(
-                select(ExplorerRun.id).where(ExplorerRun.application_id == application.id)
+                select(ExplorerRun.id).where(
+                    ExplorerRun.application_id == application.id,
+                    # Authoring runs on Explorer too, but doesn't make it the app's discovery.
+                    col(ExplorerRun.prompt).is_(None),
+                )
             ).first()
             is not None
             else "crawler"
@@ -1390,7 +1397,10 @@ def _require_crawler_discovery(session: Session, application: Application) -> No
     discovers (every app started since Explorer replaced discovery) is paused
     and resumed from Explorer itself — resuming here would start the crawler."""
     if session.exec(
-        select(ExplorerRun.id).where(ExplorerRun.application_id == application.id)
+        select(ExplorerRun.id).where(
+            ExplorerRun.application_id == application.id,
+            col(ExplorerRun.prompt).is_(None),  # authoring isn't the app's discovery
+        )
     ).first() is not None:
         raise HTTPException(
             status_code=409,
@@ -3745,6 +3755,8 @@ class TestRunRead(BaseModel):
     id: uuid.UUID
     run_number: int
     name: str
+    # The name the user gave a run of chosen test cases; None for a whole-suite run.
+    suite_name: str | None = None
     status: str
     trigger: str
     pass_rate: float | None
@@ -3811,6 +3823,7 @@ def _to_test_run_read(
         id=test_run.external_id,
         run_number=test_run.run_number,
         name=f"#{test_run.run_number} - {test_run.suite_name or 'All test cases'}",
+        suite_name=test_run.suite_name,
         status=test_run.status,
         trigger=_trigger_label(test_run),
         pass_rate=pass_rate,
