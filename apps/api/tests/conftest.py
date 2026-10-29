@@ -49,6 +49,14 @@ def _reachable_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture(autouse=True)
+def _domains_approved_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests onboard synthetic URLs under orgs with an empty domain whitelist;
+    only `test_approved_domains.py` exercises the real check (it defines its
+    own same-named fixture, which shadows this one)."""
+    monkeypatch.setattr(api_main, "require_approved_domain", lambda session, organization_id, url: None)
+
+
 async def _always_has_pollers(client: object, task_queue: str) -> bool:
     return True
 

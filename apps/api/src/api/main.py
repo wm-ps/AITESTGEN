@@ -123,6 +123,8 @@ from api.activity import (
     record_activity,
 )
 from api.activity import router as activity_router
+from api.approved_domains import approved_hosts, require_approved_domain, url_is_approved
+from api.approved_domains import router as approved_domains_router
 from api.auth import (
     COOKIE_NAME,
     DUMMY_PASSWORD_HASH,
@@ -222,6 +224,7 @@ app.add_middleware(
 SessionDep = Annotated[Session, Depends(get_session)]
 
 app.include_router(activity_router)
+app.include_router(approved_domains_router)
 # Vantage Explorer (docs/vantage-explorer/PLAN.md) — standalone module.
 app.include_router(explorer_router)
 # Authoring: test cases from a user's request, run by Explorer (authoring.py).
@@ -718,6 +721,10 @@ class ApplicationRead(BaseModel):
     # (AD-15 is deliberate, non-exhaustive sampling). `None` for every other
     # status, where the full report is more useful than a partial count.
     discovery_coverage_summary: dict[str, int] | None = None
+    # False when the app's domain isn't on the admin's approved-domain list —
+    # the Applications list then won't open it. Only the list/home responses
+    # compute it; every other response leaves the default.
+    domain_approved: bool = True
 
 
 class HealthRead(BaseModel):
@@ -910,6 +917,8 @@ async def create_application(
     organization_id: CurrentOrgIdDep,
     user: CurrentUserDep,
 ) -> ApplicationRead:
+    require_approved_domain(session, organization_id, payload.url)
+
     # FR-31 (CR-3): fail fast before any write if the Base URL isn't reachable.
     async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
         await _check_reachable(client, payload.url)
@@ -1016,8 +1025,10 @@ class ConnectionTestResult(BaseModel):
 @app.post("/applications/test-connection", response_model=ConnectionTestResult)
 async def test_application_connection(
     payload: ConnectionTestPayload,
+    session: SessionDep,
     organization_id: CurrentOrgIdDep,
 ) -> ConnectionTestResult:
+    require_approved_domain(session, organization_id, payload.url)
     async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
         try:
             await _check_reachable(client, payload.url)
@@ -1063,8 +1074,10 @@ def _verify_credentials_workflow_id(organization_id: uuid.UUID, check_id: uuid.U
 @app.post("/applications/verify-credentials", response_model=CredentialCheckStarted, status_code=202)
 async def start_credential_check(
     payload: CredentialCheckPayload,
+    session: SessionDep,
     organization_id: CurrentOrgIdDep,
 ) -> CredentialCheckStarted:
+    require_approved_domain(session, organization_id, payload.url)
     client = await get_temporal_client()
     queue = discovery_task_queue()
     if not await has_pollers(client, queue):
@@ -1192,11 +1205,14 @@ def list_applications(
         )
         .order_by(Application.created_at.desc())  # type: ignore[arg-type]
     ).all()
+    domains = approved_hosts(session, organization_id)
     result = []
     for application in applications:
         discovery_run = _latest_discovery_run(session, application.id)
         assert discovery_run is not None or not application.discovery_required
-        result.append(_to_application_read(session, application, discovery_run))
+        read = _to_application_read(session, application, discovery_run)
+        read.domain_approved = url_is_approved(application.url, domains)
+        result.append(read)
     return result
 
 
@@ -1229,6 +1245,7 @@ async def get_home(
     if not applications:
         return []
     app_ids = [a.id for a in applications]
+    domains = approved_hosts(session, organization_id)
 
     # Batched in place of the N _latest_discovery_run() calls list_applications makes.
     latest_run_by_app: dict[uuid.UUID, DiscoveryRun] = {}
@@ -1366,6 +1383,7 @@ async def get_home(
         if discovery_run is None and application.discovery_required:
             continue
         base = _to_application_read(session, application, discovery_run)
+        base.domain_approved = url_is_approved(application.url, domains)
         runs = test_runs_by_app.get(application.id, [])
         last_test_run = runs[0] if runs else None
         last_test_run_pass_rate = (

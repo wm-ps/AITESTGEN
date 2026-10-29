@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Home } from './Home'
 
@@ -57,6 +57,23 @@ describe('Home applications table', () => {
     await screen.findByText('Checkout App')
     expect(screen.getByText('https://example.com')).toBeInTheDocument()
     expect(screen.getByRole('columnheader', { name: 'Application' })).toBeInTheDocument()
+  })
+
+  it('blocks opening an application whose domain is not approved and says so above the table', async () => {
+    stubFetch([HEALTHY_APP, { ...HEALTHY_APP, id: 'app-2', name: 'Blocked App', domain_approved: false }])
+    const onResume = vi.fn()
+    render(<Home user={USER} onConnectApp={() => {}} onResumeApplication={onResume} />)
+
+    fireEvent.click((await screen.findByText('Blocked App')).closest('tr')!)
+
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      "The domain for application ‘Blocked App’ is not whitelisted. Please contact your admin to get it approved.",
+    )
+    expect(onResume).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByText('Checkout App').closest('tr')!)
+    expect(onResume).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('shows the empty state with no applications', async () => {

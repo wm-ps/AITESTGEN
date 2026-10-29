@@ -39,6 +39,30 @@ describe('ConnectAppForm', () => {
     expect(screen.getByLabelText('Password')).toBeTruthy()
   })
 
+  it('shows the contact-your-admin message and disables Start for an unapproved domain', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ allowed: false, host: 'staging.example.com' }) })),
+    )
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    fillCommonFields()
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Contact your admin')
+    expect((screen.getByRole('button', { name: /^Start$/ }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('stays usable when the domain check itself fails — the API enforces it on submit', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down') }))
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    fillCommonFields()
+    await new Promise((resolve) => setTimeout(resolve, 600))
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect((screen.getByRole('button', { name: /^Start$/ }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
   it('offers Staging/Production/QA plus a free-text Other environment', () => {
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 

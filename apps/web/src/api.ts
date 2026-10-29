@@ -37,7 +37,21 @@ export type ApplicationRead = Omit<
   discovery_required?: boolean
   discovery_run_id: string | null
   discovery_status: string | null
+  // Only the list/home responses set it; absent counts as approved.
+  domain_approved?: boolean
 }
+// Admin-managed whitelist (Settings → Approved domains). `applications` are the
+// non-deleted apps whose URL falls under the domain — the in-use warning.
+export type DomainRead = {
+  id: string
+  host: string
+  created_by: string
+  applications: { id: string; name: string }[]
+}
+export const DOMAIN_NOT_APPROVED_CODE = 'DOMAIN_NOT_APPROVED'
+export const DOMAIN_IN_USE_CODE = 'DOMAIN_IN_USE'
+export const DOMAIN_NOT_APPROVED_MESSAGE =
+  "This domain isn't approved yet. Contact your admin to add it, then try again."
 // The one place that reads the flag, so a missing value (older API response)
 // counts as "discovery on" and no caller repeats `!== false`.
 export const hasDiscovery = (application: Pick<ApplicationRead, 'discovery_required'>): boolean =>
@@ -573,6 +587,15 @@ export const api = {
     }),
   deleteApplication: (applicationId: string) =>
     request<undefined>(`/applications/${applicationId}`, { method: 'DELETE' }),
+  listDomains: () => request<DomainRead[]>('/domains'),
+  addDomain: (host: string) =>
+    request<DomainRead>('/domains', { method: 'POST', body: JSON.stringify({ host }) }),
+  deleteDomain: (id: string) => request<undefined>(`/domains/${id}`, { method: 'DELETE' }),
+  checkDomain: (url: string) =>
+    request<{ allowed: boolean; host: string | null }>('/domains/check', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    }),
   listTeam: () => request<TeamMemberRead[]>('/team'),
   removeTeamMember: (email: string) =>
     request<undefined>(`/team/${encodeURIComponent(email)}`, { method: 'DELETE' }),

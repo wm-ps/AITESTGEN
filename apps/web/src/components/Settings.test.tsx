@@ -26,11 +26,21 @@ const CREDENTIAL_ENTRY = {
   requires_login: true,
 }
 
+const DOMAIN_IN_USE = {
+  id: 'dom-1',
+  host: 'shop.example.com',
+  created_by: 'Ada Lovelace',
+  applications: [{ id: 'app-9', name: 'Shop Frontend' }],
+}
+
+const DOMAIN_UNUSED = { id: 'dom-2', host: 'spare.example.com', created_by: 'Ada Lovelace', applications: [] }
+
 function stubFetch() {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
+      if (url.endsWith('/domains')) return { ok: true, status: 200, json: async () => [DOMAIN_IN_USE, DOMAIN_UNUSED] }
       if (url.endsWith('/settings')) return { ok: true, status: 200, json: async () => SETTINGS_BODY }
       // CredentialsPanel hides itself entirely when `apps` is empty (nothing
       // to point an "Add credentials" form at) — must be non-empty for the
@@ -60,6 +70,57 @@ describe('Settings', () => {
   it('shows Access denied for a non-admin', async () => {
     render(<Settings user={MEMBER} onCancel={vi.fn()} />)
     expect(await screen.findByText('Access denied')).toBeTruthy()
+  })
+
+  it('shows approved domains as chips with no edit option', async () => {
+    stubFetch()
+    render(<Settings user={ADMIN} onCancel={vi.fn()} />)
+
+    await screen.findByText('shop.example.com')
+    expect(screen.getByText('spare.example.com')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull()
+  })
+
+  it('refuses to remove a domain an application uses, and says which applications', async () => {
+    stubFetch()
+    render(<Settings user={ADMIN} onCancel={vi.fn()} />)
+    await screen.findByText('shop.example.com')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove shop.example.com' }))
+
+    const alert = await screen.findByText(/is used by Shop Frontend/)
+    expect(alert.textContent).toContain('Delete those applications first')
+    expect(screen.getByText('shop.example.com')).toBeTruthy()
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false)
+  })
+
+  it('removes a domain no application uses', async () => {
+    stubFetch()
+    render(<Settings user={ADMIN} onCancel={vi.fn()} />)
+    await screen.findByText('spare.example.com')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove spare.example.com' }))
+
+    await vi.waitFor(() => {
+      const call = vi.mocked(fetch).mock.calls.find(([, init]) => init?.method === 'DELETE')
+      expect(String(call?.[0])).toMatch(/\/domains\/dom-2$/)
+    })
+  })
+
+  it('adds an approved domain on Enter', async () => {
+    stubFetch()
+    render(<Settings user={ADMIN} onCancel={vi.fn()} />)
+    await screen.findByText('shop.example.com')
+
+    const input = screen.getByLabelText('Add a domain')
+    fireEvent.change(input, { target: { value: 'example.org' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    const fetchMock = vi.mocked(fetch)
+    await vi.waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/domains') && init?.method === 'POST')
+      expect(JSON.parse(String(call?.[1]?.body))).toEqual({ host: 'example.org' })
+    })
   })
 
   it('lists saved credentials with a masked secret, and reveals it on click', async () => {

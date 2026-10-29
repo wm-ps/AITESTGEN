@@ -26,6 +26,7 @@ from domain.action import Action
 from domain.activity_event import ActivityCategory, ActivityEvent, ActivityOutcome
 from domain.api_endpoint import ApiEndpoint
 from domain.application import Application, AuthMethod
+from domain.approved_domain import ApprovedDomain
 from domain.assertion import Assertion
 from domain.blocked_task import BlockedTask, BlockedTaskStatus, RequiredType
 from domain.capability import Capability, CapabilityStatus
@@ -103,6 +104,7 @@ __all__ = [
     "ExplorationStep",
     "Form",
     "FormField",
+    "ApprovedDomain",
     "Invite",
     "Journey",
     "JourneyStatus",
