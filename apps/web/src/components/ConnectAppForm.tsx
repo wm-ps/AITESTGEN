@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faPlay, faPlugCircleCheck, faPlus } from '@fortawesome/free-solid-svg-icons'
-import { ApiError, api, hasDiscovery, type ApplicationRead } from '../api'
+import {
+  ApiError,
+  DOMAIN_NOT_APPROVED_CODE,
+  DOMAIN_NOT_APPROVED_MESSAGE,
+  api,
+  hasDiscovery,
+  type ApplicationRead,
+} from '../api'
 import { LoadingDots } from './LoadingDots'
 
 const KNOWN_ENVIRONMENTS = ['staging', 'production', 'qa']
@@ -40,11 +47,11 @@ const fieldInputStyle: React.CSSProperties = {
 const CREDENTIAL_POLL_MS = 1000
 const CREDENTIAL_POLL_MAX_ATTEMPTS = 150
 const INVALID_CREDENTIALS_MESSAGE =
-  'The username or password is incorrect. Enter valid credentials and click Start exploration again.'
+  'The username or password is incorrect. Enter valid credentials and click Start again.'
 const UNCERTAIN_CREDENTIALS_MESSAGE =
-  "We couldn't confirm these credentials. Click Start exploration to validate again."
+  "We couldn't confirm these credentials. Click Start to validate again."
 const DISCOVERY_NOT_STARTED_MESSAGE =
-  "Exploration couldn't start, so the application was not added. Click Start exploration to try again."
+  "Exploration couldn't start, so the application was not added. Click Start to try again."
 
 // Anything that isn't a proved `valid` / `invalid` (request error, worker
 // unavailable, timeout) collapses to `uncertain` — discovery never starts on
@@ -99,7 +106,7 @@ export function ConnectAppForm({
   // the application — the submit button's label follows it so the user can
   // tell which one they're about to do.
   const [discoveryRequired, setDiscoveryRequired] = useState(application ? hasDiscovery(application) : true)
-  const submitLabel = discoveryRequired ? 'Start exploration' : 'Add application'
+  const submitLabel = discoveryRequired ? 'Start' : 'Add application'
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   // Shown under the Username/Password fields — cleared on any edit to the
@@ -117,6 +124,28 @@ export function ConnectAppForm({
   // can't go stale by pointing at a URL that was never (re-)verified.
   const [showConnectionPopover, setShowConnectionPopover] = useState(false)
   const canStartDiscovery = connectionResult?.ok === true
+  // The URL's domain isn't on the admin's approved list — blocks the buttons
+  // below. A failed check leaves it false: the API enforces the same rule on
+  // submit, so the form never gets stuck on a flaky check.
+  const [domainBlocked, setDomainBlocked] = useState(false)
+
+  useEffect(() => {
+    if (readOnly || !url.trim()) {
+      setDomainBlocked(false)
+      return
+    }
+    let stale = false
+    const timeout = setTimeout(() => {
+      api
+        .checkDomain(url)
+        .then((result) => !stale && setDomainBlocked(!result.allowed))
+        .catch(() => !stale && setDomainBlocked(false))
+    }, 400)
+    return () => {
+      stale = true
+      clearTimeout(timeout)
+    }
+  }, [url, readOnly])
 
   useEffect(() => {
     if (!showConnectionPopover) return
@@ -133,13 +162,17 @@ export function ConnectAppForm({
       setConnectionResult({ ok: result.reachable, detail: result.detail })
       return result.reachable
     } catch (err) {
+      if (err instanceof ApiError && err.message === DOMAIN_NOT_APPROVED_CODE) {
+        setDomainBlocked(true)
+        return false
+      }
       setConnectionResult({ ok: false, detail: err instanceof ApiError ? err.message : 'Could not reach the server to test this URL.' })
       return false
     }
   }
 
   async function handleTestConnection() {
-    if (testingConnection || !url) return
+    if (testingConnection || !url || domainBlocked) return
     setTestingConnection(true)
     try {
       await runConnectionTest()
@@ -150,6 +183,7 @@ export function ConnectAppForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (domainBlocked) return
     // With discovery on, Start discovery runs the URL check itself (below), so
     // the manual Test connection gate only applies when discovery is off.
     if (!discoveryRequired && !canStartDiscovery) {
@@ -191,9 +225,12 @@ export function ConnectAppForm({
       })
       onConnected(application)
     } catch (err) {
+      if (err instanceof ApiError && err.message === DOMAIN_NOT_APPROVED_CODE) setDomainBlocked(true)
       setError(
         err instanceof ApiError && err.message === 'DISCOVERY_UNAVAILABLE'
           ? DISCOVERY_NOT_STARTED_MESSAGE
+          : err instanceof ApiError && err.message === DOMAIN_NOT_APPROVED_CODE
+            ? DOMAIN_NOT_APPROVED_MESSAGE
           : err instanceof ApiError
             ? err.message
             : 'Failed to connect the application.',
@@ -305,7 +342,7 @@ export function ConnectAppForm({
                 {(!discoveryRequired || readOnly) && (
                 <button
                   type="button"
-                  disabled={!url || testingConnection || readOnly}
+                  disabled={!url || testingConnection || readOnly || domainBlocked}
                   onClick={handleTestConnection}
                   style={{
                     display: 'inline-flex',
@@ -319,8 +356,8 @@ export function ConnectAppForm({
                     color: 'var(--accent-2)',
                     fontSize: 12,
                     fontWeight: 600,
-                    cursor: !url || testingConnection || readOnly ? 'not-allowed' : 'pointer',
-                    opacity: !url || readOnly ? 0.5 : 1,
+                    cursor: !url || testingConnection || readOnly || domainBlocked ? 'not-allowed' : 'pointer',
+                    opacity: !url || readOnly || domainBlocked ? 0.5 : 1,
                     whiteSpace: 'nowrap',
                     flexShrink: 0,
                   }}
@@ -336,7 +373,12 @@ export function ConnectAppForm({
                 </button>
                 )}
               </div>
-              {connectionResult && (
+              {domainBlocked && (
+                <div role="alert" style={{ fontSize: 12, color: 'var(--bad)' }}>
+                  {DOMAIN_NOT_APPROVED_MESSAGE}
+                </div>
+              )}
+              {!domainBlocked && connectionResult && (
                 <div style={{ fontSize: 12, color: connectionResult.ok ? 'var(--ok)' : 'var(--bad)' }}>
                   {connectionResult.ok ? 'URL is reachable.' : connectionResult.detail ?? 'URL is not reachable.'}
                 </div>
@@ -461,7 +503,7 @@ export function ConnectAppForm({
               />
               <div>
                 <label htmlFor="connect-app-discovery" style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--fg-1)' }}>
-                  Autonomous exploration
+                  Explore autonomously
                 </label>
                 <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
                   Explore the application to map journeys and scenarios automatically. Uncheck to only add the application
@@ -518,7 +560,7 @@ export function ConnectAppForm({
                     )}
                     <button
                       type="submit"
-                      disabled={submitting}
+                      disabled={submitting || domainBlocked}
                       style={{
                         display: 'inline-flex',
                         alignItems: 'center',

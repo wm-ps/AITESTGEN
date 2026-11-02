@@ -39,6 +39,30 @@ describe('ConnectAppForm', () => {
     expect(screen.getByLabelText('Password')).toBeTruthy()
   })
 
+  it('shows the contact-your-admin message and disables Start for an unapproved domain', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ allowed: false, host: 'staging.example.com' }) })),
+    )
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    fillCommonFields()
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Contact your admin')
+    expect((screen.getByRole('button', { name: /^Start$/ }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('stays usable when the domain check itself fails — the API enforces it on submit', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down') }))
+    render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
+
+    fillCommonFields()
+    await new Promise((resolve) => setTimeout(resolve, 600))
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect((screen.getByRole('button', { name: /^Start$/ }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
   it('offers Staging/Production/QA plus a free-text Other environment', () => {
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
@@ -61,7 +85,7 @@ describe('ConnectAppForm', () => {
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
     fillCommonFields()
-    fireEvent.click(screen.getByRole('button', { name: /Start exploration/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Start$/ }))
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
     const body = JSON.parse(fetchMock.mock.calls[3][1].body)
@@ -70,7 +94,7 @@ describe('ConnectAppForm', () => {
     expect(body.password).toBe('qa-password')
   })
 
-  it('defaults Autonomous exploration to checked and sends discovery_required true', async () => {
+  it('defaults Explore autonomously to checked and sends discovery_required true', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) })
       .mockResolvedValueOnce(CHECK_STARTED)
@@ -79,11 +103,11 @@ describe('ConnectAppForm', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
-    expect((screen.getByLabelText('Autonomous exploration') as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByLabelText('Explore autonomously') as HTMLInputElement).checked).toBe(true)
     expect(screen.queryByRole('button', { name: /Add application/ })).toBeNull()
 
     fillCommonFields()
-    fireEvent.click(screen.getByRole('button', { name: /Start exploration/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Start$/ }))
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
     expect(JSON.parse(fetchMock.mock.calls[3][1].body).discovery_required).toBe(true)
@@ -96,8 +120,8 @@ describe('ConnectAppForm', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
-    fireEvent.click(screen.getByLabelText('Autonomous exploration'))
-    expect(screen.queryByRole('button', { name: /Start exploration/ })).toBeNull()
+    fireEvent.click(screen.getByLabelText('Explore autonomously'))
+    expect(screen.queryByRole('button', { name: /^Start$/ })).toBeNull()
 
     fillCommonFields()
     await passConnectionTest()
@@ -113,7 +137,7 @@ describe('ConnectAppForm', () => {
     const onConnected = vi.fn()
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
-    fireEvent.click(screen.getByLabelText('Autonomous exploration'))
+    fireEvent.click(screen.getByLabelText('Explore autonomously'))
     fillCommonFields()
     fireEvent.click(screen.getByRole('button', { name: /Add application/ }))
 
@@ -139,7 +163,7 @@ describe('ConnectAppForm', () => {
 
     fireEvent.change(screen.getByLabelText('Application name'), { target: { value: 'My App' } })
     fireEvent.change(screen.getByLabelText('Deployed URL'), { target: { value: 'https://staging.example.com' } })
-    fireEvent.click(screen.getByRole('button', { name: /Start exploration/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Start$/ }))
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     const body = JSON.parse(fetchMock.mock.calls[1][1].body)
@@ -148,7 +172,7 @@ describe('ConnectAppForm', () => {
     expect(body.password).toBeUndefined()
   })
 
-  it('does not show the workspace-defaults note under Autonomous exploration', () => {
+  it('does not show the workspace-defaults note under Explore autonomously', () => {
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     expect(screen.queryByText(/workspace defaults/)).toBeNull()
@@ -170,7 +194,7 @@ describe('ConnectAppForm', () => {
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
     fillCommonFields()
-    fireEvent.click(screen.getByRole('button', { name: /Start exploration/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Start$/ }))
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
     const alert = await screen.findByRole('alert')
@@ -183,9 +207,9 @@ describe('ConnectAppForm', () => {
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     fillCommonFields()
-    const startButton = screen.getByRole('button', { name: /Start exploration/ })
+    const startButton = screen.getByRole('button', { name: /^Start$/ })
     expect(startButton).not.toBeDisabled()
-    expect(screen.queryByText('Test the connection above to enable Start exploration.')).toBeNull()
+    expect(screen.queryByText('Test the connection above to enable Start.')).toBeNull()
   })
 
   it('blocks Add application and shows a popover when the connection was never tested', async () => {
@@ -194,7 +218,7 @@ describe('ConnectAppForm', () => {
     const onConnected = vi.fn()
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
-    fireEvent.click(screen.getByLabelText('Autonomous exploration'))
+    fireEvent.click(screen.getByLabelText('Explore autonomously'))
     fillCommonFields()
     fireEvent.click(screen.getByRole('button', { name: /Add application/ }))
 
@@ -210,7 +234,7 @@ describe('ConnectAppForm', () => {
     const onConnected = vi.fn()
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
-    fireEvent.click(screen.getByLabelText('Autonomous exploration'))
+    fireEvent.click(screen.getByLabelText('Explore autonomously'))
     fillCommonFields()
     await passConnectionTest()
     // Editing the URL after testing it invalidates that test — the field's
@@ -232,7 +256,7 @@ describe('ConnectAppForm', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
-    fireEvent.click(screen.getByLabelText('Autonomous exploration'))
+    fireEvent.click(screen.getByLabelText('Explore autonomously'))
     fireEvent.change(screen.getByLabelText('Deployed URL'), { target: { value: 'https://staging.example.com' } })
     fireEvent.click(screen.getByRole('button', { name: 'Test connection' }))
 
@@ -253,7 +277,7 @@ describe('ConnectAppForm', () => {
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     fillCommonFields()
-    fireEvent.click(screen.getByRole('button', { name: /Start exploration/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Start$/ }))
 
     await screen.findByText('Validating credentials')
     resolveStatus({ ok: true, status: 200, json: async () => ({ status: 'invalid', detail: null }) })
@@ -270,10 +294,10 @@ describe('ConnectAppForm', () => {
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
     fillCommonFields()
-    fireEvent.click(screen.getByRole('button', { name: /Start exploration/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Start$/ }))
 
     const alert = await screen.findByText(
-      'The username or password is incorrect. Enter valid credentials and click Start exploration again.',
+      'The username or password is incorrect. Enter valid credentials and click Start again.',
     )
     expect(alert.getAttribute('role')).toBe('alert')
     expect(fetchMock).toHaveBeenCalledTimes(3)
@@ -281,7 +305,7 @@ describe('ConnectAppForm', () => {
     // The user can correct the credentials and retry: the message clears on edit.
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'fixed-password' } })
     expect(screen.queryByText(/username or password is incorrect/i)).toBeNull()
-    expect(screen.getByRole('button', { name: /Start exploration/ })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: /^Start$/ })).not.toBeDisabled()
   })
 
   it('asks the user to validate again, without creating anything, when the login cannot be confirmed', async () => {
@@ -294,9 +318,9 @@ describe('ConnectAppForm', () => {
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
     fillCommonFields()
-    fireEvent.click(screen.getByRole('button', { name: /Start exploration/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Start$/ }))
 
-    await screen.findByText("We couldn't confirm these credentials. Click Start exploration to validate again.")
+    await screen.findByText("We couldn't confirm these credentials. Click Start to validate again.")
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(onConnected).not.toHaveBeenCalled()
   })
@@ -315,7 +339,7 @@ describe('ConnectAppForm', () => {
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
     fillCommonFields()
-    fireEvent.click(screen.getByRole('button', { name: /Start exploration/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Start$/ }))
 
     await screen.findByText(/couldn't confirm these credentials/i)
     expect(fetchMock).toHaveBeenCalledTimes(2)
@@ -335,7 +359,7 @@ describe('ConnectAppForm', () => {
     fireEvent.change(screen.getByLabelText('Login URL (optional)'), {
       target: { value: 'https://staging.example.com/login' },
     })
-    fireEvent.click(screen.getByRole('button', { name: /Start exploration/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Start$/ }))
 
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
     expect(fetchMock.mock.calls[1][0]).toContain('/applications/verify-credentials')
@@ -348,11 +372,11 @@ describe('ConnectAppForm', () => {
     expect(fetchMock.mock.calls[2][0]).toContain('/applications/verify-credentials/check-1')
   })
 
-  it('hides Test connection while exploration is on — Start exploration checks the URL itself', () => {
+  it('hides Test connection while exploration is on — Start checks the URL itself', () => {
     render(<ConnectAppForm onConnected={vi.fn()} onCancel={vi.fn()} />)
 
     expect(screen.queryByRole('button', { name: 'Test connection' })).toBeNull()
-    fireEvent.click(screen.getByLabelText('Autonomous exploration'))
+    fireEvent.click(screen.getByLabelText('Explore autonomously'))
     expect(screen.getByRole('button', { name: 'Test connection' })).toBeTruthy()
   })
 
@@ -364,7 +388,7 @@ describe('ConnectAppForm', () => {
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
     fillCommonFields()
-    fireEvent.click(screen.getByRole('button', { name: /Start exploration/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Start$/ }))
 
     await screen.findByText('Could not reach this URL')
     expect(fetchMock).toHaveBeenCalledTimes(1)
@@ -387,14 +411,14 @@ describe('ConnectAppForm', () => {
     render(<ConnectAppForm onConnected={onConnected} onCancel={vi.fn()} />)
 
     fillCommonFields()
-    fireEvent.click(screen.getByRole('button', { name: /Start exploration/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Start$/ }))
 
     await screen.findByText(
-      "Exploration couldn't start, so the application was not added. Click Start exploration to try again.",
+      "Exploration couldn't start, so the application was not added. Click Start to try again.",
     )
     expect(onConnected).not.toHaveBeenCalled()
     expect((screen.getByLabelText('Application name') as HTMLInputElement).value).toBe('My App')
-    expect(screen.getByRole('button', { name: /Start exploration/ })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: /^Start$/ })).not.toBeDisabled()
   })
 
   it('calls onCancel when Cancel is clicked', () => {

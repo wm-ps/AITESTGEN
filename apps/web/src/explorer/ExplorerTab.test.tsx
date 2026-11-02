@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { ExplorerTab } from './ExplorerTab'
+import { PermissionsProvider } from '../PermissionsContext'
 import type { ExplorerQuestion, ExplorerRun } from './explorerApi'
 
 const run: ExplorerRun = {
@@ -133,5 +134,40 @@ describe('ExplorerTab authoring run', () => {
     render(<ExplorerTab applicationId="a1" applicationName="FNOL" applicationUrl="https://x" onAuthoringDone={onAuthoringDone} />)
     await screen.findByRole('button', { name: 'Questions, 1 open' })
     expect(onAuthoringDone).not.toHaveBeenCalled()
+  })
+})
+
+describe('ExplorerTab authoring label', () => {
+  it('labels an authoring run next to the title, with the request on hover', async () => {
+    const { explorerApi } = await import('./explorerApi')
+    vi.mocked(explorerApi.latestRun).mockResolvedValueOnce({ ...run, status: 'testing' as const, prompt: 'Check Brad Smith' })
+    render(<ExplorerTab applicationId="a1" applicationName="FNOL" applicationUrl="https://x" />)
+    const pill = await screen.findByLabelText('Authoring in progress')
+    expect(pill.getAttribute('title')).toBe('Authoring your request: Check Brad Smith')
+  })
+
+  it('shows no label for a normal Explorer run', async () => {
+    render(<ExplorerTab applicationId="a1" applicationName="FNOL" applicationUrl="https://x" />)
+    await screen.findByRole('button', { name: 'Questions, 1 open' })
+    expect(screen.queryByText('Authoring')).toBeNull()
+  })
+})
+
+describe('ExplorerTab for a viewer', () => {
+  it('shows the run but hides every control that would change it', async () => {
+    const { explorerApi } = await import('./explorerApi')
+    vi.mocked(explorerApi.latestRun).mockResolvedValueOnce({ ...run, status: 'exploring' as const })
+    render(
+      <PermissionsProvider value="viewer">
+        <ExplorerTab applicationId="a1" applicationName="FNOL" applicationUrl="https://x" />
+      </PermissionsProvider>,
+    )
+
+    expect(await screen.findByRole('tab', { name: /Live/ })).toBeTruthy()
+    for (const name of [/Pause/, /Stop/, /New run/, /Answer now/]) expect(screen.queryByRole('button', { name })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /Questions/ }))
+    expect(await screen.findByText('What policy number should I use?')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Skip/ })).toBeNull()
+    expect(screen.queryByLabelText('Your answer')).toBeNull()
   })
 })

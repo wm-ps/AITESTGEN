@@ -11,6 +11,7 @@ import {
   type SettingsRead,
   type UserRead,
 } from '../api'
+import { ApprovedDomainsPanel } from './ApprovedDomainsPanel'
 import { LoadingDots } from './LoadingDots'
 import { PasswordInput } from './PasswordInput'
 import { SkeletonRows } from './Skeleton'
@@ -588,6 +589,8 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
           </div>
         </fieldset>
       </form>
+
+      <ApprovedDomainsPanel />
 
       <CredentialsPanel />
     </div>

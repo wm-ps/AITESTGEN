@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faBullseye, faCircleCheck, faCircleQuestion, faPen } from '@fortawesome/free-solid-svg-icons'
 import { LoadingDots } from '../components/LoadingDots'
+import { useCanEdit } from '../PermissionsContext'
 import { type AppBrief, type ExplorerRun, type ExplorerScreen } from './explorerApi'
 import { glassCard, Pill, SectionTitle } from './ui'
 
@@ -41,7 +42,7 @@ export function SummaryView({
   // Confirm pressed with a question still open: say why nothing happened.
   const [confirmBlocked, setConfirmBlocked] = useState(false)
   const questionsRef = useRef<HTMLDivElement>(null)
-  const editable = run.status === 'awaiting_confirmation'
+  const editable = useCanEdit() && run.status === 'awaiting_confirmation'
 
   useEffect(() => {
     if (!editing) setDraft(run.brief ?? {})

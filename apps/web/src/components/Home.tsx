@@ -496,6 +496,9 @@ export function Home({
   const [applications, setApplications] = useState<HomeApplicationRead[] | null>(null)
   const [snackbar, setSnackbar] = useState<{ message: string; kind: 'error' | 'info' } | null>(null)
   const [page, setPage] = useState(0)
+  // Name of the application the user just tried to open whose domain isn't on
+  // the admin's approved list — shown above the table until dismissed.
+  const [blockedApplication, setBlockedApplication] = useState<string | null>(null)
   // `[ADDED generation-stuck notification]` `null` until the first poll
   // completes — deliberately not comparing against "nothing seen yet" on
   // that first load, or every pre-existing failure from before this page
@@ -573,6 +576,25 @@ export function Home({
           <SkeletonRows count={6} height={38} gap={12} />
         </div>
       ) : applications.length > 0 ? (
+        <>
+        {blockedApplication && (
+          <div
+            role="alert"
+            style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 16px', borderRadius: 10, border: '1px solid var(--bad)', background: 'var(--panel-2)', color: 'var(--bad)', fontSize: 13 }}
+          >
+            <span style={{ flex: 1 }}>
+              The domain for application ‘{blockedApplication}’ is not whitelisted. Please contact your admin to get it approved.
+            </span>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              onClick={() => setBlockedApplication(null)}
+              style={{ border: 'none', background: 'transparent', color: 'inherit', cursor: 'pointer', fontSize: 16, lineHeight: 1 }}
+            >
+              ×
+            </button>
+          </div>
+        )}
         <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -602,7 +624,14 @@ export function Home({
                   key={application.id}
                   application={application}
                   isAdmin={isAdmin}
-                  onResume={() => onResumeApplication(application)}
+                  onResume={() => {
+                    if (application.domain_approved === false) {
+                      setBlockedApplication(application.name)
+                      return
+                    }
+                    setBlockedApplication(null)
+                    onResumeApplication(application)
+                  }}
                   onChanged={refreshApplications}
                   onError={(message) => setSnackbar({ message, kind: 'error' })}
                 />
@@ -621,6 +650,7 @@ export function Home({
             />
           </div>
         </div>
+        </>
       ) : (
         <div
           style={{

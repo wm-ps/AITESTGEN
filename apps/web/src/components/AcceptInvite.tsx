@@ -79,9 +79,9 @@ export function AcceptInvite({
               </span>
               <PasswordInput
                 required
-                minLength={8}
+                minLength={12}
                 autoComplete="new-password"
-                placeholder="At least 8 characters"
+                placeholder="At least 12 characters"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 style={{ padding: '11px 14px', fontSize: 14.5 }}

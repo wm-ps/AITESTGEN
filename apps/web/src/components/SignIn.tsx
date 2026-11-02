@@ -10,16 +10,6 @@ import { PasswordInput } from './PasswordInput'
 // visible, unscaled/uncropped, at any viewport size or aspect ratio.
 import signInLeftPanel from '../assets/signin-left-panel.png'
 
-// ponytail: hardcoded on per explicit request — enabled in every build,
-// prod included. Clicking the logo (or the "Sign in" heading) fills the
-// seeded dev user's credentials (see seed_dev_data.py / dev-start scripts)
-// but still leaves the user to submit the form themselves, so the real
-// sign-in flow is untouched. If this ever needs to be off in prod,
-// reintroduce a VITE_ENABLE_DEV_LOGIN build-time env check instead of this
-// constant.
-const DEV_LOGIN_ENABLED = true
-const DEV_CREDENTIALS = { email: 'dev@example.com', password: 'devpassword123' }
-
 export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -27,12 +17,6 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
   const [submitting, setSubmitting] = useState(false)
   const [mode, setMode] = useState<'signin' | 'forgot'>('signin')
   const [resetSent, setResetSent] = useState(false)
-
-  function handleDevAutofill() {
-    if (!DEV_LOGIN_ENABLED) return
-    setEmail(DEV_CREDENTIALS.email)
-    setPassword(DEV_CREDENTIALS.password)
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -220,15 +204,12 @@ export function SignIn({ onSignedIn }: { onSignedIn: (user: UserRead) => void })
               }}
             >
               <h2
-                onClick={DEV_LOGIN_ENABLED ? handleDevAutofill : undefined}
-                title={DEV_LOGIN_ENABLED ? 'Fill dev sign-in credentials' : undefined}
                 style={{
                   fontSize: 28,
                   fontWeight: 700,
                   letterSpacing: '-0.01em',
                   color: 'var(--ink)',
                   margin: '0 0 8px',
-                  cursor: DEV_LOGIN_ENABLED ? 'pointer' : undefined,
                 }}
               >
                 Welcome back

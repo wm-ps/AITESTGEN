@@ -5,7 +5,8 @@ Two kinds of source, merged newest-first:
 - `ActivityEvent` rows, written by `record_activity` from the API routes that
   change something (settings, execution policy, credentials, team, schedules,
   scenario edits) or start scenario/test case generation.
-- `DiscoveryRun` and `TestRun` rows read as-is — they already hold status,
+- `DiscoveryRun`, `TestRun`, `RecordingSession` (Record and Play) and
+  `ExplorerQuestion` rows read as-is — they already hold status,
   counts and failure reasons, so a run shows as one row whose result updates
   in place rather than a "started" row plus a "finished" row.
 
@@ -26,10 +27,12 @@ from domain import (
     Journey,
     Page,
     PlatformUser,
+    RecordingSession,
     Scenario,
     TestRun,
     TestSuite,
 )
+from explorer_core import ExplorerQuestion, ExplorerRun
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from sqlalchemy import func, or_
@@ -119,7 +122,7 @@ def record_activity(
 
 class ActivityItemRead(BaseModel):
     id: str
-    kind: str  # "event" | "discovery" | "test_run"
+    kind: str  # "event" | "discovery" | "test_run" | "recording" | "question"
     created_at: datetime
     category: str
     outcome: str
@@ -283,6 +286,97 @@ def _test_run_items(rows: list[tuple[TestRun, Application]]) -> list[ActivityIte
     return items
 
 
+_RECORDING_OUTCOMES = {"pending": "running", "recording": "running", "complete": "done", "failed": "failed"}
+
+
+def _recording_items(
+    session: Session, rows: list[tuple[RecordingSession, Application, PlatformUser | None]]
+) -> list[ActivityItemRead]:
+    """One row per Record and Play session, its result updating in place."""
+    scenario_ids = [r.scenario_external_id for r, _, _ in rows if r.scenario_external_id]
+    numbers = dict(
+        session.exec(
+            select(Scenario.external_id, Scenario.test_case_number).where(
+                Scenario.external_id.in_(scenario_ids)  # type: ignore[attr-defined]
+            )
+        ).all()
+    ) if scenario_ids else {}
+    now = datetime.now(UTC)
+    items = []
+    for recording, application, user in rows:
+        outcome = _RECORDING_OUTCOMES.get(recording.status, "running")
+        # Minted but never opened before its link expired.
+        if recording.status == "pending" and recording.expires_at < now:
+            outcome = "stopped"
+        label = f'"{recording.name}" on {application.name}'
+        number = numbers.get(recording.scenario_external_id) if recording.scenario_external_id else None
+        summary = {
+            "running": f"Recording test case {label}",
+            "done": f"Recorded test case {label}" + (f" (TC-{number})" if number else ""),
+            "failed": f"Recording {label} failed",
+            "stopped": f"Recording {label} was never started",
+        }[outcome]
+        items.append(
+            ActivityItemRead(
+                id=f"recording:{recording.external_id}",
+                kind="recording",
+                created_at=recording.created_at,
+                category="test_cases",
+                outcome=outcome,
+                summary=summary,
+                reason=recording.error_message if outcome == "failed" else None,
+                actor=user.name if user else "Someone",
+                target_tab="suite",
+                details={
+                    "info": [
+                        {"label": "Test case name", "value": recording.name},
+                        {
+                            "label": "Started",
+                            "value": "Signed in already" if recording.auth_mode == "authenticated" else "Signed out",
+                        },
+                        *([{"label": "Test case", "value": f"TC-{number}"}] if number else []),
+                    ],
+                    "failure_reason": recording.error_message,
+                },
+                **_app_fields(application),
+            )
+        )
+    return items
+
+
+_QUESTION_OUTCOMES = {"open": "waiting", "answered": "done", "dismissed": "stopped"}
+
+
+def _question_items(rows: list[tuple[ExplorerQuestion, Application]]) -> list[ActivityItemRead]:
+    """One row per question Explorer asked; its result moves from "waiting"
+    to done/stopped in place once someone answers or skips it (who did is
+    its own event row, written by the answer/dismiss routes)."""
+    items = []
+    for question, application in rows:
+        outcome = _QUESTION_OUTCOMES.get(question.status, "waiting")
+        reason = {
+            "waiting": "Waiting for an answer",
+            "done": f"Answered: {question.answer}",
+            "stopped": "Skipped",
+        }[outcome]
+        items.append(
+            ActivityItemRead(
+                id=f"question:{question.external_id}",
+                kind="question",
+                created_at=question.created_at,
+                category="questions",
+                outcome=outcome,
+                summary=f"Explorer asked: {question.question}",
+                reason=reason,
+                actor="System",
+                target_tab="explorer",
+                details={"question": question.question, "why": question.why, "answer": question.answer},
+                **_app_fields(application),
+            )
+        )
+    return items
+
+
 def _generation_outcomes(
     session: Session, events: list[ActivityEvent]
 ) -> dict[uuid.UUID, tuple[str, list[dict[str, Any]]]]:
@@ -367,7 +461,7 @@ def _event_items(
             state = {"running": "running", "done": "finished", "failed": "failed", "stopped": "stopped"}[outcome]
             noun = "journey" if len(journeys) == 1 else "journeys"
             summary = f"{what} {state} on {event.application_name} for {len(journeys)} {noun}"
-        target_tab = {"discovery": "journeys", "scenarios": "scenarios", "test_cases": "suite", "test_runs": "schedules"}.get(
+        target_tab = {"discovery": "journeys", "questions": "explorer", "scenarios": "scenarios", "test_cases": "suite", "test_runs": "schedules"}.get(
             event.category
         )
         items.append(
@@ -414,7 +508,7 @@ def _collect(
     outcome: str | None = None,
     q: str | None = None,
 ) -> tuple[list[ActivityItemRead], datetime | None]:
-    """Newest-first merge of the three sources, `limit` rows each.
+    """Newest-first merge of every source, `limit` rows each.
 
     Paging stays correct even though `outcome`/`q` filter after fetching:
     a source that returned a full `limit` rows may have more older rows we
@@ -447,6 +541,9 @@ def _collect(
         )
         if category is not None:
             stmt = stmt.where(DiscoveryRun.source == ("crawler" if category == "discovery" else "live_exploration"))
+        else:
+            # A recording's placeholder run — the RecordingSession row covers it.
+            stmt = stmt.where(DiscoveryRun.source != "recorded")
         if outcome in ("running", "stopped", "done", "failed"):
             stmt = stmt.where(DiscoveryRun.status.in_([s for s, o in _DISCOVERY_OUTCOMES.items() if o == outcome]))  # type: ignore[attr-defined]
         elif outcome is not None:
@@ -482,6 +579,30 @@ def _collect(
         if stmt is not None:
             rows = list(session.exec(stmt.order_by(order(TestRun.created_at)).limit(limit)).all())  # type: ignore[attr-defined]
             sources.append((rows, _test_run_items(rows)))
+
+    if category in (None, "test_cases") and outcome in (None, "running", "done", "failed", "stopped"):
+        stmt = (
+            select(RecordingSession, Application, PlatformUser)
+            .join(Application, RecordingSession.application_id == Application.id)  # type: ignore[arg-type]
+            .join(PlatformUser, RecordingSession.created_by_id == PlatformUser.id, isouter=True)  # type: ignore[arg-type]
+            .where(Application.organization_id == organization_id, *app_filter, *window(RecordingSession.created_at))
+        )
+        rows = list(session.exec(stmt.order_by(order(RecordingSession.created_at)).limit(limit)).all())  # type: ignore[attr-defined]
+        sources.append((rows, _recording_items(session, rows)))
+
+    if category in (None, "questions") and outcome in (None, "waiting", "done", "stopped"):
+        stmt = (
+            select(ExplorerQuestion, Application)
+            .join(ExplorerRun, ExplorerRun.id == ExplorerQuestion.run_id)  # type: ignore[arg-type]
+            .join(Application, ExplorerRun.application_id == Application.id)  # type: ignore[arg-type]
+            .where(Application.organization_id == organization_id, *app_filter, *window(ExplorerQuestion.created_at))
+        )
+        if outcome is not None:
+            stmt = stmt.where(
+                ExplorerQuestion.status.in_([s for s, o in _QUESTION_OUTCOMES.items() if o == outcome])  # type: ignore[attr-defined]
+            )
+        rows = list(session.exec(stmt.order_by(order(ExplorerQuestion.created_at)).limit(limit)).all())  # type: ignore[attr-defined]
+        sources.append((rows, _question_items(rows)))
 
     stmt = (
         select(ActivityEvent, Application)

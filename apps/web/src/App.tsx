@@ -181,7 +181,7 @@ function App() {
   }, [successToast])
 
   // Fired by api.ts's request() on any 401 that isn't a login attempt —
-  // catches an idle-timeout logout (COOKIE_MAX_AGE, apps/api/src/api/auth.py)
+  // catches an idle-timeout logout (IDLE_TIMEOUT, apps/api/src/api/auth.py)
   // hit mid-session by a background poll, not just the mount-time check
   // below, so a stale tab bounces to Sign In instead of erroring silently.
   useEffect(() => {

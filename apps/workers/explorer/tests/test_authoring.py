@@ -109,7 +109,7 @@ async def test_full_run_follows_the_request_then_generates_test_cases(
             missions.append("m1")
         return bool(retries and retries.pop())
 
-    @activity.defn(name=ex.PLANNED_TESTS_ACTIVITY)
+    @activity.defn(name=au.PLANNED_TESTS_ACTIVITY)
     async def planned(run_id: str) -> list[str]:
         return list(tests)
 

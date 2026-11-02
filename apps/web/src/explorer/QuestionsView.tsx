@@ -19,6 +19,7 @@ import { AllAnsweredIllustration, EmptyState, QuestionsIllustration } from '../c
 import { LoadingDots } from '../components/LoadingDots'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { explorerApi, shotUrl, type ExplorerKnowledge, type ExplorerQuestion } from './explorerApi'
+import { useCanEdit } from '../PermissionsContext'
 import { glassCard, Pill, timeAgo, type Tone } from './ui'
 
 // Every question says what it is, what your answer changes, and what to do.
@@ -154,7 +155,8 @@ export function QuestionsDialog({
 
 export function QuestionCard({ question: q, onAnswered, onOpenShot }: { question: ExplorerQuestion; onAnswered: () => Promise<void>; onOpenShot: (shotId: string, caption: string) => void }) {
   const kind = KIND[q.kind] ?? KIND.clarify
-  const waiting = q.kind !== 'rule'
+  const canEdit = useCanEdit()
+  const waiting = canEdit && q.kind !== 'rule'
   const [text, setText] = useState('')
   // With choices offered, the text box opens from "Other"; without, it's the answer.
   const [typing, setTyping] = useState(q.options.length === 0)
@@ -201,7 +203,7 @@ export function QuestionCard({ question: q, onAnswered, onOpenShot }: { question
         <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)', lineHeight: '21px' }}>{q.question.replace(/^I need this to continue: /, '').replace(/ — is that correct, or a bug\?$/, ' Is that how it should work?')}</div>
         {/* One short muted line under the question: why it asks, else what your answer does. */}
         <div style={{ fontSize: 12.5, color: 'var(--fg-4)', lineHeight: '18px', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }} title={q.why ? `${q.why} ${kind.effect}` : kind.effect}>{q.why || kind.effect}</div>
-        {q.options.length > 0 && (
+        {canEdit && q.options.length > 0 && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {q.options.map((option, i) => (
               <button
@@ -220,7 +222,7 @@ export function QuestionCard({ question: q, onAnswered, onOpenShot }: { question
             </button>
           </div>
         )}
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {canEdit && (<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {typing && (<>
           <input
             className="field"
@@ -248,7 +250,7 @@ export function QuestionCard({ question: q, onAnswered, onOpenShot }: { question
           >
             Skip
           </button>
-        </div>
+        </div>)}
         {error && <div style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
       </div>
     </div>
@@ -278,6 +280,7 @@ export function KnowledgePanel({ applicationId }: { applicationId: string }) {
   const [error, setError] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
   const [allAnswers, setAllAnswers] = useState(false)
+  const canEdit = useCanEdit()
   const fileRef = useRef<HTMLInputElement>(null)
   const load = () => explorerApi.knowledge(applicationId).then(setItems).catch(() => setItems([]))
   useEffect(() => {
@@ -311,7 +314,7 @@ export function KnowledgePanel({ applicationId }: { applicationId: string }) {
     void upload(e.dataTransfer.files?.[0])
   }
 
-  const forgetButton = (id: string) => (
+  const forgetButton = (id: string) => canEdit && (
     <button type="button" aria-label="Forget this" title="Forget this" onClick={() => void forget(id)} style={{ flex: 'none', border: 'none', background: 'transparent', color: 'var(--fg-5)', cursor: 'pointer', padding: 4 }}>
       <FontAwesomeIcon icon={faTrashCan} style={{ fontSize: 11 }} />
     </button>
@@ -355,6 +358,7 @@ export function KnowledgePanel({ applicationId }: { applicationId: string }) {
           <div style={{ fontSize: 15, fontWeight: 650, color: 'var(--fg)' }}>Teach Explorer</div>
           <div style={{ fontSize: 12.5, color: 'var(--fg-4)', marginTop: 2 }}>Requirements and test data it should use in every run.</div>
         </div>
+        {canEdit && (<>
         <input ref={fileRef} type="file" accept=".pdf,.docx,.txt,.md" style={{ display: 'none' }} onChange={(e) => { void upload(e.target.files?.[0]); e.target.value = '' }} />
         <button
           type="button"
@@ -387,6 +391,7 @@ export function KnowledgePanel({ applicationId }: { applicationId: string }) {
             </>
           )}
         </button>
+        </>)}
         {error && <div style={{ fontSize: 12, color: 'var(--danger)' }}>{error}</div>}
         {docs.size > 0 && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
@@ -397,7 +402,7 @@ export function KnowledgePanel({ applicationId }: { applicationId: string }) {
         )}
 
         <div style={{ ...sectionLabel, marginTop: 4 }}>Facts and test data</div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        {canEdit && (<div style={{ display: 'flex', gap: 8 }}>
           <input
             className="field"
             aria-label="New fact or test data"
@@ -435,7 +440,7 @@ export function KnowledgePanel({ applicationId }: { applicationId: string }) {
           >
             {busy === 'fact' ? <LoadingDots label="Adding" /> : <FontAwesomeIcon icon={faPlus} />}
           </button>
-        </div>
+        </div>)}
         {items !== null && facts.length === 0 && <div style={{ fontSize: 13, color: 'var(--fg-5)', padding: '6px 0' }}>No facts yet.</div>}
         {facts.map((k) => {
           const f = readFact(k.text)

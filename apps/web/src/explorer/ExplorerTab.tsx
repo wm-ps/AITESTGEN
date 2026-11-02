@@ -18,11 +18,13 @@ import {
   faPause,
   faTowerBroadcast,
   faUserCheck,
+  faWandMagicSparkles,
 } from '@fortawesome/free-solid-svg-icons'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import { ApiError } from '../api'
 import { AppIdentityLine } from '../components/AppIdentityLine'
-import { LoadingDots } from '../components/LoadingDots'
+import { BouncingDots, LoadingDots } from '../components/LoadingDots'
+import { useCanEdit } from '../PermissionsContext'
 import {
   explorerApi,
   WORKING_STATUSES,
@@ -76,6 +78,8 @@ export function ExplorerTab({
   const [pausing, setPausing] = useState<'pause' | 'resume' | null>(null)
   const [startingFresh, setStartingFresh] = useState(false)
   const cursor = useRef(0)
+  // A viewer watches; every control that changes the run is hidden.
+  const canEdit = useCanEdit()
 
   const working = run ? WORKING_STATUSES.includes(run.status) : false
 
@@ -233,7 +237,7 @@ export function ExplorerTab({
     setIssues(h)
   }
   // "Is this a bug?" questions never hold Explorer up; they live with the bugs.
-  const needsYou = run?.status === 'awaiting_confirmation' || (questions ?? []).some((q) => q.status === 'open' && q.kind !== 'rule')
+  const needsYou = canEdit && (run?.status === 'awaiting_confirmation' || (questions ?? []).some((q) => q.status === 'open' && q.kind !== 'rule'))
 
   return (
     <div style={{ width: '100%', maxWidth: 'var(--content-max-wide)', margin: '0 auto', boxSizing: 'border-box' }}>
@@ -246,6 +250,7 @@ export function ExplorerTab({
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <h2 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Explorer</h2>
+            {run?.prompt && <AuthoringPill prompt={run.prompt} working={working} />}
           </div>
           <AppIdentityLine name={applicationName} url={applicationUrl} />
           {run && (
@@ -276,17 +281,17 @@ export function ExplorerTab({
                 </button>
               )
             })()}
-            {working && (
+            {canEdit && working && (
               <button type="button" className="button-secondary" onClick={() => pauseOrResume('pause')} disabled={pausing !== null || stopping} title="Halt now and carry on later from this point" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
                 {pausing === 'pause' ? <LoadingDots label="Pausing" /> : (<><FontAwesomeIcon icon={faPause} style={{ fontSize: 11 }} /> Pause</>)}
               </button>
             )}
-            {resumable && (
+            {canEdit && resumable && (
               <button type="button" className="button-primary" onClick={() => pauseOrResume('resume')} disabled={pausing !== null} title="Carry on from where this run stopped; nothing finished is redone" style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
                 {pausing === 'resume' ? <LoadingDots label="Resuming" /> : (<><FontAwesomeIcon icon={faPlay} style={{ fontSize: 11 }} /> Resume</>)}
               </button>
             )}
-            {working ? (
+            {!canEdit ? null : working ? (
               <button type="button" className="button-secondary" onClick={stop} disabled={stopping} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
                 {stopping ? <LoadingDots label="Stopping" /> : (<><FontAwesomeIcon icon={faStop} style={{ fontSize: 11 }} /> Stop</>)}
               </button>
@@ -309,6 +314,8 @@ export function ExplorerTab({
         <div style={{ ...glassCard, padding: 28, display: 'flex', gap: 10, alignItems: 'center', color: 'var(--fg-3)', fontSize: 13.5 }}>
           <LoadingDots label="Loading Explorer" />
         </div>
+      ) : run === null && !canEdit ? (
+        <div style={{ ...glassCard, padding: 28, fontSize: 13.5, color: 'var(--fg-3)' }}>Explorer has not explored this app yet.</div>
       ) : run === null || startingFresh ? (
         <StartCard applicationId={applicationId} applicationName={applicationName} busy={starting} onStart={start} onCancel={run ? () => setStartingFresh(false) : undefined} />
       ) : (
@@ -320,9 +327,11 @@ export function ExplorerTab({
               <div style={{ flex: '1 1 320px', fontSize: 13, color: 'var(--fg-2)', lineHeight: '19px' }}>
                 <strong style={{ color: 'var(--fg)' }}>This App Summary expired.</strong> Nobody confirmed it within 14 days, so this run has ended and can't be resumed. Start a new run: it begins from the screens this one already learned, and your answers are kept.
               </div>
-              <button type="button" className="button-primary" onClick={() => setStartingFresh(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-                <FontAwesomeIcon icon={faArrowsRotate} style={{ fontSize: 11 }} /> Start a new run
-              </button>
+              {canEdit && (
+                <button type="button" className="button-primary" onClick={() => setStartingFresh(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                  <FontAwesomeIcon icon={faArrowsRotate} style={{ fontSize: 11 }} /> Start a new run
+                </button>
+              )}
             </div>
           )}
           {resumable && (
@@ -330,7 +339,7 @@ export function ExplorerTab({
               <strong style={{ color: run.status === 'failed' ? 'var(--bad)' : 'var(--fg)' }}>
                 {run.status === 'failed' ? 'This run did not finish.' : run.status === 'paused' ? 'This run is paused.' : 'This run was stopped.'}
               </strong>{' '}
-              {run.error ? `Reason: ${run.error}. ` : ''}Press Resume to carry on from where it stopped. Everything already done is kept.
+              {run.error ? `Reason: ${run.error}. ` : ''}{canEdit && 'Press Resume to carry on from where it stopped. Everything already done is kept.'}
             </div>
           )}
           <Tabs
@@ -363,10 +372,10 @@ export function ExplorerTab({
               />
             )}
             {view === 'screens' && <ScreensView map={appMap} issues={issues} onOpenShot={openShot} />}
-            {view === 'scenarios' && <ScenariosView run={run} tests={tests} screens={appMap?.screens ?? []} onOpenShot={openShot} onGenerateTests={onGenerateTests} onVerdict={async (testId, verdict) => {
+            {view === 'scenarios' && <ScenariosView run={run} tests={tests} screens={appMap?.screens ?? []} onOpenShot={openShot} onGenerateTests={canEdit ? onGenerateTests : undefined} onVerdict={canEdit ? async (testId, verdict) => {
               setRun(await explorerApi.verdict(testId, verdict))
               setTests(await explorerApi.tests(run.id))
-            }} />}
+            } : undefined} />}
             {view === 'summary' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 <SummaryView
@@ -523,5 +532,33 @@ function StartCard({ applicationId, applicationName, busy, onStart, onCancel }: 
         </div>
       </div>
     </div>
+  )
+}
+
+// An authoring run (Explorer following the user's own request) says so next
+// to the title on every tab; hovering shows the request.
+function AuthoringPill({ prompt, working }: { prompt: string; working: boolean }) {
+  return (
+    <span
+      title={`Authoring your request: ${prompt}`}
+      aria-label={working ? 'Authoring in progress' : 'Authoring'}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '3px 10px',
+        borderRadius: 1000,
+        fontSize: 12,
+        fontWeight: 600,
+        color: 'var(--accent-2)',
+        background: 'var(--accent-wash)',
+        border: '1px solid color-mix(in srgb, var(--accent-2) 30%, transparent)',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <FontAwesomeIcon icon={faWandMagicSparkles} style={{ fontSize: 10 }} />
+      Authoring
+      {working && <BouncingDots size={3} />}
+    </span>
   )
 }

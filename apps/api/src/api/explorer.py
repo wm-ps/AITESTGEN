@@ -48,6 +48,7 @@ from test_suite_assembler.assembler import (
     write_project_scaffold,
 )
 
+from api.activity import record_activity
 from api.auth import CurrentOrgIdDep, CurrentUserDep
 from api.db import get_session
 from api.temporal_client import get_temporal_client, has_pollers
@@ -302,6 +303,14 @@ async def start_run(
 ) -> RunRead:
     application = _owned_application(session, application_id, org_id)
     run = await begin_run(session, application, payload.notes, started_by=user.id)
+    record_activity(
+        session,
+        user,
+        "discovery",
+        f"Started Explorer on {application.name}",
+        application=application,
+    )
+    session.commit()
     return _to_read(session, run, application)
 
 
@@ -438,7 +447,9 @@ def list_health(
 
 
 @router.post("/health/{issue_id}/false-alarm", status_code=204)
-def mark_false_alarm(issue_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep) -> None:
+def mark_false_alarm(
+    issue_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep, user: CurrentUserDep
+) -> None:
     """You looked and the app is fine: the finding leaves "Things that look
     wrong", its open "is this a bug?" question closes, and the app's
     behaviour is remembered as correct for this and future runs."""
@@ -472,6 +483,15 @@ def mark_false_alarm(issue_id: uuid.UUID, session: SessionDep, org_id: CurrentOr
         ExplorerEvent(
             run_id=run.id, kind="phase", title="You marked a false alarm", detail=issue.title[:600]
         )
+    )
+    application = session.get(Application, run.application_id)
+    record_activity(
+        session,
+        user,
+        "questions",
+        f"Marked an Explorer finding as not a bug: {issue.title}",
+        application=application,
+        outcome="done",
     )
     session.commit()
 
@@ -526,7 +546,9 @@ def unanswered_questions(brief: dict[str, Any] | None) -> int:
 
 
 @router.post("/runs/{run_id}/confirm", response_model=RunRead)
-async def confirm_brief(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep) -> RunRead:
+async def confirm_brief(
+    run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep, user: CurrentUserDep
+) -> RunRead:
     run, application = _owned_run(session, run_id, org_id)
     if run.status == "expired":
         raise HTTPException(status_code=409, detail=_EXPIRED)
@@ -567,13 +589,30 @@ async def confirm_brief(run_id: uuid.UUID, session: SessionDep, org_id: CurrentO
                     source="App Summary",
                 )
             )
+    record_activity(
+        session,
+        user,
+        "questions",
+        f"Confirmed the App Summary for {application.name}",
+        application=application,
+        outcome="done",
+        details={
+            "answers": [
+                {"question": str(i.get("question") or ""), "answer": str(i["answer"])}
+                for i in (run.brief or {}).get("questions_for_you") or []
+                if isinstance(i, dict) and i.get("answer")
+            ]
+        },
+    )
     session.commit()
     session.refresh(run)
     return _to_read(session, run, application)
 
 
 @router.post("/runs/{run_id}/stop", response_model=RunRead)
-async def stop_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep) -> RunRead:
+async def stop_run(
+    run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep, user: CurrentUserDep
+) -> RunRead:
     run, application = _owned_run(session, run_id, org_id)
     if run.status not in ACTIVE_RUN_STATUSES:
         raise HTTPException(status_code=409, detail="this run is not running")
@@ -581,6 +620,14 @@ async def stop_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdD
     session.add(run)
     if not run.prompt:  # an authoring run is not the app's discovery
         _mirror_discovery(session, application, "failed", "Explorer was stopped before it finished")
+    record_activity(
+        session,
+        user,
+        "discovery",
+        f"Stopped Explorer on {application.name}",
+        application=application,
+        outcome="stopped",
+    )
     session.add(
         ExplorerEvent(
             run_id=run.id, kind="phase", title="Stopped", detail="Exploration was stopped."
@@ -611,7 +658,9 @@ async def _end_leftover_workflow(run: ExplorerRun, reason: str) -> None:
 
 
 @router.post("/runs/{run_id}/pause", response_model=RunRead)
-async def pause_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep) -> RunRead:
+async def pause_run(
+    run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep, user: CurrentUserDep
+) -> RunRead:
     """Like Stop, but meant to be picked up again with Resume."""
     run, application = _owned_run(session, run_id, org_id)
     if run.status not in ACTIVE_RUN_STATUSES:
@@ -620,6 +669,14 @@ async def pause_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgId
     session.add(run)
     if not run.prompt:  # an authoring run is not the app's discovery
         _mirror_discovery(session, application, "paused")
+    record_activity(
+        session,
+        user,
+        "discovery",
+        f"Paused Explorer on {application.name}",
+        application=application,
+        outcome="stopped",
+    )
     session.add(
         ExplorerEvent(
             run_id=run.id,
@@ -639,7 +696,9 @@ async def pause_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgId
 
 
 @router.post("/runs/{run_id}/resume", response_model=RunRead)
-async def resume_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep) -> RunRead:
+async def resume_run(
+    run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep, user: CurrentUserDep
+) -> RunRead:
     """Carry on a paused, stopped or failed run (a server or worker problem
     included) from the step it reached; finished work is kept."""
     run, application = _owned_run(session, run_id, org_id)
@@ -663,6 +722,13 @@ async def resume_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgI
     session.add(run)
     if not run.prompt:  # an authoring run is not the app's discovery
         _mirror_discovery(session, application, "running")
+    record_activity(
+        session,
+        user,
+        "discovery",
+        f"Resumed Explorer on {application.name}",
+        application=application,
+    )
     session.commit()
     session.refresh(run)
     client = await get_temporal_client()
@@ -930,7 +996,9 @@ def _slug(text: str) -> str:
 
 
 @router.get("/runs/{run_id}/tests/download")
-def download_tests(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep) -> Response:
+def download_tests(
+    run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep, user: CurrentUserDep
+) -> Response:
     """All proven and known-bug tests as a ready-to-run Playwright project."""
     run, application = _owned_run(session, run_id, org_id)
     tests = session.exec(
@@ -954,6 +1022,16 @@ def download_tests(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdD
         for test in tests:
             folder = test.kind.replace("_", "-")
             archive.writestr(f"tests/{folder}/{_slug(test.title)}.spec.ts", test.code or "")
+    record_activity(
+        session,
+        user,
+        "test_cases",
+        f"Downloaded Explorer's test project for {application.name}",
+        application=application,
+        outcome="done",
+        details={"info": [{"label": "Test cases", "value": str(len(tests))}]},
+    )
+    session.commit()
     return Response(
         buffer.getvalue(),
         media_type="application/zip",
@@ -1143,7 +1221,11 @@ def _owned_question(
 
 @router.post("/questions/{question_id}/answer", response_model=QuestionRead)
 def answer_question(
-    question_id: uuid.UUID, payload: AnswerRequest, session: SessionDep, org_id: CurrentOrgIdDep
+    question_id: uuid.UUID,
+    payload: AnswerRequest,
+    session: SessionDep,
+    org_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> QuestionRead:
     question, run = _owned_question(session, question_id, org_id)
     answer = payload.answer.strip()
@@ -1179,6 +1261,15 @@ def answer_question(
             run_id=run.id, kind="phase", title="You answered a question", detail=fact[:600]
         )
     )
+    record_activity(
+        session,
+        user,
+        "questions",
+        f"Answered Explorer: {question.question}",
+        application=session.get(Application, run.application_id),
+        outcome="done",
+        details={"question": question.question, "answer": question.answer},
+    )
     session.commit()
     session.refresh(question)
     return _question_read(question, {})
@@ -1186,12 +1277,20 @@ def answer_question(
 
 @router.post("/questions/{question_id}/dismiss", response_model=QuestionRead)
 def dismiss_question(
-    question_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep
+    question_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep, user: CurrentUserDep
 ) -> QuestionRead:
-    question, _ = _owned_question(session, question_id, org_id)
+    question, run = _owned_question(session, question_id, org_id)
     if question.status == "open":
         question.status = "dismissed"
         session.add(question)
+        record_activity(
+            session,
+            user,
+            "questions",
+            f"Skipped Explorer's question: {question.question}",
+            application=session.get(Application, run.application_id),
+            outcome="stopped",
+        )
         session.commit()
         session.refresh(question)
     return _question_read(question, {})
@@ -1219,7 +1318,11 @@ def list_knowledge(
     "/applications/{application_id}/knowledge", response_model=KnowledgeRead, status_code=201
 )
 def add_fact(
-    application_id: uuid.UUID, payload: AddFactRequest, session: SessionDep, org_id: CurrentOrgIdDep
+    application_id: uuid.UUID,
+    payload: AddFactRequest,
+    session: SessionDep,
+    org_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> KnowledgeRead:
     application = _owned_application(session, application_id, org_id)
     text = payload.text.strip()
@@ -1229,6 +1332,14 @@ def add_fact(
         application_id=application.id, kind="fact", text=text[:4000], source="added by you"
     )
     session.add(row)
+    record_activity(
+        session,
+        user,
+        "settings",
+        f"Told Explorer a fact about {application.name}",
+        application=application,
+        details={"info": [{"label": "Fact", "value": text[:600]}]},
+    )
     session.commit()
     session.refresh(row)
     return KnowledgeRead(
@@ -1242,15 +1353,24 @@ def add_fact(
 
 @router.delete("/knowledge/{knowledge_id}", status_code=204)
 def delete_knowledge(
-    knowledge_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep
+    knowledge_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep, user: CurrentUserDep
 ) -> Response:
-    row = session.exec(
-        select(ExplorerKnowledge)
+    found = session.exec(
+        select(ExplorerKnowledge, Application)
         .join(Application, col(Application.id) == col(ExplorerKnowledge.application_id))
         .where(ExplorerKnowledge.external_id == knowledge_id, Application.organization_id == org_id)
     ).first()
-    if row is None:
+    if found is None:
         raise HTTPException(status_code=404, detail="not found")
+    row, application = found
+    record_activity(
+        session,
+        user,
+        "settings",
+        f"Removed something Explorer knew about {application.name}",
+        application=application,
+        details={"info": [{"label": "Removed", "value": row.text[:600]}]},
+    )
     session.delete(row)
     session.commit()
     return Response(status_code=204)
@@ -1353,7 +1473,11 @@ def list_roles(
 
 @router.post("/applications/{application_id}/roles", response_model=RoleRead, status_code=201)
 def add_role(
-    application_id: uuid.UUID, payload: AddRoleRequest, session: SessionDep, org_id: CurrentOrgIdDep
+    application_id: uuid.UUID,
+    payload: AddRoleRequest,
+    session: SessionDep,
+    org_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> RoleRead:
     application = _owned_application(session, application_id, org_id)
     name = payload.name.strip()
@@ -1368,20 +1492,37 @@ def add_role(
     )
     row = ExplorerRole(application_id=application.id, name=name[:80], secret_ref=ref.path)
     session.add(row)
+    record_activity(
+        session,
+        user,
+        "settings",
+        f"Added a login for user type {row.name} on {application.name}",
+        application=application,
+    )
     session.commit()
     session.refresh(row)
     return RoleRead(id=row.external_id, name=row.name, created_at=row.created_at)
 
 
 @router.delete("/roles/{role_id}", status_code=204)
-def delete_role(role_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep) -> Response:
-    row = session.exec(
-        select(ExplorerRole)
+def delete_role(
+    role_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep, user: CurrentUserDep
+) -> Response:
+    found = session.exec(
+        select(ExplorerRole, Application)
         .join(Application, col(Application.id) == col(ExplorerRole.application_id))
         .where(ExplorerRole.external_id == role_id, Application.organization_id == org_id)
     ).first()
-    if row is None:
+    if found is None:
         raise HTTPException(status_code=404, detail="not found")
+    row, application = found
+    record_activity(
+        session,
+        user,
+        "settings",
+        f"Removed the login for user type {row.name} on {application.name}",
+        application=application,
+    )
     try:
         VaultSecretsClient().delete(SecretRef(path=row.secret_ref))
     except Exception:  # already gone — removing the row is what matters

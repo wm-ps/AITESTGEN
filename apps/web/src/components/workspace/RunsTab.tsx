@@ -351,16 +351,25 @@ const RESULT_GRID_TEMPLATE = '50% 1fr 1fr'
 // Results/Pass rate/chevron grid.
 const RUN_ROW_GRID_TEMPLATE = 'minmax(140px,1.3fr) minmax(110px,0.9fr) 90px minmax(130px,1.4fr) 84px 20px'
 
-type ResultBucket = 'passed' | 'failed'
+type ResultBucket = 'passed' | 'healed' | 'failed'
 
-// Every finished result lands in exactly one bucket, Passed / Failed by its own
-// status, so the buckets always sum to the run's finished results. A
-// self-healed test is just a passed one, so it counts as Passed. Pending/
-// blocked/cancelled results have no bucket. Flaky is not a bucket — `is_flaky`
-// is a separate overlay count (see `RunDetail`).
+// Every finished result lands in exactly one bucket by its own status, so the
+// buckets always sum to the run's finished results. A self-healed test passed
+// (after healing) and gets its own bucket so healing stays visible; it counts
+// toward the pass rate. Pending/blocked/cancelled results have no bucket.
+// Flaky is not a bucket — `is_flaky` is a separate overlay count (see `RunDetail`).
 function resultBucket(result: TestResultRead): ResultBucket | null {
   if (result.status !== 'passed' && !NON_PASSED_STATUSES.has(result.status)) return null
-  return result.status === 'passed' ? 'passed' : 'failed'
+  if (result.status !== 'passed') return 'failed'
+  return result.healed_test_asset_id != null ? 'healed' : 'passed'
+}
+
+const emptyBuckets = (): Record<ResultBucket, number> => ({ passed: 0, healed: 0, failed: 0 })
+
+// Pass rate (self-healed included) coloured like the run's health badge
+// (backend `_health_tier`: >90% healthy, 70-90% needs attention, else critical).
+function passRateColor(rate: number): string {
+  return rate > 0.9 ? 'var(--good-strong)' : rate >= 0.7 ? 'var(--warn-strong)' : 'var(--danger-strong)'
 }
 
 // Same "Test Case" / "Duration" / "Status" columns as the Test Suite tab's
@@ -899,6 +908,7 @@ type ResultSegment = ResultBucket
 // donut arcs and its legend so they can't drift apart.
 const RESULT_SEGMENTS: { key: ResultSegment; color: string; label: string }[] = [
   { key: 'passed', color: 'var(--good-strong)', label: 'Passed' },
+  { key: 'healed', color: 'var(--healed)', label: 'Self-healed' },
   { key: 'failed', color: 'var(--danger-strong)', label: 'Failed' },
 ]
 
@@ -919,7 +929,8 @@ function ResultSplitDonut({
   hovered: ResultSegment | null
   onHover: (segment: ResultSegment | null) => void
 }) {
-  const rate = total > 0 ? `${Math.round((counts.passed / total) * 100)}%` : '—'
+  const passRate = total > 0 ? (counts.passed + counts.healed) / total : null
+  const rate = passRate == null ? '—' : `${Math.round(passRate * 100)}%`
   const SIZE = 156
   function segStyle(segment: ResultSegment): { strokeWidth: number; opacity: number } {
     if (!hovered) return { strokeWidth: 5, opacity: 1 }
@@ -932,7 +943,10 @@ function ResultSplitDonut({
         <circle cx={21} cy={21} r={DONUT_RADIUS} fill="none" stroke="var(--panel-2)" strokeWidth={5} />
         {RESULT_SEGMENTS.map(({ key, color }) => {
           const count = counts[key]
-          const frac = total > 0 ? count / total : 0
+          // An empty bucket draws nothing: a 0-length arc with round caps
+          // still painted a dot (a red one when nothing had failed).
+          if (count === 0 || total === 0) return null
+          const frac = count / total
           const offset = -(consumed * DONUT_CIRCUMFERENCE)
           consumed += frac
           const style = segStyle(key)
@@ -956,7 +970,7 @@ function ResultSplitDonut({
           )
         })}
       </svg>
-      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 21, color: 'var(--fg)', fontWeight: 600 }}>
+      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 21, color: passRate == null ? 'var(--fg)' : passRateColor(passRate), fontWeight: 600 }}>
         {rate}
       </div>
     </div>
@@ -1002,7 +1016,7 @@ function ResultsBySuite({ results }: { results: TestResultRead[] }) {
   const bySuite = new Map<string, Record<ResultBucket, number>>()
   for (const r of results) {
     const key = r.journey_name || 'Other'
-    const bucket = bySuite.get(key) ?? { passed: 0, failed: 0 }
+    const bucket = bySuite.get(key) ?? emptyBuckets()
     const kind = resultBucket(r)
     if (kind) bucket[kind] += 1
     bySuite.set(key, bucket)
@@ -1017,6 +1031,7 @@ function ResultsBySuite({ results }: { results: TestResultRead[] }) {
     name: name.length > maxNameChars ? `${name.slice(0, maxNameChars - 1)}…` : name,
     fullName: name,
     Passed: v.passed,
+    'Self-healed': v.healed,
     Failed: v.failed,
   }))
   return (
@@ -1043,6 +1058,7 @@ function ResultsBySuite({ results }: { results: TestResultRead[] }) {
             <YAxis tick={{ fontSize: 10, fill: 'var(--fg-5)' }} tickLine={false} axisLine={false} allowDecimals={false} width={26} />
             <Tooltip content={ResultsBySuiteTooltip} cursor={{ fill: 'var(--hover)' }} />
             <Bar dataKey="Passed" stackId="a" fill="var(--good-strong)" radius={0} />
+            <Bar dataKey="Self-healed" stackId="a" fill="var(--healed)" radius={0} />
             <Bar dataKey="Failed" stackId="a" fill="var(--danger-strong)" radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
@@ -1070,7 +1086,7 @@ function RunDetail({
   const [resultSortKey, setResultSortKey] = useState<ResultSortKey | null>(null)
   const [resultSortDir, setResultSortDir] = useState<'asc' | 'desc'>('asc')
   const results = run.results ?? []
-  const bucketCounts: Record<ResultBucket, number> = { passed: 0, failed: 0 }
+  const bucketCounts: Record<ResultBucket, number> = emptyBuckets()
   for (const r of results) {
     const kind = resultBucket(r)
     if (kind) bucketCounts[kind] += 1

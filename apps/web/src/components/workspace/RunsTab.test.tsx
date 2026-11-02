@@ -142,10 +142,11 @@ describe('RunsTab', () => {
     expect(retry).toBeEnabled()
   })
 
-  // Passed / Failed use each result's own status and sum to the finished
-  // results; a self-healed pass is just a pass. Flaky is an overlay count: a
-  // flaky result is still counted as Passed or Failed.
-  it('counts self-healed passes as Passed and Flaky separately', async () => {
+  // Passed / Self-healed / Failed use each result's own status and sum to the
+  // finished results; a pass reached by self-healing is its own bucket so the
+  // healing stays visible. Flaky is an overlay count: a flaky result is still
+  // counted as Passed or Failed.
+  it('counts self-healed passes on their own and Flaky separately', async () => {
     const base = { ...failedResult, error_message: null, heal_blocked_reason: null }
     stubRunDetail([
       { ...base, id: 'r1', scenario_name: 'Clean pass', status: 'passed' },
@@ -162,9 +163,22 @@ describe('RunsTab', () => {
     const tileValue = async (label: string) =>
       (await screen.findByText(label, { selector: 'div' })).nextElementSibling?.textContent
     await waitFor(async () => expect(await tileValue('Flaky')).toBe('2'))
-    expect(await tileValue('Passed')).toBe('4')
-    expect(screen.queryByText('Self-healed', { selector: 'div' })).toBeNull()
+    expect(await tileValue('Passed')).toBe('2')
+    expect(await tileValue('Self-healed')).toBe('2')
     expect(await tileValue('Failed')).toBe('3')
+  })
+
+  it('counts self-healed tests in the pass rate and draws no red when nothing failed', async () => {
+    const base = { ...failedResult, error_message: null, heal_blocked_reason: null }
+    stubRunDetail([
+      { ...base, id: 'r1', scenario_name: 'Clean pass', status: 'passed' },
+      { ...base, id: 'r2', scenario_name: 'Healed pass', status: 'passed', healed_test_asset_id: 'asset-2' },
+    ])
+    const { container } = render(<RunsTab applicationId="app-1" initialRunId="run-1" />)
+    await screen.findByText('Result split')
+    const arcs = [...container.querySelectorAll('circle[stroke]')].map((c) => c.getAttribute('stroke'))
+    expect(arcs).toContain('var(--healed)') // the self-healed slice, light orange
+    expect(arcs).not.toContain('var(--danger-strong)') // no red dot when nothing failed
   })
 
   it('explains a Flaky flag with the outcome trail and filters the list from the Flaky tile', async () => {

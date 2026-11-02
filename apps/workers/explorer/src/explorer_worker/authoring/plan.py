@@ -149,6 +149,30 @@ def retry_if_nothing_seen(run_id: uuid.UUID) -> bool:
     return True
 
 
+def planned_tests(run_id: uuid.UUID) -> list[str]:
+    """Like tests_stage.planned_tests, but always one at a time: a request's
+    scenarios act on the same things (one account, one chat, one record), and
+    tried in parallel they spoil each other (seen: three scenarios sending to
+    one AI chat at once)."""
+    with Session(engine) as session:
+        run = session.get(ExplorerRun, run_id)
+        if run is None or run.status in ("stopped", "paused"):
+            return []
+        busy = session.exec(
+            select(ExplorerTestCase.id).where(
+                ExplorerTestCase.run_id == run_id, ExplorerTestCase.status == "building"
+            )
+        ).first()
+        if busy is not None:
+            return []
+        first = session.exec(
+            select(ExplorerTestCase.id)
+            .where(ExplorerTestCase.run_id == run_id, ExplorerTestCase.status == "planned")
+            .order_by(col(ExplorerTestCase.created_at))
+        ).first()
+    return [str(first)] if first else []
+
+
 def say_done(run_id: uuid.UUID) -> None:
     """The last word of an authoring run: where its test cases are (Explorer's
     own closing line points at "Generate tests", already done here)."""

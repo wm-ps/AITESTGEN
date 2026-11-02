@@ -15,6 +15,7 @@ import {
   faPause,
 } from '@fortawesome/free-solid-svg-icons'
 import { BouncingDots } from '../components/LoadingDots'
+import { useCanEdit } from '../PermissionsContext'
 import {
   shotUrl,
   WORKING_STATUSES,
@@ -117,13 +118,14 @@ export function LiveView({
   const scenarios = tests.filter((t) => t.status === 'proven' || t.status === 'known_bug')
   const [allMissions, setAllMissions] = useState(false)
   const [skipping, setSkipping] = useState<string | null>(null)
+  const canEdit = useCanEdit()
   const sortedMissions = [...missions].sort((a, b) => order(a.status) - order(b.status))
   const missionsShown = allMissions ? sortedMissions : sortedMissions.slice(0, 3)
   const activity = useMemo(() => [...events].reverse().filter((e) => LOGGED.includes(e.kind)).slice(0, 80), [events])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {(run.status === 'awaiting_confirmation' || open.length > 0) && (
+      {canEdit && (run.status === 'awaiting_confirmation' || open.length > 0) && (
         <div
           style={{
             borderRadius: 14,
@@ -344,7 +346,7 @@ export function LiveView({
                     <span key={m.id} style={{ display: 'flex', gap: 8, alignItems: 'baseline', fontSize: 12.5, color: live ? 'var(--fg)' : m.status === 'queued' ? 'var(--fg-5)' : 'var(--fg-3)', fontWeight: m.status === 'running' ? 600 : 400 }}>
                       <span style={{ width: 12, flex: 'none', textAlign: 'center' }}>{missionMark(m.status)}</span>
                       <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.title}>{m.title}</span>
-                      {skippable && (
+                      {canEdit && skippable && (
                         <button
                           type="button"
                           disabled={skipping === m.id}

@@ -56,7 +56,7 @@ from domain.login_fields import is_login_field, visible_fields
 from domain.recorded_test_data import RecordedFieldsChanged, apply_recorded_test_data
 import hvac.exceptions
 from explorer_core import ExplorerRun
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Response
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from object_store import ObjectStore
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -123,14 +123,20 @@ from api.activity import (
     record_activity,
 )
 from api.activity import router as activity_router
+from api.approved_domains import approved_hosts, require_approved_domain, url_is_approved
+from api.approved_domains import router as approved_domains_router
 from api.auth import (
+    COOKIE_NAME,
+    DUMMY_PASSWORD_HASH,
     ROLES,
     CurrentAdminDep,
     CurrentOrgIdDep,
     CurrentUserDep,
     NotViewerDep,
     block_viewer_writes,
+    check_new_password,
     clear_session_cookie,
+    end_session,
     issue_session_cookie,
     verify_password,
 )
@@ -218,6 +224,7 @@ app.add_middleware(
 SessionDep = Annotated[Session, Depends(get_session)]
 
 app.include_router(activity_router)
+app.include_router(approved_domains_router)
 # Vantage Explorer (docs/vantage-explorer/PLAN.md) — standalone module.
 app.include_router(explorer_router)
 # Authoring: test cases from a user's request, run by Explorer (authoring.py).
@@ -244,17 +251,61 @@ def _to_user_read(user: PlatformUser) -> UserRead:
     return UserRead(name=user.name, email=user.email, role=user.role)
 
 
+# This many wrong passwords in a row locks the account for LOCKOUT_DURATION.
+# ponytail: per-account only — no per-IP limit, since behind the load
+# balancer every request shares one client IP; add one once the real client
+# IP is trusted from proxy headers.
+MAX_FAILED_LOGINS = 5
+LOCKOUT_DURATION = timedelta(minutes=15)
+
+
 @app.post("/auth/login", response_model=UserRead)
 def login(payload: LoginRequest, response: Response, session: SessionDep) -> UserRead:
     user = session.exec(select(PlatformUser).where(PlatformUser.email == payload.email)).first()
-    if user is None or not verify_password(payload.password, user.hashed_password):
+    if user is None:
+        verify_password(payload.password, DUMMY_PASSWORD_HASH)
         raise HTTPException(status_code=401, detail="invalid email or password")
-    issue_session_cookie(response, user.id)
+    now = datetime.now(UTC)
+    if user.locked_until is not None and user.locked_until > now:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many failed sign-in attempts. Try again in 15 minutes or reset your password.",
+        )
+    if not verify_password(payload.password, user.hashed_password):
+        user.failed_logins += 1
+        # A wrong password on a real account is worth an admin's attention.
+        record_activity(
+            session,
+            user,
+            "account",
+            f"Failed sign-in for {user.email} (wrong password)",
+            outcome="failed",
+        )
+        if user.failed_logins >= MAX_FAILED_LOGINS:
+            user.failed_logins = 0
+            user.locked_until = now + LOCKOUT_DURATION
+            record_activity(
+                session,
+                user,
+                "account",
+                f"Locked {user.email} for 15 minutes after {MAX_FAILED_LOGINS} failed sign-ins",
+                outcome="failed",
+            )
+        session.add(user)
+        session.commit()
+        raise HTTPException(status_code=401, detail="invalid email or password")
+    user.failed_logins = 0
+    user.locked_until = None
+    session.add(user)
+    record_activity(session, user, "account", f"{user.name} signed in", outcome="done")
+    session.commit()
+    issue_session_cookie(response, user)
     return _to_user_read(user)
 
 
 @app.post("/auth/logout")
-def logout(response: Response) -> dict[str, str]:
+def logout(request: Request, response: Response, session: SessionDep) -> dict[str, str]:
+    end_session(session, request.cookies.get(COOKIE_NAME))
     clear_session_cookie(response)
     return {"status": "ok"}
 
@@ -352,20 +403,21 @@ def revoke_invite(
 class AcceptInviteRequest(BaseModel):
     token: str
     name: str
-    password: str = Field(min_length=8)
+    password: str = Field(min_length=12)
 
 
 @app.post("/invites/accept", response_model=UserRead)
 def accept_invite_route(
     payload: AcceptInviteRequest, response: Response, session: SessionDep
 ) -> UserRead:
+    check_new_password(payload.password)
     try:
         user = accept_invite(session, payload.token, payload.name, payload.password)
     except InviteAcceptError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    record_activity(session, user, "settings", f"{user.name} ({user.email}) joined as {user.role}")
+    record_activity(session, user, "account", f"{user.name} ({user.email}) joined as {user.role}")
     session.commit()
-    issue_session_cookie(response, user.id)
+    issue_session_cookie(response, user)
     return _to_user_read(user)
 
 
@@ -518,6 +570,10 @@ class ForgotPasswordRequest(BaseModel):
 @app.post("/auth/forgot-password", status_code=202)
 def forgot_password(payload: ForgotPasswordRequest, session: SessionDep) -> dict[str, str]:
     request_password_reset(session, payload.email)
+    user = session.exec(select(PlatformUser).where(PlatformUser.email == payload.email)).first()
+    if user is not None:
+        record_activity(session, user, "account", f"{user.name} asked for a password reset link")
+        session.commit()
     return {"status": "ok"}
 
 
@@ -537,15 +593,18 @@ def reset_password_target(token: str, session: SessionDep) -> ResetPasswordTarge
 
 class ResetPasswordRequest(BaseModel):
     token: str
-    password: str = Field(min_length=8)
+    password: str = Field(min_length=12)
 
 
 @app.post("/auth/reset-password", response_model=UserRead)
 def reset_password_route(payload: ResetPasswordRequest, session: SessionDep) -> UserRead:
+    check_new_password(payload.password)
     try:
         user = reset_password(session, payload.token, payload.password)
     except PasswordResetError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    record_activity(session, user, "account", f"{user.name} changed their password")
+    session.commit()
     return _to_user_read(user)
 
 
@@ -662,6 +721,10 @@ class ApplicationRead(BaseModel):
     # (AD-15 is deliberate, non-exhaustive sampling). `None` for every other
     # status, where the full report is more useful than a partial count.
     discovery_coverage_summary: dict[str, int] | None = None
+    # False when the app's domain isn't on the admin's approved-domain list —
+    # the Applications list then won't open it. Only the list/home responses
+    # compute it; every other response leaves the default.
+    domain_approved: bool = True
 
 
 class HealthRead(BaseModel):
@@ -840,6 +903,13 @@ async def _check_reachable(client: httpx.AsyncClient, url: str) -> None:
         raise HTTPException(status_code=422, detail=_UNREACHABLE_DETAIL)
 
 
+_AUTH_METHOD_LABELS = {
+    "standard_login": "Username and password",
+    "sso_session_reuse": "Saved browser session (SSO)",
+    "none": "No sign-in",
+}
+
+
 @app.post("/applications", response_model=ApplicationRead, status_code=201)
 async def create_application(
     payload: ApplicationCreate,
@@ -847,6 +917,8 @@ async def create_application(
     organization_id: CurrentOrgIdDep,
     user: CurrentUserDep,
 ) -> ApplicationRead:
+    require_approved_domain(session, organization_id, payload.url)
+
     # FR-31 (CR-3): fail fast before any write if the Base URL isn't reachable.
     async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
         await _check_reachable(client, payload.url)
@@ -887,8 +959,30 @@ async def create_application(
     )
     session.add(application)
     session.flush()
+    # What was entered while onboarding — never the credentials themselves.
     record_activity(
-        session, user, "settings", f"Added application {application.name}", application=application
+        session,
+        user,
+        "settings",
+        f"Added application {application.name}",
+        application=application,
+        details={
+            "info": [
+                {"label": "Name", "value": application.name},
+                {"label": "URL", "value": application.url},
+                {"label": "Login page", "value": application.login_url or "Not given"},
+                {"label": "Environment", "value": application.environment},
+                {
+                    "label": "Sign-in",
+                    "value": _AUTH_METHOD_LABELS.get(application.auth_method, application.auth_method),
+                },
+                {"label": "Login username given", "value": "Yes" if payload.username else "No"},
+                {
+                    "label": "Autonomous discovery",
+                    "value": "On" if application.discovery_required else "Off",
+                },
+            ]
+        },
     )
 
     # Absorbed from removed Story 1.5: start a DiscoveryRun immediately, in
@@ -931,8 +1025,10 @@ class ConnectionTestResult(BaseModel):
 @app.post("/applications/test-connection", response_model=ConnectionTestResult)
 async def test_application_connection(
     payload: ConnectionTestPayload,
+    session: SessionDep,
     organization_id: CurrentOrgIdDep,
 ) -> ConnectionTestResult:
+    require_approved_domain(session, organization_id, payload.url)
     async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
         try:
             await _check_reachable(client, payload.url)
@@ -978,8 +1074,10 @@ def _verify_credentials_workflow_id(organization_id: uuid.UUID, check_id: uuid.U
 @app.post("/applications/verify-credentials", response_model=CredentialCheckStarted, status_code=202)
 async def start_credential_check(
     payload: CredentialCheckPayload,
+    session: SessionDep,
     organization_id: CurrentOrgIdDep,
 ) -> CredentialCheckStarted:
+    require_approved_domain(session, organization_id, payload.url)
     client = await get_temporal_client()
     queue = discovery_task_queue()
     if not await has_pollers(client, queue):
@@ -1107,11 +1205,14 @@ def list_applications(
         )
         .order_by(Application.created_at.desc())  # type: ignore[arg-type]
     ).all()
+    domains = approved_hosts(session, organization_id)
     result = []
     for application in applications:
         discovery_run = _latest_discovery_run(session, application.id)
         assert discovery_run is not None or not application.discovery_required
-        result.append(_to_application_read(session, application, discovery_run))
+        read = _to_application_read(session, application, discovery_run)
+        read.domain_approved = url_is_approved(application.url, domains)
+        result.append(read)
     return result
 
 
@@ -1144,6 +1245,7 @@ async def get_home(
     if not applications:
         return []
     app_ids = [a.id for a in applications]
+    domains = approved_hosts(session, organization_id)
 
     # Batched in place of the N _latest_discovery_run() calls list_applications makes.
     latest_run_by_app: dict[uuid.UUID, DiscoveryRun] = {}
@@ -1281,6 +1383,7 @@ async def get_home(
         if discovery_run is None and application.discovery_required:
             continue
         base = _to_application_read(session, application, discovery_run)
+        base.domain_approved = url_is_approved(application.url, domains)
         runs = test_runs_by_app.get(application.id, [])
         last_test_run = runs[0] if runs else None
         last_test_run_pass_rate = (
@@ -1543,7 +1646,7 @@ def update_requires_login(
     external_id: uuid.UUID,
     payload: RequiresLoginPayload,
     session: SessionDep,
-    _admin: CurrentAdminDep,
+    admin: CurrentAdminDep,
     organization_id: CurrentOrgIdDep,
 ) -> ApplicationRead:
     """Settings' "Requires sign-in" switch, the same choice as the Add
@@ -1564,6 +1667,14 @@ def update_requires_login(
             SecretRef(path=application.secret_ref), b'{"cookies": [], "origins": []}'
         )
         application.auth_method = "none"
+    if application.requires_login != payload.requires_login:
+        record_activity(
+            session,
+            admin,
+            "settings",
+            f"Turned sign-in {'on' if payload.requires_login else 'off'} for {application.name}",
+            application=application,
+        )
     application.requires_login = payload.requires_login
     session.add(application)
     session.commit()
@@ -2949,6 +3060,7 @@ async def create_live_test_case(
     payload: LiveTestCaseCreate,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> dict[str, str]:
     application = _get_org_application(session, organization_id, external_id)
 
@@ -2996,6 +3108,28 @@ async def create_live_test_case(
         id=_live_exploration_workflow_id(external_id, request_id),
         task_queue=GENERATION_TASK_QUEUE,
     )
+    existing_journey = (
+        session.exec(active_journeys.where(Journey.external_id == payload.journey_id)).first()
+        if payload.journey_id is not None
+        else None
+    )
+    record_activity(
+        session,
+        user,
+        "test_cases",
+        f"Asked AI to write test cases on {application.name}",
+        application=application,
+        details={
+            "info": [
+                {"label": "Request", "value": payload.prompt},
+                {
+                    "label": "Journey",
+                    "value": existing_journey.name if existing_journey else f"{journey_name} (new)",
+                },
+            ]
+        },
+    )
+    session.commit()
     return {"request_id": str(request_id)}
 
 
@@ -3498,6 +3632,7 @@ def download_test_suite_project(
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
     _not_viewer: NotViewerDep,
+    user: CurrentUserDep,
 ) -> Response:
     # Same org-scoped lookup as every other Application endpoint (AD-12) —
     # never by external_id alone, or one Organization could download
@@ -3581,6 +3716,16 @@ def download_test_suite_project(
     filename = re.sub(r"[^A-Za-z0-9._ -]+", "_", application.name).strip(" ._-")
     if not filename:
         filename = sanitize_slug(application.name, fallback="application")
+    record_activity(
+        session,
+        user,
+        "test_cases",
+        f"Downloaded the test project for {application.name}",
+        application=application,
+        outcome="done",
+        details={"info": [{"label": "Test cases", "value": str(len(test_assets))}]},
+    )
+    session.commit()
     return Response(
         content=zip_bytes,
         media_type="application/zip",
@@ -4753,6 +4898,7 @@ async def trigger_schedule_now(
     external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> dict[str, bool]:
     """Goes through `handle.trigger()`, not `client.start_workflow` — so a
     "Run now" takes the exact same gated path a real occurrence takes, gets
@@ -4794,6 +4940,9 @@ async def trigger_schedule_now(
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail="SCHEDULE_BACKEND_UNAVAILABLE") from exc
 
+    # The run itself shows as the schedule's; this says who pressed Run now.
+    _record_schedule_activity(session, user, schedule, "Ran")
+    session.commit()
     return {"started": True}
 
 
@@ -5308,6 +5457,7 @@ async def heal_test_result(
     external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
 ) -> dict[str, bool]:
     """Manual "Retry with self-heal" — starts the same HealTestActivity the
     automatic path runs (inside ApplicationTestExecutionWorkflow.run_one),
@@ -5375,6 +5525,16 @@ async def heal_test_result(
         )
     except WorkflowAlreadyStartedError:
         pass  # already in progress — not an error
+    else:
+        record_activity(
+            session,
+            user,
+            "test_runs",
+            f"Retried a failed test with self-heal in test run #{test_run.run_number}"
+            f" on {application.name}",
+            application=application,
+        )
+        session.commit()
     return {"started": True}
 
 
