@@ -49,6 +49,11 @@ export type ExplorerRun = {
   notes: string | null
   // Authoring: the user's request this run follows; null when exploring.
   prompt?: string | null
+  // AI spend so far (US dollars), the run's budget (null = no limit), and the
+  // limit that paused it, if one did.
+  ai_spent_usd?: number
+  ai_budget_usd?: number | null
+  limit_reached?: 'ai_budget' | 'run_time' | null
   error: string | null
   created_at: string
   updated_at: string
@@ -213,6 +218,21 @@ export const reelUrl = (runId: string) => `${API_BASE}/explorer/runs/${runId}/re
 export const reportDownloadUrl = (runId: string) => `${API_BASE}/explorer/runs/${runId}/report/download`
 export const testsDownloadUrl = (runId: string) => `${API_BASE}/explorer/runs/${runId}/tests/download`
 
+// Settings → Explorer limits. null = no limit.
+export type ExplorerSettings = {
+  question_wait_minutes: number | null
+  mission_time_limit_minutes: number | null
+  run_time_limit_minutes: number | null
+  first_look_time_limit_minutes: number
+  hidden_screen_search_minutes: number
+  ai_budget_usd: number | null
+  first_look_max_screens: number
+  max_missions: number
+  steps_per_mission: number
+  max_scenarios: number
+  proof_replays: number
+}
+
 export const explorerApi = {
   latestRun: (applicationId: string) =>
     request<ExplorerRun | null>(`/explorer/applications/${applicationId}/runs/latest`),
@@ -228,6 +248,11 @@ export const explorerApi = {
       body: JSON.stringify({ prompt }),
     }),
   getRun: (runId: string) => request<ExplorerRun>(`/explorer/runs/${runId}`),
+  // Skip the exploring left and write scenarios from what was explored.
+  wrapUp: (runId: string) => request<ExplorerRun>(`/explorer/runs/${runId}/wrap-up`, { method: 'POST' }),
+  getSettings: () => request<ExplorerSettings>('/explorer/settings'),
+  saveSettings: (settings: ExplorerSettings) =>
+    request<ExplorerSettings>('/explorer/settings', { method: 'PUT', body: JSON.stringify(settings) }),
   events: (runId: string, after: number) =>
     request<ExplorerEvent[]>(`/explorer/runs/${runId}/events?after=${after}`),
   screens: (runId: string) => request<ExplorerScreen[]>(`/explorer/runs/${runId}/screens`),

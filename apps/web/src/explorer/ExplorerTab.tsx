@@ -226,6 +226,22 @@ export function ExplorerTab({
   }
   const resumable = run?.status === 'paused' || run?.status === 'stopped' || run?.status === 'failed'
 
+  // A limit (Settings → Explorer limits) paused the run: skip the exploring
+  // left and write scenarios from what was explored.
+  const [wrappingUp, setWrappingUp] = useState(false)
+  const wrapUp = async () => {
+    if (!run) return
+    setWrappingUp(true)
+    try {
+      setRun(await explorerApi.wrapUp(run.id))
+      setView('live')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not start writing scenarios.')
+    } finally {
+      setWrappingUp(false)
+    }
+  }
+
   const openShot = (shotId: string, caption: string) => setLightbox({ shotId, caption })
   // An answer can turn a possible bug into a confirmed one (or drop it), so
   // the bug list reloads with the questions.
@@ -257,6 +273,12 @@ export function ExplorerTab({
             <div className="caption" style={{ fontSize: 13, marginTop: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
               {working && <span style={{ width: 7, height: 7, borderRadius: 1000, background: 'var(--accent-2)', animation: 'v2-pulse 1.4s ease-in-out infinite' }} />}
               {run.headline}
+              {!!run.ai_spent_usd && (
+                <span title="AI spend so far in this run" style={{ color: 'var(--fg-4)' }}>
+                  · AI ${run.ai_spent_usd.toFixed(2)}
+                  {run.ai_budget_usd != null && ` of $${run.ai_budget_usd.toFixed(2)}`}
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -334,7 +356,22 @@ export function ExplorerTab({
               )}
             </div>
           )}
-          {resumable && (
+          {resumable && run.limit_reached && (
+            <div role="status" style={{ ...glassCard, padding: '14px 16px', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap', borderColor: 'color-mix(in srgb, var(--warn) 35%, transparent)' }}>
+              <div style={{ flex: '1 1 320px', minWidth: 0, fontSize: 13, color: 'var(--fg-2)' }}>
+                <strong style={{ color: 'var(--fg)' }}>{run.headline}.</strong> The run is paused and nothing done is lost. Write scenarios from what was explored so far, or raise the limit in Settings and resume exploring.
+              </div>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button type="button" className="button-secondary" onClick={() => pauseOrResume('resume')} disabled={pausing !== null || wrappingUp}>
+                  {pausing === 'resume' ? <LoadingDots label="Resuming" /> : 'Resume exploring'}
+                </button>
+                <button type="button" className="button-primary" onClick={wrapUp} disabled={pausing !== null || wrappingUp}>
+                  {wrappingUp ? <LoadingDots label="Starting" /> : "Write scenarios from what's explored"}
+                </button>
+              </div>
+            </div>
+          )}
+          {resumable && !run.limit_reached && (
             <div style={{ ...glassCard, padding: '12px 16px', marginBottom: 16, fontSize: 13, color: 'var(--fg-2)', borderColor: run.status === 'failed' ? 'color-mix(in srgb, var(--bad) 30%, transparent)' : undefined }}>
               <strong style={{ color: run.status === 'failed' ? 'var(--bad)' : 'var(--fg)' }}>
                 {run.status === 'failed' ? 'This run did not finish.' : run.status === 'paused' ? 'This run is paused.' : 'This run was stopped.'}

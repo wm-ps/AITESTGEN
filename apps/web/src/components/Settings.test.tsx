@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Settings } from './Settings'
 
@@ -15,6 +15,20 @@ const SETTINGS_BODY = {
   max_test_cases_per_application: null,
   delete_project_after: '1_week',
   max_heal_attempts: 3,
+}
+
+const EXPLORER_LIMITS = {
+  question_wait_minutes: 30,
+  mission_time_limit_minutes: 75,
+  run_time_limit_minutes: null,
+  first_look_time_limit_minutes: 120,
+  hidden_screen_search_minutes: 25,
+  ai_budget_usd: null,
+  first_look_max_screens: 150,
+  max_missions: 15,
+  steps_per_mission: 20,
+  max_scenarios: 150,
+  proof_replays: 1,
 }
 
 const CREDENTIAL_ENTRY = {
@@ -41,6 +55,7 @@ function stubFetch() {
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.endsWith('/domains')) return { ok: true, status: 200, json: async () => [DOMAIN_IN_USE, DOMAIN_UNUSED] }
+      if (url.endsWith('/explorer/settings')) return { ok: true, status: 200, json: async () => EXPLORER_LIMITS }
       if (url.endsWith('/settings')) return { ok: true, status: 200, json: async () => SETTINGS_BODY }
       // CredentialsPanel hides itself entirely when `apps` is empty (nothing
       // to point an "Add credentials" form at) — must be non-empty for the
@@ -150,5 +165,37 @@ describe('Settings', () => {
     const call = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/applications/app-1/requires-login'))!
     expect(call[1]?.method).toBe('PATCH')
     expect(JSON.parse(String(call[1]?.body))).toEqual({ requires_login: false })
+  })
+
+  it('shows the Explorer limits, not the crawler-only fields', async () => {
+    stubFetch()
+    render(<Settings user={ADMIN} onCancel={() => {}} />)
+    expect(await screen.findByText('Explorer limits')).toBeTruthy()
+    for (const group of ['Time', 'AI cost', 'Coverage', 'Accuracy']) expect(screen.getByText(group)).toBeTruthy()
+    expect((screen.getByLabelText('Question wait') as HTMLSelectElement).value).toBe('30')
+    expect(screen.queryByText('Maximum pages')).toBeNull()
+    expect(screen.queryByText('Interaction level')).toBeNull()
+  })
+
+  it('waiting until you answer takes the mission time limit off', async () => {
+    stubFetch()
+    render(<Settings user={ADMIN} onCancel={() => {}} />)
+    fireEvent.change(await screen.findByLabelText('Question wait'), { target: { value: 'none' } })
+    const mission = screen.getByLabelText('Mission time limit') as HTMLSelectElement
+    expect(mission.value).toBe('none')
+    expect(mission.disabled).toBe(true)
+  })
+
+  it('saves the Explorer limits with the other settings', async () => {
+    stubFetch()
+    render(<Settings user={ADMIN} onCancel={() => {}} />)
+    fireEvent.change(await screen.findByLabelText('AI budget per run (USD)'), { target: { value: '25' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }))
+    const fetchMock = vi.mocked(fetch)
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/explorer/settings') && init?.method === 'PUT')
+      expect(put).toBeTruthy()
+      expect(JSON.parse(String(put![1]!.body)).ai_budget_usd).toBe(25)
+    })
   })
 })

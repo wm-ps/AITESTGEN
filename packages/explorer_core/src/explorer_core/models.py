@@ -109,6 +109,15 @@ class ExplorerRun(SQLModel, table=True):
     # Authoring: the user's request this run follows instead of exploring by
     # itself (explorer_worker.authoring). None = a normal Explorer run.
     prompt: str | None = Field(default=None)
+    # The Explorer limits this run uses, copied from ExplorerSettings when it
+    # starts (and again on Resume): changing Settings never alters a run
+    # mid-way. {} = a run from before limits existed (built-in values).
+    # "reached" is set when a limit paused it ("ai_budget" | "run_time").
+    limits: dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSONB, nullable=False, server_default="{}")
+    )
+    # AI spend so far, in US dollars, as the AI gateway reports each call.
+    ai_spent_usd: float = Field(default=0.0)
     # Who started it — emailed whenever the run needs them (explorer_core.notify).
     started_by_id: uuid.UUID | None = Field(
         default=None,
@@ -465,3 +474,27 @@ class ExplorerAccess(SQLModel, table=True):
     allowed: bool
     note: str | None = Field(default=None)
     created_at: datetime = _ts()
+
+
+class ExplorerSettings(SQLModel, table=True):
+    """Explorer's limits, set on the Settings page (one row, id=1). Copied
+    onto each run when it starts (ExplorerRun.limits). None = no limit."""
+
+    __tablename__ = "explorer_settings"  # pyright: ignore[reportAssignmentType]
+
+    id: int = Field(default=1, primary_key=True)
+    # Time
+    question_wait_minutes: int | None = Field(default=30)
+    mission_time_limit_minutes: int | None = Field(default=75)
+    run_time_limit_minutes: int | None = Field(default=None)
+    first_look_time_limit_minutes: int = Field(default=120)
+    hidden_screen_search_minutes: int = Field(default=25)
+    # Cost
+    ai_budget_usd: float | None = Field(default=None)
+    # Coverage
+    first_look_max_screens: int = Field(default=150)
+    max_missions: int = Field(default=15)
+    steps_per_mission: int = Field(default=20)
+    max_scenarios: int = Field(default=150)
+    # Accuracy
+    proof_replays: int = Field(default=1)

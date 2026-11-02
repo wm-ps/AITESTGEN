@@ -6,6 +6,7 @@ import uuid
 
 from temporalio import activity
 
+from explorer_worker import limits
 from explorer_worker.activities import _fail_run
 from explorer_worker.authoring import plan, promote, request
 from explorer_worker.journal import Journal
@@ -54,6 +55,8 @@ async def plan_missions_activity(run_id: str) -> int:
 
 @activity.defn(name=QUEUED_MISSIONS_ACTIVITY)
 async def queued_missions_activity(run_id: str) -> list[str]:
+    if not await limits.may_continue(uuid.UUID(run_id)):  # AI budget / run time
+        return []
     return plan.queued_missions(uuid.UUID(run_id))
 
 
@@ -64,6 +67,8 @@ async def retry_blank_activity(run_id: str) -> bool:
 
 @activity.defn(name=PLANNED_TESTS_ACTIVITY)
 async def planned_tests_activity(run_id: str) -> list[str]:
+    if not await limits.may_continue(uuid.UUID(run_id)):  # AI budget / run time
+        return []
     return plan.planned_tests(uuid.UUID(run_id))
 
 

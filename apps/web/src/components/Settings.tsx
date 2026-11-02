@@ -5,7 +5,6 @@ import {
   ApiError,
   api,
   type HomeApplicationRead,
-  type InteractionLevel,
   type RetentionPeriod,
   type ScreenshotCapture,
   type SettingsRead,
@@ -13,13 +12,15 @@ import {
 } from '../api'
 import { ApprovedDomainsPanel } from './ApprovedDomainsPanel'
 import { LoadingDots } from './LoadingDots'
+import { explorerApi, type ExplorerSettings } from '../explorer/explorerApi'
 import { PasswordInput } from './PasswordInput'
 import { SkeletonRows } from './Skeleton'
 import { AccessDeniedIllustration } from './EmptyState'
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    // The hint is a hover tooltip only: no text under the field.
+    <label title={hint} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)' }}>{label}</span>
       {children}
     </label>
@@ -306,8 +307,184 @@ function CredentialsPanel() {
   )
 }
 
+
+// Settings → Explorer limits: what really bounds an Explorer (or authoring)
+// run's time and AI cost. A run copies them when it starts; Resume picks up
+// changes. "No limit" is null.
+type LimitOption = { value: number | null; label: string }
+
+function LimitSelect({
+  value,
+  options,
+  onChange,
+  label,
+  disabled,
+}: {
+  value: number | null
+  options: LimitOption[]
+  onChange: (value: number | null) => void
+  label: string
+  disabled?: boolean
+}) {
+  return (
+    <select
+      aria-label={label}
+      value={value == null ? 'none' : String(value)}
+      onChange={(e) => onChange(e.target.value === 'none' ? null : Number(e.target.value))}
+      disabled={disabled}
+      style={fieldInputStyle}
+    >
+      {options.map((o) => (
+        <option key={o.label} value={o.value == null ? 'none' : String(o.value)}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+const minutes = (ns: number[]): LimitOption[] => ns.map((n) => ({ value: n, label: n >= 60 && n % 60 === 0 ? `${n / 60} h` : `${n} min` }))
+const counts = (ns: number[]): LimitOption[] => ns.map((n) => ({ value: n, label: String(n) }))
+// Keeps a saved value selectable even when it isn't one of the presets.
+const withValue = (options: LimitOption[], value: number | null): LimitOption[] =>
+  options.some((o) => o.value === value) ? options : [...options, { value, label: value == null ? 'No limit' : String(value) }]
+
+function LimitGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>{title}</div>
+      {/* auto-fill: a group with one field keeps one column's width, not the whole row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(210px,1fr))', gap: 16 }}>{children}</div>
+    </div>
+  )
+}
+
+function ExplorerLimitsSection({ limits, onChange }: { limits: ExplorerSettings; onChange: (limits: ExplorerSettings) => void }) {
+  const set = <K extends keyof ExplorerSettings>(key: K, value: ExplorerSettings[K]) => onChange({ ...limits, [key]: value })
+  const waitsForever = limits.question_wait_minutes == null
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div>
+        <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Explorer limits</div>
+        <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
+          Control how long Explorer and authoring runs take and how much AI they use. Each run uses the limits set when it starts.
+        </div>
+      </div>
+
+      <LimitGroup title="Time">
+        <Field label="Question wait" hint="How long a mission waits for your answer before carrying on without it.">
+          <LimitSelect
+            label="Question wait"
+            value={limits.question_wait_minutes}
+            options={withValue([...minutes([5, 10, 20, 30, 60, 120]), { value: null, label: 'Until you answer' }], limits.question_wait_minutes)}
+            onChange={(v) => onChange({ ...limits, question_wait_minutes: v, ...(v == null ? { mission_time_limit_minutes: null } : {}) })}
+          />
+        </Field>
+        <Field
+          label="Mission time limit"
+          hint={waitsForever ? 'No limit while missions wait until you answer.' : 'Longest one mission may take, waiting for your answers included.'}
+        >
+          <LimitSelect
+            label="Mission time limit"
+            value={limits.mission_time_limit_minutes}
+            disabled={waitsForever}
+            options={withValue([...minutes([30, 45, 60, 75, 90, 120, 180]), { value: null, label: 'No limit' }], limits.mission_time_limit_minutes)}
+            onChange={(v) => set('mission_time_limit_minutes', v)}
+          />
+        </Field>
+        <Field label="Run time limit" hint="Counted from when you confirm the App Summary. Reaching it pauses the run.">
+          <LimitSelect
+            label="Run time limit"
+            value={limits.run_time_limit_minutes}
+            options={withValue([{ value: null, label: 'No limit' }, ...minutes([60, 120, 240, 360, 480, 720, 1440])], limits.run_time_limit_minutes)}
+            onChange={(v) => set('run_time_limit_minutes', v)}
+          />
+        </Field>
+        <Field label="First look time limit" hint="How long Explorer looks around the app before writing the App Summary.">
+          <LimitSelect
+            label="First look time limit"
+            value={limits.first_look_time_limit_minutes}
+            options={withValue(minutes([30, 60, 90, 120, 180, 240]), limits.first_look_time_limit_minutes)}
+            onChange={(v) => set('first_look_time_limit_minutes', v ?? 120)}
+          />
+        </Field>
+        <Field label="Hidden screen search" hint="Time spent trying choices and empty or failing data to find screens that only appear sometimes.">
+          <LimitSelect
+            label="Hidden screen search"
+            value={limits.hidden_screen_search_minutes}
+            options={withValue([{ value: 0, label: 'Off' }, ...minutes([10, 25, 45, 60])], limits.hidden_screen_search_minutes)}
+            onChange={(v) => set('hidden_screen_search_minutes', v ?? 0)}
+          />
+        </Field>
+      </LimitGroup>
+
+      <LimitGroup title="AI cost">
+        <Field label="AI budget per run (USD)" hint="Reaching it pauses the run. You can then write scenarios from what was explored, or raise it and resume.">
+          <input
+            type="number"
+            min={0.5}
+            step={0.5}
+            placeholder="No limit"
+            aria-label="AI budget per run (USD)"
+            value={limits.ai_budget_usd ?? ''}
+            onChange={(e) => set('ai_budget_usd', e.target.value === '' ? null : Number(e.target.value))}
+            style={fieldInputStyle}
+          />
+        </Field>
+      </LimitGroup>
+
+      <LimitGroup title="Coverage">
+        <Field label="Screens in the first look" hint="Most screens Explorer visits before writing the App Summary.">
+          <LimitSelect
+            label="Screens in the first look"
+            value={limits.first_look_max_screens}
+            options={withValue(counts([25, 50, 100, 150, 250, 500]), limits.first_look_max_screens)}
+            onChange={(v) => set('first_look_max_screens', v ?? 150)}
+          />
+        </Field>
+        <Field label="Maximum missions" hint="Most missions (walk-throughs of a task) in one run, follow-ups included.">
+          <LimitSelect
+            label="Maximum missions"
+            value={limits.max_missions}
+            options={withValue(counts([5, 10, 15, 20, 30, 50]), limits.max_missions)}
+            onChange={(v) => set('max_missions', v ?? 15)}
+          />
+        </Field>
+        <Field label="Steps per mission" hint="Most clicks and entries one mission may take.">
+          <LimitSelect
+            label="Steps per mission"
+            value={limits.steps_per_mission}
+            options={withValue(counts([10, 20, 30, 40, 60]), limits.steps_per_mission)}
+            onChange={(v) => set('steps_per_mission', v ?? 20)}
+          />
+        </Field>
+        <Field label="Maximum scenarios" hint="Most scenarios Explorer tries to prove in one run.">
+          <LimitSelect
+            label="Maximum scenarios"
+            value={limits.max_scenarios}
+            options={withValue(counts([25, 50, 100, 150, 250, 500]), limits.max_scenarios)}
+            onChange={(v) => set('max_scenarios', v ?? 150)}
+          />
+        </Field>
+      </LimitGroup>
+
+      <LimitGroup title="Accuracy">
+        <Field label="Proof replays" hint="Clean replays each scenario must pass before it becomes a test case. More is surer but slower.">
+          <LimitSelect
+            label="Proof replays"
+            value={limits.proof_replays}
+            options={withValue([{ value: 0, label: 'None (fastest)' }, ...counts([1, 2, 3])], limits.proof_replays)}
+            onChange={(v) => set('proof_replays', v ?? 1)}
+          />
+        </Field>
+      </LimitGroup>
+    </div>
+  )
+}
+
 export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => void }) {
   const [settings, setSettings] = useState<SettingsRead | null>(null)
+  const [limits, setLimits] = useState<ExplorerSettings | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -322,9 +499,11 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
       setLoading(false)
       return
     }
-    api
-      .getSettings()
-      .then(setSettings)
+    Promise.all([api.getSettings(), explorerApi.getSettings()])
+      .then(([loaded, explorer]) => {
+        setSettings(loaded)
+        setLimits(explorer)
+      })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load settings.'))
       .finally(() => setLoading(false))
   }, [isAdmin])
@@ -365,12 +544,13 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!settings) return
+    if (!settings || !limits) return
     setError(null)
     setSubmitting(true)
     try {
-      const updated = await api.updateSettings(settings)
+      const [updated, explorer] = await Promise.all([api.updateSettings(settings), explorerApi.saveSettings(limits)])
       setSettings(updated)
+      setLimits(explorer)
       onCancel()
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Saving settings failed.')
@@ -379,7 +559,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
     }
   }
 
-  if (loading || !settings) {
+  if (loading || !settings || !limits) {
     return (
       <div style={{ maxWidth: 1560, margin: '0 auto', width: '100%' }} role="status">
         {error ?? <SkeletonRows count={5} height={38} gap={14} />}
@@ -396,84 +576,16 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
 
       <form onSubmit={handleSubmit} style={panelStyle}>
         <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
+          <ExplorerLimitsSection limits={limits} onChange={setLimits} />
+
+          <div style={{ height: 1, background: 'var(--line)' }} />
+
           <div>
-            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Exploration limits</div>
-            <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>Applied to every new application unless overridden per run.</div>
+            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Test case generation</div>
+            <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>How many test cases are written and how failing ones are handled.</div>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 16 }}>
-            <Field label="Maximum exploration time">
-              <select
-                value={settings.max_discovery_duration_minutes ?? 'unlimited'}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    max_discovery_duration_minutes: e.target.value === 'unlimited' ? null : Number(e.target.value),
-                  })
-                }
-                style={fieldInputStyle}
-              >
-                {[2, 5, 10, 15, 30, 60].map((n) => (
-                  <option key={n} value={n}>
-                    {n} min
-                  </option>
-                ))}
-                <option value="unlimited">Unlimited</option>
-              </select>
-            </Field>
-
-            <Field label="Maximum pages">
-              <select value={settings.max_pages} onChange={(e) => setSettings({ ...settings, max_pages: Number(e.target.value) })} style={fieldInputStyle}>
-                {[5, 10, 20, 50, 100, 250, 500, 1000].map((n) => (
-                  <option key={n} value={n}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            <Field label="Maximum journeys">
-              <input
-                type="number"
-                min={1}
-                placeholder="Unlimited"
-                value={settings.max_journeys ?? ''}
-                onChange={(e) => setSettings({ ...settings, max_journeys: e.target.value === '' ? null : Number(e.target.value) })}
-                style={fieldInputStyle}
-              />
-            </Field>
-
-            <Field label="Navigation timeout">
-              <select
-                value={settings.navigation_timeout_seconds}
-                onChange={(e) => setSettings({ ...settings, navigation_timeout_seconds: Number(e.target.value) })}
-                style={fieldInputStyle}
-              >
-                {[10, 15, 30, 60].map((n) => (
-                  <option key={n} value={n}>
-                    {n} sec
-                  </option>
-                ))}
-                {[120, 180, 240, 300].map((n) => (
-                  <option key={n} value={n}>
-                    {n / 60} min
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            <Field label="Interaction level">
-              <select
-                value={settings.interaction_level}
-                onChange={(e) => setSettings({ ...settings, interaction_level: e.target.value as InteractionLevel })}
-                style={fieldInputStyle}
-              >
-                <option value="passive">Passive</option>
-                <option value="normal">Normal</option>
-                <option value="aggressive">Aggressive</option>
-              </select>
-            </Field>
-
             <Field label="Maximum scenarios / journey">
               <input
                 type="number"

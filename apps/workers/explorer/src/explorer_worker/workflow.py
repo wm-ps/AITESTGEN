@@ -197,7 +197,9 @@ class ExplorerRunWorkflow:
                         workflow.execute_activity(
                             run_activity,
                             args=[run_id, item_id],
-                            start_to_close_timeout=timedelta(minutes=45),
+                            # A safety net only: missions keep their own time limit
+                            # (Settings), a dead worker is caught by the heartbeat.
+                            start_to_close_timeout=timedelta(hours=24),
                             heartbeat_timeout=timedelta(minutes=5),
                             retry_policy=_ONCE,
                         )

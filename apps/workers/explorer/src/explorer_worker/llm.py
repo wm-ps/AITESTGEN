@@ -12,6 +12,8 @@ import json
 import logging
 import os
 import time
+import uuid
+from contextvars import ContextVar
 from typing import Any
 
 import httpx
@@ -22,6 +24,33 @@ THINKING_MODEL = os.environ.get("EXPLORER_THINKING_MODEL", "gpt-5.6-sol")
 FAST_MODEL = os.environ.get("EXPLORER_FAST_MODEL", "gpt-5.6-luna")
 
 logger = logging.getLogger(__name__)
+
+# The run a model call is made for (set by Journal), so its cost is added to
+# that run's AI spend — what the AI budget in Settings is checked against.
+RUN: ContextVar[uuid.UUID | None] = ContextVar("explorer_run", default=None)
+
+
+def _record_cost(cost_header: str | None) -> None:
+    """Add a call's cost, as the AI gateway reports it in US dollars, to the
+    run's spend. Never raises: cost bookkeeping must not stop a run."""
+    run_id = RUN.get()
+    if run_id is None or not cost_header:
+        return
+    try:
+        amount = float(cost_header)
+        if amount <= 0:
+            return
+        from sqlalchemy import text
+
+        from explorer_worker.db import engine
+
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE explorer_run SET ai_spent_usd = ai_spent_usd + :a WHERE id = :id"),
+                {"a": amount, "id": run_id},
+            )
+    except Exception:  # noqa: BLE001
+        logger.warning("could not record the cost of an explorer model call", exc_info=True)
 
 
 class LLMError(RuntimeError):
@@ -67,6 +96,7 @@ async def ask_json(
                     json=body,
                 )
                 response.raise_for_status()
+                _record_cost(response.headers.get("x-litellm-response-cost"))
                 text = response.json()["choices"][0]["message"]["content"] or ""
                 parsed = _parse_json(text)
                 logger.info(

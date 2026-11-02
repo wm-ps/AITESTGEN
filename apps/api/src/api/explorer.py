@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from domain import Application, DiscoveryRun
+from explorer_core.limits import current_settings
+from explorer_core.limits import snapshot as limits_snapshot
 from explorer_core import (
     ACTIVE_RUN_STATUSES,
     BRIEF_CONFIRMED_SIGNAL,
@@ -35,7 +37,7 @@ from explorer_core import (
     run_workflow_name,
 )
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from secrets_client import SecretRef, VaultSecretsClient
 from sqlalchemy import func
 from sqlmodel import Session, col, select
@@ -49,7 +51,7 @@ from test_suite_assembler.assembler import (
 )
 
 from api.activity import record_activity
-from api.auth import CurrentOrgIdDep, CurrentUserDep
+from api.auth import CurrentAdminDep, CurrentOrgIdDep, CurrentUserDep
 from api.db import get_session
 from api.temporal_client import get_temporal_client, has_pollers
 
@@ -85,6 +87,11 @@ class RunRead(BaseModel):
     notes: str | None
     # Authoring: the user's request this run follows (None for exploring).
     prompt: str | None = None
+    # AI spend so far (US dollars) and this run's budget (None = no limit).
+    ai_spent_usd: float = 0.0
+    ai_budget_usd: float | None = None
+    # The limit that paused it ("ai_budget" | "run_time"), if one did.
+    limit_reached: str | None = None
     error: str | None
     created_at: datetime
     updated_at: datetime
@@ -249,6 +256,9 @@ def _to_read(session: Session, run: ExplorerRun, application: Application) -> Ru
         brief_confirmed_at=run.brief_confirmed_at,
         notes=run.notes,
         prompt=run.prompt,
+        ai_spent_usd=round(run.ai_spent_usd, 4),
+        ai_budget_usd=(run.limits or {}).get("ai_budget_usd"),
+        limit_reached=(run.limits or {}).get("reached"),
         error=run.error,
         created_at=run.created_at,
         updated_at=run.updated_at,
@@ -340,6 +350,7 @@ async def begin_run(
         application_id=application.id,
         notes=(notes or "").strip() or None,
         started_by_id=started_by,
+        limits=limits_snapshot(session),  # Settings → Explorer limits, as of now
     )
     session.add(run)
     # Notes (test data like a policy number) are remembered for later runs —
@@ -718,6 +729,9 @@ async def resume_run(
     if other is not None:
         raise HTTPException(status_code=409, detail="another Explorer run is going for this app")
     await _end_leftover_workflow(run, "Resumed by the user")
+    # Today's limits from Settings: raising the one that paused it is how a
+    # run reaching its budget or time carries on.
+    run.limits = limits_snapshot(session)
     run.status, run.headline, run.updated_at = "queued", "Resuming", datetime.now(UTC)
     session.add(run)
     if not run.prompt:  # an authoring run is not the app's discovery
@@ -739,6 +753,125 @@ async def resume_run(
         task_queue=EXPLORER_TASK_QUEUE,
     )
     return _to_read(session, run, application)
+
+
+WRAPPED_UP = "Not explored: you chose to write scenarios from what was explored"
+
+
+@router.post("/runs/{run_id}/wrap-up", response_model=RunRead)
+async def wrap_up_run(run_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep) -> RunRead:
+    """"Write scenarios from what's explored": a paused, stopped or failed run
+    (typically one that reached its AI budget or run time) skips the exploring
+    it has left and writes and proves scenarios for what it has explored.
+    You chose it, so the AI budget and run time limit no longer apply."""
+    run, application = _owned_run(session, run_id, org_id)
+    if run.status not in ("paused", "stopped", "failed"):
+        raise HTTPException(status_code=409, detail="only a paused, stopped or failed run can do this")
+    if run.brief_confirmed_at is None:
+        raise HTTPException(
+            status_code=409, detail="Confirm the App Summary first — nothing is explored yet"
+        )
+    other = session.exec(
+        select(ExplorerRun).where(
+            ExplorerRun.application_id == application.id,
+            ExplorerRun.id != run.id,
+            col(ExplorerRun.status).in_(ACTIVE_RUN_STATUSES),
+        )
+    ).first()
+    if other is not None:
+        raise HTTPException(status_code=409, detail="another Explorer run is going for this app")
+    await _end_leftover_workflow(run, "Writing scenarios from what was explored")
+    for mission in session.exec(
+        select(ExplorerMission).where(ExplorerMission.run_id == run.id)
+    ).all():
+        if mission.status in ("queued", "running", "waiting") or (
+            mission.status == "skipped" and mission.outcome == "Stopped before finishing"
+        ):
+            mission.status, mission.outcome = "skipped", WRAPPED_UP
+            session.add(mission)
+    limits = {k: v for k, v in (run.limits or {}).items() if k != "reached"}
+    run.limits = {**limits, "wrap_up": True}
+    run.status, run.headline, run.updated_at = (
+        "queued",
+        "Writing scenarios from what was explored",
+        datetime.now(UTC),
+    )
+    session.add(run)
+    session.add(
+        ExplorerEvent(
+            run_id=run.id,
+            kind="phase",
+            title="Writing scenarios from what was explored",
+            detail="The exploring that was left is skipped; the AI budget and run time limit "
+            "no longer apply to this run.",
+        )
+    )
+    if not run.prompt:  # an authoring run is not the app's discovery
+        _mirror_discovery(session, application, "running")
+    planned = session.exec(
+        select(ExplorerTestCase.id).where(ExplorerTestCase.run_id == run.id)
+    ).first()
+    session.commit()
+    session.refresh(run)
+    client = await get_temporal_client()
+    await client.start_workflow(
+        run_workflow_name(run),
+        # Scenarios already planned are built from where they stopped;
+        # otherwise they are written now, from what was explored.
+        args=[str(run.id), "resume" if planned else "tests"],
+        id=explorer_workflow_id(run.external_id),
+        task_queue=EXPLORER_TASK_QUEUE,
+    )
+    return _to_read(session, run, application)
+
+
+# -- Settings → Explorer limits ---------------------------------------------
+
+
+class ExplorerSettingsBody(BaseModel):
+    """Every limit; None = no limit (where allowed)."""
+
+    question_wait_minutes: int | None = Field(default=30, ge=0, le=10080)
+    mission_time_limit_minutes: int | None = Field(default=75, ge=5, le=10080)
+    run_time_limit_minutes: int | None = Field(default=None, ge=10, le=43200)
+    first_look_time_limit_minutes: int = Field(default=120, ge=5, le=1440)
+    hidden_screen_search_minutes: int = Field(default=25, ge=0, le=600)
+    ai_budget_usd: float | None = Field(default=None, gt=0, le=100000)
+    first_look_max_screens: int = Field(default=150, ge=5, le=1000)
+    max_missions: int = Field(default=15, ge=1, le=100)
+    steps_per_mission: int = Field(default=20, ge=5, le=200)
+    max_scenarios: int = Field(default=150, ge=1, le=1000)
+    proof_replays: int = Field(default=1, ge=0, le=5)
+
+
+@router.get("/settings", response_model=ExplorerSettingsBody)
+def get_explorer_settings(session: SessionDep, _admin: CurrentAdminDep) -> ExplorerSettingsBody:
+    settings = current_settings(session)
+    session.commit()
+    return ExplorerSettingsBody.model_validate(settings, from_attributes=True)
+
+
+@router.put("/settings", response_model=ExplorerSettingsBody)
+def update_explorer_settings(
+    payload: ExplorerSettingsBody, session: SessionDep, admin: CurrentAdminDep
+) -> ExplorerSettingsBody:
+    """New runs use these; a run going now keeps the limits it started with
+    (Resume picks up the new ones)."""
+    wait, mission = payload.question_wait_minutes, payload.mission_time_limit_minutes
+    if mission is not None and (wait is None or wait >= mission):
+        raise HTTPException(
+            status_code=422,
+            detail="Give missions more time than the question wait — a mission waiting for "
+            "your answer counts toward its time limit",
+        )
+    settings = current_settings(session)
+    for key, value in payload.model_dump().items():
+        setattr(settings, key, value)
+    session.add(settings)
+    record_activity(session, admin, "settings", "Changed the Explorer limits")
+    session.commit()
+    session.refresh(settings)
+    return ExplorerSettingsBody.model_validate(settings, from_attributes=True)
 
 
 # -- Stage 2: Mission Board, App Map, recordings ---------------------------

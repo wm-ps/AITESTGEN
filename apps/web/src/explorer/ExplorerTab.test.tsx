@@ -171,3 +171,18 @@ describe('ExplorerTab for a viewer', () => {
     expect(screen.queryByLabelText('Your answer')).toBeNull()
   })
 })
+
+describe('ExplorerTab limit reached', () => {
+  it('says which limit paused the run and offers both ways on', async () => {
+    const { explorerApi } = await import('./explorerApi')
+    const paused = { ...run, status: 'paused' as const, headline: 'Reached the AI budget: $5.12 of $5.00', limit_reached: 'ai_budget' as const, ai_spent_usd: 5.12, ai_budget_usd: 5 }
+    vi.mocked(explorerApi.latestRun).mockResolvedValueOnce(paused)
+    const wrapUp = vi.spyOn(explorerApi, 'wrapUp').mockResolvedValue({ ...paused, status: 'queued' as const, limit_reached: null })
+    render(<ExplorerTab applicationId="a1" applicationName="FNOL" applicationUrl="https://x" />)
+    expect(await screen.findByText('Reached the AI budget: $5.12 of $5.00.')).toBeTruthy()
+    expect(screen.getByText(/AI \$5\.12/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Resume exploring' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: "Write scenarios from what's explored" }))
+    await waitFor(() => expect(wrapUp).toHaveBeenCalledWith('r1'))
+  })
+})

@@ -20,7 +20,7 @@ from urllib.parse import urljoin, urlsplit
 from explorer_core import ExplorerRun, ExplorerScreen, ExplorerTransition
 from sqlmodel import Session, col, select
 
-from explorer_worker import brain
+from explorer_worker import brain, limits
 from explorer_worker.browser import Eyes, Visit
 from explorer_worker.db import engine
 from explorer_worker.journal import Journal
@@ -100,13 +100,15 @@ async def understand_app(run_id: uuid.UUID, heartbeat: Callable[[], None]) -> st
         journal.event("action", "Signed in", "Got past the login screen")
         journal.update_run(status="understanding", headline="Looking around the app")
         seeded = seed_from_previous_run(run_id, journal)
+        run_limits = limits.of(run_id)  # Settings → Explorer limits (first look)
         branches = await _first_look(
             eyes,
             journal,
             target.notes,
             heartbeat,
             target.app_url,
-            budget=REVISIT_SCREENS if seeded else FIRST_LOOK_SCREENS,
+            budget=REVISIT_SCREENS if seeded else run_limits["first_look_max_screens"],
+            minutes=run_limits["first_look_time_limit_minutes"],
         )
         journal.update_run(branch_points=branches)
         return await _write_summary(journal, target.notes, target.app_name, branches)
@@ -129,9 +131,10 @@ async def _first_look(
     heartbeat: Callable[[], None],
     home_url: str | None = None,
     budget: int = FIRST_LOOK_SCREENS,
+    minutes: float = FIRST_LOOK_MINUTES,
 ) -> list[dict[str, Any]]:
     assert eyes.page is not None
-    deadline = time.monotonic() + FIRST_LOOK_MINUTES * 60
+    deadline = time.monotonic() + minutes * 60
     leads: list[Lead] = []
     tried: set[tuple[str, str]] = set()  # (label, from url pattern)
     seen_patterns: set[str] = set()

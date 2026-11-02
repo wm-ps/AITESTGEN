@@ -21,7 +21,7 @@ from pathlib import Path
 from explorer_core import ExplorerMission, ExplorerRecording, ExplorerRun, ExplorerScreen
 from sqlmodel import Session, col, select
 
-from explorer_worker import brain
+from explorer_worker import brain, limits
 from explorer_worker.browser import Eyes
 from explorer_worker.db import engine
 from explorer_worker.goal import ensure_scope, missions_in_goal, screens_in_goal
@@ -42,10 +42,11 @@ MAX_MISSIONS = 15
 TASK_PASSES = int(os.environ.get("EXPLORER_TASK_PASSES", "1"))
 
 
-def mission_cap(screen_count: int) -> int:
+def mission_cap(screen_count: int, most: int = MAX_MISSIONS) -> int:
     """Missions worth running for an app this size: a 20-screen app needs
-    about 10, not 15 (each one is a full walk through the app)."""
-    return max(6, min(MAX_MISSIONS, screen_count // 3 + 4))
+    about 10, not 15 (each one is a full walk through the app). `most` is the
+    run's "maximum missions" limit."""
+    return max(min(6, most), min(most, screen_count // 3 + 4))
 
 
 async def fast_forward(
@@ -109,7 +110,7 @@ async def plan_missions(run_id: uuid.UUID) -> int:
     )
     # Most important first, then only as many as the app's size warrants.
     planned.sort(key=lambda m: -(m.get("priority") if isinstance(m.get("priority"), int) else 3))
-    cap = mission_cap(len(screens))
+    cap = mission_cap(len(screens), limits.of(run_id)["max_missions"])
     planned = planned[:cap]
     with Session(engine) as session:
         for m in planned:
@@ -287,7 +288,8 @@ async def run_mission(
                     instructions=instructions,
                     known_screens=known,
                     # walking in from the start costs the steps a jump saved
-                    max_steps=MISSION_STEPS + (10 if stateful and not lead_in else 0),
+                    max_steps=limits.of(run_id)["steps_per_mission"]
+                    + (10 if stateful and not lead_in else 0),
                     stop_requested=stop_requested,
                     non_production=target.non_production,
                     ask=asker,
@@ -491,7 +493,8 @@ def _queue_follow_ups(
         new = missions_in_goal(new, {s.name: s.goal_fit for s in screens})
         # ponytail: two missions finishing at the same moment may both add the
         # same follow-up; a unique (run_id, title) constraint if that shows up.
-        room = max(0, MAX_MISSIONS - len(missions))
+        most = limits.of(journal.run_id)["max_missions"]
+        room = max(0, most - len(missions))
         for m in new[:room]:
             session.add(ExplorerMission(run_id=journal.run_id, priority=2, **m))
         session.commit()
@@ -501,7 +504,7 @@ def _queue_follow_ups(
         journal.event(
             "thought",
             f"Not explored: {len(new) - room} more way(s) forward",
-            f"The run has its {MAX_MISSIONS} missions: "
+            f"The run has its {most} missions: "
             + "; ".join(m["title"] for m in new[room:])[:800],
         )
 

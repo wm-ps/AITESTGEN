@@ -15,7 +15,7 @@ from workflows import (
     VerifyCredentialsResult,
 )
 
-from explorer_worker import breadth, hunt, missions, promote, reel, resume, tests_stage
+from explorer_worker import breadth, hunt, limits, missions, promote, reel, resume, tests_stage
 from explorer_worker.browser import Eyes
 from explorer_worker.journal import Journal
 from explorer_worker.understand import understand_app
@@ -137,16 +137,30 @@ async def plan_missions_activity(run_id: str) -> int:
 
 @activity.defn(name=QUEUED_MISSIONS_ACTIVITY)
 async def queued_missions_activity(run_id: str) -> list[str]:
+    # Between missions: past the AI budget or run time limit, the run pauses.
+    if not await limits.may_continue(uuid.UUID(run_id)):
+        return []
     return missions.queued_missions(uuid.UUID(run_id))
 
 
 @activity.defn(name=RUN_MISSION_ACTIVITY)
 async def run_mission_activity(run_id: str, mission_id: str) -> str:
+    # The run's mission time limit (Settings → Explorer limits), waiting for
+    # your answers included. None = no limit.
+    minutes = limits.of(uuid.UUID(run_id))["mission_time_limit_minutes"]
     try:
-        async with kept_alive():
+        async with kept_alive(), asyncio.timeout(minutes * 60 if minutes else None):
             return await missions.run_mission(
                 uuid.UUID(run_id), uuid.UUID(mission_id), activity.heartbeat
             )
+    except TimeoutError:
+        outcome = f"Stopped at the {minutes}-minute mission time limit"
+        journal = Journal(uuid.UUID(run_id), uuid.UUID(mission_id))
+        journal.event(
+            "phase", outcome, "Raise “Mission time limit” in Settings to give missions longer."
+        )
+        journal.update_mission(status="blocked", outcome=outcome)
+        return "blocked"
     except Exception as exc:
         # One mission failing never stops the others.
         logger.exception("explorer mission failed")
@@ -179,6 +193,9 @@ async def plan_tests_activity(run_id: str) -> int:
 
 @activity.defn(name=PLANNED_TESTS_ACTIVITY)
 async def planned_tests_activity(run_id: str) -> list[str]:
+    # Between scenarios: past the AI budget or run time limit, the run pauses.
+    if not await limits.may_continue(uuid.UUID(run_id)):
+        return []
     return tests_stage.planned_tests(uuid.UUID(run_id))
 
 

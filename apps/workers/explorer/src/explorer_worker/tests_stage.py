@@ -36,7 +36,7 @@ from explorer_core import (
 )
 from sqlmodel import Session, col, select
 
-from explorer_worker import brain, quality
+from explorer_worker import brain, limits, quality
 from explorer_worker.browser import Visit
 from explorer_worker.db import engine
 from explorer_worker.goal import ensure_scope, screens_in_goal
@@ -65,10 +65,10 @@ MAX_TESTS = 150
 SCREENS_PER_PLAN = 3
 
 
-def test_cap(screen_count: int) -> int:
+def test_cap(screen_count: int, most: int = MAX_TESTS) -> int:
     """Scenarios worth proving for an app this size (each one is proven by
     several full replays): enough for every checklist item a screen has, 10 to MAX_TESTS."""
-    return max(10, min(MAX_TESTS, 15 * screen_count))
+    return max(min(10, most), min(most, 15 * screen_count))
 
 
 # Replays without the model, in a clean browser, that must all pass before a
@@ -365,7 +365,8 @@ async def plan_tests(run_id: uuid.UUID) -> int:
                 )
             )
             kept += 1
-        tried = [(t, None) for t in balanced(reviewed, test_cap(len(screen_info)))]
+        cap = test_cap(len(screen_info), limits.of(run_id)["max_scenarios"])
+        tried = [(t, None) for t in balanced(reviewed, cap)]
         for t, reason in tried + [(planned[i], why) for i, why in skipped.items()]:
             kind = str(t.get("kind") or "")
             if kind not in TEST_KINDS or not t.get("title") or not t.get("expected"):
@@ -428,7 +429,7 @@ async def plan_tests(run_id: uuid.UUID) -> int:
                     )
                     checks += 1
         session.commit()
-    cap = test_cap(len(screen_info))
+    cap = test_cap(len(screen_info), limits.of(run_id)["max_scenarios"])
     journal.event(
         "phase",
         f"{kept} scenarios to try",
@@ -461,7 +462,8 @@ async def _prove_quality(
     results: list[list[str]] = []
     shot_id = None
     try:
-        for _ in range(max(1, PROOF_RUNS)):  # measured at least once
+        # Settings → "Proof replays"; measured at least once.
+        for _ in range(max(1, limits.of(journal.run_id)["proof_replays"])):
             found = await quality.measure(eyes, name, url)
             assert eyes.page is not None
             if not same_place(eyes.page.url, url):
@@ -566,6 +568,7 @@ async def build_and_prove(
     run_id: uuid.UUID, test_id: uuid.UUID, heartbeat: Callable[[], None]
 ) -> str:
     journal = Journal(run_id)
+    proof_runs = limits.of(run_id)["proof_replays"]  # Settings → "Proof replays"
     with Session(engine) as session:
         test = session.get(ExplorerTestCase, test_id)
         if test is None or test.status != "planned":
@@ -607,9 +610,9 @@ async def build_and_prove(
         "action",
         f"Scenario {done + 1} of {total}: {title}",
         (
-            f"First I try it once, then replay it {PROOF_RUNS} times to prove it works "
+            f"First I try it once, then replay it {proof_runs} times to prove it works "
             "the same way. "
-            if PROOF_RUNS
+            if proof_runs
             else "I try it once in the app (repeat runs are off). "
         )
         + (meta.get("how_to_run") or ""),
@@ -850,7 +853,7 @@ async def build_and_prove(
         passes, shot_id = 0, None
         try:
             failed_steps: list[str] = []
-            for attempt in range(PROOF_RUNS):
+            for attempt in range(proof_runs):
                 heartbeat()
                 failed_before = len(failed_steps)
                 if signed_out:
@@ -863,7 +866,8 @@ async def build_and_prove(
                         shot_id = journal.shot((await eyes.look(eyes.page.url, None, 0)).shot)
                 journal.event(
                     "action",
-                    f"Replay {attempt + 1} of {PROOF_RUNS}: {'worked' if worked else 'did not work'}",
+                    f"Replay {attempt + 1} of {proof_runs}: "
+                    f"{'worked' if worked else 'did not work'}",
                     None
                     if worked
                     else (
@@ -874,7 +878,7 @@ async def build_and_prove(
                 )
         finally:
             video = await eyes.close()
-            if video and Path(video).exists() and PROOF_RUNS:
+            if video and Path(video).exists() and proof_runs:
                 with Session(engine) as session:
                     session.add(
                         ExplorerRecording(
@@ -887,13 +891,13 @@ async def build_and_prove(
                     )
                     session.commit()
 
-    _update(test_id, proof_runs=PROOF_RUNS, proof_passes=passes, catches_breakage=catches)
-    if passes < PROOF_RUNS:
+    _update(test_id, proof_runs=proof_runs, proof_passes=passes, catches_breakage=catches)
+    if passes < proof_runs:
         return drop(
             journal,
             test_id,
             title,
-            f"Gave different results on repeat runs ({passes}/{PROOF_RUNS} passed)"
+            f"Gave different results on repeat runs ({passes}/{proof_runs} passed)"
             + (f" — it got stuck {failed_steps[0]}" if failed_steps else ""),
         )
     if shot_id is None:  # no repeat runs: the live run's end is the evidence
@@ -926,8 +930,8 @@ async def build_and_prove(
         f"{'Scenario ready' if matches else 'Possible bug'}: {title}",
         (
             (
-                f"Worked the same way {PROOF_RUNS} times. "
-                if PROOF_RUNS
+                f"Worked the same way {proof_runs} times. "
+                if proof_runs
                 else "Worked when tried (repeat runs are off). "
             )
             + f"It passes when the screen shows “{check['value']}”."

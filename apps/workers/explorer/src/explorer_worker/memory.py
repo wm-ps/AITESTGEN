@@ -10,6 +10,7 @@ when it doesn't (PLAN.md Step 6).
 """
 
 import asyncio
+import itertools
 import os
 import re
 import uuid
@@ -18,12 +19,15 @@ from collections.abc import Callable
 from explorer_core import ExplorerKnowledge, ExplorerMission, ExplorerQuestion, ExplorerRun
 from sqlmodel import Session, col, select
 
+from explorer_worker import limits
 from explorer_worker.db import engine
 from explorer_worker.journal import Journal
 
 FACTS_IN_PROMPT = 60
 # How long a mission pauses for your answer to a blocking question ("I need
-# this to continue", "May I press Send?"). 0 = never wait. "Is this a bug?"
+# this to continue", "May I press Send?") is the run's "question wait" limit
+# (Settings → Explorer limits; WAIT_MINUTES is the built-in for older runs).
+# 0 = never wait, None = until answered. "Is this a bug?"
 # questions never block; they are answered whenever you get to them.
 # An answer is remembered per app, so the same question is only waited on once.
 WAIT_MINUTES = int(os.environ.get("EXPLORER_WAIT_MINUTES", "10"))
@@ -162,7 +166,8 @@ async def ask(
             session.refresh(existing)
             journal.event("question", f"Question for you: {question}"[:300], why, shot_id)
         question_id = existing.id
-    if not wait or WAIT_MINUTES <= 0:
+    wait_minutes = limits.of(journal.run_id)["question_wait_minutes"]  # None = until answered
+    if not wait or (wait_minutes is not None and wait_minutes <= 0):
         # Every new question is emailed — you may not be watching the run.
         # One that doesn't block (e.g. "is this a bug?") says so.
         if is_new:
@@ -182,11 +187,14 @@ async def ask(
         await asyncio.to_thread(
             journal.email_starter,
             "Explorer has a question for you",
-            f"{question} Explorer will wait {WAIT_MINUTES} minutes for your answer, then "
-            "carry on without it.",
+            f"{question} Explorer will wait {wait_minutes} minutes for your answer, then "
+            "carry on without it."
+            if wait_minutes is not None
+            else f"{question} Explorer will wait for your answer before carrying on.",
         )
     try:
-        for _ in range(WAIT_MINUTES * 12):
+        checks = itertools.count() if wait_minutes is None else range(wait_minutes * 12)
+        for _ in checks:
             heartbeat()
             await asyncio.sleep(5)
             with Session(engine) as session:

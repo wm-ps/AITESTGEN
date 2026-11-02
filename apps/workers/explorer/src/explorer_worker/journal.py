@@ -21,6 +21,7 @@ from explorer_core import (
 from explorer_core.notify import send_pause_email
 from sqlmodel import Session, col, select
 
+from explorer_worker import llm
 from explorer_worker.db import engine
 from explorer_worker.sense import url_pattern
 
@@ -55,6 +56,7 @@ class Journal:
     def __init__(self, run_id: uuid.UUID, mission_id: uuid.UUID | None = None) -> None:
         self.run_id = run_id
         self.mission_id = mission_id
+        llm.RUN.set(run_id)  # model calls from here on count toward this run's AI spend
 
     def update_run(self, **changes: Any) -> None:
         with Session(engine) as session:

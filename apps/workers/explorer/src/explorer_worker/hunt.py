@@ -24,9 +24,10 @@ from explorer_core import ExplorerScreen
 from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Route
 
+from explorer_worker import limits
 from explorer_worker.browser import Eyes
-from explorer_worker.journal import Journal
 from explorer_worker.goal import screens_in_goal
+from explorer_worker.journal import Journal
 from explorer_worker.sense import url_pattern
 from explorer_worker.session import load_target, open_signed_in
 
@@ -167,6 +168,9 @@ async def hunt(run_id: uuid.UUID, heartbeat: Callable[[], None]) -> int:
     journal = Journal(run_id)
     if journal.status() == "stopped":
         return 0
+    if limits.of(run_id)["hidden_screen_search_minutes"] <= 0:
+        journal.event("thought", "Skipped the search for hidden screens", "Turned off in Settings.")
+        return 0
     target = load_target(run_id)
     screens = screens_in_goal(journal.screen_rows())  # with a goal, only screens inside it
     forms = [s for s in screens if s.view_kind in ("form", "wizard") and not s.condition][
@@ -187,7 +191,7 @@ async def hunt(run_id: uuid.UUID, heartbeat: Callable[[], None]) -> int:
     if eyes is None:
         return 0
     found = 0
-    deadline = time.monotonic() + HUNT_MINUTES * 60
+    deadline = time.monotonic() + limits.of(run_id)["hidden_screen_search_minutes"] * 60
     try:
         for screen in forms:
             if time.monotonic() > deadline or journal.status() == "stopped":

@@ -21,6 +21,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/domains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Domains */
+        get: operations["list_domains_domains_get"];
+        put?: never;
+        /** Add Domain */
+        post: operations["add_domain_domains_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/domains/{external_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Domain */
+        delete: operations["delete_domain_domains__external_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/domains/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Check Domain */
+        post: operations["check_domain_domains_check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/explorer/applications/{application_id}/runs/latest": {
         parameters: {
             query?: never;
@@ -248,6 +300,51 @@ export interface paths {
          *     included) from the step it reached; finished work is kept.
          */
         post: operations["resume_run_explorer_runs__run_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/explorer/runs/{run_id}/wrap-up": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Wrap Up Run
+         * @description "Write scenarios from what's explored": a paused, stopped or failed run
+         *     (typically one that reached its AI budget or run time) skips the exploring
+         *     it has left and writes and proves scenarios for what it has explored.
+         *     You chose it, so the AI budget and run time limit no longer apply.
+         */
+        post: operations["wrap_up_run_explorer_runs__run_id__wrap_up_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/explorer/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Explorer Settings */
+        get: operations["get_explorer_settings_explorer_settings_get"];
+        /**
+         * Update Explorer Settings
+         * @description New runs use these; a run going now keeps the limits it started with
+         *     (Resume picks up the new ones).
+         */
+        put: operations["update_explorer_settings_explorer_settings_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -607,6 +704,23 @@ export interface paths {
         get: operations["download_report_explorer_runs__run_id__report_download_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/explorer/applications/{application_id}/author": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Authoring */
+        post: operations["start_authoring_explorer_applications__application_id__author_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2215,11 +2329,21 @@ export interface components {
             discovery_coverage_summary?: {
                 [key: string]: number;
             } | null;
+            /**
+             * Domain Approved
+             * @default true
+             */
+            domain_approved: boolean;
         };
         /** ApplicationRenamePayload */
         ApplicationRenamePayload: {
             /** Name */
             name: string;
+        };
+        /** AuthorRequest */
+        AuthorRequest: {
+            /** Prompt */
+            prompt: string;
         };
         /** AutofillScenarioTestDataStatusRead */
         AutofillScenarioTestDataStatusRead: {
@@ -2320,6 +2444,47 @@ export interface components {
             /** Detail */
             detail?: string | null;
         };
+        /** DomainApplicationRead */
+        DomainApplicationRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** DomainCheckPayload */
+        DomainCheckPayload: {
+            /** Url */
+            url: string;
+        };
+        /** DomainCheckRead */
+        DomainCheckRead: {
+            /** Allowed */
+            allowed: boolean;
+            /** Host */
+            host: string | null;
+        };
+        /** DomainPayload */
+        DomainPayload: {
+            /** Host */
+            host: string;
+        };
+        /** DomainRead */
+        DomainRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Host */
+            host: string;
+            /** Created By */
+            created_by: string;
+            /** Applications */
+            applications: components["schemas"]["DomainApplicationRead"][];
+        };
         /** EventRead */
         EventRead: {
             /** Id */
@@ -2363,6 +2528,61 @@ export interface components {
             destructive_actions_permitted?: boolean | null;
             /** Video Capture Enabled */
             video_capture_enabled?: boolean | null;
+        };
+        /**
+         * ExplorerSettingsBody
+         * @description Every limit; None = no limit (where allowed).
+         */
+        ExplorerSettingsBody: {
+            /**
+             * Question Wait Minutes
+             * @default 30
+             */
+            question_wait_minutes: number | null;
+            /**
+             * Mission Time Limit Minutes
+             * @default 75
+             */
+            mission_time_limit_minutes: number | null;
+            /** Run Time Limit Minutes */
+            run_time_limit_minutes?: number | null;
+            /**
+             * First Look Time Limit Minutes
+             * @default 120
+             */
+            first_look_time_limit_minutes: number;
+            /**
+             * Hidden Screen Search Minutes
+             * @default 25
+             */
+            hidden_screen_search_minutes: number;
+            /** Ai Budget Usd */
+            ai_budget_usd?: number | null;
+            /**
+             * First Look Max Screens
+             * @default 150
+             */
+            first_look_max_screens: number;
+            /**
+             * Max Missions
+             * @default 15
+             */
+            max_missions: number;
+            /**
+             * Steps Per Mission
+             * @default 20
+             */
+            steps_per_mission: number;
+            /**
+             * Max Scenarios
+             * @default 150
+             */
+            max_scenarios: number;
+            /**
+             * Proof Replays
+             * @default 1
+             */
+            proof_replays: number;
         };
         /** ForgotPasswordRequest */
         ForgotPasswordRequest: {
@@ -2464,6 +2684,11 @@ export interface components {
             discovery_coverage_summary?: {
                 [key: string]: number;
             } | null;
+            /**
+             * Domain Approved
+             * @default true
+             */
+            domain_approved: boolean;
             /** Journey Count */
             journey_count: number;
             /** Scenario Count */
@@ -3003,6 +3228,17 @@ export interface components {
             brief_confirmed_at: string | null;
             /** Notes */
             notes: string | null;
+            /** Prompt */
+            prompt?: string | null;
+            /**
+             * Ai Spent Usd
+             * @default 0
+             */
+            ai_spent_usd: number;
+            /** Ai Budget Usd */
+            ai_budget_usd?: number | null;
+            /** Limit Reached */
+            limit_reached?: string | null;
             /** Error */
             error: string | null;
             /**
@@ -3062,6 +3298,11 @@ export interface components {
             test_data: components["schemas"]["ScenarioTestDataFieldRead"][];
             /** Test Data Complete */
             test_data_complete: boolean;
+            /**
+             * Has Login Fields
+             * @default false
+             */
+            has_login_fields: boolean;
         };
         /** ScenarioRenamePayload */
         ScenarioRenamePayload: {
@@ -3497,6 +3738,8 @@ export interface components {
             run_number: number;
             /** Name */
             name: string;
+            /** Suite Name */
+            suite_name?: string | null;
             /** Status */
             status: string;
             /** Trigger */
@@ -3700,6 +3943,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActivityPageRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_domains_domains_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_domain_domains_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DomainPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_domain_domains__external_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_domain_domains_check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DomainCheckPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainCheckRead"];
                 };
             };
             /** @description Validation Error */
@@ -4140,6 +4515,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    wrap_up_run_explorer_runs__run_id__wrap_up_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_explorer_settings_explorer_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExplorerSettingsBody"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_explorer_settings_explorer_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExplorerSettingsBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExplorerSettingsBody"];
                 };
             };
             /** @description Validation Error */
@@ -4919,6 +5393,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_authoring_explorer_applications__application_id__author_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuthorRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunRead"];
                 };
             };
             /** @description Validation Error */

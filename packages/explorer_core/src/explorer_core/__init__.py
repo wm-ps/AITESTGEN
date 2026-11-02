@@ -17,6 +17,7 @@ from explorer_core.models import (
     ExplorerRecording,
     ExplorerRun,
     ExplorerScreen,
+    ExplorerSettings,
     ExplorerShot,
     ExplorerTestCase,
     ExplorerTransition,
@@ -40,6 +41,7 @@ def run_workflow_name(run: ExplorerRun) -> str:
 
 
 __all__ = [
+    "ExplorerSettings",
     "run_workflow_name",
     "ExplorerAccess",
     "ExplorerRole",

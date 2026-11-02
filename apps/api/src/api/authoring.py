@@ -12,6 +12,7 @@ from explorer_core import (
     ExplorerRun,
     explorer_workflow_id,
 )
+from explorer_core.limits import snapshot as limits_snapshot
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlmodel import col, select
@@ -53,7 +54,12 @@ async def start_authoring(
     client = await get_temporal_client()
     if not await has_pollers(client, EXPLORER_TASK_QUEUE):
         raise HTTPException(status_code=503, detail="EXPLORER_UNAVAILABLE")
-    run = ExplorerRun(application_id=application.id, prompt=prompt[:8000], started_by_id=user.id)
+    run = ExplorerRun(
+        application_id=application.id,
+        prompt=prompt[:8000],
+        started_by_id=user.id,
+        limits=limits_snapshot(session),  # Settings → Explorer limits, as of now
+    )
     session.add(run)
     session.commit()
     session.refresh(run)
