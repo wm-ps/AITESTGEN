@@ -25,12 +25,16 @@ export function RecordAndPlay({
   applicationId,
   applicationName,
   applicationUrl,
+  requiresSignIn,
   onSaved,
   onCancelled,
 }: {
   applicationId: string
   applicationName: string
   applicationUrl: string
+  // false for an app connected with sign-in turned off — there's no login
+  // to record or start past, so the recording-mode choice isn't shown.
+  requiresSignIn: boolean
   onSaved: (message: string, saved: SavedResult) => void
   onCancelled: (message: string) => void
 }) {
@@ -59,11 +63,12 @@ export function RecordAndPlay({
     setPreConnectPhase('starting')
     setMintError(null)
     try {
-      const session = await api.createRecordingSession(applicationId, authMode, trimmedName)
+      const mode: RecordingAuthMode = requiresSignIn ? authMode : 'logged_out'
+      const session = await api.createRecordingSession(applicationId, mode, trimmedName)
       const popupUrl = buildRecordingSessionWindowUrl({
         vncWsUrl: session.vnc_ws_url,
         controlWsUrl: session.control_ws_url,
-        authMode,
+        authMode: mode,
         applicationName,
       })
       popupUrlRef.current = popupUrl
@@ -152,6 +157,7 @@ export function RecordAndPlay({
           <IdleState
             flowName={flowName}
             onFlowNameChange={setFlowName}
+            requiresSignIn={requiresSignIn}
             authMode={authMode}
             onAuthModeChange={setAuthMode}
             starting={stage === 'starting'}
@@ -180,6 +186,7 @@ export function RecordAndPlay({
 function IdleState({
   flowName,
   onFlowNameChange,
+  requiresSignIn,
   authMode,
   onAuthModeChange,
   starting,
@@ -187,6 +194,7 @@ function IdleState({
 }: {
   flowName: string
   onFlowNameChange: (name: string) => void
+  requiresSignIn: boolean
   authMode: RecordingAuthMode
   onAuthModeChange: (mode: RecordingAuthMode) => void
   starting: boolean
@@ -220,22 +228,24 @@ function IdleState({
           }}
         />
       </label>
-      <div role="radiogroup" aria-label="Recording mode" style={{ display: 'flex', gap: 10 }}>
-        <AuthModeOption
-          mode="logged_out"
-          selected={authMode === 'logged_out'}
-          onSelect={onAuthModeChange}
-          title="Record a login flow"
-          description="Start from a logged-out browser — your login steps become part of the test."
-        />
-        <AuthModeOption
-          mode="authenticated"
-          selected={authMode === 'authenticated'}
-          onSelect={onAuthModeChange}
-          title="Record an authenticated flow"
-          description="Start already signed in, using this application's stored credentials."
-        />
-      </div>
+      {requiresSignIn && (
+        <div role="radiogroup" aria-label="Recording mode" style={{ display: 'flex', gap: 10 }}>
+          <AuthModeOption
+            mode="logged_out"
+            selected={authMode === 'logged_out'}
+            onSelect={onAuthModeChange}
+            title="Record a login flow"
+            description="Start from a logged-out browser — your login steps become part of the test."
+          />
+          <AuthModeOption
+            mode="authenticated"
+            selected={authMode === 'authenticated'}
+            onSelect={onAuthModeChange}
+            title="Record an authenticated flow"
+            description="Start already signed in, using this application's stored credentials."
+          />
+        </div>
+      )}
       <button
         type="button"
         onClick={onStart}

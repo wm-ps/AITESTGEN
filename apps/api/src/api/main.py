@@ -3038,6 +3038,9 @@ def create_recording_session(
     user: CurrentUserDep,
 ) -> RecordingSessionMintRead:
     application = _get_org_application(session, organization_id, external_id)
+    # No stored credential to start signed in with.
+    if application.auth_method == "none" and payload.auth_mode == "authenticated":
+        raise HTTPException(status_code=422, detail="This application has no sign-in")
     recording_session, token = mint_recording_session(
         session,
         application_id=application.id,

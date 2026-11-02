@@ -479,6 +479,7 @@ function App() {
           applicationId={application.id}
           applicationName={application.name}
           applicationUrl={application.url}
+          requiresSignIn={application.auth_method !== 'none'}
           onSaved={(message, saved) => {
             setSuccessToast(message)
             setHighlightScenarioId(saved.scenarioExternalId)
