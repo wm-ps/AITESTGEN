@@ -4,7 +4,7 @@
   "meta": {
     "title": "AITestGen — System Architecture",
     "subtitle": "Crawling, invites, journeys/scenarios, test-suite generation & CI/CD",
-    "output": "aitestgen-architecture.html",
+    "output": "aitestgen-system-architecture.html",
     "views": [
       {
         "id": "crawl-to-journeys",

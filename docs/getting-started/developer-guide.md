@@ -362,4 +362,4 @@ git diff --exit-code apps/web/src/api-types.gen.ts   # must be clean
 
 ---
 
-*Questions or something out of date? This guide lives at `docs/DEVELOPER_GUIDE.md` — update it in the same PR that changes the behavior it describes.*
+*Questions or something out of date? This guide lives at `docs/getting-started/developer-guide.md` — update it in the same PR that changes the behavior it describes.*

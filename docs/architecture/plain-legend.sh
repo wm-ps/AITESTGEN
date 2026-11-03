@@ -1,7 +1,7 @@
 #!/bin/sh
 # Archify's legend always says Frontend/Database; swap in plain words for slides.
-# Rerun after every `archify deliver` of vantage-product-flow.architecture.json.
-f="${1:-$(dirname "$0")/vantage-product-flow.html}"
+# Rerun after every `archify deliver` of vantage-how-it-works.architecture.json.
+f="${1:-$(dirname "$0")/vantage-how-it-works.html}"
 sed -i \
  -e 's|y="533" class="t-primary" font-size="9" font-weight="600">Legend</text>|y="528" class="t-primary" font-size="11" font-weight="600">Key</text>|' \
  -e 's|<rect x="40" y="538" width="14" height="9"|<rect x="40" y="536" width="18" height="12"|' \

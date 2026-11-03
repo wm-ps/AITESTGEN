@@ -1,6 +1,7 @@
 # Vantage Explorer — what's built and how to run it
 
 The plan is in [PLAN.md](PLAN.md). This page covers what exists today.
+New to Explorer? Start with [how-explorer-works.html](how-explorer-works.html), a visual walkthrough of every stage, from the first look to test cases.
 
 ## Stage 1 (built): "Get to know the app"
 

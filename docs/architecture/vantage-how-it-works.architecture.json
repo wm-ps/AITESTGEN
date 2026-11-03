@@ -4,7 +4,7 @@
   "meta": {
     "title": "Vantage — How It Works",
     "subtitle": "Follow left to right: blue boxes are what you do, purple boxes Vantage does for you",
-    "output": "vantage-product-flow.html",
+    "output": "vantage-how-it-works.html",
     "visual_preset": "signal-flow",
     "animation": "trace",
     "quality_profile": "showcase",

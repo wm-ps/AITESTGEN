@@ -1,7 +1,7 @@
 # Discovery Engine v2 — How Crawling Works
 
 **Status:** design spine for Epic 2 Stories 2.9–2.22.
-**Supersedes:** the crawl-mechanics half of `EPIC_2_DISCOVERY_PIPELINE.md` (the
+**Supersedes:** the crawl-mechanics half of `docs/crawler/discovery-pipeline-epic-2.md` (the
 Journey-inference half of that document is unchanged and still authoritative).
 **Written:** 2026-08-03, replacing the 2026-07-29 story batch after a
 feasibility review.

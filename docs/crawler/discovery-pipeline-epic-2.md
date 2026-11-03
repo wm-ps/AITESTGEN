@@ -1,6 +1,6 @@
 # 🔎 Epic 2 — The Discovery Pipeline (Stories 2.1–2.5)
 
-> **Companion to `DEVELOPER_GUIDE.md`.** That doc is the general onboarding
+> **Companion to `docs/getting-started/developer-guide.md`.** That doc is the general onboarding
 > path (bring the stack up, sign in, connect an Application). This doc is a
 > deep dive into *what happens after* an Application is connected — the fully
 > autonomous pipeline that turns a live URL and some credentials into

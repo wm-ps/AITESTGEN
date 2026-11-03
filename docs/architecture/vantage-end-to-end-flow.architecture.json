@@ -4,7 +4,7 @@
   "meta": {
     "title": "Vantage — End-to-End Flow",
     "subtitle": "Discover the app, LLM drafts the tests from its metadata, you validate at each gate, then run",
-    "output": "aitestgen-flow.html",
+    "output": "vantage-end-to-end-flow.html",
     "quality_profile": "showcase",
     "visual_preset": "editorial"
   },

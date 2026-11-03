@@ -4,7 +4,7 @@
   "meta": {
     "title": "Vantage — Platform Architecture & Test Flows",
     "subtitle": "Discovery, NL authoring, record & play, scheduled runs, and project download",
-    "output": "vantage-flow.html",
+    "output": "vantage-platform-and-test-flows.html",
     "visual_preset": "signal-flow",
     "animation": "trace",
     "quality_profile": "showcase",

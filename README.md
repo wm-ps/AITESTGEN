@@ -3,7 +3,7 @@
 Monorepo for the AITestGen platform — automated discovery, test-scenario
 generation, and Playwright execution against onboarded applications.
 
-> 📘 **New to this codebase? Read the [Developer Guide](docs/DEVELOPER_GUIDE.md)** —
+> 📘 **New to this codebase? Read the [Developer Guide](docs/getting-started/developer-guide.md)** —
 > it explains what each module does, where it deploys, the core architecture rules,
 > and a step-by-step runbook for bringing the whole stack up locally.
 

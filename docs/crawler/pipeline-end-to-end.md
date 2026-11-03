@@ -1,6 +1,6 @@
 # AITestGen — the real pipeline, end to end
 
-> **Why this doc exists.** `docs/DEVELOPER_GUIDE.md` describes Discovery as a
+> **Why this doc exists.** `docs/getting-started/developer-guide.md` describes Discovery as a
 > "no-op shell" and Generation as a "no-op stub" — that was true at Stories
 > 1.1–1.3 and is no longer true. Everything below was read directly from the
 > current code (not `_bmad/`, `_bmad-output/`, or any other planning doc,
@@ -475,4 +475,4 @@ session open across an AI-call `await`.
 | How does a test run actually execute? | `apps/workers/execution/src/execution_worker/activities.py` |
 
 *Something here go stale? Fix it in the same PR that changes the behavior —
-same rule as `docs/DEVELOPER_GUIDE.md`.*
+same rule as `docs/getting-started/developer-guide.md`.*

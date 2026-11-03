@@ -110,7 +110,7 @@ crawler + AI inference activities, `discovery-task-queue`),
 External concerns (LLM vendor, secrets store, delivery/CI integrations) sit
 behind fixed Python `Protocol` interfaces in dedicated `packages/*` — core
 code never imports a vendor SDK directly. Quoted:
-`docs/DEVELOPER_GUIDE.md:54-55` — *"external concerns (AI vendors, secret
+`docs/getting-started/developer-guide.md:54-55` — *"external concerns (AI vendors, secret
 stores) live behind fixed `Protocol` interfaces. The core never imports a
 vendor SDK directly."*
 
@@ -207,7 +207,7 @@ executed by a **worker** process; the workflow class itself never touches the
 DB/network/browser directly.
 
 **Why:** *"Temporal replays workflow code to recover from failure; any I/O
-inside a workflow breaks determinism"* (`docs/DEVELOPER_GUIDE.md:145`).
+inside a workflow breaks determinism"* (`docs/getting-started/developer-guide.md:145`).
 Verified true for the workflow files actually read for this doc
 (`execution_workflow.py`, `discovery_workflow.py`,
 `suite_generation_workflow.py`) — each is orchestration-only `asyncio.gather`
@@ -257,7 +257,7 @@ plaintext.
 (`auth.py:90-96`), a FastAPI dependency every org-scoped router depends on.
 This is **Architecture Decision AD-12**.
 
-**Why, quoted** (`docs/DEVELOPER_GUIDE.md:149`): *"Every `apps/api` query is
+**Why, quoted** (`docs/getting-started/developer-guide.md:149`): *"Every `apps/api` query is
 scoped to the signed-in user's Organization through **one** central
 mechanism..., never re-implemented per endpoint. — The only thing standing
 between one customer's data and another's."*
@@ -603,7 +603,7 @@ persistence/resume, locator-durability capture, and coverage-report
 diagnostics — on top of the original Story 2.1-2.6 crawl (plain BFS + generic
 settle waits, no planner/safety layer). `docs/DISCOVERY_ENGINE_V2.md`
 documents this and self-describes as superseding "the crawl-mechanics half"
-of the older `docs/EPIC_2_DISCOVERY_PIPELINE.md` (the Journey-inference half
+of the older `docs/crawler/discovery-pipeline-epic-2.md` (the Journey-inference half
 of that older doc is still described as accurate).
 
 ### What happens when the crawler gets stuck (needs data it doesn't have, or a destructive action needs approval)?
@@ -1389,7 +1389,7 @@ still say AITestGen — cosmetic drift only, not a product-truth conflict."*
 ## Architecture Decision (AD) rule registry
 
 Numbered rules cited throughout the codebase (grep-collected across `docs/`,
-`packages/`, and `apps/` — `docs/DEVELOPER_GUIDE.md`'s own table only lists a
+`packages/`, and `apps/` — `docs/getting-started/developer-guide.md`'s own table only lists a
 partial set and is stale in multiple, specific ways, verified line-by-line
 against current code:
 - Says "Current state: Stories 1.1–1.3" and calls `DiscoveryWorkflow`/
