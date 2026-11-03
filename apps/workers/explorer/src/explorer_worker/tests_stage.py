@@ -13,6 +13,7 @@
 """
 
 import asyncio
+import logging
 import os
 import re
 import tempfile
@@ -60,6 +61,8 @@ from explorer_worker.testkit import (
     playwright_code,
     replay,
 )
+
+logger = logging.getLogger(__name__)
 
 MAX_TESTS = 150
 SCREENS_PER_PLAN = 3
@@ -322,6 +325,7 @@ async def plan_tests(run_id: uuid.UUID) -> int:
     try:
         verdicts = await brain.review_plan(planned, screen_info, links, missions)
     except Exception:  # noqa: BLE001 — the review only saves time; never block planning
+        logger.warning("run %s: plan review failed, trying every idea", run_id, exc_info=True)
         verdicts = []
     skipped = left_out(planned, verdicts)
     if skipped:

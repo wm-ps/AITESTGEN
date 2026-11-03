@@ -185,7 +185,9 @@ class AuthoringRunWorkflow:
                     parent_close_policy=workflow.ParentClosePolicy.ABANDON,
                 )
             except Exception:  # noqa: BLE001 — "Generate tests" can still do it
-                workflow.logger.warning("authoring: test-case generation did not finish")
+                workflow.logger.warning(
+                    "authoring: test-case generation did not finish", exc_info=True
+                )
 
     async def _bonus(
         self, activity: str, run_id: str, timeout: timedelta, heartbeat: bool = True

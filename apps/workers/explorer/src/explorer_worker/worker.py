@@ -11,6 +11,7 @@ from explorer_core import EXPLORER_TASK_QUEUE
 from temporalio.client import Client
 from temporalio.worker import Worker
 from workflows import VerifyCredentialsWorkflow
+from workflows.activity_logging import ActivityLogging
 
 from explorer_worker.activities import (
     breadth_activity,
@@ -43,10 +44,13 @@ MAX_CONCURRENT_ACTIVITIES = int(os.environ.get("EXPLORER_WORKER_MAX_CONCURRENT_A
 
 
 async def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     client = await Client.connect(TEMPORAL_ADDRESS)
     worker = Worker(
         client,
+        interceptors=[ActivityLogging()],  # start / done / failed + timing, every activity
         task_queue=EXPLORER_TASK_QUEUE,
         # Also the "Start discovery" login pre-flight: Explorer does discovery.
         # Authoring (a user's request) runs on Explorer too, on its own path.

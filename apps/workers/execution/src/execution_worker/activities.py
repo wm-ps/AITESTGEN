@@ -1179,6 +1179,26 @@ def _persist_test_result_sync(
         test_result.completed_at = datetime.now(UTC)
         session.add(test_result)
         session.flush()
+        # Every outcome in the worker log; a failure with its error, so a
+        # deployed run can be diagnosed from the logs alone.
+        passed = test_result.status in ("passed", "healed")
+        logger.log(
+            logging.INFO if passed else logging.WARNING,
+            "test_run_id=%s test_result_id=%s app=%s spec=%s status=%s duration_ms=%s%s",
+            test_run_id,
+            test_result.external_id,
+            getattr(context.application, "name", "-"),
+            context.spec_path,
+            test_result.status,
+            test_result.duration_ms,
+            ""
+            if passed
+            else (
+                f" blocked_reason={test_result.blocked_reason or '-'}\n"
+                f"  error: {(test_result.error_message or '-')[:2000]}\n"
+                f"  stack: {(test_result.stack_trace or '-')[:2000]}"
+            ),
+        )
 
         # A heal attempt reruns this same TestResult for real — each rerun
         # would otherwise pile its own screenshot/trace on top of every

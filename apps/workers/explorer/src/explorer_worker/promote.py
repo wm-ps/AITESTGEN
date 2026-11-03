@@ -18,6 +18,7 @@ but are no longer `current`.
 
 import asyncio
 import json
+import logging
 import re
 import uuid
 from datetime import UTC, datetime
@@ -47,6 +48,8 @@ from explorer_worker.db import engine
 from explorer_worker.journal import Journal
 from explorer_worker.missions import one_at_a_time
 from explorer_worker.session import needs_sign_in
+
+logger = logging.getLogger(__name__)
 
 MAX_STEPS = 12
 # Vantage's scenario types: positive flows vs. rule/error checks.
@@ -147,6 +150,7 @@ def _promote(run_id: uuid.UUID) -> dict[str, int]:
         try:
             store = ObjectStore()
         except Exception:
+            logger.warning("object store unavailable: no screenshots for screens", exc_info=True)
             store = None
         page_for_screen: dict[uuid.UUID, uuid.UUID] = {}
         scenarios = 0
@@ -195,6 +199,7 @@ def _promote(run_id: uuid.UUID) -> dict[str, int]:
                                     shot.data, discovery_run.id, content_type="image/jpeg"
                                 )
                             except Exception:
+                                logger.warning("screenshot upload failed", exc_info=True)
                                 key = None
                     page = Page(
                         application_id=application.id,

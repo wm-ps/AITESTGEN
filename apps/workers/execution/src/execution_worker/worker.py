@@ -45,6 +45,7 @@ from workflows import (
     ReconcileStaleTestRunsWorkflow,
     ScheduledExecutionWorkflow,
 )
+from workflows.activity_logging import ActivityLogging
 
 from execution_worker.activities import (
     cleanup_cancelled_test_run_activity,
@@ -74,7 +75,9 @@ MAX_CONCURRENT_ACTIVITIES = int(os.environ.get("EXECUTION_WORKER_MAX_CONCURRENT_
 
 
 async def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     # A directory left behind by a run that crashed before its own
     # FinalizeTestRunActivity could clean up after itself — swept once at
     # startup rather than left to accumulate indefinitely.
@@ -82,6 +85,7 @@ async def main() -> None:
     client = await Client.connect(TEMPORAL_ADDRESS)
     worker = Worker(
         client,
+        interceptors=[ActivityLogging()],  # start / done / failed + timing, every activity
         task_queue=EXECUTION_TASK_QUEUE,
         workflows=[
             ApplicationTestExecutionWorkflow,

@@ -62,6 +62,7 @@ async def kept_alive() -> AsyncIterator[None]:
 
 def _fail_run(run_id: uuid.UUID, exc: Exception) -> str:
     reason = (str(exc).splitlines() or [type(exc).__name__])[0][:300]
+    logger.error("run %s failed", run_id, exc_info=exc)  # the full traceback, for the logs
     journal = Journal(run_id)
     journal.event("error", "Exploration stopped unexpectedly", reason)
     journal.update_run(status="failed", headline="Exploration stopped unexpectedly", error=reason)

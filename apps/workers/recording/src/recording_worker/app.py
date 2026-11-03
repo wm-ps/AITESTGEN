@@ -31,6 +31,11 @@ from recording_worker.tokens import (
 )
 
 logger = logging.getLogger(__name__)
+# Uvicorn only sets up its own loggers: without this, recording_worker's
+# info and warning lines never reach the pod log.
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+)
 
 app = FastAPI(title="Record and Play — recording service")
 _registry = SessionRegistry()

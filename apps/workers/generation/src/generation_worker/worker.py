@@ -24,6 +24,7 @@ from workflows import (
     RegenerateTestAssetWorkflow,
     SuiteGenerationWorkflow,
 )
+from workflows.activity_logging import ActivityLogging
 
 from generation_worker.activities import (
     autofill_scenario_test_data_activity,
@@ -53,10 +54,13 @@ LIVE_EXPLORATION_MAX_CONCURRENT_ACTIVITIES = int(
 
 
 async def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s: %(message)s")
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
     client = await Client.connect(TEMPORAL_ADDRESS)
     worker = Worker(
         client,
+        interceptors=[ActivityLogging()],  # start / done / failed + timing, every activity
         task_queue=GENERATION_TASK_QUEUE,
         workflows=[
             GenerationWorkflow,
@@ -83,6 +87,7 @@ async def main() -> None:
     )
     live_exploration_worker = Worker(
         client,
+        interceptors=[ActivityLogging()],  # start / done / failed + timing, every activity
         task_queue=LIVE_EXPLORATION_TASK_QUEUE,
         activities=[live_explore_activity, live_heal_activity],
         max_concurrent_activities=LIVE_EXPLORATION_MAX_CONCURRENT_ACTIVITIES,

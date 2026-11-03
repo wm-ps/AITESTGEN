@@ -3,6 +3,7 @@ way both the first look and every mission get in."""
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from dataclasses import dataclass
@@ -19,6 +20,8 @@ from explorer_worker.db import engine
 from explorer_worker.journal import Journal
 from explorer_worker.memory import known_facts
 from explorer_worker.sense import same_place
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -46,6 +49,7 @@ def needs_sign_in(auth_method: str, secret_ref: str, requires_login: bool = True
     try:
         creds = json.loads(VaultSecretsClient().resolve(SecretRef(path=secret_ref)))
     except Exception:
+        logger.warning("could not read saved login %s; assuming sign-in", secret_ref, exc_info=True)
         return True
     return bool(str(creds.get("username") or "").strip())
 
