@@ -24,7 +24,8 @@ const columnHeaderLabelStyle: React.CSSProperties = {
   letterSpacing: '0.05em',
 }
 
-const SCHEDULE_ROW_GRID_TEMPLATE = 'minmax(160px,2fr) minmax(120px,1.3fr) minmax(120px,1.2fr) 70px 32px'
+const SCHEDULE_ROW_GRID_TEMPLATE =
+  'minmax(160px,2fr) minmax(120px,1.3fr) minmax(110px,1fr) minmax(120px,1.2fr) 70px 32px'
 
 // Self-contained on/off control — doubles as the status indicator (no
 // separate "Enabled"/"Disabled" pill needed alongside it, the switch's own
@@ -346,6 +347,7 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
           >
             <div style={columnHeaderLabelStyle}>Schedule</div>
             <div style={columnHeaderLabelStyle}>Cadence</div>
+            <div style={columnHeaderLabelStyle}>Environment</div>
             <div style={columnHeaderLabelStyle}>Next run</div>
             <div style={columnHeaderLabelStyle}>Enabled</div>
             <div />
@@ -374,6 +376,9 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
               </div>
               <div style={{ fontSize: 12.5, color: 'var(--fg-3)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {schedule.cadence_label}
+              </div>
+              <div style={{ fontSize: 12.5, color: 'var(--fg-2)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={schedule.environment_name}>
+                {schedule.environment_name || '—'}
               </div>
               <div className="caption" style={{ fontSize: 12 }}>
                 {schedule.next_run_at ? formatDateTime(schedule.next_run_at) : '—'}

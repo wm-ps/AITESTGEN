@@ -81,6 +81,20 @@ class Schedule(SQLModel, table=True):
     # offset silently breaks across DST, a zone name does not.
     time_zone: str = Field(sa_column=Column(String, nullable=False))
 
+    # Environment this schedule's runs target; NULL = the Application's own
+    # (default) environment, so every existing schedule keeps today's behavior.
+    # RESTRICT: an environment a live schedule uses can't be deleted (the API
+    # detaches soft-deleted schedules first, since those no longer fire).
+    environment_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey("application_environment.id", ondelete="RESTRICT"),
+            nullable=True,
+            index=True,
+        ),
+    )
+
     enabled: bool = Field(default=True, sa_column=Column(Boolean, nullable=False))
     # Deterministic, derived once at create time from `external_id`
     # (f"app-schedule-{external_id}") and never rewritten — so the handle

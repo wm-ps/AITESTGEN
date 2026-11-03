@@ -4,6 +4,7 @@ import { faChevronRight, faDownload, faFolderTree } from '@fortawesome/free-soli
 import { api, type TestSuiteRead } from '../../api'
 import { SkeletonRows } from '../Skeleton'
 import { DownloadIllustration, EmptyState } from '../EmptyState'
+import { DownloadEnvironmentDialog } from '../environments/DownloadEnvironmentDialog'
 
 // Same slug rule the exporter itself uses (sanitize_slug: lowercase,
 // non-alphanumerics to hyphens) — approximate here since the real slugs are
@@ -19,8 +20,8 @@ const VISIBLE_SUITES = 6
 
 export function DownloadTab({ applicationId, applicationName }: { applicationId: string; applicationName: string }) {
   const [suites, setSuites] = useState<TestSuiteRead[] | null>(null)
-  const [downloading, setDownloading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  // The button opens a dialog to pick the environment the project is built for.
+  const [dialogOpen, setDialogOpen] = useState(false)
   const [showAllSuites, setShowAllSuites] = useState(false)
   const [expandedSuiteIds, setExpandedSuiteIds] = useState<Set<string>>(new Set())
 
@@ -48,18 +49,6 @@ export function DownloadTab({ applicationId, applicationName }: { applicationId:
     }
   }, [applicationId])
 
-  async function handleDownload() {
-    setError(null)
-    setDownloading(true)
-    try {
-      await api.downloadTestSuiteProject(applicationId)
-    } catch {
-      setError('Could not download the project. Try again.')
-    } finally {
-      setDownloading(false)
-    }
-  }
-
   const specCount = suites?.reduce((n, s) => n + s.test_cases.length, 0) ?? 0
   const hasSuites = suites === null || suites.length > 0
 
@@ -73,8 +62,8 @@ export function DownloadTab({ applicationId, applicationName }: { applicationId:
         {hasSuites && (
           <button
             type="button"
-            onClick={handleDownload}
-            disabled={downloading}
+            onClick={() => setDialogOpen(true)}
+            aria-haspopup="dialog"
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -87,21 +76,18 @@ export function DownloadTab({ applicationId, applicationName }: { applicationId:
               fontSize: 13.5,
               fontWeight: 600,
               border: 'none',
-              cursor: downloading ? 'not-allowed' : 'pointer',
-              opacity: downloading ? 0.6 : 1,
+              cursor: 'pointer',
               boxShadow: 'var(--accent-glow)',
               whiteSpace: 'nowrap',
             }}
           >
             <FontAwesomeIcon icon={faDownload} style={{ fontSize: 12 }} />
-            {downloading ? 'Downloading…' : 'Download project'}
+            Download zip
           </button>
         )}
       </div>
-      {error && (
-        <p role="alert" style={{ color: 'var(--bad)', fontSize: 13, margin: 0 }}>
-          {error}
-        </p>
+      {dialogOpen && (
+        <DownloadEnvironmentDialog applicationId={applicationId} onClose={() => setDialogOpen(false)} />
       )}
 
       {suites !== null && suites.length === 0 ? (

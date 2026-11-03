@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faClock, faDownload, faFlaskVial, faGauge, faTableList } from '@fortawesome/free-solid-svg-icons'
-import { ApiError, api, type TestRunRead } from '../../api'
+import { faClock, faDownload, faFlaskVial, faGauge, faSliders, faTableList } from '@fortawesome/free-solid-svg-icons'
+import { ApiError, api, type EnvironmentRead, type TestRunRead } from '../../api'
 import { AppIdentityLine } from '../AppIdentityLine'
 import { ServiceErrorNote } from '../ServiceError'
 import { Toast } from '../Toast'
 import { useCanEdit } from '../../PermissionsContext'
+import { AddEnvironmentDialog } from '../environments/AddEnvironmentDialog'
+import { EnvironmentsProvider, useEnvironmentList } from '../environments/EnvironmentsContext'
+import { AppSettingsTab } from './AppSettingsTab'
 import { CancelRunButton } from './CancelRunDialog'
 import { DownloadTab } from './DownloadTab'
 import { OverviewTab } from './OverviewTab'
@@ -15,7 +18,7 @@ import { SchedulesTab } from './SchedulesTab'
 import { TestSuiteTab } from './TestSuiteTab'
 import { RunsTab } from './RunsTab'
 
-export type WorkspaceTab = 'overview' | 'suite' | 'runs' | 'schedules' | 'export'
+export type WorkspaceTab = 'overview' | 'suite' | 'runs' | 'schedules' | 'export' | 'settings'
 
 // Matches the prototype's per-application nav (fa-gauge/fa-table-list/
 // fa-flask-vial/fa-clock/fa-download), replacing the previous hand-drawn SVGs.
@@ -39,6 +42,10 @@ function DownloadIcon() {
   return <FontAwesomeIcon icon={faDownload} style={{ fontSize: 15 }} />
 }
 
+function SettingsIcon() {
+  return <FontAwesomeIcon icon={faSliders} style={{ fontSize: 15 }} />
+}
+
 const RUN_IS_ACTIVE = (status: string) => status === 'pending' || status === 'running'
 const RUN_POLL_MS = 2000
 
@@ -50,6 +57,7 @@ export const WORKSPACE_TABS: { key: WorkspaceTab; label: string; heading: string
   { key: 'runs', label: 'Test runs', heading: 'Test runs', icon: RunsIcon },
   { key: 'schedules', label: 'Schedules', heading: 'Schedules', icon: SchedulesIcon },
   { key: 'export', label: 'Download project', heading: 'Download project', icon: DownloadIcon },
+  { key: 'settings', label: 'Application settings', heading: 'Application settings', icon: SettingsIcon },
 ]
 
 export function Workspace({
@@ -116,6 +124,15 @@ export function Workspace({
   // hasRunEver above.
   const [hasTestsGenerated, setHasTestsGenerated] = useState(false)
   const canEdit = useCanEdit()
+  // The application's environments (the first is its own, default one) — shared
+  // with every picker below and Application settings through the provider.
+  const { environments, refresh: refreshEnvironments } = useEnvironmentList(applicationId)
+  const defaultEnvironment = environments.find((environment) => environment.is_default)
+  // Set while the Add environment dialog is open; `onAdded` lets the picker
+  // that asked for it select the new environment straight away.
+  const [addEnvironment, setAddEnvironment] = useState<{
+    onAdded?: (environment: EnvironmentRead) => void
+  } | null>(null)
   const [triggerError, setTriggerError] = useState<string | null>(null)
   const [triggerErrorUnavailable, setTriggerErrorUnavailable] = useState(false)
   const [running, setRunning] = useState(false)
@@ -127,6 +144,8 @@ export function Workspace({
   // Run Suite Flow: "Run Journey(s)…" wizard, opened from this page's
   // toolbar RunSuiteButton.
   const [journeysDialogOpen, setJourneysDialogOpen] = useState(false)
+  // The environment chosen in the Run dialog, carried into the selective-run wizard.
+  const [journeysEnvironmentId, setJourneysEnvironmentId] = useState<string | null>(null)
   // Snapshotted at mount — App.tsx only ever mounts this component fresh
   // right after a "Run All Tests" click, so the effect below should fire
   // (or not) based on that one moment, not re-run if the prop identity
@@ -193,7 +212,11 @@ export function Workspace({
     }
   }, [applicationId])
 
-  async function handleRunSuite(journeyRun?: { suiteName: string; testCaseIds: string[] }) {
+  // `environmentId` null/omitted = the application's own (default) environment.
+  async function handleRunSuite(
+    journeyRun?: { suiteName: string; testCaseIds: string[] },
+    environmentId?: string | null,
+  ) {
     setRunning(true)
     setTriggerError(null)
     setTriggerErrorUnavailable(false)
@@ -201,8 +224,13 @@ export function Workspace({
     try {
       await api.triggerTestRun(
         applicationId,
-        journeyRun
-          ? { suite_name: journeyRun.suiteName, test_case_ids: journeyRun.testCaseIds }
+        journeyRun || environmentId
+          ? {
+              ...(journeyRun
+                ? { suite_name: journeyRun.suiteName, test_case_ids: journeyRun.testCaseIds }
+                : {}),
+              ...(environmentId ? { environment_id: environmentId } : {}),
+            }
           : undefined,
       )
       suppressReenableUntilRef.current = Date.now() + 5000
@@ -245,6 +273,15 @@ export function Workspace({
   }, [hasRunEver, hasTestsGenerated])
 
   return (
+    <EnvironmentsProvider
+      value={{
+        environments,
+        refresh: refreshEnvironments,
+        requestAdd: (onAdded) => setAddEnvironment({ onAdded }),
+        // Not for a viewer, and not for an SSO-session app (see environments.py).
+        canAdd: canEdit && !!defaultEnvironment && defaultEnvironment.auth_method !== 'sso_session_reuse',
+      }}
+    >
     <main style={{ display: 'flex', flex: 1, minHeight: 0 }}>
       <div style={{ maxWidth: 1560, margin: '0 auto', width: '100%' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
@@ -266,8 +303,11 @@ export function Workspace({
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>
               <RunSuiteButton
                 running={running}
-                onFullSuite={() => handleRunSuite()}
-                onOpenJourneysDialog={() => setJourneysDialogOpen(true)}
+                onFullSuite={(environmentId) => handleRunSuite(undefined, environmentId)}
+                onOpenJourneysDialog={(environmentId) => {
+                  setJourneysEnvironmentId(environmentId)
+                  setJourneysDialogOpen(true)
+                }}
               />
               {running && (
                 <CancelRunButton
@@ -317,6 +357,7 @@ export function Workspace({
         )}
         {activeTab === 'schedules' && <SchedulesTab applicationId={applicationId} />}
         {activeTab === 'export' && <DownloadTab applicationId={applicationId} applicationName={applicationName} />}
+        {activeTab === 'settings' && <AppSettingsTab applicationId={applicationId} />}
         {activeTab === 'runs' && (
           <RunsTab
             applicationId={applicationId}
@@ -338,10 +379,24 @@ export function Workspace({
           onClose={() => setJourneysDialogOpen(false)}
           onExecute={(suiteName, testCaseIds) => {
             setJourneysDialogOpen(false)
-            handleRunSuite({ suiteName, testCaseIds })
+            handleRunSuite({ suiteName, testCaseIds }, journeysEnvironmentId)
+          }}
+        />
+      )}
+
+      {addEnvironment && defaultEnvironment && (
+        <AddEnvironmentDialog
+          applicationId={applicationId}
+          defaultEnvironment={defaultEnvironment}
+          onClose={() => setAddEnvironment(null)}
+          onAdded={async (environment) => {
+            await refreshEnvironments()
+            addEnvironment.onAdded?.(environment)
+            setAddEnvironment(null)
           }}
         />
       )}
     </main>
+    </EnvironmentsProvider>
   )
 }

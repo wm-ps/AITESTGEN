@@ -23,6 +23,7 @@ from domain import (
     Action,
     ApiEndpoint,
     Application,
+    ApplicationEnvironment,
     AuthMethod,
     Component,
     ComponentLocator,
@@ -50,6 +51,8 @@ from domain import (
     TestSuite,
     aggregation_key,
     apply_test_run_cancel,
+    effective_application,
+    find_environment,
     lock_test_run,
 )
 from domain.login_fields import is_login_field, visible_fields
@@ -149,6 +152,7 @@ from api.discovery import (
     resume_discovery_run,
     start_discovery_run,
 )
+from api.environments import router as environments_router
 from api.explorer import router as explorer_router
 from api.authoring import router as authoring_router
 from api.invites import InviteAcceptError, accept_invite, create_invite, send_invite_email
@@ -225,6 +229,8 @@ SessionDep = Annotated[Session, Depends(get_session)]
 
 app.include_router(activity_router)
 app.include_router(approved_domains_router)
+# Application Settings → Environments (environments.py).
+app.include_router(environments_router)
 # Vantage Explorer (docs/vantage-explorer/PLAN.md) — standalone module.
 app.include_router(explorer_router)
 # Authoring: test cases from a user's request, run by Explorer (authoring.py).
@@ -1171,6 +1177,17 @@ def _get_org_application(
     return application
 
 
+def _get_environment_or_404(
+    session: Session, application: Application, environment_id: uuid.UUID
+) -> ApplicationEnvironment:
+    """The application's own environment with this external id, else 404 — an
+    unknown id and another application's id look the same."""
+    try:
+        return find_environment(session, application, environment_id)
+    except LookupError:
+        raise HTTPException(status_code=404, detail="environment not found") from None
+
+
 def _require_discovery(application: Application) -> None:
     """409 for the crawler-driven actions (pause/resume discovery, generate
     scenarios) on an Application created with `discovery_required=false` — the
@@ -1596,7 +1613,7 @@ def update_application_credentials(
     external_id: uuid.UUID,
     payload: ApplicationCredentialsUpdatePayload,
     session: SessionDep,
-    admin: CurrentAdminDep,
+    user: NotViewerDep,
     organization_id: CurrentOrgIdDep,
 ) -> ApplicationRead:
     """Rotates a standard_login Application's stored credential in place —
@@ -1620,7 +1637,7 @@ def update_application_credentials(
         session.add(application)
     # Never the values — only that they changed.
     record_activity(
-        session, admin, "settings", f"Updated login credentials for {application.name}", application=application
+        session, user, "settings", f"Updated login credentials for {application.name}", application=application
     )
     session.commit()
     discovery_run = _latest_discovery_run(session, application.id)
@@ -3633,11 +3650,21 @@ def download_test_suite_project(
     organization_id: CurrentOrgIdDep,
     _not_viewer: NotViewerDep,
     user: CurrentUserDep,
+    environment_id: uuid.UUID | None = None,
 ) -> Response:
     # Same org-scoped lookup as every other Application endpoint (AD-12) —
     # never by external_id alone, or one Organization could download
     # another's generated tests (AC 6).
     application = _get_org_application(session, organization_id, external_id)
+    # No `environment_id` = the application's own (default) environment,
+    # exactly as before. Otherwise the project is built for that environment:
+    # its URL, login URL and auth, and the test code's default-host URLs
+    # rewritten to match.
+    environment = (
+        _get_environment_or_404(session, application, environment_id) if environment_id else None
+    )
+    default_url = application.url
+    application_for_project = effective_application(application, environment)
 
     journeys = session.exec(
         select(Journey).where(
@@ -3693,19 +3720,20 @@ def download_test_suite_project(
     # reads non-secret auth_method and (for standard_login) the non-secret
     # captured login-page evidence (AC 11-13).
     login_evidence = (
-        find_login_page_evidence(session, application)
-        if application.auth_method == "standard_login"
+        find_login_page_evidence(session, application_for_project)
+        if application_for_project.auth_method == "standard_login"
         else None
     )
 
     try:
         zip_bytes = assemble_test_suite_project(
-            application,
+            application_for_project,
             test_suites,
             journeys_by_id,
             assets_by_suite,
             scenario_name_by_asset_id,
             login_evidence,
+            default_url if environment is not None else None,
         )
     except TestSuiteExportError as exc:
         # Fail closed (AC 9) — never a 200 with partial/corrupt zip bytes.
@@ -3716,11 +3744,14 @@ def download_test_suite_project(
     filename = re.sub(r"[^A-Za-z0-9._ -]+", "_", application.name).strip(" ._-")
     if not filename:
         filename = sanitize_slug(application.name, fallback="application")
+    if environment is not None:
+        filename = f"{filename}-{sanitize_slug(environment.name, fallback='environment')}"
     record_activity(
         session,
         user,
         "test_cases",
-        f"Downloaded the test project for {application.name}",
+        f"Downloaded the test project for {application.name}"
+        + (f" ({environment.name})" if environment is not None else ""),
         application=application,
         outcome="done",
         details={"info": [{"label": "Test cases", "value": str(len(test_assets))}]},
@@ -4009,6 +4040,9 @@ class TriggerTestRunRequest(BaseModel):
     # (== `TestAsset.external_id`) restricting which tests execute.
     suite_name: str | None = None
     test_case_ids: list[uuid.UUID] | None = None
+    # `ApplicationEnvironment` id to run against; unset = the application's own
+    # (default) environment, so existing callers are unchanged.
+    environment_id: uuid.UUID | None = None
 
 
 @app.post("/applications/{external_id}/test-runs", status_code=202)
@@ -4035,6 +4069,8 @@ async def trigger_test_run(
     `select(ExecutionPolicy)...` lookup and 409 when it's missing (see git
     history for the removed version)."""
     application = _get_org_application(session, organization_id, external_id)
+    if body.environment_id is not None:
+        _get_environment_or_404(session, application, body.environment_id)
 
     client = await get_temporal_client()
     if not await has_pollers(client, EXECUTION_TASK_QUEUE):
@@ -4049,6 +4085,7 @@ async def trigger_test_run(
             test_asset_ids=(
                 [str(x) for x in body.test_case_ids] if body.test_case_ids else None
             ),
+            environment_id=str(body.environment_id) if body.environment_id else None,
         ),
         # Every run is a genuinely new TestRun (no rerun/idempotency key the
         # way suite-{journey_id}-{attempt} has) — the id only needs to be
@@ -4212,6 +4249,9 @@ class ScheduleCreate(BaseModel):
     days_of_week: list[int] = []
     day_of_month: int | None = None
     cron_expression: str | None = None
+    # `ApplicationEnvironment` id the schedule's runs target; unset = the
+    # application's own (default) environment.
+    environment_id: uuid.UUID | None = None
 
 
 class ScheduleUpdate(BaseModel):
@@ -4231,6 +4271,10 @@ class ScheduleUpdate(BaseModel):
     day_of_month: int | None = None
     cron_expression: str | None = None
     time_zone: str | None = None
+    # Unlike the fields above, an explicit null here is meaningful — it moves
+    # the schedule back to the default environment — so it is applied whenever
+    # the key is present in the request (`model_fields_set`).
+    environment_id: uuid.UUID | None = None
 
 
 class ScheduleRead(BaseModel):
@@ -4248,12 +4292,26 @@ class ScheduleRead(BaseModel):
     next_run_at: datetime | None
     created_by_name: str | None
     created_at: datetime
+    # None = the application's own (default) environment; `environment_name`
+    # is then the application's own environment label.
+    environment_id: uuid.UUID | None = None
+    environment_name: str = ""
 
 
 def _to_schedule_read(
-    schedule: Schedule, *, enabled: bool, next_run_at: datetime | None
+    schedule: Schedule, *, enabled: bool, next_run_at: datetime | None, session: Session
 ) -> ScheduleRead:
+    environment = (
+        session.get(ApplicationEnvironment, schedule.environment_id)
+        if schedule.environment_id is not None
+        else None
+    )
+    application = session.get(Application, schedule.application_id)
     return ScheduleRead(
+        environment_id=environment.external_id if environment else None,
+        environment_name=(
+            environment.name if environment else (application.environment if application else "")
+        ),
         id=schedule.external_id,
         name=schedule.name,
         cadence_type=schedule.cadence_type,
@@ -4400,7 +4458,7 @@ async def list_schedules(
     dirty = False
     for schedule in schedules:
         if states is None:
-            results.append(_to_schedule_read(schedule, enabled=schedule.enabled, next_run_at=None))
+            results.append(_to_schedule_read(schedule, enabled=schedule.enabled, next_run_at=None, session=session))
             continue
         if schedule.temporal_schedule_id not in states:
             # NOT_FOUND-as-proof-of-deletion: the *key itself* is absent,
@@ -4418,14 +4476,14 @@ async def list_schedules(
         if state is None:
             # Exists, but this round's visibility data was incomplete —
             # degrade this one row to its cached value, not a deletion.
-            results.append(_to_schedule_read(schedule, enabled=schedule.enabled, next_run_at=None))
+            results.append(_to_schedule_read(schedule, enabled=schedule.enabled, next_run_at=None, session=session))
             continue
         enabled, next_run_at = state
         if schedule.enabled != enabled:
             schedule.enabled = enabled
             session.add(schedule)
             dirty = True
-        results.append(_to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at))
+        results.append(_to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at, session=session))
     if dirty:
         session.commit()
     return results
@@ -4448,6 +4506,7 @@ async def _create_schedule_row(
     # Gets the run-completed email for this schedule's runs. None for the
     # seeded defaults, which have no owner.
     created_by_user_id: uuid.UUID | None = None,
+    environment_id: uuid.UUID | None = None,
 ) -> Schedule:
     """Row + matching Temporal Schedule, shared by the user-triggered
     `create_schedule` endpoint and default-schedule seeding at Application
@@ -4478,6 +4537,7 @@ async def _create_schedule_row(
         temporal_schedule_id="",  # set below, derived from external_id
         created_by_name=created_by_name,
         created_by_user_id=created_by_user_id,
+        environment_id=environment_id,
     )
     schedule.temporal_schedule_id = f"app-schedule-{schedule.external_id}"
     session.add(schedule)
@@ -4614,6 +4674,11 @@ async def create_schedule(
     business failing because the execution worker happens to be restarting
     right now — see this module's accepted-limitation note above."""
     application = _get_org_application(session, organization_id, external_id)
+    environment = (
+        _get_environment_or_404(session, application, payload.environment_id)
+        if payload.environment_id
+        else None
+    )
 
     try:
         schedule = await _create_schedule_row(
@@ -4630,6 +4695,7 @@ async def create_schedule(
             enabled=True,
             created_by_name=user.name,
             created_by_user_id=user.id,
+            environment_id=environment.id if environment else None,
         )
     except ScheduleSpecError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
@@ -4644,7 +4710,7 @@ async def create_schedule(
 
     client = await get_temporal_client()
     enabled, next_run_at = await _describe_schedule_state(client, schedule)
-    return _to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at)
+    return _to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at, session=session)
 
 
 @app.patch("/schedules/{external_id}", response_model=ScheduleRead)
@@ -4678,6 +4744,14 @@ async def update_schedule(
         value = getattr(payload, field_name)
         if value is not None:
             setattr(schedule, field_name, value)
+    if "environment_id" in payload.model_fields_set:
+        # The run reads its environment from this row when it starts
+        # (`_prepare_test_run_sync`), so no Temporal action change is needed.
+        schedule.environment_id = (
+            _get_environment_or_404(session, application, payload.environment_id).id
+            if payload.environment_id
+            else None
+        )
     # Clear the fields the (possibly new) cadence type doesn't use, so a
     # daily schedule edited from a weekly one doesn't keep stale days.
     if schedule.cadence_type != "weekly":
@@ -4783,7 +4857,7 @@ async def update_schedule(
 
     session.refresh(schedule)
     enabled, next_run_at = await _describe_schedule_state(client, schedule)
-    return _to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at)
+    return _to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at, session=session)
 
 
 @app.delete("/schedules/{external_id}", status_code=204)
@@ -4850,7 +4924,7 @@ async def enable_schedule(
     session.commit()
     session.refresh(schedule)
     enabled, next_run_at = await _describe_schedule_state(client, schedule)
-    return _to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at)
+    return _to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at, session=session)
 
 
 @app.post("/schedules/{external_id}/disable", response_model=ScheduleRead)
@@ -4880,7 +4954,7 @@ async def disable_schedule(
     session.commit()
     session.refresh(schedule)
     enabled, next_run_at = await _describe_schedule_state(client, schedule)
-    return _to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at)
+    return _to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at, session=session)
 
 
 # The statuses that mean "an execution is in flight for this Application" —

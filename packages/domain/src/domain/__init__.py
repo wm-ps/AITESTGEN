@@ -26,6 +26,11 @@ from domain.action import Action
 from domain.activity_event import ActivityCategory, ActivityEvent, ActivityOutcome
 from domain.api_endpoint import ApiEndpoint
 from domain.application import Application, AuthMethod
+from domain.application_environment import (
+    ApplicationEnvironment,
+    effective_application,
+    find_environment,
+)
 from domain.approved_domain import ApprovedDomain
 from domain.assertion import Assertion
 from domain.blocked_task import BlockedTask, BlockedTaskStatus, RequiredType
@@ -81,6 +86,7 @@ __all__ = [
     "ActivityOutcome",
     "ApiEndpoint",
     "Application",
+    "ApplicationEnvironment",
     "Assertion",
     "AuthMethod",
     "BlockedTask",
@@ -139,4 +145,6 @@ __all__ = [
     "TestSuite",
     "ValidationRule",
     "aggregation_key",
+    "effective_application",
+    "find_environment",
 ]

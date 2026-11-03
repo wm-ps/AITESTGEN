@@ -466,6 +466,10 @@ export type ScheduleRead = {
   next_run_at: string | null
   created_by_name: string | null
   created_at: string
+  // null = the application's own (default) environment; `environment_name` is
+  // then that environment's name.
+  environment_id: string | null
+  environment_name: string
 }
 export type ScheduleCreate = {
   name: string
@@ -475,8 +479,33 @@ export type ScheduleCreate = {
   days_of_week?: number[]
   day_of_month?: number | null
   cron_expression?: string | null
+  environment_id?: string | null
 }
 export type ScheduleUpdate = Partial<ScheduleCreate>
+
+// Application environments (Application settings) — not in api-types.gen.ts
+// yet, added by hand per the same convention as the types above. The first
+// entry of a listing is the application's own (default) environment: `id` is
+// null and `is_default` true.
+export type EnvironmentRead = {
+  id: string | null
+  name: string
+  url: string
+  login_url: string | null
+  is_default: boolean
+  auth_method: string
+  // Hidden (null) for viewers; never the password.
+  username: string | null
+}
+export type EnvironmentCreate = {
+  name: string
+  url: string
+  login_url?: string | null
+  username?: string | null
+  password?: string | null
+}
+// Only the fields present are changed; a blank password means "unchanged".
+export type EnvironmentUpdate = Partial<EnvironmentCreate>
 
 export const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000'
 
@@ -587,6 +616,31 @@ export const api = {
     }),
   deleteApplication: (applicationId: string) =>
     request<undefined>(`/applications/${applicationId}`, { method: 'DELETE' }),
+  listEnvironments: (applicationId: string) =>
+    request<EnvironmentRead[]>(`/applications/${applicationId}/environments`),
+  createEnvironment: (applicationId: string, payload: EnvironmentCreate) =>
+    request<EnvironmentRead>(`/applications/${applicationId}/environments`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updateEnvironment: (applicationId: string, environmentId: string, payload: EnvironmentUpdate) =>
+    request<EnvironmentRead>(`/applications/${applicationId}/environments/${environmentId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  // 409 `ENVIRONMENT_IN_USE` while a run or schedule uses it.
+  deleteEnvironment: (applicationId: string, environmentId: string) =>
+    request<undefined>(`/applications/${applicationId}/environments/${environmentId}`, {
+      method: 'DELETE',
+    }),
+  // Pass the environment id for an extra environment, omit it for the default.
+  revealEnvironmentPassword: (applicationId: string, environmentId: string | null) =>
+    request<{ password: string }>(
+      environmentId
+        ? `/applications/${applicationId}/environments/${environmentId}/reveal`
+        : `/applications/${applicationId}/credentials/reveal`,
+      { method: 'POST' },
+    ),
   listDomains: () => request<DomainRead[]>('/domains'),
   addDomain: (host: string) =>
     request<DomainRead>('/domains', { method: 'POST', body: JSON.stringify({ host }) }),
@@ -745,9 +799,10 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+  // `environment_id` omitted = the application's own (default) environment.
   triggerTestRun: (
     applicationId: string,
-    payload?: { suite_name: string; test_case_ids: string[] },
+    payload?: { suite_name?: string; test_case_ids?: string[]; environment_id?: string },
   ) =>
     request<{ started: boolean }>(`/applications/${applicationId}/test-runs`, {
       method: 'POST',
@@ -785,9 +840,11 @@ export const api = {
     request<OverviewRead>(`/applications/${applicationId}/overview`),
   // Not built on request<T>() — that helper always calls response.json(),
   // which throws on a binary zip body (Story 4.3).
-  downloadTestSuiteProject: async (applicationId: string) => {
+  downloadTestSuiteProject: async (applicationId: string, environmentId?: string) => {
     const response = await fetch(
-      `${API_BASE}/applications/${applicationId}/test-suites/download`,
+      `${API_BASE}/applications/${applicationId}/test-suites/download${
+        environmentId ? `?environment_id=${encodeURIComponent(environmentId)}` : ''
+      }`,
       { credentials: 'include' },
     )
     if (!response.ok) {

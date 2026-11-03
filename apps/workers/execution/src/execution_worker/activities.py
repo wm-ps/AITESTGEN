@@ -39,6 +39,7 @@ from ai_provider.hosted import HostedAIProvider, invented_locator_names
 from domain import (
     CANCELLABLE_TEST_RUN_STATUSES,
     Application,
+    ApplicationEnvironment,
     DiscoverySettings,
     FailureExplanationRecord,
     Journey,
@@ -51,6 +52,8 @@ from domain import (
     TestRun,
     TestSuite,
     apply_test_run_cancel,
+    effective_application,
+    find_environment,
     lock_test_run,
     tally_result_counts,
 )
@@ -75,6 +78,7 @@ from test_suite_assembler import (
     assemble_test_suite_project_to_dir,
     compute_spec_paths,
     find_login_page_evidence,
+    retarget_code,
 )
 from workflows import (
     AUTO_HEAL_ATTEMPT_CAP,
@@ -256,6 +260,21 @@ class _AssemblyInputs:
     login_evidence: object
 
 
+def _run_target(
+    session: Session, application: Application, test_run: TestRun
+) -> tuple[Application, str | None]:
+    """The Application as `test_run` sees it, plus the default base URL to
+    rewrite test code from (None for the default environment). A run with an
+    environment gets a detached copy carrying that environment's URL, login
+    URL, auth and secret — see `domain.effective_application`. The row is read
+    by id, so it still resolves for a run that is mid-flight; the API refuses
+    to delete an environment that has runs."""
+    if test_run.environment_id is None:
+        return application, None
+    environment = session.get(ApplicationEnvironment, test_run.environment_id)
+    return effective_application(application, environment), application.url
+
+
 def _load_assembly_inputs_sync(
     session: Session, application: Application, test_asset_ids: set[uuid.UUID] | None = None
 ) -> _AssemblyInputs:
@@ -369,6 +388,9 @@ def _rebuild_project_dir_sync(test_run_id: uuid.UUID, application_id: uuid.UUID)
                 )
             ).all()
         )
+        # The run's own environment, not the Application's default — a
+        # rebuilt project must point at the same host the run started on.
+        application, retarget_from = _run_target(session, application, run)
         inputs = _load_assembly_inputs_sync(session, application, test_asset_ids)
         assemble_test_suite_project_to_dir(
             dest_dir,
@@ -378,6 +400,7 @@ def _rebuild_project_dir_sync(test_run_id: uuid.UUID, application_id: uuid.UUID)
             inputs.assets_by_suite,
             inputs.scenario_name_by_asset_id,
             inputs.login_evidence,
+            retarget_from,
         )
     _install_project(dest_dir)
     # This function only runs when the project dir was missing (evicted
@@ -427,6 +450,26 @@ def _prepare_test_run_sync(
             select(Application).where(Application.external_id == uuid.UUID(input.application_id))
         ).one()
 
+        # Which environment this run targets: the one asked for, else the
+        # triggering schedule's (read fresh, so editing a schedule's
+        # environment needs no change to its Temporal action), else None — the
+        # Application's own (default) environment. Resolved before claiming a
+        # run_number so an unknown id never burns one.
+        environment: ApplicationEnvironment | None = None
+        if input.environment_id is not None:
+            environment = find_environment(session, application, input.environment_id)
+        elif input.schedule_id is not None:
+            schedule_environment_pk = session.exec(
+                select(Schedule.environment_id).where(
+                    Schedule.external_id == uuid.UUID(input.schedule_id)
+                )
+            ).first()
+            if schedule_environment_pk is not None:
+                environment = session.get(ApplicationEnvironment, schedule_environment_pk)
+        # Everything below that picks a URL, login or secret uses `target`.
+        target = effective_application(application, environment)
+        retarget_from = application.url if environment is not None else None
+
         # Claim this Application's next run_number atomically before
         # inserting the TestRun row, in the same transaction/commit below.
         # Postgres's row lock on this UPDATE (held until commit) is what
@@ -458,8 +501,9 @@ def _prepare_test_run_sync(
             run_number=run_number,
             schedule_id=schedule_pk,
             status="running",
-            environment_snapshot=application.environment,
-            target_base_url_snapshot=application.url,
+            environment_snapshot=target.environment,
+            target_base_url_snapshot=target.url,
+            environment_id=environment.id if environment is not None else None,
             triggered_by_name=input.triggered_by_name,
             triggered_by_user_id=(
                 uuid.UUID(input.triggered_by_user_id) if input.triggered_by_user_id else None
@@ -489,7 +533,7 @@ def _prepare_test_run_sync(
                 if input.test_asset_ids is not None
                 else None
             )
-            inputs = _load_assembly_inputs_sync(session, application, test_asset_ids)
+            inputs = _load_assembly_inputs_sync(session, target, test_asset_ids)
             test_assets = inputs.test_assets
             assets_by_suite = inputs.assets_by_suite
             scenario_name_by_asset_id = inputs.scenario_name_by_asset_id
@@ -529,16 +573,17 @@ def _prepare_test_run_sync(
             dest_dir = project_dir_for(test_run.external_id)
             assemble_test_suite_project_to_dir(
                 dest_dir,
-                application,
+                target,
                 inputs.test_suites,
                 inputs.journeys_by_id,
                 assets_by_suite,
                 scenario_name_by_asset_id,
                 inputs.login_evidence,
+                retarget_from,
             )
             _install_project(dest_dir)
             if inputs.login_evidence is not None:
-                _run_auth_setup_once(dest_dir, application)
+                _run_auth_setup_once(dest_dir, target)
         except Exception as exc:  # noqa: BLE001 — infra failure, not a test outcome
             # Cancelled meanwhile (its npm/login processes were killed — the
             # usual way a cancel ends Prepare): the run is already final.
@@ -856,6 +901,10 @@ def _load_execution_context_sync(input: ExecuteTestActivityInput) -> _ExecutionC
             scenario_name_by_asset_id=inputs.scenario_name_by_asset_id,
         )
 
+        # The run's own environment: its login credentials, and (through
+        # `context.application`) the auth refresh after a bad session.
+        test_run = session.exec(select(TestRun).where(TestRun.id == test_result.test_run_id)).one()
+        application, _ = _run_target(session, application, test_run)
         return _ExecutionContext(
             application=application,
             test_result_pk=test_result.id,
@@ -1433,6 +1482,27 @@ class _HealContext:
     # for automatic (input.triggered_manually=False), or
     # DiscoverySettings.max_heal_attempts for manual. Never a shared value.
     attempt_cap: int
+    # The default base URL when this run targets another environment, else
+    # None. A test's saved code belongs to the default host (every
+    # environment shares it), so a heal shows the model — and writes to the
+    # project dir — the environment's URLs, but only saves default-hosted code.
+    retarget_from: str | None = None
+
+
+def _code_for_run(code: str | None, ctx: _HealContext) -> str | None:
+    """A saved test's code as this run's project holds it (default-host URLs
+    rewritten to the environment's)."""
+    if not code or ctx.retarget_from is None:
+        return code
+    return retarget_code(code, ctx.retarget_from, ctx.application.url)
+
+
+def _code_for_default(code: str, ctx: _HealContext) -> str:
+    """Healed code, written against the run's environment, back to the
+    default host before it is saved as the test's current code."""
+    if ctx.retarget_from is None:
+        return code
+    return retarget_code(code, ctx.application.url, ctx.retarget_from)
 
 
 def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None:
@@ -1509,9 +1579,12 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
             assets_by_suite=inputs.assets_by_suite,
             scenario_name_by_asset_id=inputs.scenario_name_by_asset_id,
         )
+        test_run = session.exec(select(TestRun).where(TestRun.id == test_result.test_run_id)).one()
+        application, retarget_from = _run_target(session, application, test_run)
         return _HealContext(
             test_result_pk=test_result.id,
             application=application,
+            retarget_from=retarget_from,
             scenario=scenario,
             known_pages=known_pages,
             known_locators=known_locators,
@@ -1831,7 +1904,7 @@ async def _heal_test(input: HealTestActivityInput) -> None:
                     requires_auth=state.test_asset.requires_auth,
                     field_input_types=ctx.field_input_types,
                     repair=repair,
-                    previous_code=state.test_asset.code,
+                    previous_code=_code_for_run(state.test_asset.code, ctx),
                     failure_error_message=state.error_message,
                     failure_stack_trace=state.stack_trace,
                     failure_console_output=state.console_output,
@@ -1901,7 +1974,9 @@ async def _heal_test(input: HealTestActivityInput) -> None:
             # check. A rejected candidate is handled like a typecheck
             # failure — counted, never promoted, and carried forward as
             # `repair` so the next attempt sees exactly what to restore.
-            changed_assertions = await assertion_changes(state.test_asset.code, code_result.code)
+            changed_assertions = await assertion_changes(
+                _code_for_run(state.test_asset.code, ctx), code_result.code
+            )
             if changed_assertions:
                 logger.info(
                     "HealTestActivity: test_result_id=%s rejected a fix that changed assertions: %s",
@@ -1934,7 +2009,7 @@ async def _heal_test(input: HealTestActivityInput) -> None:
                 _record_heal_supersede_sync,
                 ctx.test_result_pk,
                 state.test_asset.id,
-                code_result.code,
+                _code_for_default(code_result.code, ctx),
                 input.triggered_manually,
             )
 

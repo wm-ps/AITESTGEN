@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faChevronRight, faListCheck, faPlay } from '@fortawesome/free-solid-svg-icons'
 import { LoadingDots } from '../LoadingDots'
+import { EnvironmentSelect } from '../environments/EnvironmentSelect'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 
 const RUN_MODES: { key: 'full' | 'selective'; icon: typeof faPlay; title: string; body: string }[] = [
@@ -19,10 +20,13 @@ export function RunSuiteButton({
   onOpenJourneysDialog,
 }: {
   running: boolean
-  onFullSuite: () => void
-  onOpenJourneysDialog: () => void
+  // Both get the environment picked in the dialog — null is the application's
+  // own (default) one.
+  onFullSuite: (environmentId: string | null) => void
+  onOpenJourneysDialog: (environmentId: string | null) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [environmentId, setEnvironmentId] = useState<string | null>(null)
   useEscapeToClose(() => setOpen(false), open)
 
   return (
@@ -89,6 +93,9 @@ export function RunSuiteButton({
             }}
           >
             <h2 style={{ fontSize: 17, fontWeight: 600, color: 'var(--fg)', margin: '0 0 16px' }}>Run tests</h2>
+            <div style={{ marginBottom: 14 }}>
+              <EnvironmentSelect label="Run on environment" value={environmentId} onChange={setEnvironmentId} />
+            </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {RUN_MODES.map((mode) => (
                 <button
@@ -96,8 +103,8 @@ export function RunSuiteButton({
                   type="button"
                   onClick={() => {
                     setOpen(false)
-                    if (mode.key === 'full') onFullSuite()
-                    else onOpenJourneysDialog()
+                    if (mode.key === 'full') onFullSuite(environmentId)
+                    else onOpenJourneysDialog(environmentId)
                   }}
                   style={{
                     display: 'flex',

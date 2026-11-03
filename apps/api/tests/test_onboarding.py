@@ -835,7 +835,11 @@ def test_update_application_credentials_overwrites_secret_ref_in_place() -> None
         assert stored == {"username": "new-qa-account", "password": "new-" + PLAINTEXT_PASSWORD}
 
 
-def test_update_application_credentials_requires_admin() -> None:
+def test_update_application_credentials_is_org_scoped() -> None:
+    # Any non-viewer in the application's own organization may rotate its
+    # credentials (see test_application_environments.py); a user of another
+    # organization — `_signed_in_client` seeds a fresh org per call — cannot
+    # even see the application.
     init_db()
     admin_client = _signed_in_client("Org Rotate Creds Non Admin")
     created = _post_application(admin_client, "Non Admin Rotate App")
@@ -847,7 +851,7 @@ def test_update_application_credentials_requires_admin() -> None:
         json={"username": "attempt", "password": "attempt"},
     )
 
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_update_application_credentials_rejects_sso_session_reuse_app() -> None:

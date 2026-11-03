@@ -8,6 +8,7 @@ from test_suite_assembler.assembler import (
     compute_spec_paths,
     dedupe_slugs,
     find_login_page_evidence,
+    retarget_code,
     sanitize_slug,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "compute_spec_paths",
     "dedupe_slugs",
     "find_login_page_evidence",
+    "retarget_code",
     "sanitize_slug",
 ]

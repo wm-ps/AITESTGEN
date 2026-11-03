@@ -73,6 +73,80 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/{external_id}/environments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Environments */
+        get: operations["list_environments_applications__external_id__environments_get"];
+        put?: never;
+        /** Create Environment */
+        post: operations["create_environment_applications__external_id__environments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/environments/{environment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Environment
+         * @description Refused (409) while any run, or any live schedule, uses it — history is
+         *     never left pointing at a deleted environment.
+         */
+        delete: operations["delete_environment_applications__external_id__environments__environment_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Environment */
+        patch: operations["update_environment_applications__external_id__environments__environment_id__patch"];
+        trace?: never;
+    };
+    "/applications/{external_id}/credentials/reveal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reveal Default Credentials */
+        post: operations["reveal_default_credentials_applications__external_id__credentials_reveal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/environments/{environment_id}/reveal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reveal Environment Credentials */
+        post: operations["reveal_environment_credentials_applications__external_id__environments__environment_id__reveal_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/explorer/applications/{application_id}/runs/latest": {
         parameters: {
             query?: never;
@@ -2485,6 +2559,62 @@ export interface components {
             /** Applications */
             applications: components["schemas"]["DomainApplicationRead"][];
         };
+        /** EnvironmentCreate */
+        EnvironmentCreate: {
+            /** Name */
+            name: string;
+            /** Url */
+            url: string;
+            /** Login Url */
+            login_url?: string | null;
+            /** Username */
+            username?: string | null;
+            /** Password */
+            password?: string | null;
+        };
+        /** EnvironmentRead */
+        EnvironmentRead: {
+            /** Id */
+            id: string | null;
+            /** Name */
+            name: string;
+            /** Url */
+            url: string;
+            /** Login Url */
+            login_url: string | null;
+            /** Is Default */
+            is_default: boolean;
+            /** Auth Method */
+            auth_method: string;
+            /** Username */
+            username?: string | null;
+        };
+        /** EnvironmentReveal */
+        EnvironmentReveal: {
+            /** Password */
+            password: string;
+        };
+        /**
+         * EnvironmentUpdate
+         * @description Only the fields present are changed (`model_fields_set`). A blank
+         *     password means "unchanged".
+         */
+        EnvironmentUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Url */
+            url?: string | null;
+            /** Login Url */
+            login_url?: string | null;
+            /** Username */
+            username?: string | null;
+            /** Password */
+            password?: string | null;
+            /** Mfa Enabled */
+            mfa_enabled?: boolean | null;
+            /** Totp Seed */
+            totp_seed?: string | null;
+        };
         /** EventRead */
         EventRead: {
             /** Id */
@@ -3350,6 +3480,8 @@ export interface components {
             day_of_month?: number | null;
             /** Cron Expression */
             cron_expression?: string | null;
+            /** Environment Id */
+            environment_id?: string | null;
         };
         /** ScheduleRead */
         ScheduleRead: {
@@ -3387,6 +3519,13 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
+            /** Environment Id */
+            environment_id?: string | null;
+            /**
+             * Environment Name
+             * @default
+             */
+            environment_name: string;
         };
         /**
          * ScheduleUpdate
@@ -3415,6 +3554,8 @@ export interface components {
             cron_expression?: string | null;
             /** Time Zone */
             time_zone?: string | null;
+            /** Environment Id */
+            environment_id?: string | null;
         };
         /** ScreenRead */
         ScreenRead: {
@@ -3805,6 +3946,8 @@ export interface components {
             suite_name?: string | null;
             /** Test Case Ids */
             test_case_ids?: string[] | null;
+            /** Environment Id */
+            environment_id?: string | null;
         };
         /** UserRead */
         UserRead: {
@@ -4075,6 +4218,213 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DomainCheckRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_environments_applications__external_id__environments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_environment_applications__external_id__environments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvironmentCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_environment_applications__external_id__environments__environment_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+                environment_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_environment_applications__external_id__environments__environment_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+                environment_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnvironmentUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reveal_default_credentials_applications__external_id__credentials_reveal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentReveal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reveal_environment_credentials_applications__external_id__environments__environment_id__reveal_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+                environment_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EnvironmentReveal"];
                 };
             };
             /** @description Validation Error */
@@ -7381,7 +7731,9 @@ export interface operations {
     };
     download_test_suite_project_applications__external_id__test_suites_download_get: {
         parameters: {
-            query?: never;
+            query?: {
+                environment_id?: string | null;
+            };
             header?: never;
             path: {
                 external_id: string;

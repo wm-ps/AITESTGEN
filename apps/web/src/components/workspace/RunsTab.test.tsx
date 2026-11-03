@@ -54,6 +54,57 @@ describe('RunsTab', () => {
     await waitFor(() => expect(screen.getByText('Run #3')).toBeInTheDocument())
   })
 
+  it('shows the environment each run was against, in its own column and in the run detail', async () => {
+    const run = (id: string, runNumber: number, environment: string) => ({
+      id,
+      run_number: runNumber,
+      name: `#${runNumber} - Full Suite Run`,
+      status: 'completed',
+      trigger: 'Manual run',
+      pass_rate: 1,
+      health: { tier: 'healthy', headline: 'Healthy' },
+      total_count: 1,
+      passed_count: 1,
+      failed_count: 0,
+      timed_out_count: 0,
+      errored_count: 0,
+      blocked_count: 0,
+      blocked_reason: null,
+      environment_snapshot: environment,
+      target_base_url_snapshot: `https://${environment.toLowerCase()}.example.com`,
+      created_at: '2026-09-01T00:00:00Z',
+      started_at: null,
+      completed_at: null,
+      allure_report_available: false,
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/test-runs/run-2')) {
+          return { ok: true, status: 200, json: async () => ({ ...run('run-2', 2, 'UAT'), results: [] }) }
+        }
+        if (url.includes('/test-runs')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ items: [run('run-2', 2, 'UAT'), run('run-1', 1, 'production')], next_cursor: null }),
+          }
+        }
+        return { ok: true, status: 200, json: async () => ({ available: true }) }
+      }),
+    )
+
+    render(<RunsTab applicationId="app-1" />)
+
+    await waitFor(() => expect(screen.getByText('Run #2')).toBeInTheDocument())
+    expect(screen.getByText('Environment')).toBeInTheDocument()
+    expect(screen.getByText('UAT')).toBeInTheDocument()
+    expect(screen.getByText('production')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByText('Run #2'))
+    await waitFor(() => expect(screen.getByText(/Manual run · .* · UAT/)).toBeInTheDocument())
+  })
+
   // Self-healing only fixes broken locators in test actions — for an
   // assertion failure the Retry chip stays visible but disabled, with the
   // API's reason, instead of offering a heal that would be refused.

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { faClock, faPlus, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type ScheduleCadenceType, type ScheduleCreate, type ScheduleRead } from '../../api'
 import { LoadingDots } from '../LoadingDots'
+import { EnvironmentSelect } from '../environments/EnvironmentSelect'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { faIcon } from '../../faIcon'
 
@@ -51,6 +52,8 @@ type FormState = {
   daysOfWeek: Set<number>
   dayOfMonth: number
   cronExpression: string
+  // null = the application's own (default) environment.
+  environmentId: string | null
 }
 
 function blankForm(): FormState {
@@ -62,6 +65,7 @@ function blankForm(): FormState {
     daysOfWeek: new Set([1]), // Monday
     dayOfMonth: 1,
     cronExpression: '',
+    environmentId: null,
   }
 }
 
@@ -74,6 +78,7 @@ function formFromSchedule(schedule: ScheduleRead): FormState {
     daysOfWeek: new Set(schedule.days_of_week),
     dayOfMonth: schedule.day_of_month ?? 1,
     cronExpression: schedule.cron_expression ?? '',
+    environmentId: schedule.environment_id ?? null,
   }
 }
 
@@ -125,6 +130,12 @@ export function ScheduleDialog({
     setSubmitting(true)
     try {
       const payload = toPayload(form)
+      // Only sent when it differs from what the schedule already has, so an
+      // edit that doesn't touch it leaves it alone — and null moves a schedule
+      // back to the default environment.
+      if (form.environmentId !== (initial?.environment_id ?? null)) {
+        payload.environment_id = form.environmentId
+      }
       if (initial) {
         await api.updateSchedule(initial.id, payload)
       } else {
@@ -219,6 +230,12 @@ export function ScheduleDialog({
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
             </label>
+
+            <EnvironmentSelect
+              label="Environment"
+              value={form.environmentId}
+              onChange={(environmentId) => setForm({ ...form, environmentId })}
+            />
 
             <label className="field">
               <FieldLabel>Cadence</FieldLabel>

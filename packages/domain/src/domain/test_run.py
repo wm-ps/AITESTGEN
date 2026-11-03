@@ -79,6 +79,19 @@ class TestRun(SQLModel, table=True):
     execution_policy_version: int | None = Field(default=None)
     environment_snapshot: str
     target_base_url_snapshot: str
+    # Which `ApplicationEnvironment` this run targeted; NULL = the
+    # Application's own (default) environment, so every earlier run reads as
+    # default with no backfill. RESTRICT: an environment with runs can't be
+    # deleted. History is displayed from the snapshots above, not this id.
+    environment_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey("application_environment.id", ondelete="RESTRICT"),
+            nullable=True,
+            index=True,
+        ),
+    )
     triggered_by_name: str | None = Field(default=None)
     # Who clicked Run, for a manual run — the run-completed email goes to
     # them. Null for scheduled runs (their email goes to the schedule's

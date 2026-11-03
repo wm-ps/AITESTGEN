@@ -42,6 +42,32 @@ describe('SchedulesTab', () => {
     expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'true')
   })
 
+  it('shows which environment each schedule runs against', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/schedules')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [
+              { ...SCHEDULE_ROW, id: 'sched-1', name: 'Nightly Regression', environment_id: null, environment_name: 'production' },
+              { ...SCHEDULE_ROW, id: 'sched-2', name: 'UAT nightly', environment_id: 'env-1', environment_name: 'UAT' },
+            ],
+          }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      }),
+    )
+
+    render(<SchedulesTab applicationId="app-1" />)
+
+    await waitFor(() => expect(screen.getByText('UAT nightly')).toBeInTheDocument())
+    expect(screen.getByText('Environment')).toBeInTheDocument()
+    expect(screen.getByText('production')).toBeInTheDocument()
+    expect(screen.getByText('UAT')).toBeInTheDocument()
+  })
+
   it('clicking "New Schedule" opens the dialog, and Escape closes it', async () => {
     vi.stubGlobal(
       'fetch',

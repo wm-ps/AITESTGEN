@@ -107,6 +107,10 @@ class ExecutionWorkflowInput:
     # recipient. None for scheduled runs (their schedule's creator gets it
     # instead) and for histories started before this field existed.
     triggered_by_user_id: str | None = None
+    # `ApplicationEnvironment.external_id` this run targets; None = the
+    # Application's own (default) environment — every existing caller and
+    # in-flight workflow keeps today's behavior by simply not passing it.
+    environment_id: str | None = None
 
 
 @dataclass
@@ -117,6 +121,7 @@ class PrepareTestRunActivityInput:
     suite_name: str | None = None
     test_asset_ids: list[str] | None = None
     triggered_by_user_id: str | None = None
+    environment_id: str | None = None
 
 
 @dataclass
@@ -235,6 +240,7 @@ class ApplicationTestExecutionWorkflow:
                 suite_name=input.suite_name,
                 test_asset_ids=input.test_asset_ids,
                 triggered_by_user_id=input.triggered_by_user_id,
+                environment_id=input.environment_id,
             ),
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=RetryPolicy(maximum_attempts=3),

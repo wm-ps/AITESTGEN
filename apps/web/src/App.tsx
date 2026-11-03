@@ -75,7 +75,7 @@ const SCENARIOS_TAB = { key: 'scenarios', label: 'Scenarios', heading: 'Review S
 const RECORD_TAB = { key: 'record', label: 'Record and play', heading: 'Record and play', icon: RecordIcon }
 // Vantage Explorer (docs/vantage-explorer/PLAN.md) — the discovery module.
 const EXPLORER_TAB = { key: 'explorer', label: 'Explorer', heading: 'Explorer', icon: ExplorerIcon }
-const TAB_ORDER = ['overview', 'journeys', 'explorer', 'scenarios', 'suite', 'runs', 'record', 'schedules', 'export']
+const TAB_ORDER = ['overview', 'journeys', 'explorer', 'scenarios', 'suite', 'runs', 'record', 'schedules', 'export', 'settings']
 
 // Invite links point at /accept-invite?token=... — handled before the
 // signed-in check below since accepting an invite never requires an
