@@ -1,0 +1,476 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How Explorer Works</title>
+<style>
+  :root {
+    --bg: #f4f6f8; --panel: #ffffff; --fg: #14211f; --fg-2: #4b5a58; --line: #dfe5e4;
+    --accent: #0f766e; --accent-wash: #e6f4f2; --code: #eef2f1;
+    /* one colour per stage */
+    --s1: #2563eb; --s1w: #e8effd;   /* first look   */
+    --s2: #7c3aed; --s2w: #f1eafd;   /* your review  */
+    --s3: #0f766e; --s3w: #e6f4f2;   /* missions     */
+    --s4: #b45309; --s4w: #fdf1e2;   /* hunt         */
+    --s5: #475569; --s5w: #eef1f5;   /* breadth      */
+    --s6: #be185d; --s6w: #fce8f1;   /* plan         */
+    --s7: #15803d; --s7w: #e5f5ea;   /* prove        */
+    --s8: #4338ca; --s8w: #ebeafd;   /* journeys     */
+    --s9: #c2410c; --s9w: #fdece4;   /* test cases   */
+    --warn: #b45309; --warn-w: #fdf3e3; --ok: #15803d; --ok-w: #e5f5ea; --bad: #b91c1c; --bad-w: #fdeaea;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1514; --panel: #172120; --fg: #e8efee; --fg-2: #a3b3b0; --line: #2a3634;
+      --accent: #2dd4bf; --accent-wash: #11302c; --code: #1e2a29;
+      --s1: #7aa7ff; --s1w: #17233b; --s2: #b794f6; --s2w: #261c3a; --s3: #2dd4bf; --s3w: #11302c;
+      --s4: #f0a54a; --s4w: #33240f; --s5: #a7b4c6; --s5w: #1f2630; --s6: #f472b6; --s6w: #351626;
+      --s7: #4ade80; --s7w: #12301d; --s8: #a5b4fc; --s8w: #1e1f3d; --s9: #fb923c; --s9w: #35200f;
+      --warn: #f0a54a; --warn-w: #33240f; --ok: #4ade80; --ok-w: #12301d; --bad: #f87171; --bad-w: #381818;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1514; --panel: #172120; --fg: #e8efee; --fg-2: #a3b3b0; --line: #2a3634;
+    --accent: #2dd4bf; --accent-wash: #11302c; --code: #1e2a29;
+    --s1: #7aa7ff; --s1w: #17233b; --s2: #b794f6; --s2w: #261c3a; --s3: #2dd4bf; --s3w: #11302c;
+    --s4: #f0a54a; --s4w: #33240f; --s5: #a7b4c6; --s5w: #1f2630; --s6: #f472b6; --s6w: #351626;
+    --s7: #4ade80; --s7w: #12301d; --s8: #a5b4fc; --s8w: #1e1f3d; --s9: #fb923c; --s9w: #35200f;
+    --warn: #f0a54a; --warn-w: #33240f; --ok: #4ade80; --ok-w: #12301d; --bad: #f87171; --bad-w: #381818;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .wrap { display: grid; grid-template-columns: 250px minmax(0, 1fr); max-width: 1240px; margin: 0 auto; }
+  aside { position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 28px 16px 28px 20px; border-right: 1px solid var(--line); }
+  aside h2 { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-2); margin: 0 0 10px; }
+  aside a { display: flex; align-items: center; gap: 8px; color: var(--fg-2); text-decoration: none; font-size: 13.5px; padding: 5px 8px; border-radius: 6px; }
+  aside a:hover { background: var(--panel); color: var(--fg); }
+  aside .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  main { padding: 32px 28px 80px; min-width: 0; }
+  h1 { font-size: 30px; letter-spacing: -.02em; margin: 0 0 6px; }
+  .lead { color: var(--fg-2); font-size: 16px; margin: 0 0 28px; max-width: 760px; }
+  section { margin: 0 0 44px; scroll-margin-top: 16px; }
+  section > h2 { display: flex; align-items: center; gap: 10px; font-size: 22px; letter-spacing: -.01em; margin: 0 0 6px; }
+  .num { display: inline-grid; place-items: center; min-width: 30px; height: 30px; padding: 0 8px; border-radius: 999px; color: #fff; font-size: 14px; font-weight: 700; }
+  :root[data-theme="dark"] .num { color: #0f1514; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .num { color: #0f1514; } }
+  .tag { color: var(--fg-2); margin: 0 0 16px; }
+  h3 { font-size: 16px; margin: 22px 0 8px; }
+  p { margin: 0 0 12px; }
+  ul, ol { margin: 0 0 12px; padding-left: 22px; }
+  li { margin: 3px 0; }
+  code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code); padding: 1px 6px; border-radius: 5px; }
+  .ref { font: 11.5px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg-2); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin: 0 0 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 12px; margin: 0 0 14px; }
+  .grid .card { margin: 0; }
+  .card h4 { margin: 0 0 6px; font-size: 14.5px; }
+  .card p, .card li { font-size: 14px; }
+  .table { overflow-x: auto; margin: 0 0 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; font-size: 13.8px; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-2); background: var(--bg); }
+  tr:last-child td { border-bottom: 0; }
+  .note { border-left: 4px solid var(--accent); background: var(--accent-wash); border-radius: 0 10px 10px 0; padding: 12px 16px; margin: 0 0 14px; font-size: 14px; }
+  .note.warn { border-color: var(--warn); background: var(--warn-w); }
+  .note.ok { border-color: var(--ok); background: var(--ok-w); }
+  .note b:first-child { display: block; margin-bottom: 2px; }
+  .yes { color: var(--ok); font-weight: 650; } .no { color: var(--bad); font-weight: 650; } .maybe { color: var(--warn); font-weight: 650; }
+  pre { background: var(--code); border-radius: 10px; padding: 14px 16px; overflow-x: auto; font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0 0 14px; }
+  /* pipeline strip */
+  .pipe { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin: 0 0 20px; }
+  .step { flex: 1 1 140px; border-radius: 12px; padding: 12px 14px; border: 1px solid var(--line); background: var(--panel); border-top: 5px solid var(--c); text-decoration: none; color: var(--fg); }
+  .step:hover { background: var(--cw); }
+  .step b { display: block; font-size: 13.5px; color: var(--c); }
+  .step span { font-size: 12.5px; color: var(--fg-2); }
+  /* stage colour hooks */
+  .c1 { --c: var(--s1); --cw: var(--s1w); } .c2 { --c: var(--s2); --cw: var(--s2w); } .c3 { --c: var(--s3); --cw: var(--s3w); }
+  .c4 { --c: var(--s4); --cw: var(--s4w); } .c5 { --c: var(--s5); --cw: var(--s5w); } .c6 { --c: var(--s6); --cw: var(--s6w); }
+  .c7 { --c: var(--s7); --cw: var(--s7w); } .c8 { --c: var(--s8); --cw: var(--s8w); } .c9 { --c: var(--s9); --cw: var(--s9w); }
+  section.stage > h2 .num { background: var(--c); }
+  section.stage .card { border-top: 3px solid var(--c); }
+  section.stage .note { border-color: var(--c); background: var(--cw); }
+  section.stage .note.warn { border-color: var(--warn); background: var(--warn-w); }
+  .pill { display: inline-block; font-size: 12px; font-weight: 650; padding: 1px 9px; border-radius: 999px; background: var(--cw); color: var(--c); margin: 0 4px 4px 0; }
+  /* flow boxes */
+  .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 14px; }
+  .flow .box { border-radius: 9px; padding: 7px 12px; font-size: 13.5px; font-weight: 600; background: var(--cw); color: var(--c); border: 1px solid var(--c); }
+  .flow .arrow { color: var(--fg-2); font-weight: 700; }
+  .tree { font: 13px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 0 0 14px; overflow-x: auto; white-space: pre; }
+  .tree .j { color: var(--s8); font-weight: 700; } .tree .s { color: var(--s7); } .tree .m { color: var(--fg-2); }
+  .toggle { position: fixed; top: 12px; right: 14px; border: 1px solid var(--line); background: var(--panel); color: var(--fg); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 12.5px; cursor: pointer; }
+  @media (max-width: 860px) {
+    .wrap { grid-template-columns: 1fr; }
+    aside { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 20px 16px; }
+    aside nav { display: flex; flex-wrap: wrap; gap: 2px; }
+    main { padding: 24px 16px 60px; }
+    h1 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+<button class="toggle" type="button" id="theme">Light / Dark</button>
+<div class="wrap">
+<aside>
+  <h2>On this page</h2>
+  <nav>
+    <a href="#big-picture"><span class="dot" style="background:var(--accent)"></span>The big picture</a>
+    <a href="#words"><span class="dot" style="background:var(--accent)"></span>Words you'll see</a>
+    <a href="#first-look"><span class="dot" style="background:var(--s1)"></span>1 · First look</a>
+    <a href="#review"><span class="dot" style="background:var(--s2)"></span>2 · Your review</a>
+    <a href="#missions"><span class="dot" style="background:var(--s3)"></span>3 · Missions</a>
+    <a href="#hunt"><span class="dot" style="background:var(--s4)"></span>4 · Hunt</a>
+    <a href="#breadth"><span class="dot" style="background:var(--s5)"></span>5 · Breadth</a>
+    <a href="#plan"><span class="dot" style="background:var(--s6)"></span>6 · Planning scenarios</a>
+    <a href="#prove"><span class="dot" style="background:var(--s7)"></span>7 · Build &amp; prove</a>
+    <a href="#locators"><span class="dot" style="background:var(--s7)"></span>How elements are found</a>
+    <a href="#journeys"><span class="dot" style="background:var(--s8)"></span>8 · Journeys</a>
+    <a href="#tests"><span class="dot" style="background:var(--s9)"></span>9 · Test cases</a>
+    <a href="#how-many"><span class="dot" style="background:var(--accent)"></span>How many test cases?</a>
+    <a href="#limits"><span class="dot" style="background:var(--accent)"></span>Limits</a>
+    <a href="#gaps"><span class="dot" style="background:var(--warn)"></span>Known gaps</a>
+  </nav>
+</aside>
+
+<main>
+<h1>How Explorer works</h1>
+<p class="lead">Explorer learns a web application by using it in a real browser, the way a careful tester would. It ends up with test scenarios that it has already proven work. This page goes through every stage in plain words. The small grey references point to the code, so you can check any detail.</p>
+
+<section id="big-picture">
+  <h2>The big picture</h2>
+  <p class="tag">One run goes through nine stages. One Temporal workflow (<code>ExplorerRunWorkflow</code>) runs all of them in order. Click a stage to jump to it.</p>
+  <div class="pipe">
+    <a class="step c1" href="#first-look"><b>1 · First look</b><span>Visit every screen it can and describe each one</span></a>
+    <a class="step c2" href="#review"><b>2 · Your review</b><span>You confirm the summary, set a goal and skip screens</span></a>
+    <a class="step c3" href="#missions"><b>3 · Missions</b><span>Carry out real tasks end to end</span></a>
+    <a class="step c4" href="#hunt"><b>4 · Hunt</b><span>Find screens that only appear sometimes</span></a>
+    <a class="step c5" href="#breadth"><b>5 · Breadth</b><span>Unlinked pages, roles</span></a>
+    <a class="step c6" href="#plan"><b>6 · Plan</b><span>Write the scenarios</span></a>
+    <a class="step c7" href="#prove"><b>7 · Prove</b><span>Run, break on purpose, replay</span></a>
+    <a class="step c8" href="#journeys"><b>8 · Journeys</b><span>Group the proven scenarios</span></a>
+    <a class="step c9" href="#tests"><b>9 · Test cases</b><span>Generate tests and run them</span></a>
+  </div>
+  <div class="note"><b>The one-line version</b>Explorer learns the app (1), you tell it what matters (2), it does the real tasks (3), looks for hidden screens (4–5), writes scenarios from everything it learned (6), proves each one really works (7), and hands the proven ones to Vantage as Journeys, Scenarios and test cases (8–9).</div>
+  <p class="ref">Order of steps: apps/workers/explorer/src/explorer_worker/workflow.py:53 · Every activity runs once with no retry, because a browser session can't safely be replayed halfway through.</p>
+</section>
+
+<section id="words">
+  <h2>Words you'll see</h2>
+  <p class="tag">New users mix these up most often. They are different things.</p>
+  <div class="grid">
+    <div class="card" style="border-top:3px solid var(--s3)"><h4 style="color:var(--s3)">Mission</h4><p>A task Explorer sets <b>itself</b> so it can learn the app, such as "Create a new claim". It is <b>never a test</b> and never shows up in Journeys.</p><p class="ref">table explorer_mission</p></div>
+    <div class="card" style="border-top:3px solid var(--s7)"><h4 style="color:var(--s7)">Scenario</h4><p><b>One test</b>: one action and one visible result, for example "Policy number is required". It is written in plain English first; its code comes later.</p><p class="ref">table explorer_test_case → Vantage Scenario</p></div>
+    <div class="card" style="border-top:3px solid var(--s8)"><h4 style="color:var(--s8)">Journey</h4><p>Just a <b>folder</b>, created at the very end, that groups proven scenarios. It is named after a screen or after a whole task.</p><p class="ref">Vantage Journey · promote.py</p></div>
+    <div class="card" style="border-top:3px solid var(--s9)"><h4 style="color:var(--s9)">Test case</h4><p>The runnable Playwright test for a scenario. <b>One proven scenario = one test case.</b></p><p class="ref">Vantage TestAsset</p></div>
+  </div>
+  <div class="flow c3"><span class="box" style="--c:var(--s3);--cw:var(--s3w)">Missions</span><span class="arrow">→</span><span class="box" style="--c:var(--s7);--cw:var(--s7w)">Scenarios</span><span class="arrow">→</span><span class="box" style="--c:var(--s8);--cw:var(--s8w)">Journeys (folders)</span><span class="arrow">→</span><span class="box" style="--c:var(--s9);--cw:var(--s9w)">Test cases</span></div>
+  <p>The order is always this one. Nothing before the very last step knows about Journeys.</p>
+</section>
+
+<section id="first-look" class="stage c1">
+  <h2><span class="num">1</span>First look: learning the app</h2>
+  <p class="tag">Visit as many screens as possible, describe each one, and save it all. There is no goal yet, so it explores everything.</p>
+
+  <h3>What it does</h3>
+  <ol>
+    <li><b>Signs in.</b> If the app has no login, it just opens it. For SSO it loads the saved cookies. For a username and password it finds the password box, fills it and the field before it, and submits.</li>
+    <li><b>Starts from the last map</b> if this app was explored before, and then needs fewer new screens.</li>
+    <li><b>Opens menu groups</b> to reveal hidden menu items. This is plain code, without the model.</li>
+    <li><b>Keeps a "to visit" list</b> built from the model's suggestions and the page's links. The fast model picks the next one.</li>
+    <li><b>Goes there:</b>
+      <ul>
+        <li>For a link, it clicks it and reads the new screen.</li>
+        <li>For a task (such as "New Claim"), it walks through the form step by step, filling fields and pressing Next, and notes every choice point. It <b>stops before the final Submit</b>.</li>
+      </ul></li>
+    <li><b>Repeats</b> until it has 150 new screens, 120 minutes have passed, or nothing is left to visit.</li>
+    <li><b>Writes the App Summary</b> from the saved screens, then waits for you.</li>
+  </ol>
+
+  <h3>Where the data on each screen comes from</h3>
+  <div class="grid">
+    <div class="card"><h4>① A DOM scan</h4><p>One JavaScript snippet reads the visible elements: title, headings, links (150), menu items (80), buttons (60), fields with label, type, required flag, options and min/max/pattern (60), tables (headers and row count), alerts, and the first 2,500 characters of text.</p><p class="ref">browser.py:190 _INVENTORY_JS</p></div>
+    <div class="card"><h4>② A screenshot</h4><p>A JPEG of the page. The model looks at it, so it sees what a person sees.</p><p class="ref">browser.py:538 Eyes.look</p></div>
+    <div class="card"><h4>③ Browser listeners</h4><p>These run all the time and catch console errors, crashes, 4xx/5xx responses, loads slower than 6 seconds, and every API call the page makes.</p></div>
+  </div>
+  <p>The screenshot and a trimmed copy of the scan go to the model (<code>brain.perceive</code>). It answers with a <b>reading</b> of the screen:</p>
+  <ul>
+    <li>its name, the record it is about (such as Claim), its kind (list, form, detail…), mode and purpose;</li>
+    <li>its fields and actions, with risky ones flagged;</li>
+    <li>hints that something is hidden, and problems it noticed;</li>
+    <li>places worth visiting next, and records the app created.</li>
+  </ul>
+  <p>A screen already read in this run is not sent to the model again.</p>
+
+  <h3>What gets saved</h3>
+  <div class="table"><table>
+    <tr><th>Saved in</th><th>What goes in</th></tr>
+    <tr><td><code>explorer_screen</code></td><td>One row per distinct screen: name, record, kind, URL, <b>fields and actions as the model read them</b>, screenshot, visit count</td></tr>
+    <tr><td><code>explorer_transition</code></td><td>"From screen A, pressing X led to screen B". This is <b>watched</b>, not guessed</td></tr>
+    <tr><td><code>explorer_health_issue</code></td><td>Findings: crashes, server errors, blank pages, wording problems, things that look wrong</td></tr>
+    <tr><td><code>explorer_knowledge</code></td><td>Records the app created (such as claim numbers), kept for use as test data</td></tr>
+    <tr><td><code>explorer_shot</code> / <code>explorer_event</code></td><td>Screenshots, and the Live activity feed</td></tr>
+    <tr><td><code>explorer_run.brief</code></td><td>The App Summary at the end</td></tr>
+  </table></div>
+  <div class="note"><b>Not saved</b>The raw DOM scan is never stored. It is used only for the model prompt and to find links. Locators are not stored here either: a screen's fields and actions are <b>labels only</b>.</div>
+  <p class="ref">understand.py:90 · mind.py:51 · journal.py:138 (how a screen is recognised as one already seen)</p>
+</section>
+
+<section id="review" class="stage c2">
+  <h2><span class="num">2</span>Your review</h2>
+  <p class="tag">Explorer waits, for up to 14 days, until you confirm. This is your consent, and it never answers for you.</p>
+  <div class="table"><table>
+    <tr><th>You give</th><th>What it changes</th></tr>
+    <tr><td><b>Goal (focus)</b></td><td>Turned into a scope rule. Every screen is labelled <span class="pill">inside</span><span class="pill">on the way</span><span class="pill">past the stop</span><span class="pill">outside</span>. Missions and scenarios then only cover what's in scope.</td></tr>
+    <tr><td><b>Screens to skip</b></td><td>Left out of missions and scenarios. They are not deleted.</td></tr>
+    <tr><td><b>Answers to its questions</b></td><td>Saved as knowledge. Every later prompt reads them as trusted facts.</td></tr>
+  </table></div>
+  <p class="ref">PUT /runs/{id}/brief · POST /runs/{id}/confirm → Temporal signal brief_confirmed (the only signal in the whole run) · brain.read_goal</p>
+</section>
+
+<section id="missions" class="stage c3">
+  <h2><span class="num">3</span>Missions: doing the real tasks</h2>
+  <p class="tag">The first look covers the app broadly. Missions go deep on the tasks inside your goal and finish them.</p>
+  <h3>Planning</h3>
+  <p>The model reads the scope, your answers, the choice points and the screens inside your goal. It writes <b>8–15 missions</b>, each with a kind (<span class="pill">task</span><span class="pill">branch</span><span class="pill">area</span><span class="pill">rule</span>), a priority, a start screen, instructions and an <b>expected result</b>.</p>
+  <h3>Running</h3>
+  <p>Up to 3 missions run at once (only 1 if the app seems to keep state per account). Each one walks its task step by step:</p>
+  <ol>
+    <li>The model looks at the screenshot and decides what to fill, choose and press.</li>
+    <li>Code finds the element and does it. The exact way it found the element is recorded.</li>
+    <li><b>Safety gate:</b> Delete, Pay, Transfer, Approve, Log out and Cancel always need your OK. A final Submit or Save is pressed automatically <b>only on a non-production app</b>; otherwise it asks "May I press X?".</li>
+    <li>If it goes in circles or gets stuck, it asks you once, then stops.</li>
+    <li>At the end, the model compares what happened with what was expected. A mismatch becomes a finding plus an "Is this a bug?" question, which never blocks the run.</li>
+    <li>Options it didn't try become <b>follow-up missions</b>.</li>
+  </ol>
+
+  <h3>First look compared with missions</h3>
+  <div class="table"><table>
+    <tr><th></th><th>First look</th><th>Missions</th></tr>
+    <tr><td>Clicks links and menus</td><td class="yes">Yes</td><td class="yes">Yes</td></tr>
+    <tr><td>Fills forms, presses Next</td><td class="yes">Yes, one path per form</td><td class="yes">Yes</td></tr>
+    <tr><td>Presses the final Submit/Save</td><td class="no">Never</td><td class="maybe">Automatically on non-production; otherwise only with your "yes"</td></tr>
+    <tr><td>Risky buttons</td><td class="no">Never</td><td class="maybe">Only with your "yes"</td></tr>
+    <tr><td>Asks you questions</td><td class="no">No</td><td class="yes">Yes</td></tr>
+    <tr><td>Follows your goal</td><td class="no">No, there is no goal yet</td><td class="yes">Yes</td></tr>
+    <tr><td>Checks the result against what was expected</td><td class="no">No</td><td class="yes">Yes</td></tr>
+  </table></div>
+
+  <h3>How questions work</h3>
+  <p>Explorer first reuses an earlier similar answer if there is one. Otherwise it emails you and checks every 5 seconds for up to 10 minutes. If nobody answers, it carries on. Your answer is saved as knowledge, so all later steps use it even if it arrives late.</p>
+  <div class="table"><table>
+    <tr><th>Kind</th><th>Example</th><th>Blocks the mission?</th></tr>
+    <tr><td><span class="pill">data</span></td><td>"What policy number should I use?" or "I can't get past this screen"</td><td>Waits up to 10 minutes</td></tr>
+    <tr><td><span class="pill">risk</span></td><td>"May I press Submit?"</td><td>Waits up to 10 minutes; with no answer, it stops before the button</td></tr>
+    <tr><td><span class="pill">rule</span></td><td>"Is this a bug?"</td><td>Never</td></tr>
+  </table></div>
+  <p class="ref">missions.py:89 plan · missions.py:192 run · pursue.py:128 step loop · sense.py:212 may_commit · memory.py:127 ask</p>
+</section>
+
+<section id="hunt" class="stage c4">
+  <h2><span class="num">4</span>Hunt: screens that only appear sometimes</h2>
+  <p class="tag">This runs only after <b>all</b> missions are done. It is plain code with no model, it stays on one screen at a time, and it never presses Next or Submit.</p>
+  <div class="grid">
+    <div class="card"><h4>Every option</h4><p>On up to 10 forms, it picks each option of every dropdown and radio group (up to 4 groups × 5 options) and records any fields that appear. Example: "Married" shows the spouse fields.</p></div>
+    <div class="card"><h4>Amounts</h4><p>It types 1, 999, 15,000 and 1,000,000 into amount fields and records any new sections. Example: an approval panel above 15,000.</p></div>
+    <div class="card"><h4>Fake server answers</h4><p>Inside its own browser only, it pretends the server returned no data, an error, every feature switched on, or a date a year from now. The real server is never changed.</p></div>
+  </div>
+  <div class="table"><table>
+    <tr><th></th><th>Missions</th><th>Hunt</th></tr>
+    <tr><td>Question it answers</td><td>What happens if I go down this path?</td><td>What appears on this screen when this changes?</td></tr>
+    <tr><td>Scope</td><td>A whole task, across screens</td><td>One screen</td></tr>
+    <tr><td>Options tried</td><td>A few chosen branches</td><td>Every option, up to 4×5 per form</td></tr>
+    <tr><td>Uses the model</td><td>On every step</td><td>No</td></tr>
+  </table></div>
+  <p>Each find is saved as a screen with a <b>condition</b>, such as "only appears when Marital status is Married". Variants found from options and amounts are used when planning scenarios. Variants from fake server answers are not, because a real test can't reach them. A screen that goes blank on a server error is logged as a finding.</p>
+  <p class="ref">hunt.py · 25-minute limit · can be turned off in Settings</p>
+</section>
+
+<section id="breadth" class="stage c5">
+  <h2><span class="num">5</span>Breadth</h2>
+  <p class="tag">A final sweep before planning: pages that exist in the app's code but that no menu links to, a code-coverage radar, and which role can see what. Results go to the run's insights.</p>
+  <p class="ref">breadth.py</p>
+</section>
+
+<section id="plan" class="stage c6">
+  <h2><span class="num">6</span>Planning scenarios</h2>
+  <p class="tag">Scenarios come from three sources. They all go into one list, and the total is what you see.</p>
+  <div class="grid">
+    <div class="card"><h4>A · Whole-flow, from missions</h4><p><b>At most 8.</b> Each chosen mission becomes <b>exactly one</b> scenario that redoes the task from start to finish.</p><p class="ref">kind = journey · code, no model</p></div>
+    <div class="card"><h4>B · Checklist, from screens</h4><p><b>Most of them.</b> The model applies a fixed QA checklist to every screen in scope, adds "X-" extras, and plans sign-in tests.</p><p class="ref">navigation · validation · error_state · data_load · form_submission</p></div>
+    <div class="card"><h4>C · Page quality</h4><p>A few checks per screen, made by code.</p><p class="ref">kind = page_quality</p></div>
+  </div>
+
+  <h3>B: what the model is given</h3>
+  <div class="table"><table>
+    <tr><th>Input</th><th>Role of the missions</th></tr>
+    <tr><td>Screens in scope: fields (with required flag), buttons, purpose</td><td>Missions <b>add screens</b> the first look never reached</td></tr>
+    <tr><td>Links in the form "A —Submit→ B"</td><td>Missions <b>add links</b>, especially what happens after Submit</td></tr>
+    <tr><td>Each mission's title, outcome and whether it went as it should</td><td>Only these three fields. <b>Not the mission's steps</b></td></tr>
+    <tr><td>Possible bugs</td><td>Missions whose result didn't match what was expected</td></tr>
+    <tr><td>Notes and answers</td><td>Answers you gave during missions</td></tr>
+    <tr><td>Buttons you approved (non-production only)</td><td>Your "Yes, press it" answers</td></tr>
+    <tr><td>Confirmed App Summary and scope</td><td>—</td></tr>
+  </table></div>
+  <p>Screens are sent <b>three at a time</b>, with up to 4 calls running together. For each screen, the model works through the checklist and writes one scenario per item that applies:</p>
+  <div class="grid">
+    <div class="card"><h4>List screens · L-01…L-23</h4><p>Page loads, columns, data matches the server, count, empty state, search, filters, sort, paging, open, edit, delete (then cancel or confirm), add, export.</p></div>
+    <div class="card"><h4>Form screens · F-01…F-20</h4><p>Loads, defaults, dropdown options, edit pre-fill, required fields, format, length, range, conditional fields, create, saved correctly, appears in list, update, cancel, reset, double submit.</p></div>
+    <div class="card"><h4>Other · P-01 and X-</h4><p>Other pages: loads, its links lead to the right screen, Back and Refresh keep the user in place. X- items: your answers and confirmed rules, hidden choices, possible bugs.</p></div>
+  </div>
+  <p>Rules it follows: one action and one result per test; only fields and buttons that the screen really has; anything you confirmed gets a test first, marked <span class="pill">confirmed</span>; no final Save on production; never pay, delete or cancel unless you approved that button.</p>
+  <p>A <b>second model call</b> (<code>review_plan</code>) then drops only exact duplicates and scenarios that need a screen or step Explorer never saw. Finally the list is capped at <b>Max scenarios</b> (150) and spread evenly across screens.</p>
+
+  <h3>A: which missions become whole-flow scenarios</h3>
+  <p>A mission qualifies only if <b>all four</b> are true:</p>
+  <ol>
+    <li>It <b>finished</b>. Stuck or blocked missions are out.</li>
+    <li>It is <b>not a rule check</b>.</li>
+    <li>It took <b>5 or more steps</b>.</li>
+    <li>It is an original mission, or a follow-up that <b>found new screens</b>.</li>
+  </ol>
+  <p>The qualifying missions are sorted by new screens found, then by steps, and the <b>top 8</b> are kept.</p>
+  <div class="table"><table>
+    <tr><th>Mission</th><th>Status</th><th>Kind</th><th>Steps</th><th>New screens</th><th>Kept?</th></tr>
+    <tr><td>Create a new claim</td><td>done</td><td>task</td><td>22</td><td>4</td><td class="yes">✓</td></tr>
+    <tr><td>Try "Home" as claim type</td><td>done</td><td>branch</td><td>18</td><td>3</td><td class="yes">✓ a follow-up that found new screens</td></tr>
+    <tr><td>Update customer address</td><td>done</td><td>task</td><td>9</td><td>0</td><td class="yes">✓ an original mission</td></tr>
+    <tr><td>Try "Travel" as claim type</td><td>done</td><td>branch</td><td>17</td><td>0</td><td class="no">✗ a follow-up that found nothing new</td></tr>
+    <tr><td>Cancelled policy can't be edited</td><td>done</td><td>rule</td><td>6</td><td>0</td><td class="no">✗ a rule check</td></tr>
+    <tr><td>Search claims</td><td>done</td><td>area</td><td>3</td><td>0</td><td class="no">✗ under 5 steps</td></tr>
+    <tr><td>Upload documents</td><td>stuck</td><td>task</td><td>12</td><td>1</td><td class="no">✗ didn't finish</td></tr>
+  </table></div>
+  <p>Each kept mission becomes one scenario. Its title is the mission's title. It starts on the home screen, its instructions are the mission's goal plus "do the whole task from start to finish", and its expected result is the mission's expected result. It gets up to 40 steps. The mission's clicks are <b>not copied</b>; the flow is walked again in stage 7.</p>
+  <div class="note warn"><b>Missions that qualify but don't make the top 8</b>Their exploring is <b>not wasted</b>. Their screens, links, outcomes, your answers and any bugs all still feed the checklist scenarios. What they lose is an <b>end-to-end test of the whole task</b> and a Journey folder of their own. The 8 is a fixed number in the code (<code>MAX_JOURNEYS</code>, tests_stage.py:84) with no documented reason; most likely it limits cost, since whole-flow scenarios are the most expensive kind. The ranking uses new screens found, not business importance.</div>
+  <p class="ref">tests_stage.py:223 plan_tests · brain.py:446 checklist prompt · brain.py:624 review_plan · tests_stage.py:89 journeys_from</p>
+</section>
+
+<section id="prove" class="stage c7">
+  <h2><span class="num">7</span>Build &amp; prove</h2>
+  <p class="tag">The model is used only once, in the first run. Every later run replays the exact recorded steps in code.</p>
+  <div class="table"><table>
+    <tr><th>Run</th><th>Who drives</th><th>What happens</th><th>Fails if</th></tr>
+    <tr><td><b>1 · Build</b></td><td>Model</td><td>Starts on the home page and reaches the start screen, by the saved route if there is one. Carries out the plain-English scenario step by step, <b>recording each action and its locator</b>. Then the model chooses a <b>proof</b>: text visible, URL contains, or an API call. A proof that was already on screen before the test acted is rejected.</td><td>It can't finish, even after one retry with a note on what went wrong, or no reliable proof is found</td></tr>
+    <tr><td><b>2 · Broken on purpose</b></td><td>Code</td><td>Replays the steps <b>without the last real action</b>, usually the final click. If the proof still appears, it tries again <b>without the last value typed or chosen</b>. Steps that only reach the screen are never removed.</td><td>The proof still appears, which means the test wouldn't catch a real problem</td></tr>
+    <tr><td><b>3 · Proof replays</b></td><td>Code</td><td>Replays all the steps "Proof replays" times (default 1), recording a video.</td><td>Any replay gives a different result</td></tr>
+  </table></div>
+  <p>The result is <span class="pill" style="--c:var(--ok);--cw:var(--ok-w)">proven</span> if the model said it matched what was expected, and <span class="pill" style="--c:var(--warn);--cw:var(--warn-w)">known_bug</span> if it didn't. Otherwise it is dropped. The Playwright code is made from a <b>template</b> using the recorded steps and the proof; the AI doesn't write it.</p>
+  <p class="ref">tests_stage.py:567 build_and_prove · testkit.py:64 replay · testkit.py:235 broken_variants · testkit.py:298 playwright_code</p>
+</section>
+
+<section id="locators" class="stage c7">
+  <h2><span class="num">•</span>How elements are found (locators)</h2>
+  <p class="tag">No ids or CSS classes are needed. Explorer finds elements the way a person does, which is also what Playwright recommends.</p>
+  <div class="table"><table>
+    <tr><th>Locator</th><th>Finds</th><th>Matches, for example</th></tr>
+    <tr><td><code>getByRole('button', {name: 'Submit'})</code></td><td>a button named "Submit"</td><td><code>&lt;button class="css-1x9k2"&gt;Submit&lt;/button&gt;</code></td></tr>
+    <tr><td><code>getByLabel('Policy number')</code></td><td>the field linked to that label</td><td><code>&lt;label for="p1"&gt;…&lt;input id="p1"&gt;</code></td></tr>
+    <tr><td><code>getByPlaceholder(…)</code></td><td>an input with that placeholder</td><td></td></tr>
+    <tr><td><code>getByText(…)</code></td><td>an element showing that text</td><td></td></tr>
+  </table></div>
+  <ol>
+    <li><b>Build run:</b> the model names an element by its visible text, such as "Submit" or "Policy number".</li>
+    <li>Code tries a fixed list of ways to find it: role, then exact text, then placeholder, then label, then the field after a caption, and so on. The <b>first one that matches</b> is used and saved on the step.</li>
+    <li><b>Replays and the exported test</b> use <b>only that saved locator</b>. There is no guessing and no model.</li>
+    <li>The route to a scenario's start screen reuses locators recorded by earlier walks (<code>ExplorerScreen.route</code>).</li>
+  </ol>
+  <pre>{do: "click", label: "Submit", locator: {by: "role", role: "button", name: "Submit", exact: true}}
+→ page.getByRole("button", { name: "Submit", exact: true }).filter({ visible: true }).first()</pre>
+  <div class="note warn"><b>Elements with the same name</b>Hidden duplicates are ignored, but among <b>visible</b> ones Explorer always takes the <b>first</b>. "Edit" on every row of a table means row 1 gets clicked. Explorer has nothing yet that scopes to a container, such as "the Edit in the row for POL-123".</div>
+  <p class="ref">browser.py:277 locate · browser.py:496 click_text · browser.py:782 fill_field · testkit.py:264 ts_locator</p>
+</section>
+
+<section id="journeys" class="stage c8">
+  <h2><span class="num">8</span>Journeys: grouping the proven scenarios</h2>
+  <p class="tag">Only <b>proven</b> scenarios are sent on. Possible bugs stay in Explorer until you mark one "not a bug".</p>
+  <pre>key = test.title if test.kind == "journey" else test.start_screen</pre>
+  <ul>
+    <li><b>A whole-flow scenario</b> gets its own Journey, named after the mission, with that one scenario inside.</li>
+    <li><b>Any other scenario</b> goes into the Journey named after the <b>screen it starts on</b>.</li>
+  </ul>
+  <div class="tree"><span class="j">Journey "Create a new claim"</span>      <span class="m">← from a mission (whole flow)</span>
+   └─ <span class="s">Scenario: Create a new claim, start to finish</span>
+<span class="j">Journey "Claims List"</span>             <span class="m">← a screen</span>
+   ├─ <span class="s">Scenario: List loads with data</span>
+   ├─ <span class="s">Scenario: Search filters results</span>
+   └─ <span class="s">Scenario: Empty search shows a message</span>
+<span class="j">Journey "New Claim Form"</span>          <span class="m">← a screen</span>
+   ├─ <span class="s">Scenario: Policy number is required</span>
+   └─ <span class="s">Scenario: Date can't be in the future</span></div>
+  <p>Each scenario keeps Explorer's proven code in <code>grounding.proven_code</code>. Older Explorer journeys are retired.</p>
+  <p class="ref">promote.py:84–279</p>
+</section>
+
+<section id="tests" class="stage c9">
+  <h2><span class="num">9</span>Test cases &amp; running them</h2>
+  <ol>
+    <li><b>Generate tests</b> (on Explorer's Scenarios tab) starts suite generation for each Journey.</li>
+    <li>For each scenario, <b>if the proven code typechecks it is used as-is</b>. Only if it doesn't is the code written by the AI. <b>One scenario = one test case.</b></li>
+    <li>Running the tests: each test runs, gets healed if it fails, and is reported. Apps that keep state per account run their tests one at a time.</li>
+  </ol>
+  <p class="ref">POST /applications/{id}/generate-suite · generation_worker/activities.py:999 · execution_workflow.py</p>
+</section>
+
+<section id="how-many">
+  <h2>How many test cases will I get?</h2>
+  <p class="tag">An example with 15 finished missions and 20 screens in scope. The numbers are illustrative.</p>
+  <div class="table"><table>
+    <tr><th>Source</th><th>Planned</th><th>Proven = test cases</th></tr>
+    <tr><td style="color:var(--s3)"><b>A</b> · 15 missions → 11 qualify → top 8</td><td>8</td><td>6</td></tr>
+    <tr><td style="color:var(--s6)"><b>B</b> · 4 list screens (about 12 each)</td><td>48</td><td rowspan="5" style="vertical-align:middle">≈ 75 (after the 150 cap, review drops and failed proofs)</td></tr>
+    <tr><td style="color:var(--s6)"><b>B</b> · 5 form screens (about 14 each)</td><td>70</td></tr>
+    <tr><td style="color:var(--s6)"><b>B</b> · 11 other screens (about 3 each)</td><td>33</td></tr>
+    <tr><td style="color:var(--s6)"><b>B</b> · X- items and sign-in</td><td>15</td></tr>
+    <tr><td style="color:var(--s5)"><b>C</b> · page quality</td><td>10</td></tr>
+    <tr><td><b>Total</b></td><td><b>≈ 184</b></td><td><b>≈ 81 test cases</b></td></tr>
+  </table></div>
+  <div class="note"><b>What decides the total</b>The number of screens in your goal, the Max scenarios setting, and how many scenarios get proven. Missions give at most 8 test cases <b>directly</b>; their main effect is <b>indirect</b>, because every screen they find adds checklist scenarios.</div>
+  <pre>-- check your own run
+SELECT kind, count(*) FROM explorer_test_case
+WHERE run_id = '&lt;run id&gt;' AND status = 'proven' GROUP BY kind;</pre>
+</section>
+
+<section id="limits">
+  <h2>Limits (Settings → Explorer)</h2>
+  <p class="tag">Each run takes a copy of these when it starts or resumes. Changing them doesn't affect a run already going.</p>
+  <div class="table"><table>
+    <tr><th>Limit</th><th>Default</th><th>Affects</th></tr>
+    <tr><td>First-look screens / time</td><td>150 / 120 min</td><td>How far the first look goes</td></tr>
+    <tr><td>Max missions</td><td>15</td><td>Missions, including follow-ups</td></tr>
+    <tr><td>Steps per mission / mission time</td><td>20 / 45 min</td><td>How long one task may take</td></tr>
+    <tr><td>Question wait</td><td>10 min</td><td>How long a mission waits for your answer</td></tr>
+    <tr><td>Hidden-screen search</td><td>25 min</td><td>Hunt (0 turns it off)</td></tr>
+    <tr><td>Max scenarios</td><td>150</td><td>Cap on planned scenarios</td></tr>
+    <tr><td>Proof replays</td><td>1</td><td>Replays per scenario</td></tr>
+    <tr><td>Run time / AI budget</td><td>not set</td><td>Pauses the run when reached</td></tr>
+    <tr><td><i>Whole-flow scenarios</i></td><td><i>8 (fixed in code)</i></td><td><i>Not in Settings</i></td></tr>
+  </table></div>
+  <p class="ref">apps/workers/explorer/src/explorer_worker/limits.py:20</p>
+</section>
+
+<section id="gaps">
+  <h2>Known gaps</h2>
+  <div class="grid">
+    <div class="card" style="border-top:3px solid var(--warn)"><h4>Only 8 whole-flow tests</h4><p>The cap is fixed and ranks by new screens found, so an important but short flow can be cut.</p></div>
+    <div class="card" style="border-top:3px solid var(--warn)"><h4>Same-name elements</h4><p>The first visible match always wins. There is no scoping to a row or section.</p></div>
+    <div class="card" style="border-top:3px solid var(--warn)"><h4>Planning sees little of each mission</h4><p>Only its title, outcome and whether it went as it should. Its steps and the values it entered are not passed on.</p></div>
+    <div class="card" style="border-top:3px solid var(--warn)"><h4>Hunt opens screens by address</h4><p>Wizard steps you can only reach by clicking through earlier steps may not be checked.</p></div>
+    <div class="card" style="border-top:3px solid var(--warn)"><h4>Late answers</h4><p>An answer that arrives after the 10-minute wait only helps later steps.</p></div>
+    <div class="card" style="border-top:3px solid var(--warn)"><h4>No schema check on model replies</h4><p>A badly formed reply is patched with defaults instead of being rejected.</p></div>
+  </div>
+</section>
+</main>
+</div>
+<script>
+  (function () {
+    var root = document.documentElement, key = 'explorer-doc-theme';
+    try { var saved = localStorage.getItem(key); if (saved) root.dataset.theme = saved; } catch (e) {}
+    document.getElementById('theme').addEventListener('click', function () {
+      var dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+      root.dataset.theme = dark ? 'light' : 'dark';
+      try { localStorage.setItem(key, root.dataset.theme); } catch (e) {}
+    });
+  })();
+</script>
+</body>
+</html>
