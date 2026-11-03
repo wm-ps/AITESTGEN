@@ -9,13 +9,12 @@ Run with: uv run --package discovery-worker python -m discovery_worker.worker
 """
 
 import asyncio
-import logging
 import os
 
 from temporalio.client import Client
 from temporalio.worker import Worker
 from workflows import DISCOVERY_TASK_QUEUE, DiscoveryWorkflow, VerifyCredentialsWorkflow
-from workflows.activity_logging import ActivityLogging
+from workflows.activity_logging import ActivityLogging, configure_logging
 
 from discovery_worker.activities import (
     application_model_builder_activity,
@@ -34,9 +33,7 @@ async def main() -> None:
     # default level (WARNING) silently swallowed every `logger.info(...)`
     # call in crawler.py, so a long-running crawl looked completely silent
     # in this Terminal window even while it was actively working.
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
+    configure_logging()
     client = await Client.connect(TEMPORAL_ADDRESS)
     worker = Worker(
         client,

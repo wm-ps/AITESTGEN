@@ -60,3 +60,57 @@ def test_input_objects_are_never_logged(caplog: pytest.LogCaptureFixture) -> Non
     assert all(
         "secret" not in r.getMessage() and "id=" not in r.getMessage() for r in caplog.records
     )
+
+
+def _label_of(record: logging.LogRecord) -> str:
+    activity_logging._AppLabel().filter(record)
+    return record.app  # type: ignore[attr-defined]
+
+
+def test_lines_name_the_app_the_activity_loaded(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="activity")
+    class _LoadsAnApp(_Next):
+        async def execute_activity(self, input: ExecuteActivityInput) -> Any:
+            # Loaded in a worker thread, as most activities do it.
+            await asyncio.to_thread(activity_logging.label_app, "Denali", "3f9a1c2b-0000")
+            logging.getLogger("x").warning("inside")
+            return 1
+
+    records: list[logging.LogRecord] = []
+
+    class _Keep(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+            _label_of(record)
+
+    handler = _Keep()
+    logging.getLogger().addHandler(handler)
+    try:
+        hook = activity_logging._LogEachActivity(_LoadsAnApp(False))  # type: ignore[arg-type]
+        asyncio.run(hook.execute_activity(ExecuteActivityInput(lambda: None, ["r"], None, {})))
+    finally:
+        logging.getLogger().removeHandler(handler)
+    labels = {r.getMessage().split()[0]: r.app for r in records}  # type: ignore[attr-defined]
+    assert labels["start"] == "-"
+    assert labels["inside"] == "Denali#3f9a1c2b"
+    assert labels["done"] == "Denali#3f9a1c2b"
+
+
+def test_each_activity_starts_unlabelled_and_mixed_apps_say_so() -> None:
+    activity_logging.start_log_scope()
+    activity_logging.label_app("Denali", "3f9a1c2b")
+    activity_logging.label_app("Denali", "3f9a1c2b")
+    assert _label_of(logging.LogRecord("x", 20, "", 0, "m", None, None)) == "Denali#3f9a1c2b"
+    activity_logging.label_app("FNOL", "11112222")
+    assert _label_of(logging.LogRecord("x", 20, "", 0, "m", None, None)) == "several apps"
+    activity_logging.start_log_scope()
+    assert _label_of(logging.LogRecord("x", 20, "", 0, "m", None, None)) == "-"
+
+
+def test_loading_an_application_labels_the_lines() -> None:
+    from domain import Application
+    from sqlalchemy import event
+
+    activity_logging.configure_logging()
+    activity_logging.configure_logging()  # twice: still one hook
+    assert event.contains(Application, "load", activity_logging._on_app_load)

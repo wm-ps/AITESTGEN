@@ -31,7 +31,6 @@ Run with: uv run --package execution-worker python -m execution_worker.worker
 """
 
 import asyncio
-import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 
@@ -45,7 +44,7 @@ from workflows import (
     ReconcileStaleTestRunsWorkflow,
     ScheduledExecutionWorkflow,
 )
-from workflows.activity_logging import ActivityLogging
+from workflows.activity_logging import ActivityLogging, configure_logging
 
 from execution_worker.activities import (
     cleanup_cancelled_test_run_activity,
@@ -75,9 +74,7 @@ MAX_CONCURRENT_ACTIVITIES = int(os.environ.get("EXECUTION_WORKER_MAX_CONCURRENT_
 
 
 async def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
+    configure_logging()
     # A directory left behind by a run that crashed before its own
     # FinalizeTestRunActivity could clean up after itself — swept once at
     # startup rather than left to accumulate indefinitely.

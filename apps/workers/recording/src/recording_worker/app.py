@@ -21,6 +21,7 @@ import contextlib
 import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from workflows.activity_logging import configure_logging, start_log_scope
 
 from recording_worker.registry import RecordingServiceBusy, SessionRegistry
 from recording_worker.runtime import CANCELLED_CLOSE_CODE, RuntimeState
@@ -32,10 +33,8 @@ from recording_worker.tokens import (
 
 logger = logging.getLogger(__name__)
 # Uvicorn only sets up its own loggers: without this, recording_worker's
-# info and warning lines never reach the pod log.
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-)
+# info and warning lines never reach the pod log. Each line names its app.
+configure_logging()
 
 app = FastAPI(title="Record and Play — recording service")
 _registry = SessionRegistry()
@@ -92,6 +91,7 @@ async def _proxy_vnc(websocket: WebSocket, vnc_port: int) -> None:
 
 @app.websocket("/recordings/{token}/vnc")
 async def recordings_vnc(websocket: WebSocket, token: str) -> None:
+    start_log_scope()  # lines from this session name its app
     try:
         recording_session = load_session_for_connect(token)
         runtime = await _registry.get_or_start(recording_session)
@@ -125,6 +125,7 @@ async def _tell_cancelled(websocket: WebSocket) -> None:
 
 @app.websocket("/recordings/{token}/control")
 async def recordings_control(websocket: WebSocket, token: str) -> None:
+    start_log_scope()  # lines from this session name its app
     try:
         recording_session = load_session_for_connect(token)
         runtime = await _registry.get_or_start(recording_session)

@@ -10,7 +10,6 @@ Run with: uv run --package generation-worker python -m generation_worker.worker
 """
 
 import asyncio
-import logging
 import os
 
 from temporalio.client import Client
@@ -24,7 +23,7 @@ from workflows import (
     RegenerateTestAssetWorkflow,
     SuiteGenerationWorkflow,
 )
-from workflows.activity_logging import ActivityLogging
+from workflows.activity_logging import ActivityLogging, configure_logging
 
 from generation_worker.activities import (
     autofill_scenario_test_data_activity,
@@ -54,9 +53,7 @@ LIVE_EXPLORATION_MAX_CONCURRENT_ACTIVITIES = int(
 
 
 async def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
+    configure_logging()
     client = await Client.connect(TEMPORAL_ADDRESS)
     worker = Worker(
         client,

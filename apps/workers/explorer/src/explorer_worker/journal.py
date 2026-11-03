@@ -2,7 +2,6 @@
 screenshots, understood screens, health issues, run status. Short-lived DB
 sessions per write so the Live screen sees progress immediately."""
 
-import functools
 import logging
 import re
 import uuid
@@ -36,18 +35,6 @@ _SECRET_ENTRY = re.compile(
 
 def _masked(text: str) -> str:
     return _SECRET_ENTRY.sub(r"\1***", text)
-
-
-@functools.lru_cache(maxsize=512)
-def _app_of(run_id: uuid.UUID) -> str:
-    """The app's name on every log line: a user reports an app, not a run id."""
-    try:
-        with Session(engine) as session:
-            run = session.get(ExplorerRun, run_id)
-            app = session.get(Application, run.application_id) if run else None
-            return app.name if app else "?"
-    except Exception:  # noqa: BLE001 — a log label must never break the run
-        return "?"
 
 
 _URL = re.compile(r"https?://\S+")
@@ -128,9 +115,8 @@ class Journal:
         # followed (and its failures explained) from the logs alone.
         logger.log(
             _LOG_LEVEL.get(kind, logging.INFO),
-            "run %s [%s]%s %s: %s",
+            "run %s%s %s: %s",
             self.run_id,
-            _app_of(self.run_id),
             f" mission {self.mission_id}" if self.mission_id else "",
             kind,
             title if not detail else f"{title} — {_masked(' '.join(detail.split()))[:2000]}",

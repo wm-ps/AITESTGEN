@@ -4,14 +4,13 @@ Run with: uv run --env-file .env --package explorer-worker python -m explorer_wo
 """
 
 import asyncio
-import logging
 import os
 
 from explorer_core import EXPLORER_TASK_QUEUE
 from temporalio.client import Client
 from temporalio.worker import Worker
 from workflows import VerifyCredentialsWorkflow
-from workflows.activity_logging import ActivityLogging
+from workflows.activity_logging import ActivityLogging, configure_logging
 
 from explorer_worker.activities import (
     breadth_activity,
@@ -44,9 +43,7 @@ MAX_CONCURRENT_ACTIVITIES = int(os.environ.get("EXPLORER_WORKER_MAX_CONCURRENT_A
 
 
 async def main() -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
-    )
+    configure_logging()
     client = await Client.connect(TEMPORAL_ADDRESS)
     worker = Worker(
         client,
