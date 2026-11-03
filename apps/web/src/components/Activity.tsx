@@ -35,7 +35,7 @@ const RESULT: Record<ActivityOutcome, { label: string; color: string; tint: stri
 }
 
 const CATEGORY_LABEL: Record<ActivityCategory, string> = {
-  discovery: 'Exploration',
+  discovery: 'Explore',
   questions: 'Questions',
   scenarios: 'Scenarios',
   test_cases: 'Test cases',
@@ -133,7 +133,7 @@ function suggestedNextStep(item: ActivityItemRead): string | null {
     return "Check the application's saved login credentials, then try again."
   }
   if (item.kind === 'test_run') return 'Open the run to see each failure, or retry the failed tests with self-healing.'
-  if (item.kind === 'discovery') return 'Confirm the application is reachable, then resume exploration.'
+  if (item.kind === 'discovery') return 'Confirm the application is reachable, then resume exploring.'
   if (item.category === 'scenarios') return 'Generate scenarios again from the Scenarios tab.'
   if (item.category === 'test_cases') return 'Generate test cases again from the Test cases tab.'
   return null
@@ -417,7 +417,7 @@ function ActivityFeed({ onOpen }: { onOpen: (item: ActivityItemRead) => void }) 
         <div style={{ minWidth: 0 }}>
           <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Activity</h1>
           <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 4 }}>
-            Every run, exploration, question, sign-in and settings change in this workspace, {oldestFirst ? 'oldest' : 'newest'} first.
+            Every test run, Explorer run, question, sign-in and settings change in this workspace, {oldestFirst ? 'oldest' : 'newest'} first.
           </div>
         </div>
         <div style={{ flex: 1 }} />
@@ -902,7 +902,7 @@ function DiscoveryDetail({ item }: { item: ActivityItemRead }) {
       {failure_reason && <ErrorBlock title="Exact error" text={failure_reason} />}
       {errors && errors.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={sectionLabelStyle}>Errors during exploration ({errors.length})</div>
+          <div style={sectionLabelStyle}>Errors while exploring ({errors.length})</div>
           <ErrorBlock title="Error log" text={errors.map((e) => `${e.code}: ${e.message}`).join('\n')} />
         </div>
       )}

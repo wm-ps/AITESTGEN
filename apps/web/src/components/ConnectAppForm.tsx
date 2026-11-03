@@ -51,7 +51,7 @@ const INVALID_CREDENTIALS_MESSAGE =
 const UNCERTAIN_CREDENTIALS_MESSAGE =
   "We couldn't confirm these credentials. Click Start to validate again."
 const DISCOVERY_NOT_STARTED_MESSAGE =
-  "Exploration couldn't start, so the application was not added. Click Start to try again."
+  "Exploring couldn't start, so the application was not added. Click Start to try again."
 
 // Anything that isn't a proved `valid` / `invalid` (request error, worker
 // unavailable, timeout) collapses to `uncertain` — discovery never starts on
@@ -252,8 +252,8 @@ export function ConnectAppForm({
             {readOnly
               ? 'What was submitted when this application connected.'
               : discoveryRequired
-                ? 'Enter the deployed URL and sign-in credentials. Exploration starts immediately — journeys, scenarios and Playwright code follow automatically.'
-                : 'Enter the deployed URL and sign-in credentials. No exploration runs — add test cases yourself by writing them or recording them.'}
+                ? 'Enter the deployed URL and sign-in credentials. Exploring starts immediately — journeys, scenarios and Playwright code follow automatically.'
+                : 'Enter the deployed URL and sign-in credentials. Nothing is explored — add test cases yourself by writing them or recording them.'}
           </div>
         </div>
 
@@ -427,7 +427,7 @@ export function ConnectAppForm({
                   {!requiresSignIn
                     ? 'Turn on if the application asks for a username and password.'
                     : discoveryRequired
-                      ? 'Credentials are stored encrypted and injected at exploration and run time only.'
+                      ? 'Credentials are stored encrypted and used only while exploring and running tests.'
                       : 'Credentials are stored encrypted and injected at run time only.'}
                 </div>
               </div>

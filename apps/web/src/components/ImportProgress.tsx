@@ -34,7 +34,7 @@ export function ImportProgress({ applicationName }: { applicationName?: string }
         bullets={['Exploring pages', 'Grouping flows', 'Capturing screenshots']}
         footer={
           <p className="caption" style={{ margin: '10px 0 0', fontSize: 12, opacity: 0.7 }}>
-            Exploration runs in the background — this list updates automatically.
+            Exploring runs in the background — this list updates automatically.
           </p>
         }
       />

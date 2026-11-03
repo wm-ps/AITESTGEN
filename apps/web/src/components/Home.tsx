@@ -158,7 +158,7 @@ function ApplicationRow({
 
   const deleteBlocked = isRunning || scenariosGenerating || suiteGenerating || testRunRunning
   const deleteBlockedReason = isRunning
-    ? 'Exploration is still running'
+    ? 'Still exploring'
     : scenariosGenerating
       ? 'Test case generation is still running'
       : suiteGenerating
@@ -683,7 +683,7 @@ export function Home({
           </div>
           <div style={{ fontSize: 19, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.015em' }}>Add your first application</div>
           <div style={{ fontSize: 13, color: 'var(--fg-3)', marginTop: 9, maxWidth: 460, lineHeight: '21px' }}>
-            Point Vantage at a deployed URL and optional login. Exploration maps the pages, models journeys and generates Playwright test cases for each one — usually inside 40 minutes.
+            Point Vantage at a deployed URL and optional login. Explorer maps the pages, models journeys and generates Playwright test cases for each one — usually inside 40 minutes.
           </div>
           {canEdit && (
           <button

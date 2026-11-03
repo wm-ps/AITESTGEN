@@ -212,7 +212,7 @@ export function ChevronIcon({ open }: { open: boolean }) {
 const REGENERATE_POLL_INTERVAL_MS = 3000
 
 const SOURCE_LABEL: Record<TestAssetStatusRead['source'], string> = {
-  discovery: 'From exploration',
+  discovery: 'From Explorer',
   nl: 'Authored by prompt',
   recorded: 'Recorded',
 }
@@ -1015,7 +1015,7 @@ export function TestSuiteTab({
             title="No test cases generated yet"
             subtitle={
               discoveryEnabled || !canAuthor
-                ? 'Test cases appear here once exploration finds journeys and test cases are generated.'
+                ? 'Test cases appear here once exploring finds journeys and test cases are generated.'
                 : 'Author a test case in plain language or record a flow to add your first test case.'
             }
           />

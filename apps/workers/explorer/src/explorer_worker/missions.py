@@ -642,7 +642,7 @@ def finish_exploring(run_id: uuid.UUID) -> None:
     )
     journal.event(
         "summary",
-        "Exploration complete",
+        "Done exploring",
         f"{done} of {len(missions)} missions completed. {len(screens)} screens understood, "
         f"{hidden} of them hidden behind a choice or situation. {bugs} possible bug(s) where the app "
         "did something different from what it should.",

@@ -414,7 +414,7 @@ describe('ConnectAppForm', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Start$/ }))
 
     await screen.findByText(
-      "Exploration couldn't start, so the application was not added. Click Start to try again.",
+      "Exploring couldn't start, so the application was not added. Click Start to try again.",
     )
     expect(onConnected).not.toHaveBeenCalled()
     expect((screen.getByLabelText('Application name') as HTMLInputElement).value).toBe('My App')

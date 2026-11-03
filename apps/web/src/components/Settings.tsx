@@ -155,8 +155,8 @@ function CredentialsPanel() {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Saved credentials</div>
           <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
-            Stored encrypted at project level and reused for exploration, generation and every run. Turn Sign-in
-            off for an app that has no login — exploration and tests then open it directly.
+            Stored encrypted at project level and reused for exploring, generation and every run. Turn Sign-in
+            off for an app that has no login — exploring and tests then open it directly.
           </div>
         </div>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 30, padding: '0 12px', borderRadius: 8, border: '1px solid var(--border-2)', background: 'var(--panel-2)', fontSize: 12, fontWeight: 500, color: 'var(--fg-2)', flex: 'none' }}>
@@ -528,7 +528,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
           </div>
           <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--fg)' }}>Access denied</div>
           <p style={{ fontSize: 13.5, margin: '8px auto 0', maxWidth: 360, lineHeight: 1.5, color: 'var(--fg-3)' }}>
-            Exploration settings are limited to organization admins. Ask an admin on your team for access.
+            Explorer settings are limited to organization admins. Ask an admin on your team for access.
           </p>
           <button
             type="button"
@@ -571,7 +571,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
     <div style={{ maxWidth: 1560, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: 18 }}>
       <div>
         <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Settings</h1>
-        <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 4 }}>Exploration limits, credentials and schedules.</div>
+        <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 4 }}>Explorer limits, credentials and schedules.</div>
       </div>
 
       <form onSubmit={handleSubmit} style={panelStyle}>
@@ -651,7 +651,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--fg-1)' }}>Auto-clean up removed projects</div>
               <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 2 }}>
-                Deletes exploration data, generated test cases, screenshots and run history for a project once it is removed.
+                Deletes explored data, generated test cases, screenshots and run history for a project once it is removed.
               </div>
             </div>
             <select

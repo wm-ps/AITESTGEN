@@ -252,7 +252,7 @@ export function DiscoverJourneys({
       const application = await api.pauseDiscovery(applicationId)
       setStatusOverride(application.discovery_status)
     } catch {
-      setPauseResumeError('Could not pause exploration. Try again.')
+      setPauseResumeError('Could not pause exploring. Try again.')
     } finally {
       setPauseResumeBusy(false)
     }
@@ -265,7 +265,7 @@ export function DiscoverJourneys({
       const application = await api.resumeDiscovery(applicationId)
       setStatusOverride(application.discovery_status)
     } catch {
-      setPauseResumeError('Could not resume exploration. Try again.')
+      setPauseResumeError('Could not resume exploring. Try again.')
     } finally {
       setPauseResumeBusy(false)
     }
@@ -442,7 +442,7 @@ export function DiscoverJourneys({
                 onClick={status === 'running' ? handlePause : handleResume}
                 disabled={pauseResumeBusy}
               >
-                {status === 'running' ? 'Pause Exploration' : 'Resume Exploration'}
+                {status === 'running' ? 'Pause exploring' : 'Resume exploring'}
               </button>
             )}
             {canEdit && journeys.length > 0 && (
@@ -480,14 +480,14 @@ export function DiscoverJourneys({
           </p>
         ) : sessionExpired ? (
           <p className="caption" role="alert" style={{ color: 'var(--danger)' }}>
-            Session expired mid-exploration. Re-authenticate to continue exploration.
+            Session expired while exploring. Sign in again to continue exploring.
           </p>
         ) : discoveryWorkerDown ? (
           <ServiceErrorNote code="DISCOVERY_UNAVAILABLE" />
         ) : (
           status === 'failed' && (
             <p className="caption" role="alert" style={{ color: 'var(--danger)' }}>
-              Exploration Run failed.
+              Exploring failed.
             </p>
           )
         )}
@@ -502,7 +502,7 @@ export function DiscoverJourneys({
 
         {!onOpenExplorer && status === 'paused' && (
           <p className="caption" style={{ color: 'var(--warn-strong)' }}>
-            Exploration paused. Resume to continue exploring from where it left off.
+            Exploring paused. Resume to continue exploring from where it left off.
           </p>
         )}
 

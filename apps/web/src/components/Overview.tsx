@@ -27,7 +27,7 @@ const POLL_INTERVAL_MS = 15000
 // this app's own applicationStage() outcomes; Execution is the one active
 // state that stage doesn't carry (a run can still be going after the suite
 // is otherwise complete), so it's checked independently and wins ties.
-const PIPE_STAGE_LABELS = ['Exploration', 'Scenarios', 'Test cases', 'Execution'] as const
+const PIPE_STAGE_LABELS = ['Explore', 'Scenarios', 'Test cases', 'Execution'] as const
 
 function activePipelineIndex(app: HomeApplicationRead): number | null {
   const { isRunning, scenariosGenerating, suiteGenerating, testRunRunning } = applicationStage(app)
@@ -220,7 +220,7 @@ export function Overview({
                 : stageIndex === 1
                   ? `${app.scenario_journeys_covered}/${app.journey_count} journeys`
                   : stageIndex === 0
-                    ? 'Exploration in progress'
+                    ? 'Exploring'
                     : stageIndex === 2
                       ? 'Generating test cases'
                       : 'Run in progress'
@@ -510,7 +510,7 @@ export function Overview({
               {
                 id: 'discovery',
                 icon: faCompass,
-                label: 'Last exploration',
+                label: 'Last explored',
                 value: lastDiscoveryAt == null ? '—' : relativeTime(lastDiscoveryAt),
                 sub: `${appsDiscoveredUnderAWeek} of ${apps.length} apps under 7 days`,
               },

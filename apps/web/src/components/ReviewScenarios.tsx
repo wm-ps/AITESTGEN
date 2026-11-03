@@ -540,7 +540,7 @@ export function ReviewScenarios({
             <GenerationLoader
               icon={Brain}
               title="Modelling scenarios…"
-              body="Each settled journey is broken into scenarios with their own steps and test data. They appear here as exploration completes."
+              body="Each settled journey is broken into scenarios with their own steps and test data. They appear here as exploring finishes."
               bullets={['Reading journeys', 'Drafting scenarios', 'Deriving test data']}
               percent={journeys.length > 0 ? (journeysCovered / journeys.length) * 100 : undefined}
               caption={

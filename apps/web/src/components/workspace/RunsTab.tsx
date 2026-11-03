@@ -1649,7 +1649,7 @@ export function RunsTab({
           illustration={<RunsIllustration />}
           variant="scene"
           title="No test runs yet"
-          subtitle="Once exploration finishes and test cases are generated, every execution shows up here with results, traces and per-case re-runs."
+          subtitle="Once exploring finishes and test cases are generated, every execution shows up here with results, traces and per-case re-runs."
         />
       ) : (
         <div style={{ ...mainPanelStyle, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>

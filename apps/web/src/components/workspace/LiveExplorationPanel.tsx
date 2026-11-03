@@ -424,7 +424,7 @@ export function LiveExplorationPanel({
       {status === 'failed' && (
         <div style={{ marginTop: 16 }}>
           <p style={{ color: 'var(--bad)', fontSize: 13.5, margin: '0 0 12px' }}>
-            {statusRow?.error_message || 'Something went wrong during live exploration.'}
+            {statusRow?.error_message || 'Something went wrong while exploring live.'}
           </p>
           <button type="button" onClick={reset} style={secondaryButtonStyle}>
             Try again

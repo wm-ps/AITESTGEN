@@ -126,7 +126,7 @@ const QUICK_ACTIONS: { target: QuickActionTarget; label: string; hint: string; i
   { target: 'record', label: 'Record and play', hint: 'Capture a flow by hand and replay it as a test.', icon: RecordIcon },
   { target: 'suite', label: 'View test cases', hint: "See this application's generated Playwright test cases.", icon: CheckCircleIcon },
   { target: 'runs', label: 'View test runs', hint: 'Browse past executions and results.', icon: RunHistoryIcon },
-  { target: 'schedules', label: 'Schedules', hint: 'Automate exploration and test runs on a cadence.', icon: ClockPauseIcon },
+  { target: 'schedules', label: 'Schedules', hint: 'Explore and run tests automatically on a cadence.', icon: ClockPauseIcon },
   { target: 'export', label: 'Download project', hint: 'Get the generated Playwright project as a .zip.', icon: DownloadProjectIcon },
 ]
 
@@ -317,7 +317,7 @@ export function OverviewTab({
           <StatTile
             label="Journeys mapped"
             value={overview.journey_count}
-            sub={overview.last_discovery_started_at ? `Last exploration ${formatDateTime(overview.last_discovery_started_at)}` : 'No exploration yet'}
+            sub={overview.last_discovery_started_at ? `Last explored ${formatDateTime(overview.last_discovery_started_at)}` : 'Not explored yet'}
           />
         )}
         <StatTile label="Test cases" value={overview.total_tests} sub={`${overview.not_run} not yet run`} />

@@ -641,7 +641,7 @@ async def stop_run(
     )
     session.add(
         ExplorerEvent(
-            run_id=run.id, kind="phase", title="Stopped", detail="Exploration was stopped."
+            run_id=run.id, kind="phase", title="Stopped", detail="Exploring was stopped."
         )
     )
     session.commit()
