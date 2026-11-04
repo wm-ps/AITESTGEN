@@ -61,12 +61,16 @@ function stubFetch(handler: (path: string, method: string) => { status?: number;
   return calls
 }
 
+function openMenu(name: string) {
+  fireEvent.click(screen.getByRole('button', { name: `Actions for ${name} environment` }))
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
 })
 
 describe('AppSettingsTab', () => {
-  it('lists the default environment first, badged, then the extras', () => {
+  it('lists the default environment first, then the extras', () => {
     renderTab()
 
     const rows = screen.getAllByTestId(/^environment-row-/)
@@ -74,8 +78,6 @@ describe('AppSettingsTab', () => {
       'environment-row-production',
       'environment-row-UAT',
     ])
-    expect(within(rows[0]).getByText('Default')).toBeTruthy()
-    expect(within(rows[1]).queryByText('Default')).toBeNull()
     expect(within(rows[0]).getByText('https://prod.example.com/signin')).toBeTruthy()
     expect(within(rows[1]).getByText('uat-account')).toBeTruthy()
   })
@@ -83,10 +85,12 @@ describe('AppSettingsTab', () => {
   it('lets a member edit every row but remove only the extra ones', () => {
     renderTab({ role: 'member' })
 
-    expect(screen.getByRole('button', { name: 'Edit production environment' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Edit UAT environment' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Remove UAT environment' })).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Remove production environment' })).toBeNull()
+    openMenu('production')
+    expect(screen.getByRole('menuitem', { name: 'Edit production environment' })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: 'Remove production environment' })).toBeNull()
+    openMenu('UAT')
+    expect(screen.getByRole('menuitem', { name: 'Edit UAT environment' })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: 'Remove UAT environment' })).toBeTruthy()
   })
 
   it('adds through the one shared Add environment dialog', () => {
@@ -102,8 +106,7 @@ describe('AppSettingsTab', () => {
 
     expect(screen.getAllByTestId(/^environment-row-/)).toHaveLength(2)
     expect(screen.queryByRole('button', { name: 'Add environment' })).toBeNull()
-    expect(screen.queryByRole('button', { name: /^Edit / })).toBeNull()
-    expect(screen.queryByRole('button', { name: /^Remove / })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Actions for / })).toBeNull()
     expect(screen.queryByRole('button', { name: /password for/ })).toBeNull()
   })
 
@@ -144,14 +147,15 @@ describe('AppSettingsTab', () => {
 
     const row = screen.getByTestId('environment-row-production')
     expect(within(row).queryByRole('button', { name: /password for/ })).toBeNull()
-    expect(within(row).queryByRole('button', { name: /^Edit / })).toBeNull()
+    expect(within(row).queryByRole('button', { name: /^Actions for / })).toBeNull()
   })
 
   it('removes an environment after confirmation, then refreshes the list', async () => {
     const calls = stubFetch(() => ({ status: 204 }))
     const value = renderTab()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove UAT environment' }))
+    openMenu('UAT')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove UAT environment' }))
     expect(screen.getByText('Remove UAT environment?')).toBeTruthy()
     expect(calls).toEqual([])
     fireEvent.click(screen.getByRole('button', { name: 'OK, remove' }))
@@ -165,7 +169,8 @@ describe('AppSettingsTab', () => {
     stubFetch(() => ({ status: 409, body: { detail: 'ENVIRONMENT_IN_USE' } }))
     const value = renderTab()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove UAT environment' }))
+    openMenu('UAT')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove UAT environment' }))
     fireEvent.click(screen.getByRole('button', { name: 'OK, remove' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain("has test runs or schedules, so it can't be removed")
@@ -176,7 +181,8 @@ describe('AppSettingsTab', () => {
     const calls = stubFetch(() => ({ status: 204 }))
     const value = renderTab()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove UAT environment' }))
+    openMenu('UAT')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove UAT environment' }))
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
 
     expect(screen.queryByText('Remove UAT environment?')).toBeNull()

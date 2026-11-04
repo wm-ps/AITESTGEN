@@ -52,7 +52,6 @@ export function RemoveEnvironmentDialog({
           submitLabel="OK, remove"
           busyLabel="Removing"
           busy={removing}
-          icon={faTrash}
           danger
         />
       }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEye, faEyeSlash, faPencil, faPlus, faTrash } from '@fortawesome/free-solid-svg-icons'
+import { faEllipsisVertical, faEye, faEyeSlash, faPlus, faStar } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type EnvironmentRead } from '../../api'
 import { useCanEdit } from '../../PermissionsContext'
 import { EditEnvironmentDialog } from '../environments/EditEnvironmentDialog'
@@ -8,16 +8,37 @@ import { useEnvironments } from '../environments/EnvironmentsContext'
 import { RemoveEnvironmentDialog } from '../environments/RemoveEnvironmentDialog'
 import { SkeletonRows } from '../Skeleton'
 
-const GRID_TEMPLATE =
-  'minmax(130px,1.1fr) minmax(170px,1.5fr) minmax(170px,1.5fr) minmax(150px,1.3fr) minmax(130px,1.1fr) 84px'
 const REVEAL_FOR_MS = 15_000
 
-const headerStyle: React.CSSProperties = {
+const labelStyle: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
   color: 'var(--fg-4)',
   textTransform: 'uppercase',
   letterSpacing: '0.05em',
+  marginBottom: 2,
+}
+
+const cardStyle: React.CSSProperties = {
+  background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
+  backdropFilter: 'blur(16px) saturate(1.25)',
+  border: '1px solid var(--border-1)',
+  borderRadius: 14,
+  boxShadow: 'var(--panel-shadow)',
+  padding: 24,
+}
+
+const menuItemStyle: React.CSSProperties = {
+  display: 'block',
+  width: '100%',
+  textAlign: 'left',
+  padding: '8px 12px',
+  border: 'none',
+  background: 'none',
+  borderRadius: 7,
+  fontSize: 14,
+  color: 'var(--fg-1)',
+  cursor: 'pointer',
 }
 
 const cellTextStyle: React.CSSProperties = {
@@ -42,16 +63,28 @@ const iconButtonStyle: React.CSSProperties = {
   cursor: 'pointer',
 }
 
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={labelStyle}>{label}</div>
+      <div style={{ ...monoStyle, fontSize: 13.5 }} title={value}>
+        {value}
+      </div>
+    </div>
+  )
+}
+
 const keyOf = (environment: EnvironmentRead) => environment.id ?? 'default'
 
 // Application settings: the application's own (default) environment and every
 // extra one, with their URLs and sign-in details. Admins and members add, edit
-// and remove (and can reveal a password); a viewer sees the table read-only.
+// and remove (and can reveal a password); a viewer sees the cards read-only.
 export function AppSettingsTab({ applicationId }: { applicationId: string }) {
   const canEdit = useCanEdit()
   const context = useEnvironments()
   const [editing, setEditing] = useState<EnvironmentRead | null>(null)
   const [removing, setRemoving] = useState<EnvironmentRead | null>(null)
+  const [menuFor, setMenuFor] = useState<string | null>(null)
   const [revealed, setRevealed] = useState<Record<string, string>>({})
   const [revealError, setRevealError] = useState<string | null>(null)
   const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({})
@@ -93,32 +126,6 @@ export function AppSettingsTab({ applicationId }: { applicationId: string }) {
 
   return (
     <div>
-      {canEdit && canAdd && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
-          <button
-            type="button"
-            onClick={() => requestAdd()}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 8,
-              height: 38,
-              padding: '0 18px',
-              borderRadius: 8,
-              border: 'none',
-              fontSize: 13.5,
-              fontWeight: 600,
-              color: '#fff',
-              background: 'var(--accent)',
-              boxShadow: '0 4px 14px rgba(30,150,138,0.3)',
-              cursor: 'pointer',
-            }}
-          >
-            <FontAwesomeIcon icon={faPlus} style={{ fontSize: 11 }} />
-            Add environment
-          </button>
-        </div>
-      )}
       {revealError && (
         <p role="alert" style={{ color: 'var(--bad)', fontSize: 13, marginBottom: 14 }}>
           {revealError}
@@ -128,77 +135,96 @@ export function AppSettingsTab({ applicationId }: { applicationId: string }) {
       {environments.length === 0 ? (
         <SkeletonRows count={2} height={48} gap={10} />
       ) : (
-        <div
-          style={{
-            background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))',
-            backdropFilter: 'blur(16px) saturate(1.25)',
-            border: '1px solid var(--border-1)',
-            borderRadius: 14,
-            boxShadow: 'var(--panel-shadow)',
-            overflow: 'hidden',
-          }}
-        >
-          <div
-            style={{ display: 'grid', gridTemplateColumns: GRID_TEMPLATE, alignItems: 'center', gap: 14, padding: '12px 20px', background: 'var(--panel-2)' }}
-          >
-            <div style={headerStyle}>Environment</div>
-            <div style={headerStyle}>Deployed URL</div>
-            <div style={headerStyle}>Login URL</div>
-            <div style={headerStyle}>Username</div>
-            <div style={headerStyle}>Password</div>
-            <div style={{ ...headerStyle, textAlign: 'right' }}>Actions</div>
-          </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(360px,1fr))', gap: 20, gridAutoRows: '1fr' }}>
+          {canEdit && canAdd && (
+            <button
+              type="button"
+              aria-label="Add environment"
+              onClick={() => requestAdd()}
+              style={{ ...cardStyle, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, textAlign: 'center', cursor: 'pointer', borderColor: 'var(--accent)' }}
+            >
+              <span style={{ width: 50, height: 50, borderRadius: '50%', background: 'var(--panel-2)', color: 'var(--accent-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                <FontAwesomeIcon icon={faPlus} style={{ fontSize: 16 }} />
+              </span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--accent-2)' }}>Add environment</span>
+              <span style={{ fontSize: 13, color: 'var(--fg-3)', maxWidth: 260 }}>
+                Add another deployment URL to validate the same test cases against.
+              </span>
+            </button>
+          )}
           {environments.map((environment) => {
             const key = keyOf(environment)
             const signsIn = environment.auth_method === 'standard_login'
             const shown = revealed[key]
+            const canEditThis = canEdit && (signsIn || !environment.is_default)
+            const canRemoveThis = canEdit && !environment.is_default
             return (
               <div
                 key={key}
                 data-testid={`environment-row-${environment.name}`}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: GRID_TEMPLATE,
-                  alignItems: 'center',
-                  gap: 14,
-                  padding: '14px 20px',
-                  borderBottom: '1px solid var(--row-line)',
-                  borderLeft: environment.is_default ? '3px solid var(--accent)' : '3px solid transparent',
-                  background: environment.is_default ? 'var(--accent-wash)' : undefined,
-                }}
+                style={cardStyle}
               >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ ...cellTextStyle, fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }} title={environment.name}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                  {environment.is_default && <FontAwesomeIcon icon={faStar} style={{ fontSize: 14, color: 'var(--accent-2)' }} />}
+                  <div style={{ ...cellTextStyle, flex: 1, fontSize: 16, fontWeight: 600, color: 'var(--fg)' }} title={environment.name}>
                     {environment.name}
                   </div>
-                  {environment.is_default && (
-                    <span
-                      style={{
-                        display: 'inline-block',
-                        marginTop: 5,
-                        padding: '1px 9px',
-                        borderRadius: 1000,
-                        fontSize: 11,
-                        fontWeight: 600,
-                        color: 'var(--accent-2)',
-                        background: 'var(--chip)',
-                        border: '1px solid var(--accent-wash)',
-                      }}
-                    >
-                      Default
-                    </span>
+                  {(canEditThis || canRemoveThis) && (
+                    <div style={{ position: 'relative' }}>
+                      <button
+                        type="button"
+                        aria-label={`Actions for ${environment.name} environment`}
+                        aria-haspopup="menu"
+                        onClick={() => setMenuFor((v) => (v === key ? null : key))}
+                        style={{ ...iconButtonStyle, color: 'var(--fg-2)' }}
+                      >
+                        <FontAwesomeIcon icon={faEllipsisVertical} style={{ fontSize: 15 }} />
+                      </button>
+                      {menuFor === key && (
+                        <>
+                          <div onClick={() => setMenuFor(null)} style={{ position: 'fixed', inset: 0, zIndex: 9 }} />
+                          <div role="menu" style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, width: 'max-content', padding: 4, zIndex: 10, background: 'var(--panel)', border: '1px solid var(--border-2)', borderRadius: 10, boxShadow: 'var(--panel-shadow)' }}>
+                            {canEditThis && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                aria-label={`Edit ${environment.name} environment`}
+                                onClick={() => {
+                                  setMenuFor(null)
+                                  setEditing(environment)
+                                }}
+                                style={menuItemStyle}
+                              >
+                                Edit
+                              </button>
+                            )}
+                            {canRemoveThis && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                aria-label={`Remove ${environment.name} environment`}
+                                onClick={() => {
+                                  setMenuFor(null)
+                                  setRemoving(environment)
+                                }}
+                                style={{ ...menuItemStyle, color: 'var(--bad)' }}
+                              >
+                                Delete
+                              </button>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
                   )}
                 </div>
-                <div style={monoStyle} title={environment.url}>
-                  {environment.url}
-                </div>
-                <div style={monoStyle} title={environment.login_url ?? undefined}>
-                  {environment.login_url ?? '—'}
-                </div>
-                <div style={monoStyle}>{signsIn ? (environment.username ?? '—') : '—'}</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                  {signsIn ? (
-                    <>
+                <Field label="Deployed URL" value={environment.url} />
+                {environment.login_url && <Field label="Login URL" value={environment.login_url} />}
+                {signsIn && <Field label="Username" value={environment.username ?? '—'} />}
+                {signsIn && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={labelStyle}>Password</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                       <span style={{ ...monoStyle, letterSpacing: shown === undefined ? '0.1em' : undefined }}>
                         {shown ?? '••••••••••'}
                       </span>
@@ -213,35 +239,9 @@ export function AppSettingsTab({ applicationId }: { applicationId: string }) {
                           <FontAwesomeIcon icon={shown === undefined ? faEye : faEyeSlash} style={{ fontSize: 13 }} />
                         </button>
                       )}
-                    </>
-                  ) : (
-                    <span style={{ color: 'var(--fg-4)' }}>—</span>
-                  )}
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 4 }}>
-                  {canEdit && (signsIn || !environment.is_default) && (
-                    <button
-                      type="button"
-                      aria-label={`Edit ${environment.name} environment`}
-                      title="Edit"
-                      onClick={() => setEditing(environment)}
-                      style={{ ...iconButtonStyle, color: 'var(--fg-2)' }}
-                    >
-                      <FontAwesomeIcon icon={faPencil} style={{ fontSize: 13 }} />
-                    </button>
-                  )}
-                  {canEdit && !environment.is_default && (
-                    <button
-                      type="button"
-                      aria-label={`Remove ${environment.name} environment`}
-                      title="Remove"
-                      onClick={() => setRemoving(environment)}
-                      style={{ ...iconButtonStyle, color: 'var(--bad)' }}
-                    >
-                      <FontAwesomeIcon icon={faTrash} style={{ fontSize: 13 }} />
-                    </button>
-                  )}
-                </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )
           })}
