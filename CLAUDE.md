@@ -7,6 +7,27 @@ Any "more options" row/card menu trigger uses FontAwesome's vertical kebab
 matches the Vantage v2 prototype. Applies anywhere a `...` menu trigger is
 added (Team members, Applications list, etc.).
 
+## Row/card popover menus — always `AnchoredMenu`, never hand-rolled
+
+Any right-aligned popover anchored to a trigger (kebab "more options" menus on
+rows/cards) renders through `AnchoredMenu`
+(`apps/web/src/components/AnchoredMenu.tsx`), never an inline
+`position: absolute` panel plus a fixed backdrop. It flips above the trigger
+when there isn't room below, can't be clipped by a table's `overflow: hidden`,
+and closes on outside click, Escape, scroll and resize.
+
+- Pass `anchorRef` (a `useRef` on the trigger button), `open`, `onClose`, and
+  the menu panel as children. The panel carries its own border/shadow/items but
+  no `position`, `top`/`right` or `zIndex` — `AnchoredMenu` places it.
+- Keep the trigger's own click as the toggle; `AnchoredMenu` ignores
+  clicks on the anchor so it doesn't close and reopen.
+- Create the `useRef` in a component of its own (e.g. `EnvironmentMenu` in
+  `AppSettingsTab.tsx`) when the menu is rendered inside a `.map()`.
+- A new menu needs no extra backdrop, Escape or resize code.
+- It only right-aligns today. The Activity filter dropdowns and the top-bar
+  account menu are still hand-rolled; if a new popover needs left alignment,
+  add an `align` prop to `AnchoredMenu` rather than hand-rolling another one.
+
 ## bmad docs are stale — never read them
 
 `_bmad-output/` and `_bmad/` (planning artifacts, implementation-artifact story
