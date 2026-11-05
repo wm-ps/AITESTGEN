@@ -89,7 +89,7 @@ describe('Workspace environments', () => {
     renderWorkspace('runs')
 
     fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
-    await screen.findByRole('option', { name: 'UAT · uat.example.com' })
+    await screen.findByRole('option', { name: 'UAT' })
     fireEvent.change(screen.getByLabelText('Run on environment'), { target: { value: 'env-uat' } })
     fireEvent.click(screen.getByRole('button', { name: /All test cases/ }))
 
@@ -104,7 +104,7 @@ describe('Workspace environments', () => {
     renderWorkspace('runs')
 
     fireEvent.click(await screen.findByRole('button', { name: 'Run' }))
-    await screen.findByRole('option', { name: 'UAT · uat.example.com' })
+    await screen.findByRole('option', { name: 'UAT' })
     fireEvent.click(screen.getByRole('button', { name: /All test cases/ }))
 
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.path.endsWith('/test-runs'))).toBe(true))
@@ -151,7 +151,7 @@ describe('Workspace environments', () => {
     expect(screen.queryByRole('dialog', { name: 'Add new environment' })).toBeNull()
     expect(calls.some((c) => c.method === 'POST' && c.path.endsWith('/environments'))).toBe(false)
     const options = Array.from((screen.getByLabelText('Run on environment') as HTMLSelectElement).options).map((o) => o.text)
-    expect(options).toEqual(['production · prod.example.com', '+ Add new environment'])
+    expect(options).toEqual(['Production', '+ Add new environment'])
   })
 
   it('does not offer to add environments to a viewer', async () => {

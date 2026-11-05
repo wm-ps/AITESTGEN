@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faChevronRight, faLayerGroup, faListCheck, faPlay } from '@fortawesome/free-solid-svg-icons'
+import { faPlay, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { LoadingDots } from '../LoadingDots'
 import { EnvironmentSelect } from '../environments/EnvironmentSelect'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
+import { modalButton, modalCloseButton, modalFooter, modalHeader, modalOverlay, modalPanel, modalTitle } from '../modalStyles'
 
-const RUN_MODES: { key: 'full' | 'selective' | 'suites'; icon: typeof faPlay; title: string; body: string }[] = [
-  { key: 'full', icon: faPlay, title: 'All test cases', body: 'Run every test case in this application.' },
-  { key: 'selective', icon: faListCheck, title: 'Selective run', body: 'Choose specific journeys or test cases to run.' },
-  { key: 'suites', icon: faLayerGroup, title: 'Test suites', body: 'Run a saved group of test cases, like Smoke or Regression.' },
+const RUN_MODES: { key: 'full' | 'selective' | 'suites'; title: string; body: string }[] = [
+  { key: 'full', title: 'All test cases', body: 'Run every test case in this application.' },
+  { key: 'selective', title: 'Selective run', body: 'Choose specific journeys or test cases to run.' },
+  { key: 'suites', title: 'Test suites', body: 'Run a saved group of test cases, like Smoke or Regression.' },
 ]
 
 // Run Suite Flow: clicking "Run" opens a modal dialog offering Full suite,
@@ -66,40 +67,17 @@ export function RunSuiteButton({
       </button>
 
       {open && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-label="Run tests"
-          onClick={() => setOpen(false)}
-          style={{
-            position: 'fixed',
-            inset: 0,
-            background: 'rgba(15,23,42,0.35)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 50,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              background: 'linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,255,255,0.82))',
-              backdropFilter: 'blur(20px) saturate(1.3)',
-              border: '1px solid var(--border-2)',
-              borderRadius: 16,
-              boxShadow: '0 30px 80px rgba(8,12,20,0.34), var(--panel-shadow)',
-              width: '100%',
-              maxWidth: 440,
-              padding: '24px 24px 18px',
-              boxSizing: 'border-box',
-            }}
-          >
-            <h2 style={{ fontSize: 17, fontWeight: 600, color: 'var(--fg)', margin: '0 0 16px' }}>Run tests</h2>
-            <div style={{ marginBottom: 14 }}>
-              <EnvironmentSelect label="Run on environment" value={environmentId} onChange={setEnvironmentId} />
+        <div role="dialog" aria-modal="true" aria-label="Run tests" onClick={() => setOpen(false)} style={modalOverlay}>
+          <div onClick={(e) => e.stopPropagation()} style={{ ...modalPanel, maxWidth: 440 }}>
+            <div style={modalHeader}>
+              <h2 style={modalTitle}>Run tests</h2>
+              <button type="button" aria-label="Close" onClick={() => setOpen(false)} style={modalCloseButton}>
+                <FontAwesomeIcon icon={faXmark} />
+              </button>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14, padding: '4px 28px 22px' }}>
+              <EnvironmentSelect label="Run on environment" value={environmentId} onChange={setEnvironmentId} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {RUN_MODES.map((mode) => (
                 <button
                   key={mode.key}
@@ -124,31 +102,16 @@ export function RunSuiteButton({
                     fontFamily: 'inherit',
                   }}
                 >
-                  <span
-                    style={{
-                      width: 32,
-                      height: 32,
-                      flex: 'none',
-                      borderRadius: 8,
-                      background: 'var(--chip)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: 'var(--accent-2)',
-                    }}
-                  >
-                    <FontAwesomeIcon icon={mode.icon} style={{ fontSize: 13 }} />
-                  </span>
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={{ display: 'block', fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>{mode.title}</span>
                     <span style={{ display: 'block', fontSize: 12.5, color: 'var(--fg-3)', marginTop: 2 }}>{mode.body}</span>
                   </span>
-                  <FontAwesomeIcon icon={faChevronRight} style={{ fontSize: 11, color: 'var(--fg-4)' }} />
                 </button>
               ))}
             </div>
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 18 }}>
-              <button type="button" className="button-secondary" onClick={() => setOpen(false)} style={{ padding: '9px 16px', fontSize: 13.5 }}>
+            </div>
+            <div style={modalFooter}>
+              <button type="button" className="button-secondary" onClick={() => setOpen(false)} style={modalButton}>
                 Cancel
               </button>
             </div>

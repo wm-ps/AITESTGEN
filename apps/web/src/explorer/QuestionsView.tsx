@@ -18,6 +18,7 @@ import {
 import { AllAnsweredIllustration, EmptyState, QuestionsIllustration } from '../components/EmptyState'
 import { LoadingDots } from '../components/LoadingDots'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
+import { modalCloseButton, modalHeader, modalOverlay, modalPanel, modalTitle } from '../components/modalStyles'
 import { explorerApi, shotUrl, type ExplorerKnowledge, type ExplorerQuestion } from './explorerApi'
 import { useCanEdit } from '../PermissionsContext'
 import { glassCard, Pill, timeAgo, type Tone } from './ui'
@@ -131,21 +132,20 @@ export function QuestionsDialog({
 }) {
   useEscapeToClose(onClose)
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(15,23,42,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+    <div onClick={onClose} style={{ ...modalOverlay, zIndex: 90, padding: 24 }}>
       <div
         role="dialog"
         aria-label="Questions for you"
         onClick={(e) => e.stopPropagation()}
-        style={{ background: 'var(--panel)', border: '1px solid var(--border-2)', borderRadius: 16, boxShadow: '0 30px 80px rgba(8,12,20,0.34), var(--panel-shadow)', width: '100%', maxWidth: 820, maxHeight: '86vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'aitg-fade-up 220ms ease' }}
+        style={{ ...modalPanel, maxWidth: 820, animation: 'aitg-fade-up 220ms ease' }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: '1px solid var(--line)' }}>
-          <FontAwesomeIcon icon={faCircleQuestion} style={{ fontSize: 14, color: 'var(--accent-2)' }} />
-          <h3 style={{ margin: 0, flex: 1, fontSize: 16, fontWeight: 650, color: 'var(--fg)' }}>Questions for you</h3>
-          <button type="button" aria-label="Close" onClick={onClose} style={{ width: 32, height: 32, border: '1px solid var(--line)', borderRadius: 8, background: 'white', cursor: 'pointer', color: 'var(--fg-3)' }}>
+        <div style={modalHeader}>
+          <h2 style={modalTitle}>Questions for you</h2>
+          <button type="button" aria-label="Close" onClick={onClose} style={modalCloseButton}>
             <FontAwesomeIcon icon={faXmark} />
           </button>
         </div>
-        <div style={{ padding: 20, overflowY: 'auto' }}>
+        <div style={{ padding: '4px 28px 24px', overflowY: 'auto' }}>
           <QuestionsView questions={questions} onAnswered={onAnswered} onOpenShot={onOpenShot} />
         </div>
       </div>

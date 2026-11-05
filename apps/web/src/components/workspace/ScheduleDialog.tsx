@@ -1,13 +1,12 @@
 import { useState } from 'react'
-import { faClock, faPlus, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faXmark } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type ScheduleCadenceType, type ScheduleCreate, type ScheduleRead } from '../../api'
+import { modalButton, modalCloseButton, modalFooter, modalHeader, modalOverlay, modalPanel, modalTitle } from '../modalStyles'
 import { LoadingDots } from '../LoadingDots'
 import { EnvironmentSelect } from '../environments/EnvironmentSelect'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { faIcon } from '../../faIcon'
 
-const Clock = faIcon(faClock)
-const Plus = faIcon(faPlus)
 const Xmark = faIcon(faXmark)
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
@@ -150,76 +149,26 @@ export function ScheduleDialog({
   }
 
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 90,
-        background: 'rgba(10,12,16,0.46)',
-        backdropFilter: 'blur(3px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-      }}
-    >
+    <div onClick={onClose} style={{ ...modalOverlay, zIndex: 90 }}>
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
-        style={{
-          width: '100%',
-          maxWidth: 440,
-          position: 'relative',
-          overflow: 'hidden',
-          background: 'linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,255,255,0.82))',
-          backdropFilter: 'blur(20px) saturate(1.3)',
-          border: '1px solid var(--border)',
-          borderRadius: 16,
-          boxShadow: '0 30px 80px rgba(8,12,20,0.34), var(--panel-shadow)',
-          maxHeight: 'calc(100vh - 48px)',
-          overflowY: 'auto',
-          boxSizing: 'border-box',
-        }}
+        style={{ ...modalPanel, maxWidth: 440 }}
       >
-        <div style={{ position: 'absolute', left: -60, top: -120, width: 320, height: 320, borderRadius: 1000, background: 'var(--glow)', pointerEvents: 'none' }} />
-
-        <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', gap: 13, padding: '22px 22px 18px', borderBottom: '1px solid var(--line)' }}>
-          <div
-            style={{
-              width: 38,
-              height: 38,
-              flex: 'none',
-              borderRadius: 11,
-              background: 'linear-gradient(160deg,var(--accent),var(--accent-deep))',
-              color: '#fff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: 'var(--accent-glow)',
-            }}
-          >
-            <Clock size={14} />
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.015em' }}>
-              {initial ? 'Edit schedule' : 'New schedule'}
-            </div>
-            <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 3 }}>
+        <div style={modalHeader}>
+          <div>
+            <h2 style={modalTitle}>{initial ? 'Edit schedule' : 'New schedule'}</h2>
+            <p className="caption" style={{ margin: '4px 0 0', fontSize: 13 }}>
               Explore or run test cases automatically on a cadence.
-            </div>
+            </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            style={{ width: 28, height: 28, flex: 'none', border: 'none', background: 'transparent', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-4)', cursor: 'pointer' }}
-          >
+          <button type="button" aria-label="Close" onClick={onClose} style={modalCloseButton}>
             <Xmark size={13} />
           </button>
         </div>
 
         <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
-          <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 16, padding: '20px 22px 22px' }}>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, padding: '4px 28px 22px' }}>
             <label className="field">
               <FieldLabel>Name</FieldLabel>
               <input
@@ -359,58 +308,17 @@ export function ScheduleDialog({
             )}
           </div>
 
-          <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 10, padding: '14px 22px', borderTop: '1px solid var(--line)', background: 'var(--panel-2)' }}>
-            <div style={{ flex: 1 }} />
-            <button
-              type="button"
-              onClick={onClose}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                height: 36,
-                padding: '0 16px',
-                borderRadius: 9,
-                border: '1px solid var(--border-2)',
-                background: 'var(--panel)',
-                color: 'var(--fg-2)',
-                fontSize: 13,
-                fontWeight: 500,
-                cursor: 'pointer',
-                whiteSpace: 'nowrap',
-                flex: 'none',
-              }}
-            >
+          <div style={modalFooter}>
+            <button type="button" className="button-secondary" onClick={onClose} style={modalButton}>
               Cancel
             </button>
             <button
               type="submit"
+              className="button-primary"
               disabled={submitting}
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                height: 36,
-                padding: '0 18px',
-                borderRadius: 9,
-                border: 'none',
-                background: 'var(--accent)',
-                color: '#fff',
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: submitting ? 'not-allowed' : 'pointer',
-                boxShadow: 'var(--accent-glow)',
-                whiteSpace: 'nowrap',
-                flex: 'none',
-              }}
+              style={{ ...modalButton, cursor: submitting ? 'not-allowed' : 'pointer' }}
             >
-              {submitting ? (
-                <LoadingDots label="Saving" />
-              ) : (
-                <>
-                  <Plus size={11} />
-                  {initial ? 'Save changes' : 'Create schedule'}
-                </>
-              )}
+              {submitting ? <LoadingDots label="Saving" /> : initial ? 'Save changes' : 'Create schedule'}
             </button>
           </div>
         </fieldset>

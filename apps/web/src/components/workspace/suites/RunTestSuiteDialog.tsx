@@ -1,6 +1,4 @@
 import { useEffect, useState } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlay } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type CollectionSummary } from '../../../api'
 import { EnvironmentSelect } from '../../environments/EnvironmentSelect'
 import { SkeletonRows } from '../../Skeleton'
@@ -75,7 +73,6 @@ export function RunTestSuiteDialog({
                 cursor: canRun ? 'pointer' : 'not-allowed',
               }}
             >
-              <FontAwesomeIcon icon={faPlay} size="xs" />
               {selected && selected.test_case_count > 0 ? `Run ${plural(selected.test_case_count, 'test case')}` : 'Run test cases'}
             </button>
           </div>

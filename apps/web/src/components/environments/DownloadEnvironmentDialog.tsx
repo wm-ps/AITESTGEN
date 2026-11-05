@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { faDownload } from '@fortawesome/free-solid-svg-icons'
 import { api } from '../../api'
 import { EnvironmentModal, FieldError, ModalActions } from './EnvironmentModal'
 import { EnvironmentSelect } from './EnvironmentSelect'
@@ -35,7 +34,6 @@ export function DownloadEnvironmentDialog({
     <EnvironmentModal
       title="Download project"
       subtitle="Choose the environment the Playwright project should be configured for. Its base URL and login URL are written into the config."
-      icon={faDownload}
       maxWidth={440}
       onClose={onClose}
       footer={
@@ -46,7 +44,6 @@ export function DownloadEnvironmentDialog({
           submitLabel="Download"
           busyLabel="Downloading"
           busy={downloading}
-          icon={faDownload}
         />
       }
     >

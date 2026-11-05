@@ -3,23 +3,32 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faXmark } from '@fortawesome/free-solid-svg-icons'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { LoadingDots } from '../LoadingDots'
+import {
+  modalButton,
+  modalCloseButton,
+  modalFooter,
+  modalHeader,
+  modalOverlay,
+  modalPanel,
+  modalTitle,
+} from '../modalStyles'
 
-// The overlay + card shell every environment dialog shares — same look as
-// ScheduleDialog (icon tile, title + one-line subtitle, close button, footer).
+// The overlay + card shell every environment dialog shares — same look as the
+// Test suites dialogs (SuiteModal): title + one-line subtitle, plain close
+// button, tinted footer. `icon` and `tone` are accepted so callers don't
+// change, but dialogs no longer draw an icon tile.
 export function EnvironmentModal({
   title,
   subtitle,
-  icon,
   onClose,
   onSubmit,
   children,
   footer,
-  tone = 'accent',
   maxWidth = 460,
 }: {
   title: string
   subtitle?: string
-  icon: IconDefinition
+  icon?: IconDefinition
   onClose: () => void
   onSubmit?: (event: React.FormEvent) => void
   children: React.ReactNode
@@ -28,31 +37,10 @@ export function EnvironmentModal({
   maxWidth?: number
 }) {
   useEscapeToClose(onClose)
-  const iconStyle =
-    tone === 'danger'
-      ? { background: 'var(--bad-wash, #fde8ec)', color: 'var(--bad)' }
-      : {
-          background: 'linear-gradient(160deg,var(--accent),var(--accent-deep))',
-          color: '#fff',
-          boxShadow: 'var(--accent-glow)',
-        }
   const Shell = onSubmit ? 'form' : 'div'
 
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 90,
-        background: 'rgba(10,12,16,0.46)',
-        backdropFilter: 'blur(3px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-      }}
-    >
+    <div onClick={onClose} style={{ ...modalOverlay, zIndex: 90 }}>
       <Shell
         role="dialog"
         aria-modal="true"
@@ -60,65 +48,24 @@ export function EnvironmentModal({
         noValidate={onSubmit ? true : undefined}
         onClick={(e: React.MouseEvent) => e.stopPropagation()}
         onSubmit={onSubmit}
-        style={{
-          width: '100%',
-          maxWidth,
-          position: 'relative',
-          background: 'linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,255,255,0.82))',
-          backdropFilter: 'blur(20px) saturate(1.3)',
-          border: '1px solid var(--border)',
-          borderRadius: 16,
-          boxShadow: '0 30px 80px rgba(8,12,20,0.34), var(--panel-shadow)',
-          maxHeight: 'calc(100vh - 48px)',
-          overflowY: 'auto',
-          boxSizing: 'border-box',
-        }}
+        style={{ ...modalPanel, maxWidth }}
       >
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 13, padding: '22px 22px 18px', borderBottom: '1px solid var(--line)' }}>
-          <div
-            style={{
-              width: 38,
-              height: 38,
-              flex: 'none',
-              borderRadius: 11,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              ...iconStyle,
-            }}
-          >
-            <FontAwesomeIcon icon={icon} style={{ fontSize: 14 }} />
+        <div style={modalHeader}>
+          <div>
+            <h2 style={modalTitle}>{title}</h2>
+            {subtitle && <p className="caption" style={{ margin: '4px 0 0', fontSize: 13 }}>{subtitle}</p>}
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.015em' }}>{title}</div>
-            {subtitle && <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 3 }}>{subtitle}</div>}
-          </div>
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            style={{ width: 28, height: 28, flex: 'none', border: 'none', background: 'transparent', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-4)', cursor: 'pointer' }}
-          >
-            <FontAwesomeIcon icon={faXmark} style={{ fontSize: 13 }} />
+          <button type="button" aria-label="Close" onClick={onClose} style={modalCloseButton}>
+            <FontAwesomeIcon icon={faXmark} />
           </button>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '20px 22px 8px' }}>{children}</div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 10, padding: '14px 22px 20px' }}>{footer}</div>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 16, padding: '4px 28px 22px' }}>
+          {children}
+        </div>
+        <div style={modalFooter}>{footer}</div>
       </Shell>
     </div>
   )
-}
-
-const buttonBase: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 8,
-  height: 36,
-  padding: '0 18px',
-  borderRadius: 9,
-  fontSize: 13,
-  whiteSpace: 'nowrap',
-  flex: 'none',
 }
 
 // Cancel + the primary action. While `busy` the primary shows its label with
@@ -130,7 +77,6 @@ export function ModalActions({
   busyLabel,
   busy,
   disabled = false,
-  icon,
   danger = false,
   type = 'submit',
   onSubmit,
@@ -140,7 +86,7 @@ export function ModalActions({
   busyLabel: string
   busy: boolean
   disabled?: boolean
-  icon?: IconDefinition
+  icon?: IconDefinition // accepted for callers; buttons are text-only
   danger?: boolean
   type?: 'submit' | 'button'
   onSubmit?: () => void
@@ -148,36 +94,22 @@ export function ModalActions({
   const blocked = busy || disabled
   return (
     <>
-      <button
-        type="button"
-        onClick={onCancel}
-        style={{ ...buttonBase, border: '1px solid var(--border-2)', background: 'var(--panel)', color: 'var(--fg-2)', fontWeight: 500, cursor: 'pointer' }}
-      >
+      <button type="button" className="button-secondary" onClick={onCancel} style={modalButton}>
         Cancel
       </button>
       <button
         type={type}
+        className="button-primary"
         onClick={type === 'button' ? onSubmit : undefined}
         disabled={blocked}
         style={{
-          ...buttonBase,
-          border: 'none',
-          background: danger ? 'var(--bad)' : 'var(--accent)',
-          color: '#fff',
-          fontWeight: 600,
+          ...modalButton,
+          ...(danger ? { background: 'var(--danger)' } : null),
           cursor: blocked ? 'not-allowed' : 'pointer',
           opacity: disabled && !busy ? 0.6 : 1,
-          boxShadow: danger ? 'none' : 'var(--accent-glow)',
         }}
       >
-        {busy ? (
-          <LoadingDots label={busyLabel} />
-        ) : (
-          <>
-            {icon && <FontAwesomeIcon icon={icon} style={{ fontSize: 11 }} />}
-            {submitLabel}
-          </>
-        )}
+        {busy ? <LoadingDots label={busyLabel} /> : submitLabel}
       </button>
     </>
   )

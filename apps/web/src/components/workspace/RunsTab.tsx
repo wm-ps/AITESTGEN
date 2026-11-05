@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowUpRightFromSquare, faCircleExclamation, faClapperboard, faImage, faShieldHalved, faTriangleExclamation, faWandMagicSparkles } from '@fortawesome/free-solid-svg-icons'
+import { faArrowUpRightFromSquare, faCircleExclamation, faClapperboard, faImage, faShieldHalved, faTriangleExclamation, faWandMagicSparkles, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipContentProps } from 'recharts'
 import {
   ApiError,
@@ -17,6 +17,7 @@ import { EmptyState, RunsIllustration } from '../EmptyState'
 import { SkeletonRows } from '../Skeleton'
 import { Pagination } from '../Pagination'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
+import { modalCloseButton, modalHeader, modalOverlay, modalPanel, modalTitle } from '../modalStyles'
 import { useCanEdit, useIsViewer } from '../../PermissionsContext'
 import { ChevronIcon } from './TestSuiteTab'
 import { allureReportRoute } from '../../allureReportRoute'
@@ -249,58 +250,16 @@ export function ArtifactsModal({ testResult, onClose }: { testResult: TestResult
       aria-modal="true"
       aria-label={`${testResult.scenario_name} artifacts`}
       onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(15,23,42,0.55)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 100,
-      }}
+      style={{ ...modalOverlay, zIndex: 100 }}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: 'var(--panel)',
-          borderRadius: 16,
-          width: 'min(560px, 92vw)',
-          maxHeight: '80vh',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            padding: '12px 16px',
-            borderBottom: '1px solid var(--line)',
-          }}
-        >
-          <span style={{ color: 'var(--fg)', fontSize: 13, fontWeight: 600 }}>
-            {testResult.scenario_name} — failure artifacts
-          </span>
-          <button
-            type="button"
-            aria-label="Close"
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              color: 'var(--fg-4)',
-              cursor: 'pointer',
-              fontSize: 16,
-              lineHeight: 1,
-              padding: 4,
-            }}
-          >
-            ✕
+      <div onClick={(e) => e.stopPropagation()} style={{ ...modalPanel, maxWidth: 560 }}>
+        <div style={modalHeader}>
+          <h2 style={modalTitle}>{testResult.scenario_name} — failure artifacts</h2>
+          <button type="button" aria-label="Close" onClick={onClose} style={modalCloseButton}>
+            <FontAwesomeIcon icon={faXmark} />
           </button>
         </div>
-        <div style={{ padding: 20, overflow: 'auto' }}>
+        <div style={{ padding: '4px 28px 24px', overflow: 'auto' }}>
           <FailureDetails result={testResult} />
           {loadError && <p style={{ color: 'var(--danger-strong)', fontSize: 13 }}>{loadError}</p>}
           {artifacts === null && !loadError && <p className="caption">Loading artifacts…</p>}
@@ -317,7 +276,6 @@ export function ArtifactsModal({ testResult, onClose }: { testResult: TestResult
                     rel="noreferrer"
                     style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--accent)', fontWeight: 600 }}
                   >
-                    {artifact.artifact_type === 'trace' ? <FontAwesomeIcon icon={faClapperboard} style={{ fontSize: 13 }} /> : <FontAwesomeIcon icon={faImage} style={{ fontSize: 13 }} />}
                     {artifact.artifact_type === 'trace' ? 'Playwright trace' : 'Screenshot'} (
                     {Math.max(1, Math.round(artifact.size_bytes / 1024))} KB)
                   </a>

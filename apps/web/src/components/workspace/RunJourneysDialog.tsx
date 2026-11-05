@@ -4,7 +4,6 @@ import {
   faCircleExclamation,
   faEyeSlash,
   faMagnifyingGlass,
-  faPlay,
   faXmark,
 } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, formatTestCaseNumber, type TestSuiteRead } from '../../api'
@@ -443,7 +442,6 @@ export function RunJourneysDialog({
                 cursor: canExecute && !loading ? 'pointer' : 'not-allowed',
               }}
             >
-              <FontAwesomeIcon icon={faPlay} size="xs" />
               {selectedJourneyCount === 0 ? 'Run journeys' : `Run ${plural(selectedJourneyCount, 'journey')}`}
             </button>
           </div>

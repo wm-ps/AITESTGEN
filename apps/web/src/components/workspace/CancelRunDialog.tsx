@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faTriangleExclamation } from '@fortawesome/free-solid-svg-icons'
+import { faXmark } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type TestRunRead } from '../../api'
 import { LoadingDots } from '../LoadingDots'
+import { modalButton, modalCloseButton, modalFooter, modalHeader, modalOverlay, modalPanel, modalTitle } from '../modalStyles'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 
 type RunRef = { id: string; run_number: number }
@@ -165,73 +166,38 @@ function CancelRunDialog({
       onClick={() => {
         if (!cancelling) onClose()
       }}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(15,23,42,0.5)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-        zIndex: 100,
-      }}
+      style={{ ...modalOverlay, zIndex: 100 }}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{ maxWidth: 420, width: '100%', padding: 24, background: 'var(--panel)', borderRadius: 14, boxShadow: 'var(--panel-shadow)' }}
-      >
-        <div style={{ display: 'flex', gap: 14, marginBottom: 18 }}>
-          <span
-            aria-hidden="true"
-            style={{
-              display: 'inline-flex',
-              width: 40,
-              height: 40,
-              borderRadius: 1000,
-              background: 'color-mix(in srgb, var(--bad) 12%, transparent)',
-              color: 'var(--bad)',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-            }}
-          >
-            <FontAwesomeIcon icon={faTriangleExclamation} style={{ fontSize: 17 }} />
-          </span>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 17, fontWeight: 700, marginBottom: 4, color: 'var(--fg)' }}>
-              Cancel run #{runNumber}?
-            </div>
-            <p style={{ margin: 0, lineHeight: 1.5, fontSize: 13, color: 'var(--fg-3)' }}>
-              Tests still running are stopped and every test that hasn&apos;t finished is marked
-              cancelled. Finished tests keep their results. No report or email is sent.
-            </p>
-            {error && (
-              <p role="alert" style={{ margin: '8px 0 0', fontSize: 12.5, color: 'var(--danger-strong)' }}>
-                {error}
-              </p>
-            )}
-          </div>
+      <div onClick={(e) => e.stopPropagation()} style={{ ...modalPanel, maxWidth: 440 }}>
+        <div style={modalHeader}>
+          <h2 style={modalTitle}>Cancel run #{runNumber}?</h2>
+          <button type="button" aria-label="Close" disabled={cancelling} onClick={onClose} style={modalCloseButton}>
+            <FontAwesomeIcon icon={faXmark} />
+          </button>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-          <button
-            type="button"
-            disabled={cancelling}
-            onClick={onClose}
-            style={{ padding: '9px 16px', borderRadius: 8, border: '1px solid var(--border-2)', background: 'var(--panel)', color: 'var(--fg-2)', fontWeight: 600, cursor: 'pointer' }}
-          >
+        <div style={{ padding: '4px 28px 22px' }}>
+          <p style={{ margin: 0, lineHeight: 1.5, fontSize: 13.5, color: 'var(--fg-3)' }}>
+            Tests still running are stopped and every test that hasn&apos;t finished is marked
+            cancelled. Finished tests keep their results. No report or email is sent.
+          </p>
+          {error && (
+            <p role="alert" style={{ margin: '8px 0 0', fontSize: 12.5, color: 'var(--danger-strong)' }}>
+              {error}
+            </p>
+          )}
+        </div>
+        <div style={modalFooter}>
+          <button type="button" className="button-secondary" disabled={cancelling} onClick={onClose} style={modalButton}>
             Keep running
           </button>
           <button
             type="button"
+            className="button-primary"
             disabled={cancelling}
             onClick={onConfirm}
             style={{
-              padding: '9px 16px',
-              borderRadius: 8,
-              border: 'none',
-              background: 'var(--bad)',
-              color: '#FFFFFF',
-              fontWeight: 600,
+              ...modalButton,
+              background: 'var(--danger)',
               cursor: cancelling ? 'default' : 'pointer',
               opacity: cancelling ? 0.7 : 1,
             }}

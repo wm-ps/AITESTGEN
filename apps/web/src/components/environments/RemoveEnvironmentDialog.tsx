@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { faTrash } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type EnvironmentRead } from '../../api'
 import { EnvironmentModal, FieldError, ModalActions } from './EnvironmentModal'
 
@@ -40,8 +39,6 @@ export function RemoveEnvironmentDialog({
   return (
     <EnvironmentModal
       title={`Remove ${environment.name} environment?`}
-      icon={faTrash}
-      tone="danger"
       maxWidth={420}
       onClose={onClose}
       footer={

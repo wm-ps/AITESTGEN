@@ -58,7 +58,7 @@ textarea:focus-visible,
    `outline: 'none'`), so these use !important to win over them: a visible
    focus ring matching the Selective Run search input, a hover cue, and a
    muted look for genuinely disabled fields so editable ones read as active. */
-input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):hover:not(:disabled):not(:focus),
+input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):hover:not(:disabled):not([readonly]):not(:focus),
 select:hover:not(:disabled):not(:focus),
 textarea:hover:not(:disabled):not(:focus) {
   border-color: var(--border-3) !important;
@@ -79,12 +79,38 @@ input[data-bare]:focus-visible {
   outline: none;
 }
 
+/* Disabled text fields are clearly inert: gray fill, muted text, and a red
+   "not allowed" symbol as the cursor on hover. Buttons keep their own
+   disabled look. !important beats the inline background most fields carry. */
+:root {
+  --cursor-disabled: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'%3E%3Ccircle cx='10' cy='10' r='7.5' fill='white' stroke='%23dc2626' stroke-width='2'/%3E%3Cpath d='M5 15 15 5' stroke='%23dc2626' stroke-width='2'/%3E%3C/svg%3E") 10 10, not-allowed;
+}
+
 input:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='file']):disabled,
 select:disabled,
 textarea:disabled {
-  background: var(--panel-2) !important;
+  background-color: var(--panel-2) !important;
+  border-color: var(--border-2) !important;
   color: var(--fg-4) !important;
-  cursor: not-allowed;
+  -webkit-text-fill-color: var(--fg-4);
+  cursor: var(--cursor-disabled) !important;
+}
+
+/* Read-only fields inside a dialog (e.g. the default environment's name/URL)
+   read as locked the same way. Page-level read-only forms keep their look. */
+[role='dialog'] input[readonly],
+[role='dialog'] textarea[readonly] {
+  background-color: var(--panel-2) !important;
+  border-color: var(--border-2) !important;
+  color: var(--fg-3) !important;
+  cursor: var(--cursor-disabled) !important;
+}
+
+/* A bordered shell around a bare (borderless) input turns gray with it. */
+.field-shell:has(input:disabled) {
+  background: var(--panel-2) !important;
+  border-color: var(--border-2) !important;
+  cursor: var(--cursor-disabled);
 }
 
 input::placeholder,
@@ -215,6 +241,17 @@ textarea::placeholder {
   color: var(--fg);
   font-family: inherit;
   font-size: inherit;
+}
+
+/* Native selects get a custom chevron so they read as a select field. */
+.field select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: 38px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%238a8f98' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4.5 6 8l3.5-3.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
 }
 
 .field input:focus,

@@ -60,15 +60,19 @@ export function useEnvironmentList(applicationId: string) {
   return { environments, refresh }
 }
 
-export function hostOf(url: string): string {
-  try {
-    return new URL(url).host
-  } catch {
-    return url
-  }
+// "production" → "Production", "staging-eu" → "Staging Eu". Short all-caps
+// words ("UAT", "QA") are kept as typed. Display only; the stored name is untouched.
+function toDisplayName(name: string): string {
+  return name
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((word) =>
+      word.length <= 4 && word === word.toUpperCase() ? word : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase(),
+    )
+    .join(' ')
 }
 
-// "UAT · uat.example.com" — what every environment picker shows.
+// "Production" — the environment name only, what every environment picker shows.
 export function environmentLabel(environment: EnvironmentRead): string {
-  return `${environment.name} · ${hostOf(environment.url)}`
+  return toDisplayName(environment.name)
 }

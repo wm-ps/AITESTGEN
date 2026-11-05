@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { faCheck, faServer } from '@fortawesome/free-solid-svg-icons'
 import {
   ApiError,
   DOMAIN_NOT_APPROVED_CODE,
@@ -171,7 +170,6 @@ export function EditEnvironmentDialog({
     <EnvironmentModal
       title="Edit environment"
       subtitle="Update the details for this environment."
-      icon={faServer}
       onClose={onClose}
       onSubmit={handleSubmit}
       footer={
@@ -181,7 +179,6 @@ export function EditEnvironmentDialog({
           busyLabel={busy ?? 'Saving'}
           busy={busy !== null}
           disabled={!dirty || domainBlocked}
-          icon={faCheck}
         />
       }
     >

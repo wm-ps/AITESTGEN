@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEnvelope, faPaperPlane, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faXmark } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type Role } from '../api'
 import { LoadingDots } from './LoadingDots'
+import { modalButton, modalCloseButton, modalFooter, modalHeader, modalOverlay, modalPanel, modalTitle } from './modalStyles'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
 
 // Shared by this invite modal and Team members' "Change role" picker.
@@ -47,87 +48,41 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 90,
-        background: 'rgba(10,12,16,0.46)',
-        backdropFilter: 'blur(3px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-      }}
-    >
+    <div onClick={onClose} style={{ ...modalOverlay, zIndex: 90 }}>
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
-        style={{
-          width: '100%',
-          maxWidth: 520,
-          position: 'relative',
-          overflow: 'hidden',
-          background: 'var(--panel)',
-          border: '1px solid var(--border-2)',
-          borderRadius: 16,
-          boxShadow: '0 30px 80px rgba(8,12,20,0.34), var(--panel-shadow)',
-          maxHeight: 'calc(100vh - 48px)',
-          overflowY: 'auto',
-          boxSizing: 'border-box',
-        }}
+        style={{ ...modalPanel, maxWidth: 520 }}
       >
-        <div style={{ position: 'relative', display: 'flex', alignItems: 'flex-start', gap: 13, padding: '22px 22px 18px', borderBottom: '1px solid var(--line)' }}>
-          <div
-            style={{
-              width: 38,
-              height: 38,
-              flex: 'none',
-              borderRadius: 11,
-              background: 'linear-gradient(160deg,var(--accent),var(--accent-deep))',
-              color: '#fff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: 'var(--accent-glow)',
-            }}
-          >
-            <FontAwesomeIcon icon={faPaperPlane} style={{ fontSize: 15 }} />
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.015em', margin: 0 }}>Invite member</h2>
-            <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 3 }}>
+        <div style={modalHeader}>
+          <div>
+            <h2 style={modalTitle}>Invite member</h2>
+            <p className="caption" style={{ margin: '4px 0 0', fontSize: 13 }}>
               They get an email invitation to the workspace. Access applies to every onboarded application.
-            </div>
+            </p>
           </div>
           {!sent && (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close"
-              style={{ width: 28, height: 28, flex: 'none', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--fg-4)', cursor: 'pointer', background: 'none', border: 'none' }}
-            >
-              <FontAwesomeIcon icon={faXmark} style={{ fontSize: 13 }} />
+            <button type="button" aria-label="Close" onClick={onClose} style={modalCloseButton}>
+              <FontAwesomeIcon icon={faXmark} />
             </button>
           )}
         </div>
 
         {sent ? (
-          <div style={{ position: 'relative', padding: '20px 22px 22px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <p style={{ fontSize: 13.5, color: 'var(--fg-3)', margin: 0 }}>Invite sent to {email}.</p>
-            <button
-              type="button"
-              onClick={onClose}
-              style={{ alignSelf: 'flex-end', display: 'inline-flex', alignItems: 'center', height: 36, padding: '0 18px', borderRadius: 9, background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer', boxShadow: 'var(--accent-glow)', border: 'none' }}
-            >
-              Done
-            </button>
-          </div>
+          <>
+            <div style={{ padding: '4px 28px 22px' }}>
+              <p style={{ fontSize: 13.5, color: 'var(--fg-3)', margin: 0 }}>Invite sent to {email}.</p>
+            </div>
+            <div style={modalFooter}>
+              <button type="button" className="button-primary" onClick={onClose} style={modalButton}>
+                Done
+              </button>
+            </div>
+          </>
         ) : (
           <>
             <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
-              <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', gap: 18, padding: '20px 22px 22px' }}>
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 18, padding: '4px 28px 22px' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
                     <span style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>Email address</span>
@@ -148,7 +103,6 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
                       boxShadow: 'inset 0 1px 2px rgba(16,20,30,0.04)',
                     }}
                   >
-                    <FontAwesomeIcon icon={faEnvelope} style={{ fontSize: 13, color: 'var(--fg-5)', flexShrink: 0 }} />
                     <input
                       type="email"
                       required
@@ -223,48 +177,23 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
               </div>
             </fieldset>
 
-            <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 10, padding: '14px 22px', borderTop: '1px solid var(--line)', background: 'var(--panel)' }}>
-              <div style={{ flex: 1, minWidth: 0, fontSize: 11.5, color: 'var(--fg-5)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ ...modalFooter, justifyContent: 'space-between' }}>
+              <span className="caption" style={{ fontSize: 12.5 }}>
                 Invitation expires in 7 days
+              </span>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button type="button" className="button-secondary" onClick={onClose} style={modalButton}>
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="button-primary"
+                  disabled={submitting}
+                  style={{ ...modalButton, cursor: submitting ? 'default' : 'pointer', opacity: submitting ? 0.75 : 1 }}
+                >
+                  {submitting ? <LoadingDots label="Sending" /> : 'Send invite'}
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={onClose}
-                style={{ display: 'inline-flex', alignItems: 'center', height: 36, padding: '0 16px', borderRadius: 9, border: '1px solid var(--border-2)', background: 'var(--panel)', color: 'var(--fg-2)', fontSize: 13, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap', flex: 'none' }}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={submitting}
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  height: 36,
-                  padding: '0 18px',
-                  borderRadius: 9,
-                  background: 'var(--accent)',
-                  color: '#fff',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: submitting ? 'default' : 'pointer',
-                  opacity: submitting ? 0.75 : 1,
-                  boxShadow: 'var(--accent-glow)',
-                  whiteSpace: 'nowrap',
-                  flex: 'none',
-                  border: 'none',
-                }}
-              >
-                {submitting ? (
-                  <LoadingDots label="Sending" />
-                ) : (
-                  <>
-                    <FontAwesomeIcon icon={faPaperPlane} style={{ fontSize: 11 }} />
-                    Send invite
-                  </>
-                )}
-              </button>
             </div>
           </>
         )}

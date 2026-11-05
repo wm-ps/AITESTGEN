@@ -40,7 +40,7 @@ describe('EnvironmentSelect', () => {
     withEnvironments(<EnvironmentSelect value={null} onChange={vi.fn()} />)
 
     const options = Array.from((screen.getByLabelText('Environment') as HTMLSelectElement).options).map((o) => o.text)
-    expect(options).toEqual(['production · prod.example.com', 'UAT · uat.example.com', '+ Add new environment'])
+    expect(options).toEqual(['Production', 'UAT', '+ Add new environment'])
   })
 
   it('reports the chosen environment, null for the default', () => {

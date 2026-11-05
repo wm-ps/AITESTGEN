@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import { faPlus, faServer } from '@fortawesome/free-solid-svg-icons'
 import {
   ApiError,
   DOMAIN_NOT_APPROVED_CODE,
@@ -142,7 +141,6 @@ export function AddEnvironmentDialog({
     <EnvironmentModal
       title="Add new environment"
       subtitle="Run the same test cases for this application against another deployment."
-      icon={faServer}
       onClose={onClose}
       onSubmit={handleSubmit}
       footer={
@@ -152,7 +150,6 @@ export function AddEnvironmentDialog({
           busyLabel={busy ?? 'Adding'}
           busy={busy !== null}
           disabled={domainBlocked}
-          icon={faPlus}
         />
       }
     >
