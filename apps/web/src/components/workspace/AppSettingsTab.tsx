@@ -7,6 +7,7 @@ import { EditEnvironmentDialog } from '../environments/EditEnvironmentDialog'
 import { useEnvironments } from '../environments/EnvironmentsContext'
 import { RemoveEnvironmentDialog } from '../environments/RemoveEnvironmentDialog'
 import { SkeletonRows } from '../Skeleton'
+import { AnchoredMenu } from '../AnchoredMenu'
 
 const REVEAL_FOR_MS = 15_000
 
@@ -75,6 +76,70 @@ function Field({ label, value }: { label: string; value: string }) {
 }
 
 const keyOf = (environment: EnvironmentRead) => environment.id ?? 'default'
+
+function EnvironmentMenu({
+  environment,
+  open,
+  onToggle,
+  onClose,
+  onEdit,
+  onRemove,
+}: {
+  environment: EnvironmentRead
+  open: boolean
+  onToggle: () => void
+  onClose: () => void
+  onEdit?: () => void
+  onRemove?: () => void
+}) {
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label={`Actions for ${environment.name} environment`}
+        aria-haspopup="menu"
+        onClick={onToggle}
+        style={{ ...iconButtonStyle, color: 'var(--fg-2)' }}
+      >
+        <FontAwesomeIcon icon={faEllipsisVertical} style={{ fontSize: 15 }} />
+      </button>
+      <AnchoredMenu anchorRef={buttonRef} open={open} onClose={onClose}>
+        <div role="menu" style={{ width: 'max-content', padding: 4, background: 'var(--panel)', border: '1px solid var(--border-2)', borderRadius: 10, boxShadow: 'var(--panel-shadow)' }}>
+          {onEdit && (
+            <button
+              type="button"
+              role="menuitem"
+              aria-label={`Edit ${environment.name} environment`}
+              onClick={() => {
+                onClose()
+                onEdit()
+              }}
+              style={menuItemStyle}
+            >
+              Edit
+            </button>
+          )}
+          {onRemove && (
+            <button
+              type="button"
+              role="menuitem"
+              aria-label={`Remove ${environment.name} environment`}
+              onClick={() => {
+                onClose()
+                onRemove()
+              }}
+              style={{ ...menuItemStyle, color: 'var(--bad)' }}
+            >
+              Delete
+            </button>
+          )}
+        </div>
+      </AnchoredMenu>
+    </div>
+  )
+}
 
 // Application settings: the application's own (default) environment and every
 // extra one, with their URLs and sign-in details. Admins and members add, edit
@@ -170,52 +235,14 @@ export function AppSettingsTab({ applicationId }: { applicationId: string }) {
                     {environment.name}
                   </div>
                   {(canEditThis || canRemoveThis) && (
-                    <div style={{ position: 'relative' }}>
-                      <button
-                        type="button"
-                        aria-label={`Actions for ${environment.name} environment`}
-                        aria-haspopup="menu"
-                        onClick={() => setMenuFor((v) => (v === key ? null : key))}
-                        style={{ ...iconButtonStyle, color: 'var(--fg-2)' }}
-                      >
-                        <FontAwesomeIcon icon={faEllipsisVertical} style={{ fontSize: 15 }} />
-                      </button>
-                      {menuFor === key && (
-                        <>
-                          <div onClick={() => setMenuFor(null)} style={{ position: 'fixed', inset: 0, zIndex: 9 }} />
-                          <div role="menu" style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, width: 'max-content', padding: 4, zIndex: 10, background: 'var(--panel)', border: '1px solid var(--border-2)', borderRadius: 10, boxShadow: 'var(--panel-shadow)' }}>
-                            {canEditThis && (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                aria-label={`Edit ${environment.name} environment`}
-                                onClick={() => {
-                                  setMenuFor(null)
-                                  setEditing(environment)
-                                }}
-                                style={menuItemStyle}
-                              >
-                                Edit
-                              </button>
-                            )}
-                            {canRemoveThis && (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                aria-label={`Remove ${environment.name} environment`}
-                                onClick={() => {
-                                  setMenuFor(null)
-                                  setRemoving(environment)
-                                }}
-                                style={{ ...menuItemStyle, color: 'var(--bad)' }}
-                              >
-                                Delete
-                              </button>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </div>
+                    <EnvironmentMenu
+                      environment={environment}
+                      open={menuFor === key}
+                      onToggle={() => setMenuFor((v) => (v === key ? null : key))}
+                      onClose={() => setMenuFor(null)}
+                      onEdit={canEditThis ? () => setEditing(environment) : undefined}
+                      onRemove={canRemoveThis ? () => setRemoving(environment) : undefined}
+                    />
                   )}
                 </div>
                 <Field label="Deployed URL" value={environment.url} />

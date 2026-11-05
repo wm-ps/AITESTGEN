@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faCircleInfo, faEllipsisVertical, faMagnifyingGlass, faPlus } from '@fortawesome/free-solid-svg-icons'
 import {
@@ -9,6 +9,7 @@ import {
   type CollectionSummary,
 } from '../../../api'
 import { useCanEdit } from '../../../PermissionsContext'
+import { AnchoredMenu } from '../../AnchoredMenu'
 import { LoadingDots } from '../../LoadingDots'
 import { SkeletonRows } from '../../Skeleton'
 import { StatusPill } from '../../StatusPill'
@@ -114,6 +115,7 @@ export function TestSuitesPage({ applicationId }: { applicationId: string }) {
   const [detail, setDetail] = useState<CollectionDetail | null>(null)
   const [dialog, setDialog] = useState<Dialog>(null)
   const [menuOpen, setMenuOpen] = useState(false)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
   const [tab, setTab] = useState<Tab>('runs')
   const [caseSearch, setCaseSearch] = useState('')
   const [journeyFilter, setJourneyFilter] = useState('')
@@ -334,6 +336,7 @@ export function TestSuitesPage({ applicationId }: { applicationId: string }) {
                         Manage test cases
                       </button>
                       <button
+                        ref={menuButtonRef}
                         type="button"
                         className="button-secondary"
                         title="More options"
@@ -345,18 +348,12 @@ export function TestSuitesPage({ applicationId }: { applicationId: string }) {
                       >
                         <FontAwesomeIcon icon={faEllipsisVertical} style={{ fontSize: 16 }} />
                       </button>
-                      {menuOpen && (
-                        <>
-                          <div onClick={() => setMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
+                      <AnchoredMenu anchorRef={menuButtonRef} open={menuOpen} onClose={() => setMenuOpen(false)}>
                           <div
                             role="menu"
                             style={{
-                              position: 'absolute',
-                              top: 44,
-                              right: 0,
                               minWidth: 150,
                               padding: 4,
-                              zIndex: 100,
                               background: 'var(--panel)',
                               border: '1px solid var(--border-2)',
                               borderRadius: 10,
@@ -383,8 +380,7 @@ export function TestSuitesPage({ applicationId }: { applicationId: string }) {
                               </button>
                             ))}
                           </div>
-                        </>
-                      )}
+                      </AnchoredMenu>
                     </div>
                   )}
                 </div>

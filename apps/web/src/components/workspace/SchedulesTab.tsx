@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faEllipsisVertical } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type ScheduleRead } from '../../api'
 import { useCanEdit } from '../../PermissionsContext'
 import { ScheduleDialog } from './ScheduleDialog'
 import { SkeletonRows } from '../Skeleton'
+import { AnchoredMenu } from '../AnchoredMenu'
 import { EmptyState, SchedulesIllustration } from '../EmptyState'
 
 function formatDateTime(iso: string): string {
@@ -125,9 +126,11 @@ function RowMenu({
   onOpenChange: (open: boolean) => void
   items: { label: string; onClick: () => void; disabled?: boolean; danger?: boolean }[]
 }) {
+  const buttonRef = useRef<HTMLButtonElement>(null)
   return (
     <div style={{ position: 'relative', display: 'inline-block' }}>
       <button
+        ref={buttonRef}
         type="button"
         title="More actions"
         aria-label="More actions"
@@ -136,48 +139,36 @@ function RowMenu({
       >
         <MoreIcon />
       </button>
-      {open && (
-        <>
-          <div
-            data-testid="row-menu-backdrop"
-            onClick={() => onOpenChange(false)}
-            style={{ position: 'fixed', inset: 0, zIndex: 9 }}
-          />
-          <div
-            className="card-panel"
-            style={{
-              position: 'absolute',
-              top: '100%',
-              right: 0,
-              marginTop: 4,
-              minWidth: 140,
-              padding: 4,
-              zIndex: 10,
-              boxShadow: 'var(--shadow-dropdown-lg)',
-            }}
-          >
-            {items.map((item) => (
-              <button
-                key={item.label}
-                type="button"
-                disabled={item.disabled}
-                onClick={() => {
-                  onOpenChange(false)
-                  item.onClick()
-                }}
-                style={{
-                  ...menuItemStyle,
-                  color: item.danger ? 'var(--bad)' : menuItemStyle.color,
-                  opacity: item.disabled ? 0.6 : 1,
-                  cursor: item.disabled ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+      <AnchoredMenu anchorRef={buttonRef} open={open} onClose={() => onOpenChange(false)}>
+        <div
+          className="card-panel"
+          style={{
+            minWidth: 140,
+            padding: 4,
+            boxShadow: 'var(--shadow-dropdown-lg)',
+          }}
+        >
+          {items.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              disabled={item.disabled}
+              onClick={() => {
+                onOpenChange(false)
+                item.onClick()
+              }}
+              style={{
+                ...menuItemStyle,
+                color: item.danger ? 'var(--bad)' : menuItemStyle.color,
+                opacity: item.disabled ? 0.6 : 1,
+                cursor: item.disabled ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </AnchoredMenu>
     </div>
   )
 }

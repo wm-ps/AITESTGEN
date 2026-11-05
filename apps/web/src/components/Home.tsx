@@ -7,6 +7,7 @@ import { StatusPill } from './StatusPill'
 import { Pagination } from './Pagination'
 import { SkeletonRows } from './Skeleton'
 import { Toast } from './Toast'
+import { AnchoredMenu } from './AnchoredMenu'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { useCanEdit } from '../PermissionsContext'
 
@@ -142,7 +143,6 @@ function ApplicationRow({
   // own rounded-corner container clips regular absolutely-positioned
   // children (see EXPERIENCE.md), which was hiding the menu for rows near
   // the bottom/edge of the table.
-  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -297,10 +297,6 @@ function ApplicationRow({
               title="More options"
               onClick={(e) => {
                 e.stopPropagation()
-                if (!menuOpen) {
-                  const rect = menuButtonRef.current!.getBoundingClientRect()
-                  setMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
-                }
                 setMenuOpen((v) => !v)
               }}
               style={{
@@ -318,26 +314,12 @@ function ApplicationRow({
             >
               <FontAwesomeIcon icon={faEllipsisVertical} style={{ fontSize: 17 }} />
             </button>
-            {menuOpen &&
-              menuPos &&
-              createPortal(
-                <>
-                  <div
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setMenuOpen(false)
-                    }}
-                    style={{ position: 'fixed', inset: 0, zIndex: 99 }}
-                  />
+            <AnchoredMenu anchorRef={menuButtonRef} open={menuOpen} onClose={() => setMenuOpen(false)}>
                   <div
                     onClick={(e) => e.stopPropagation()}
                     style={{
-                      position: 'fixed',
-                      top: menuPos.top,
-                      right: menuPos.right,
                       minWidth: 140,
                       padding: 4,
-                      zIndex: 100,
                       background: 'var(--panel)',
                       border: '1px solid var(--border-2)',
                       borderRadius: 10,
@@ -382,9 +364,7 @@ function ApplicationRow({
                       Delete
                     </button>
                   </div>
-                </>,
-                document.body,
-              )}
+            </AnchoredMenu>
           </div>
         )}
       </td>

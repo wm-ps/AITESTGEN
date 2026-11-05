@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faEllipsisVertical, faShieldHalved, faUserPlus } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type Role, type TeamMemberRead, type UserRead } from '../api'
 import { InviteTeammateModal, ROLE_OPTIONS } from './InviteTeammateModal'
 import { SkeletonRows } from './Skeleton'
 import { Toast } from './Toast'
+import { AnchoredMenu } from './AnchoredMenu'
 
 type TeamMember = TeamMemberRead
 
@@ -59,6 +60,7 @@ const menuItemStyle: React.CSSProperties = {
 
 function MemberRow({ member, isSelf, onChanged, onError }: { member: TeamMember; isSelf: boolean; onChanged: () => void; onError: (message: string) => void }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
   const [removing, setRemoving] = useState(false)
   const [changingRole, setChangingRole] = useState(false)
 
@@ -116,6 +118,7 @@ function MemberRow({ member, isSelf, onChanged, onError }: { member: TeamMember;
         {!isSelf && (
           <>
             <button
+              ref={menuButtonRef}
               type="button"
               title="More options"
               disabled={removing || changingRole}
@@ -124,10 +127,8 @@ function MemberRow({ member, isSelf, onChanged, onError }: { member: TeamMember;
             >
               <FontAwesomeIcon icon={faEllipsisVertical} style={{ fontSize: 15 }} />
             </button>
-            {menuOpen && (
-              <>
-                <div onClick={() => setMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 9 }} />
-                <div role="menu" style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, minWidth: 170, padding: 4, zIndex: 10, background: 'var(--panel)', border: '1px solid var(--border-2)', borderRadius: 10, boxShadow: 'var(--panel-shadow)' }}>
+            <AnchoredMenu anchorRef={menuButtonRef} open={menuOpen} onClose={() => setMenuOpen(false)}>
+                <div role="menu" style={{ minWidth: 170, padding: 4, background: 'var(--panel)', border: '1px solid var(--border-2)', borderRadius: 10, boxShadow: 'var(--panel-shadow)' }}>
                   <div style={{ padding: '7px 12px 3px', fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)', textAlign: 'left' }}>
                     Change role
                   </div>
@@ -157,8 +158,7 @@ function MemberRow({ member, isSelf, onChanged, onError }: { member: TeamMember;
                     Remove
                   </button>
                 </div>
-              </>
-            )}
+            </AnchoredMenu>
           </>
         )}
       </div>

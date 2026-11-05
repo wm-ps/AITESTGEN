@@ -8,6 +8,7 @@ import { GenerationLoader } from './GenerationLoader'
 import { ServiceErrorNote } from './ServiceError'
 import { EmptyState, ScenariosIllustration } from './EmptyState'
 import { faIcon } from '../faIcon'
+import { AnchoredMenu } from './AnchoredMenu'
 
 const Route = faIcon(faRoute)
 const TableList = faIcon(faTableList)
@@ -73,10 +74,12 @@ function ScenarioRenameInput({
 
 function ScenarioRowMenu({ onRename, onDelete }: { onRename: () => void; onDelete: () => void }) {
   const [open, setOpen] = useState(false)
+  const buttonRef = useRef<HTMLButtonElement>(null)
 
   return (
     <div style={{ position: 'relative' }} onClick={(e) => e.stopPropagation()}>
       <button
+        ref={buttonRef}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -96,20 +99,14 @@ function ScenarioRowMenu({ onRename, onDelete }: { onRename: () => void; onDelet
       >
         ⋯
       </button>
-      {open && (
-        <>
-          <div style={{ position: 'fixed', inset: 0, zIndex: 9 }} onClick={() => setOpen(false)} />
+      <AnchoredMenu anchorRef={buttonRef} open={open} onClose={() => setOpen(false)}>
           <div
             role="menu"
             className="card-panel"
             style={{
-              position: 'absolute',
-              right: 0,
-              top: 30,
               minWidth: 140,
               boxShadow: '0 12px 28px rgba(15,23,42,0.14)',
               overflow: 'hidden',
-              zIndex: 10,
             }}
           >
           <button
@@ -157,8 +154,7 @@ function ScenarioRowMenu({ onRename, onDelete }: { onRename: () => void; onDelet
             Delete
           </button>
           </div>
-        </>
-      )}
+      </AnchoredMenu>
     </div>
   )
 }

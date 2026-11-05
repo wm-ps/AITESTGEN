@@ -167,10 +167,8 @@ describe('SchedulesTab', () => {
     expect(screen.getByText('Edit')).toBeInTheDocument()
     expect(screen.getByText('Delete')).toBeInTheDocument()
 
-    // Backdrop click (not a menu item) closes the menu without acting.
-    // jsdom doesn't do hit-testing, so target the backdrop element itself
-    // rather than an arbitrary point that would visually overlap it.
-    fireEvent.click(screen.getByTestId('row-menu-backdrop'))
+    // A click outside the menu (not a menu item) closes it without acting.
+    fireEvent.mouseDown(document.body)
     await waitFor(() => expect(screen.queryByText('Run now')).not.toBeInTheDocument())
   })
 })
