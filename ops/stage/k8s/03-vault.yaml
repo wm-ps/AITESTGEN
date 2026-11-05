@@ -20,6 +20,9 @@ metadata:
   name: vault-data
   namespace: aitestgen-stage
 spec:
+  # The cluster has no default StorageClass — without this the claim stays
+  # Pending forever ("no storage class is set"). gp3 = EBS CSI driver.
+  storageClassName: gp3
   accessModes: ["ReadWriteOnce"]
   resources:
     requests:
