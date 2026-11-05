@@ -1,0 +1,36 @@
+properties([
+  pipelineTriggers([
+    githubPush()
+  ])
+])
+
+pipeline {
+  agent any
+
+  stages {
+
+    stage('SonarQube Analysis') {
+      steps {
+        withSonarQubeEnv('wm-ps-team-sonar') {
+          script {
+            def scannerHome = tool 'sonar-scanner'
+            sh "${scannerHome}/bin/sonar-scanner"
+          }
+        }
+      }
+    }
+
+    stage('Quality Gate') {
+      steps {
+        timeout(time: 10, unit: 'MINUTES') {
+          script {
+            def qg = waitForQualityGate()
+            if (qg.status != 'OK') {
+              currentBuild.result = 'UNSTABLE'
+            }
+          }
+        }
+      }
+    }
+  }
+}

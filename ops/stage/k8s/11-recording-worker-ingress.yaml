@@ -1,8 +1,16 @@
+# Same ALB ingress shape as 06-api-ingress.yaml/07-web-ingress.yaml — this
+# repo's ingress controller is AWS ALB, not nginx-ingress, so a websocket
+# upgrade needs no special annotation (ALB proxies it transparently over
+# the HTTP listener). idle_timeout is raised well above the other two
+# ingresses' 300s default: a VNC/control connection can sit idle mid-
+# recording (a human reading, not clicking) for longer than that — verify
+# during rollout whether websockify's/the browser's own keepalive traffic
+# makes this unnecessary, don't assume either way (Record and Play plan §9).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: aitestgen-api-ing
-  namespace: aitestgen
+  name: aitestgen-recording-ing
+  namespace: aitestgen-stage
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
@@ -18,17 +26,17 @@ spec:
   ingressClassName: alb
 
   rules:
-    - host: aitestgen-api.onwavemaker.com
+    - host: vantage-recording-stage.omnewave.com
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: api
+                name: recording-worker
                 port:
-                  number: 8000
+                  number: 8100
 
   tls:
     - hosts:
-        - aitestgen-api.onwavemaker.com
+        - vantage-recording-stage.omnewave.com

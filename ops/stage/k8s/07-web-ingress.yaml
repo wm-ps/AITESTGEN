@@ -1,8 +1,8 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: aitestgen-temporal-ing
-  namespace: aitestgen
+  name: aitestgen-web-ing
+  namespace: aitestgen-stage
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
@@ -18,17 +18,17 @@ spec:
   ingressClassName: alb
 
   rules:
-    - host: aitestgen-temporal.onwavemaker.com
+    - host: vantage-stage.omnewave.com
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: temporal
+                name: web
                 port:
-                  number: 8233
+                  number: 80
 
   tls:
     - hosts:
-        - aitestgen-temporal.onwavemaker.com
+        - vantage-stage.omnewave.com

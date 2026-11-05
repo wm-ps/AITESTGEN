@@ -6,19 +6,19 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: aitestgen-config
-  namespace: aitestgen
+  namespace: aitestgen-stage
 data:
-  CORS_ALLOWED_ORIGINS: "https://aitestgen-app.onwavemaker.com"
-  FRONTEND_BASE_URL: "https://aitestgen-app.onwavemaker.com"
+  CORS_ALLOWED_ORIGINS: "https://vantage-stage.omnewave.com"
+  FRONTEND_BASE_URL: "https://vantage-stage.omnewave.com"
   AI_MODEL: "gpt-5.6-luna"
-  AWS_S3_BUCKET: "wmps-ai-testgen"
+  AWS_S3_BUCKET: "wmps-ai-testgen-stage"
   AWS_REGION: "us-east-1"
   TEMPORAL_ADDRESS: "temporal:7233"
   VAULT_ADDR: "http://vault:8200"
   # Postgres is externally hosted (e.g. RDS) — not deployed in-cluster.
   # Replace with the real endpoint; POSTGRES_PORT/POSTGRES_DB assume RDS
   # defaults, override here too if yours differ.
-  POSTGRES_HOST: "44.193.88.55"
+  POSTGRES_HOST: "75.101.200.108"
   POSTGRES_PORT: "8045"
   POSTGRES_DB: "aitestgen"
   POSTGRES_USER: "aitestgen"  
@@ -33,4 +33,11 @@ data:
   SMTP_HOST: "smtp.gmail.com"
   SMTP_PORT: "587"
   SMTP_USER: "ps-tools@wavemaker.com"
-  SMTP_FROM: "ps-tools@wavemaker.com"  
+  SMTP_FROM: "ps-tools@wavemaker.com"
+  SCHEDULE_DEFAULT_TIME_ZONE: "Asia/Kolkata"
+  # Record and Play — the `api` Deployment picks this up automatically via
+  # its existing `envFrom: configMapRef` (no separate env entry needed
+  # there). Points at 11-recording-worker-ingress.yaml's own host; flip to
+  # ws:// (matching COOKIE_SECURE's own "no TLS yet" note above) until that
+  # ingress's certificate-arn is actually filled in.
+  RECORDING_SERVICE_WS_BASE: "wss://vantage-recording-stage.omnewave.com"

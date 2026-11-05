@@ -1,25 +1,23 @@
-# No Service — this is a Temporal worker, all outbound connections (to
-# temporal/postgres/vault/s3), nothing listens for inbound traffic.
-# Resource requests mirror discovery-worker: each ExecuteTestActivity runs a
-# real headless Chromium instance via `npx playwright test`.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: execution-worker
-  namespace: aitestgen
+  name: api
+  namespace: aitestgen-stage
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: execution-worker
+      app: api
   template:
     metadata:
       labels:
-        app: execution-worker
+        app: api
     spec:
       containers:
-        - name: execution-worker
+        - name: api
           image: REPLACE_IMAGE
+          ports:
+            - containerPort: 8000
           env:
             # $(VAR) below only expands against vars defined in this *env*
             # list (not envFrom), so POSTGRES_USER/HOST/PORT/DB are
@@ -54,37 +52,66 @@ spec:
             # this cluster. The password never gets written to the ConfigMap.
             - name: DATABASE_URL
               value: "postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)"
+            - name: SESSION_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: SESSION_SECRET_KEY
             - name: VAULT_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: aitestgen-secrets
                   key: VAULT_TOKEN
-            # Only needed if the cluster doesn't use EKS Pod Identity/IRSA for
-            # this ServiceAccount — boto3 falls back to these env vars when no
-            # role-based credentials are available. Prefer Pod Identity/IRSA
-            # (scoped to s3:GetObject/s3:PutObject on AWS_S3_BUCKET only) and
-            # drop these two entries + the matching aitestgen-secrets keys.
-            - name: AWS_ACCESS_KEY_ID
-              valueFrom:
-                secretKeyRef:
-                  name: aitestgen-secrets
-                  key: AWS_ACCESS_KEY_ID
-            - name: AWS_SECRET_ACCESS_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: aitestgen-secrets
-                  key: AWS_SECRET_ACCESS_KEY
-            - name: EXECUTION_WORKER_MAX_CONCURRENT_ACTIVITIES
-              value: "6"
           envFrom:
             - configMapRef:
                 name: aitestgen-config
             - secretRef:
-                name: aitestgen-secrets
+                name: aitestgen-secrets      
+          # /health stalls whenever a request blocks the event loop (sync DB
+          # work inside an `async def` route), so the old 1s timeout /
+          # 3-strike liveness restarted the pod mid-request — surfacing in
+          # the browser as CORS errors, since an ALB 502/503 carries no CORS
+          # headers. startupProbe covers boot; liveness is deliberately
+          # lenient (~2 min unresponsive) so it only kills a truly hung
+          # process, while readiness just pulls the pod from the Service.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
           resources:
             requests:
-              cpu: "500m"
-              memory: "1Gi"
+              cpu: "100m"
+              memory: "256Mi"
             limits:
-              cpu: "4"
-              memory: "4Gi"
+              cpu: "1000m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: aitestgen-stage
+spec:
+  type: ClusterIP
+  selector:
+    app: api
+  ports:
+    - port: 8000
+      targetPort: 8000

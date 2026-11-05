@@ -1,24 +1,24 @@
 # No Service — this is a Temporal worker, all outbound connections (to
 # temporal/postgres/vault/s3), nothing listens for inbound traffic.
-# Resource requests are higher than the other services: each crawl runs a
-# real headless Chromium instance (Story 2.2).
+# Resource requests mirror discovery-worker: each ExecuteTestActivity runs a
+# real headless Chromium instance via `npx playwright test`.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: discovery-worker
-  namespace: aitestgen
+  name: execution-worker
+  namespace: aitestgen-stage
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: discovery-worker
+      app: execution-worker
   template:
     metadata:
       labels:
-        app: discovery-worker
+        app: execution-worker
     spec:
       containers:
-        - name: discovery-worker
+        - name: execution-worker
           image: REPLACE_IMAGE
           env:
             # $(VAR) below only expands against vars defined in this *env*
@@ -74,22 +74,17 @@ spec:
                 secretKeyRef:
                   name: aitestgen-secrets
                   key: AWS_SECRET_ACCESS_KEY
-            - name: ANTHROPIC_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: aitestgen-secrets
-                  key: ANTHROPIC_API_KEY
-            - name: DISCOVERY_WORKER_MAX_CONCURRENT_ACTIVITIES
+            - name: EXECUTION_WORKER_MAX_CONCURRENT_ACTIVITIES
               value: "6"
           envFrom:
             - configMapRef:
                 name: aitestgen-config
             - secretRef:
-                name: aitestgen-secrets      
+                name: aitestgen-secrets
           resources:
             requests:
               cpu: "500m"
               memory: "1Gi"
             limits:
-              cpu: "4"
+              cpu: "2"
               memory: "4Gi"

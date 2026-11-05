@@ -3,7 +3,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: generation-worker
-  namespace: aitestgen
+  namespace: aitestgen-stage
 spec:
   replicas: 1
   selector:

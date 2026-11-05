@@ -1,0 +1,97 @@
+properties([
+  pipelineTriggers([
+    githubPush()
+  ])
+])
+
+pipeline {
+  agent any
+
+  environment {
+    AWS_REGION = 'us-east-1'
+    ECR_REPO = 'poc-aitestgen'
+    IMAGE_TAG = "web-stage-2.${env.BUILD_NUMBER}"
+    KUBECONFIG = credentials('kubeconfig-credential-id')
+    K8S_PATH = "ops/stage/k8s"
+  }
+
+  stages {
+
+    stage('Build Docker Image') {
+      steps {
+        script {
+          withAWS(region: AWS_REGION, credentials: 'wm-ps-user-ecr') {
+
+            def awsAccountID = sh(returnStdout: true, script: """
+              aws sts get-caller-identity --query Account --output text
+            """).trim()
+
+            sh """
+              aws ecr get-login-password --region ${AWS_REGION} \
+                | docker login --username AWS --password-stdin ${awsAccountID}.dkr.ecr.${AWS_REGION}.amazonaws.com
+            """
+
+            sh """
+              docker build \
+                --build-arg VITE_API_BASE=https://vantage-api-stage.omnewave.com \
+                -t ${ECR_REPO}:${IMAGE_TAG} \
+                -f apps/web/Dockerfile \
+                apps/web
+            """
+          }
+        }
+      }
+    }
+
+    stage('Push Docker Image') {
+      steps {
+        script {
+          withAWS(region: AWS_REGION, credentials: 'wm-ps-user-ecr') {
+
+            def awsAccountID = sh(returnStdout: true, script: """
+              aws sts get-caller-identity --query Account --output text
+            """).trim()
+
+            def fullImage = "${awsAccountID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}"
+
+            sh "docker tag ${ECR_REPO}:${IMAGE_TAG} ${fullImage}"
+            sh "docker push ${fullImage}"
+          }
+        }
+      }
+    }
+
+    stage('Deploy to Kubernetes') {
+      steps {
+        script {
+          withAWS(region: AWS_REGION, credentials: 'wm-ps-user-ecr') {
+
+            def awsAccountID = sh(returnStdout: true, script: """
+              aws sts get-caller-identity --query Account --output text
+            """).trim()
+
+            def image = "${awsAccountID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:${IMAGE_TAG}"
+
+            // `sed -i` on the tracked manifest only works once per workspace:
+            // after the first run replaces REPLACE_IMAGE, the placeholder is
+            // gone from the checked-out copy, so every later run's sed is a
+            // silent no-op and `kubectl apply` keeps re-applying the SAME
+            // old image forever, no matter how many new images get built.
+            // Render into an untracked file instead so REPLACE_IMAGE in git
+            // is never touched, and use `kubectl set image` as the actual
+            // trigger so a rollout always happens even if the rendered spec
+            // is otherwise identical to what's already applied.
+            sh """
+              sed 's|REPLACE_IMAGE|${image}|' ${K8S_PATH}/07-web.yaml > ${K8S_PATH}/07-web.rendered.yaml
+            """
+
+            sh "kubectl apply -f ${K8S_PATH}/07-web.rendered.yaml"
+            sh "kubectl set image deployment/web web=${image} -n aitestgen-stage"
+            sh "kubectl rollout status deployment/web -n aitestgen-stage --timeout=120s"
+            sh "kubectl apply -f ${K8S_PATH}/07-web-ingress.yaml"
+          }
+        }
+      }
+    }
+  }
+}

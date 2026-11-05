@@ -1,8 +1,8 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: aitestgen-web-ing
-  namespace: aitestgen
+  name: aitestgen-api-ing
+  namespace: aitestgen-stage
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
@@ -18,17 +18,17 @@ spec:
   ingressClassName: alb
 
   rules:
-    - host: aitestgen-app.onwavemaker.com
+    - host: vantage-api-stage.omnewave.com
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: web
+                name: api
                 port:
-                  number: 80
+                  number: 8000
 
   tls:
     - hosts:
-        - aitestgen-app.onwavemaker.com
+        - vantage-api-stage.omnewave.com
