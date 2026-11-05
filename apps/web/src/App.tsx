@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCircleDot, faCompass, faListCheck, faRoute } from '@fortawesome/free-solid-svg-icons'
+import { faCircleDot, faCompass, faLayerGroup, faListCheck, faRoute } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, hasDiscovery, type ActivityItemRead, type ApplicationRead, type UserRead } from './api'
 import { AcceptInvite } from './components/AcceptInvite'
 import { Activity } from './components/Activity'
@@ -23,6 +23,7 @@ import { TeamMembers } from './components/TeamMembers'
 import { TestSuiteResults } from './components/TestSuiteResults'
 import { Toast } from './components/Toast'
 import { Workspace, type WorkspaceTab, WORKSPACE_TABS } from './components/workspace/Workspace'
+import { TestSuitesPage } from './components/workspace/suites/TestSuitesPage'
 import { AppShell, type AppShellTab, type ShellRoute } from './components/shell/AppShell'
 import { PermissionsProvider } from './PermissionsContext'
 
@@ -63,6 +64,9 @@ function ScenariosIcon() {
 function ExplorerIcon() {
   return <FontAwesomeIcon icon={faCompass} style={{ fontSize: 15 }} />
 }
+function SuitesIcon() {
+  return <FontAwesomeIcon icon={faLayerGroup} style={{ fontSize: 15 }} />
+}
 function RecordIcon() {
   return <FontAwesomeIcon icon={faCircleDot} style={{ fontSize: 15 }} />
 }
@@ -72,10 +76,13 @@ function RecordIcon() {
 // list below, then reordered to the prototype's sequence.
 const JOURNEYS_TAB = { key: 'journeys', label: 'Journeys', heading: 'Explore Journeys', icon: JourneysIcon }
 const SCENARIOS_TAB = { key: 'scenarios', label: 'Scenarios', heading: 'Review Scenarios', icon: ScenariosIcon }
+// User-made groups of test cases ("Test suites"), run from Test runs. Not one
+// of Workspace's own tabs, same as Record and play.
+const SUITES_TAB = { key: 'suites', label: 'Test suites', heading: 'Test suites', icon: SuitesIcon }
 const RECORD_TAB = { key: 'record', label: 'Record and play', heading: 'Record and play', icon: RecordIcon }
 // Vantage Explorer (docs/vantage-explorer/PLAN.md) — the discovery module.
 const EXPLORER_TAB = { key: 'explorer', label: 'Explorer', heading: 'Explorer', icon: ExplorerIcon }
-const TAB_ORDER = ['overview', 'journeys', 'explorer', 'scenarios', 'suite', 'runs', 'record', 'schedules', 'export', 'settings']
+const TAB_ORDER = ['overview', 'journeys', 'explorer', 'scenarios', 'suite', 'runs', 'suites', 'record', 'schedules', 'export', 'settings']
 
 // Invite links point at /accept-invite?token=... — handled before the
 // signed-in check below since accepting an invite never requires an
@@ -94,7 +101,7 @@ function getResetTokenFromUrl(): string | null {
     : null
 }
 
-type AppTab = 'journeys' | 'explorer' | 'scenarios' | 'record' | WorkspaceTab
+type AppTab = 'journeys' | 'explorer' | 'scenarios' | 'record' | 'suites' | WorkspaceTab
 
 type View = 'overview' | 'home' | 'connect-app' | 'app' | 'settings' | 'team' | 'activity'
 
@@ -407,6 +414,7 @@ function App() {
         ...(discoveryTabsVisible
           ? [...(byExplorer ? [] : [JOURNEYS_TAB]), EXPLORER_TAB, ...(byExplorer ? [] : [SCENARIOS_TAB])]
           : []),
+        SUITES_TAB,
         RECORD_TAB,
       ].filter((t) => !isViewer || (t.key !== 'record' && t.key !== 'export'))
         .sort((a, b) => TAB_ORDER.indexOf(a.key) - TAB_ORDER.indexOf(b.key))
@@ -488,7 +496,10 @@ function App() {
           onCancelled={setSuccessToast}
         />
       )}
-      {view === 'app' && application && appTab !== 'journeys' && appTab !== 'explorer' && appTab !== 'scenarios' && appTab !== 'record' && (
+      {view === 'app' && application && appTab === 'suites' && (
+        <TestSuitesPage applicationId={application.id} />
+      )}
+      {view === 'app' && application && appTab !== 'journeys' && appTab !== 'explorer' && appTab !== 'scenarios' && appTab !== 'record' && appTab !== 'suites' && (
         justGeneratedSuite && appTab === 'suite' ? (
           <TestSuiteResults
             applicationId={application.id}

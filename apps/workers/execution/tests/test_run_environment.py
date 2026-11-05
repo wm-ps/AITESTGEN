@@ -22,6 +22,7 @@ from domain import (
     Scenario,
     Schedule,
     TestAsset,
+    TestCollection,
     TestResult,
     TestRun,
     TestSuite,
@@ -297,3 +298,42 @@ def test_heal_shows_and_runs_the_environments_urls_but_saves_default_host_code()
     assert activities_module._code_for_run(saved, default_ctx) == saved
     assert activities_module._code_for_run(None, environment_ctx) is None
     assert activities_module._code_for_default(saved, default_ctx) == saved
+
+
+def test_a_suite_run_records_its_suite_and_takes_the_suites_current_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application, _, _ = _seed()
+    _Recorder(monkeypatch)
+    with Session(engine) as session:
+        suite = TestCollection(application_id=application.id, name="Smoke v2")
+        session.add(suite)
+        session.commit()
+        session.refresh(suite)
+
+    # The workflow was started under the old name; the suite has since been renamed.
+    run = _prepare(
+        application, suite_name="Smoke", test_collection_id=str(suite.external_id)
+    )
+
+    assert (run.test_collection_id, run.suite_name) == (suite.id, "Smoke v2")
+
+
+def test_a_suite_deleted_before_prepare_falls_back_to_a_plain_named_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    application, _, _ = _seed()
+    _Recorder(monkeypatch)
+
+    run = _prepare(application, suite_name="Smoke", test_collection_id=str(uuid.uuid4()))
+
+    assert (run.test_collection_id, run.suite_name) == (None, "Smoke")
+
+
+def test_a_run_without_a_suite_has_no_collection(monkeypatch: pytest.MonkeyPatch) -> None:
+    application, _, _ = _seed()
+    _Recorder(monkeypatch)
+
+    run = _prepare(application, suite_name="Hand named")
+
+    assert (run.test_collection_id, run.suite_name) == (None, "Hand named")

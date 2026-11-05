@@ -64,6 +64,8 @@ from domain import (
     Schedule,
     SyntheticDataEntry,
     TestAsset,
+    TestCollection,
+    TestCollectionMember,
     TestDataEntry,
     TestResult,
     TestResultArtifact,
@@ -116,6 +118,7 @@ class _PurgeIds:
     test_run_external_ids: list[uuid.UUID]
     test_suite_ids: list[uuid.UUID]
     test_result_ids: list[uuid.UUID]
+    test_collection_ids: list[uuid.UUID]
     # Test data values and Explorer role logins live in Vault.
     secret_refs: list[str]
 
@@ -192,6 +195,11 @@ def _collect_purge_ids(session: Session, application_id: uuid.UUID) -> _PurgeIds
         if test_run_ids
         else []
     )
+    test_collection_ids = list(
+        session.exec(
+            select(TestCollection.id).where(_eq(TestCollection.application_id, application_id))
+        )
+    )
     secret_refs = [
         ref
         for ref in session.exec(
@@ -217,6 +225,7 @@ def _collect_purge_ids(session: Session, application_id: uuid.UUID) -> _PurgeIds
         test_run_external_ids=[row[1] for row in test_runs],
         test_suite_ids=test_suite_ids,
         test_result_ids=test_result_ids,
+        test_collection_ids=test_collection_ids,
         secret_refs=secret_refs,
     )
 
@@ -259,6 +268,13 @@ def _delete_dependent_rows(session: Session, application_id: uuid.UUID, ids: _Pu
         _run(delete(TestAsset).where(_in(TestAsset.test_suite_id, ids.test_suite_ids)))
     if ids.component_ids:
         _run(delete(ComponentLocator).where(_in(ComponentLocator.component_id, ids.component_ids)))
+    # Test suites: members reference Scenario, so they go before it below.
+    if ids.test_collection_ids:
+        _run(
+            delete(TestCollectionMember).where(
+                _in(TestCollectionMember.collection_id, ids.test_collection_ids)
+            )
+        )
     if ids.journey_ids:
         _run(delete(JourneyStep).where(_in(JourneyStep.journey_id, ids.journey_ids)))
         _run(delete(TestSuite).where(_in(TestSuite.journey_id, ids.journey_ids)))
@@ -275,6 +291,10 @@ def _delete_dependent_rows(session: Session, application_id: uuid.UUID, ids: _Pu
     _run(delete(DiscoveryError).where(_eq(DiscoveryError.application_id, application_id)))
     _run(delete(TestDataEntry).where(_eq(TestDataEntry.application_id, application_id)))
     _run(delete(TestRun).where(_eq(TestRun.application_id, application_id)))
+    # Test suites: runs reference the collection, so it goes after TestRun.
+    # (Its members were deleted above, before Scenario.)
+    if ids.test_collection_ids:
+        _run(delete(TestCollection).where(_eq(TestCollection.application_id, application_id)))
     # Schedules feature: schedule rows are referenced by test_run.schedule_id
     # (no FK has ondelete=CASCADE in this schema), so this must come after
     # TestRun is gone above, not before. The live Temporal Schedule objects

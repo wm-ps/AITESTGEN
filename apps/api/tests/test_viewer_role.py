@@ -122,6 +122,11 @@ def _writes(app_id: str) -> list[tuple[str, str, dict | None]]:
             f"/applications/{app_id}/recordings/sessions",
             {"auth_mode": "fresh", "name": "x"},
         ),
+        # Test suites: every write is refused for a viewer (the id need not exist).
+        ("POST", f"/applications/{app_id}/test-collections", {"name": "Smoke"}),
+        ("PATCH", f"/test-collections/{uuid.uuid4()}", {"name": "x"}),
+        ("PUT", f"/test-collections/{uuid.uuid4()}/members", {"add": [], "remove": []}),
+        ("DELETE", f"/test-collections/{uuid.uuid4()}", None),
     ]
 
 
@@ -142,6 +147,8 @@ def test_viewer_can_read(org: dict) -> None:
         f"/applications/{app_id}/scenarios",
         f"/applications/{app_id}/test-runs",
         f"/applications/{app_id}/schedules",
+        f"/applications/{app_id}/test-collections",
+        f"/applications/{app_id}/test-collection-cases",
     ):
         response = org["viewer"].get(path)
         assert response.status_code == 200, (path, response.status_code, response.text)
@@ -175,6 +182,16 @@ def test_members_and_admins_still_write(org: dict) -> None:
     for client in (org["member"], org["admin"]):
         response = client.post(f"/applications/{app_id}/test-runs/{uuid.uuid4()}/cancel")
         assert response.status_code == 404, response.text
+
+
+def test_members_and_admins_can_create_a_test_suite(org: dict) -> None:
+    app_id = org["application"]["id"]
+    for client, name in ((org["member"], "Member suite"), (org["admin"], "Admin suite")):
+        response = client.post(f"/applications/{app_id}/test-collections", json={"name": name})
+        assert response.status_code == 201, response.text
+    # a viewer can see them
+    names = {s["name"] for s in org["viewer"].get(f"/applications/{app_id}/test-collections").json()}
+    assert {"Member suite", "Admin suite"} <= names
 
 
 def test_signed_out_writes_still_reach_their_own_auth() -> None:

@@ -497,6 +497,19 @@ export type EnvironmentRead = {
   // Hidden (null) for viewers; never the password.
   username: string | null
 }
+// Test suites (user-made groups of test cases; `TestCollection` in the API,
+// because `TestSuite` there means one journey's generated tests).
+export type CollectionSummary = components['schemas']['CollectionSummary']
+export type CollectionCaseRead = components['schemas']['CollectionCaseRead']
+export type CollectionDetail = components['schemas']['CollectionDetail']
+export type CollectionMemberRead = components['schemas']['CollectionMemberRead']
+export type CollectionRunRead = components['schemas']['CollectionRunRead']
+// Error `detail` codes the suite endpoints raise.
+export const SUITE_HAS_RUNS = 'SUITE_HAS_RUNS'
+export const SUITE_RUN_IN_PROGRESS = 'SUITE_RUN_IN_PROGRESS'
+export const COLLECTION_NAME_TAKEN = 'COLLECTION_NAME_TAKEN'
+export const COLLECTION_EMPTY = 'COLLECTION_EMPTY'
+
 export type EnvironmentCreate = {
   name: string
   url: string
@@ -802,11 +815,45 @@ export const api = {
   // `environment_id` omitted = the application's own (default) environment.
   triggerTestRun: (
     applicationId: string,
-    payload?: { suite_name?: string; test_case_ids?: string[]; environment_id?: string },
+    payload?: {
+      suite_name?: string
+      test_case_ids?: string[]
+      environment_id?: string
+      // A saved test suite: the server resolves its test cases and run name.
+      test_collection_id?: string
+    },
   ) =>
     request<{ started: boolean }>(`/applications/${applicationId}/test-runs`, {
       method: 'POST',
       ...(payload ? { body: JSON.stringify(payload) } : {}),
+    }),
+  listCollections: (applicationId: string) =>
+    request<CollectionSummary[]>(`/applications/${applicationId}/test-collections`),
+  listCollectionCases: (applicationId: string) =>
+    request<CollectionCaseRead[]>(`/applications/${applicationId}/test-collection-cases`),
+  getCollection: (collectionId: string) =>
+    request<CollectionDetail>(`/test-collections/${collectionId}`),
+  createCollection: (applicationId: string, name: string) =>
+    request<CollectionSummary>(`/applications/${applicationId}/test-collections`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }),
+  renameCollection: (collectionId: string, name: string) =>
+    request<CollectionSummary>(`/test-collections/${collectionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ name }),
+    }),
+  // One atomic diff of `Scenario` ids (`CollectionCaseRead.scenario_id`).
+  changeCollectionMembers: (collectionId: string, change: { add?: string[]; remove?: string[] }) =>
+    request<CollectionSummary>(`/test-collections/${collectionId}/members`, {
+      method: 'PUT',
+      body: JSON.stringify({ add: change.add ?? [], remove: change.remove ?? [] }),
+    }),
+  // A suite with runs is refused (409 SUITE_HAS_RUNS) unless `deleteRuns` — the
+  // caller asks the user first, since that also removes those runs.
+  deleteCollection: (collectionId: string, deleteRuns = false) =>
+    request<void>(`/test-collections/${collectionId}${deleteRuns ? '?delete_runs=true' : ''}`, {
+      method: 'DELETE',
     }),
   listTestRuns: (applicationId: string, cursor: string | null = null, limit = 10, q = '') =>
     request<TestRunCursorPageRead>(

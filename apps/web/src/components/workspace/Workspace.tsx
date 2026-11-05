@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faClock, faDownload, faFlaskVial, faGauge, faSliders, faTableList } from '@fortawesome/free-solid-svg-icons'
-import { ApiError, api, type EnvironmentRead, type TestRunRead } from '../../api'
+import { ApiError, COLLECTION_EMPTY, api, type EnvironmentRead, type TestRunRead } from '../../api'
 import { AppIdentityLine } from '../AppIdentityLine'
 import { ServiceErrorNote } from '../ServiceError'
 import { Toast } from '../Toast'
@@ -14,6 +14,7 @@ import { DownloadTab } from './DownloadTab'
 import { OverviewTab } from './OverviewTab'
 import { RunJourneysDialog } from './RunJourneysDialog'
 import { RunSuiteButton } from './RunSuiteButton'
+import { RunTestSuiteDialog } from './suites/RunTestSuiteDialog'
 import { SchedulesTab } from './SchedulesTab'
 import { TestSuiteTab } from './TestSuiteTab'
 import { RunsTab } from './RunsTab'
@@ -146,6 +147,9 @@ export function Workspace({
   const [journeysDialogOpen, setJourneysDialogOpen] = useState(false)
   // The environment chosen in the Run dialog, carried into the selective-run wizard.
   const [journeysEnvironmentId, setJourneysEnvironmentId] = useState<string | null>(null)
+  // Run test suite dialog (a saved group of test cases), same environment hand-off.
+  const [suitesDialogOpen, setSuitesDialogOpen] = useState(false)
+  const [suitesEnvironmentId, setSuitesEnvironmentId] = useState<string | null>(null)
   // Snapshotted at mount — App.tsx only ever mounts this component fresh
   // right after a "Run All Tests" click, so the effect below should fire
   // (or not) based on that one moment, not re-run if the prop identity
@@ -216,6 +220,8 @@ export function Workspace({
   async function handleRunSuite(
     journeyRun?: { suiteName: string; testCaseIds: string[] },
     environmentId?: string | null,
+    // A saved test suite: the API resolves its test cases and names the run.
+    collectionId?: string,
   ) {
     setRunning(true)
     setTriggerError(null)
@@ -224,12 +230,13 @@ export function Workspace({
     try {
       await api.triggerTestRun(
         applicationId,
-        journeyRun || environmentId
+        journeyRun || environmentId || collectionId
           ? {
               ...(journeyRun
                 ? { suite_name: journeyRun.suiteName, test_case_ids: journeyRun.testCaseIds }
                 : {}),
               ...(environmentId ? { environment_id: environmentId } : {}),
+              ...(collectionId ? { test_collection_id: collectionId } : {}),
             }
           : undefined,
       )
@@ -238,7 +245,11 @@ export function Workspace({
       onActiveTabChange('runs')
     } catch (err) {
       if (err instanceof ApiError && err.message !== 'EXECUTION_UNAVAILABLE') {
-        setTriggerError(err.message)
+        setTriggerError(
+          err.message === COLLECTION_EMPTY
+            ? 'This suite has no test cases that can run right now.'
+            : err.message,
+        )
       } else {
         setTriggerErrorUnavailable(true)
       }
@@ -307,6 +318,10 @@ export function Workspace({
                 onOpenJourneysDialog={(environmentId) => {
                   setJourneysEnvironmentId(environmentId)
                   setJourneysDialogOpen(true)
+                }}
+                onOpenSuitesDialog={(environmentId) => {
+                  setSuitesEnvironmentId(environmentId)
+                  setSuitesDialogOpen(true)
                 }}
               />
               {running && (
@@ -380,6 +395,18 @@ export function Workspace({
           onExecute={(suiteName, testCaseIds) => {
             setJourneysDialogOpen(false)
             handleRunSuite({ suiteName, testCaseIds }, journeysEnvironmentId)
+          }}
+        />
+      )}
+
+      {suitesDialogOpen && (
+        <RunTestSuiteDialog
+          applicationId={applicationId}
+          initialEnvironmentId={suitesEnvironmentId}
+          onClose={() => setSuitesDialogOpen(false)}
+          onRun={(collectionId, environmentId) => {
+            setSuitesDialogOpen(false)
+            handleRunSuite(undefined, environmentId, collectionId)
           }}
         />
       )}

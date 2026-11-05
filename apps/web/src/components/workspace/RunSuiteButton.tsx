@@ -1,29 +1,32 @@
 import { useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faChevronRight, faListCheck, faPlay } from '@fortawesome/free-solid-svg-icons'
+import { faChevronRight, faLayerGroup, faListCheck, faPlay } from '@fortawesome/free-solid-svg-icons'
 import { LoadingDots } from '../LoadingDots'
 import { EnvironmentSelect } from '../environments/EnvironmentSelect'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 
-const RUN_MODES: { key: 'full' | 'selective'; icon: typeof faPlay; title: string; body: string }[] = [
+const RUN_MODES: { key: 'full' | 'selective' | 'suites'; icon: typeof faPlay; title: string; body: string }[] = [
   { key: 'full', icon: faPlay, title: 'All test cases', body: 'Run every test case in this application.' },
   { key: 'selective', icon: faListCheck, title: 'Selective run', body: 'Choose specific journeys or test cases to run.' },
+  { key: 'suites', icon: faLayerGroup, title: 'Test suites', body: 'Run a saved group of test cases, like Smoke or Regression.' },
 ]
 
-// Run Suite Flow: clicking "Run" opens a modal dialog offering Full suite or
-// Selective run — same overlay + card-panel modal shape as
+// Run Suite Flow: clicking "Run" opens a modal dialog offering Full suite,
+// Selective run or a saved Test suite — same overlay + card-panel modal shape as
 // RunJourneysDialog.tsx/ScheduleDialog.tsx, replacing the earlier
 // button-anchored dropdown menu with an actual dialog per the prototype.
 export function RunSuiteButton({
   running,
   onFullSuite,
   onOpenJourneysDialog,
+  onOpenSuitesDialog,
 }: {
   running: boolean
   // Both get the environment picked in the dialog — null is the application's
   // own (default) one.
   onFullSuite: (environmentId: string | null) => void
   onOpenJourneysDialog: (environmentId: string | null) => void
+  onOpenSuitesDialog: (environmentId: string | null) => void
 }) {
   const [open, setOpen] = useState(false)
   const [environmentId, setEnvironmentId] = useState<string | null>(null)
@@ -104,6 +107,7 @@ export function RunSuiteButton({
                   onClick={() => {
                     setOpen(false)
                     if (mode.key === 'full') onFullSuite(environmentId)
+                    else if (mode.key === 'suites') onOpenSuitesDialog(environmentId)
                     else onOpenJourneysDialog(environmentId)
                   }}
                   style={{

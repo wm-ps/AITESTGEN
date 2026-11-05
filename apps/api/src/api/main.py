@@ -153,6 +153,11 @@ from api.discovery import (
     start_discovery_run,
 )
 from api.environments import router as environments_router
+from api.test_collections import (
+    get_collection_for_run,
+    resolve_runnable_asset_ids,
+)
+from api.test_collections import router as test_collections_router
 from api.explorer import router as explorer_router
 from api.authoring import router as authoring_router
 from api.invites import InviteAcceptError, accept_invite, create_invite, send_invite_email
@@ -231,6 +236,7 @@ app.include_router(activity_router)
 app.include_router(approved_domains_router)
 # Application Settings → Environments (environments.py).
 app.include_router(environments_router)
+app.include_router(test_collections_router)
 # Vantage Explorer (docs/vantage-explorer/PLAN.md) — standalone module.
 app.include_router(explorer_router)
 # Authoring: test cases from a user's request, run by Explorer (authoring.py).
@@ -4043,6 +4049,15 @@ class TriggerTestRunRequest(BaseModel):
     # `ApplicationEnvironment` id to run against; unset = the application's own
     # (default) environment, so existing callers are unchanged.
     environment_id: uuid.UUID | None = None
+    # Test suites: run exactly this suite's available test cases. Exclusive
+    # with `test_case_ids`; the server resolves the ids and the run name.
+    test_collection_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _one_scope(self) -> "TriggerTestRunRequest":
+        if self.test_collection_id is not None and self.test_case_ids:
+            raise ValueError("test_collection_id and test_case_ids cannot be combined")
+        return self
 
 
 @app.post("/applications/{external_id}/test-runs", status_code=202)
@@ -4072,6 +4087,17 @@ async def trigger_test_run(
     if body.environment_id is not None:
         _get_environment_or_404(session, application, body.environment_id)
 
+    suite_name = body.suite_name
+    test_asset_ids = [str(x) for x in body.test_case_ids] if body.test_case_ids else None
+    collection = None
+    if body.test_collection_id is not None:
+        # A suite run: the ids are the suite's runnable test cases right now
+        # (409 COLLECTION_EMPTY when none, instead of falling through to a
+        # Complete run), named after the suite.
+        collection = get_collection_for_run(session, application, body.test_collection_id)
+        test_asset_ids = [str(x) for x in resolve_runnable_asset_ids(session, application, collection)]
+        suite_name = collection.name
+
     client = await get_temporal_client()
     if not await has_pollers(client, EXECUTION_TASK_QUEUE):
         raise HTTPException(status_code=503, detail="EXECUTION_UNAVAILABLE")
@@ -4081,11 +4107,10 @@ async def trigger_test_run(
             application_id=str(application.external_id),
             triggered_by_name=user.name,
             triggered_by_user_id=str(user.id),
-            suite_name=body.suite_name,
-            test_asset_ids=(
-                [str(x) for x in body.test_case_ids] if body.test_case_ids else None
-            ),
+            suite_name=suite_name,
+            test_asset_ids=test_asset_ids,
             environment_id=str(body.environment_id) if body.environment_id else None,
+            test_collection_id=str(collection.external_id) if collection else None,
         ),
         # Every run is a genuinely new TestRun (no rerun/idempotency key the
         # way suite-{journey_id}-{attempt} has) — the id only needs to be

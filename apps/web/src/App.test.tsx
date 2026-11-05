@@ -144,6 +144,9 @@ describe('App', () => {
     expect(screen.getAllByText('My App').length).toBeGreaterThan(0)
     expect(screen.getByText('Scenarios')).toBeTruthy()
     expect(screen.getByText('Record and play')).toBeTruthy()
+    // Test suites sits in the sidebar between Test runs and Record and play.
+    const sidebar = screen.getAllByText(/^(Test runs|Test suites|Record and play)$/).map((el) => el.textContent)
+    expect(sidebar).toEqual(['Test runs', 'Test suites', 'Record and play'])
 
     // Tab title/favicon are static platform branding — unaffected by the Application.
     expect(document.title).toBe('Vantage')

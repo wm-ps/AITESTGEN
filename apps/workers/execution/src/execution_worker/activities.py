@@ -47,6 +47,7 @@ from domain import (
     Scenario,
     Schedule,
     TestAsset,
+    TestCollection,
     TestResult,
     TestResultArtifact,
     TestRun,
@@ -496,10 +497,28 @@ def _prepare_test_run_sync(
                 select(Schedule.id).where(Schedule.external_id == uuid.UUID(input.schedule_id))
             ).first()
 
+        # Test suites: a run started from a suite records which one and takes
+        # the suite's *current* name, so a rename between trigger and now is
+        # not lost. A suite deleted in that window just yields a plain run
+        # under the name it was triggered with.
+        suite_name = input.suite_name
+        test_collection_pk: uuid.UUID | None = None
+        if input.test_collection_id is not None:
+            collection = session.exec(
+                select(TestCollection).where(
+                    TestCollection.external_id == uuid.UUID(input.test_collection_id),
+                    TestCollection.application_id == application.id,  # type: ignore[arg-type]
+                )
+            ).first()
+            if collection is not None:
+                test_collection_pk = collection.id
+                suite_name = collection.name
+
         test_run = TestRun(
             application_id=application.id,
             run_number=run_number,
             schedule_id=schedule_pk,
+            test_collection_id=test_collection_pk,
             status="running",
             environment_snapshot=target.environment,
             target_base_url_snapshot=target.url,
@@ -508,7 +527,7 @@ def _prepare_test_run_sync(
             triggered_by_user_id=(
                 uuid.UUID(input.triggered_by_user_id) if input.triggered_by_user_id else None
             ),
-            suite_name=input.suite_name,
+            suite_name=suite_name,
             workflow_id=workflow_id,
             started_at=datetime.now(UTC),
         )

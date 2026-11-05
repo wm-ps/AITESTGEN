@@ -147,6 +147,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/applications/{external_id}/test-collections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Collections */
+        get: operations["list_collections_applications__external_id__test_collections_get"];
+        put?: never;
+        /** Create Collection */
+        post: operations["create_collection_applications__external_id__test_collections_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/test-collection-cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Collection Cases
+         * @description Every test case of the application, for the Select test cases dialog —
+         *     lean on purpose (no code or steps), with the other suites each is in.
+         */
+        get: operations["list_collection_cases_applications__external_id__test_collection_cases_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/test-collections/{collection_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Collection */
+        get: operations["get_collection_test_collections__collection_id__get"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete Collection
+         * @description Deletes the suite. Its runs are history, so they are only removed when
+         *     the caller says so (`delete_runs=true`, after the user confirms in the
+         *     UI); otherwise a suite with runs is refused and nothing changes. Test
+         *     cases are never touched.
+         */
+        delete: operations["delete_collection_test_collections__collection_id__delete"];
+        options?: never;
+        head?: never;
+        /** Rename Collection */
+        patch: operations["rename_collection_test_collections__collection_id__patch"];
+        trace?: never;
+    };
+    "/test-collections/{collection_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Change Members
+         * @description One atomic add/remove diff (the Select test cases dialog's Save, and
+         *     Remove / Remove all on unavailable cases).
+         */
+        put: operations["change_members_test_collections__collection_id__members_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/explorer/applications/{application_id}/runs/latest": {
         parameters: {
             query?: never;
@@ -2444,6 +2529,117 @@ export interface components {
              */
             created_at: string;
         };
+        /** CollectionCaseRead */
+        CollectionCaseRead: {
+            /**
+             * Scenario Id
+             * Format: uuid
+             */
+            scenario_id: string;
+            /** Test Case Number */
+            test_case_number: number;
+            /** Name */
+            name: string;
+            /**
+             * Journey Id
+             * Format: uuid
+             */
+            journey_id: string;
+            /** Journey Name */
+            journey_name: string;
+            /** In Collections */
+            in_collections: components["schemas"]["CollectionRef"][];
+        };
+        /** CollectionDetail */
+        CollectionDetail: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Test Case Count */
+            test_case_count: number;
+            /** Journey Count */
+            journey_count: number;
+            /** Run Count */
+            run_count: number;
+            /** Available */
+            available: components["schemas"]["CollectionMemberRead"][];
+            /** Unavailable */
+            unavailable: components["schemas"]["CollectionMemberRead"][];
+            /** Recent Runs */
+            recent_runs: components["schemas"]["CollectionRunRead"][];
+        };
+        /** CollectionMemberRead */
+        CollectionMemberRead: {
+            /**
+             * Scenario Id
+             * Format: uuid
+             */
+            scenario_id: string;
+            /** Name */
+            name: string;
+            /** Journey Name */
+            journey_name?: string | null;
+        };
+        /** CollectionName */
+        CollectionName: {
+            /** Name */
+            name: string;
+        };
+        /** CollectionRef */
+        CollectionRef: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** CollectionRunRead */
+        CollectionRunRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Run Number */
+            run_number: number;
+            /** Suite Name */
+            suite_name: string | null;
+            /** Status */
+            status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Total */
+            total: number;
+            /** Passed */
+            passed: number;
+            /** Failed */
+            failed: number;
+        };
+        /** CollectionSummary */
+        CollectionSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Test Case Count */
+            test_case_count: number;
+            /** Unavailable Count */
+            unavailable_count: number;
+            /** Run Count */
+            run_count: number;
+        };
         /** ConnectionTestPayload */
         ConnectionTestPayload: {
             /** Url */
@@ -3063,6 +3259,19 @@ export interface components {
             to_id: string;
             /** Action */
             action: string;
+        };
+        /** MembersChange */
+        MembersChange: {
+            /**
+             * Add
+             * @default []
+             */
+            add: string[];
+            /**
+             * Remove
+             * @default []
+             */
+            remove: string[];
         };
         /** MissionRead */
         MissionRead: {
@@ -3948,6 +4157,8 @@ export interface components {
             test_case_ids?: string[] | null;
             /** Environment Id */
             environment_id?: string | null;
+            /** Test Collection Id */
+            test_collection_id?: string | null;
         };
         /** UserRead */
         UserRead: {
@@ -4425,6 +4636,249 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EnvironmentReveal"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_collections_applications__external_id__test_collections_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CollectionSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_collection_applications__external_id__test_collections_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CollectionName"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CollectionSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_collection_cases_applications__external_id__test_collection_cases_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CollectionCaseRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_collection_test_collections__collection_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CollectionDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_collection_test_collections__collection_id__delete: {
+        parameters: {
+            query?: {
+                delete_runs?: boolean;
+            };
+            header?: never;
+            path: {
+                collection_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_collection_test_collections__collection_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CollectionName"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CollectionSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_members_test_collections__collection_id__members_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                collection_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembersChange"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CollectionSummary"];
                 };
             };
             /** @description Validation Error */

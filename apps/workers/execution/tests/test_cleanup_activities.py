@@ -23,6 +23,8 @@ from domain import (
     Organization,
     Scenario,
     TestAsset,
+    TestCollection,
+    TestCollectionMember,
     TestResult,
     TestRun,
     TestSuite,
@@ -108,8 +110,16 @@ def _seed_application(*, deleted_at: datetime | None) -> Application:
         session.flush()
         session.add(ExplorerEvent(run_id=explorer_run.id, kind="note", title="hi"))
 
+        # Test suites: a suite with a member and a run started from it — the
+        # purge must remove all three in an order the FKs allow.
+        collection = TestCollection(application_id=application.id, name="Smoke")
+        session.add(collection)
+        session.flush()
+        session.add(TestCollectionMember(collection_id=collection.id, scenario_id=scenario.id))
+
         test_run = TestRun(
             application_id=application.id,
+            test_collection_id=collection.id,
             execution_policy_id=policy.id,
             run_number=1,
             status="complete",
@@ -149,6 +159,11 @@ def test_purge_removes_eligible_application_and_leaves_others_alone() -> None:
     untouched = _seed_application(deleted_at=None)
     recently_deleted = _seed_application(deleted_at=datetime.now(UTC))
 
+    with Session(engine) as session:
+        eligible_collection_id = session.exec(
+            select(TestCollection.id).where(TestCollection.application_id == eligible.id)
+        ).one()
+
     candidates = find_purge_candidates_activity()
     assert str(eligible.external_id) in candidates
     assert str(untouched.external_id) not in candidates
@@ -167,6 +182,20 @@ def test_purge_removes_eligible_application_and_leaves_others_alone() -> None:
         assert (
             session.exec(
                 select(DiscoveryRun).where(DiscoveryRun.application_id == eligible.id)
+            ).first()
+            is None
+        )
+        assert (
+            session.exec(
+                select(TestCollection).where(TestCollection.application_id == eligible.id)
+            ).first()
+            is None
+        )
+        assert (
+            session.exec(
+                select(TestCollectionMember).where(
+                    TestCollectionMember.collection_id == eligible_collection_id
+                )
             ).first()
             is None
         )

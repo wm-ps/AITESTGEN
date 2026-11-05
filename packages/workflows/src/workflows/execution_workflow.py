@@ -111,6 +111,11 @@ class ExecutionWorkflowInput:
     # Application's own (default) environment — every existing caller and
     # in-flight workflow keeps today's behavior by simply not passing it.
     environment_id: str | None = None
+    # `TestCollection.external_id` ("Test suites") when this run was started
+    # from a suite; None for every other run, so existing callers and
+    # in-flight workflows are unchanged. `suite_name` still carries the
+    # suite's name at trigger time; Prepare re-reads the current name by id.
+    test_collection_id: str | None = None
 
 
 @dataclass
@@ -122,6 +127,7 @@ class PrepareTestRunActivityInput:
     test_asset_ids: list[str] | None = None
     triggered_by_user_id: str | None = None
     environment_id: str | None = None
+    test_collection_id: str | None = None
 
 
 @dataclass
@@ -241,6 +247,7 @@ class ApplicationTestExecutionWorkflow:
                 test_asset_ids=input.test_asset_ids,
                 triggered_by_user_id=input.triggered_by_user_id,
                 environment_id=input.environment_id,
+                test_collection_id=input.test_collection_id,
             ),
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=RetryPolicy(maximum_attempts=3),

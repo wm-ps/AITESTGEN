@@ -65,6 +65,7 @@ from domain.scenario import Scenario, ScenarioSource, ScenarioType
 from domain.schedule import Schedule, ScheduleCadenceType
 from domain.synthetic_data_entry import SyntheticDataEntry
 from domain.test_asset import TestAsset
+from domain.test_collection import TestCollection, TestCollectionMember
 from domain.test_data_entry import TestDataEntry
 from domain.test_result import TestResult, TestResultStatus
 from domain.test_result_artifact import ArtifactType, TestResultArtifact
@@ -131,6 +132,8 @@ __all__ = [
     "SyntheticDataEntry",
     "ArtifactType",
     "TestAsset",
+    "TestCollection",
+    "TestCollectionMember",
     "TestDataEntry",
     "TestResult",
     "TestResultStatus",

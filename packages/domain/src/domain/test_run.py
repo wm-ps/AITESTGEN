@@ -92,6 +92,21 @@ class TestRun(SQLModel, table=True):
             index=True,
         ),
     )
+    # Which `TestCollection` ("Test suites") this run was started from; NULL
+    # for Complete, Selective and scheduled runs. It is what lets renaming a
+    # suite rewrite `suite_name` on exactly its own runs (a Selective run that
+    # happens to share the name is never touched) and powers the suite's
+    # "Recent runs". Deleting a suite deletes these runs first, so no
+    # `ondelete` is needed (none in this schema uses CASCADE).
+    test_collection_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey("test_collection.id"),
+            nullable=True,
+            index=True,
+        ),
+    )
     triggered_by_name: str | None = Field(default=None)
     # Who clicked Run, for a manual run — the run-completed email goes to
     # them. Null for scheduled runs (their email goes to the schedule's
