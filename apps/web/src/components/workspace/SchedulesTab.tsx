@@ -6,6 +6,7 @@ import { useCanEdit } from '../../PermissionsContext'
 import { ScheduleDialog } from './ScheduleDialog'
 import { SkeletonRows } from '../Skeleton'
 import { AnchoredMenu } from '../AnchoredMenu'
+import { Pill } from '../../explorer/ui'
 import { EmptyState, SchedulesIllustration } from '../EmptyState'
 
 function formatDateTime(iso: string): string {
@@ -26,7 +27,7 @@ const columnHeaderLabelStyle: React.CSSProperties = {
 }
 
 const SCHEDULE_ROW_GRID_TEMPLATE =
-  'minmax(160px,2fr) minmax(120px,1.3fr) minmax(110px,1fr) minmax(110px,1fr) minmax(120px,1.2fr) 70px 32px'
+  'minmax(200px,2.4fr) minmax(120px,1.3fr) minmax(110px,1fr) minmax(120px,1.2fr) 70px 32px'
 
 // Self-contained on/off control — doubles as the status indicator (no
 // separate "Enabled"/"Disabled" pill needed alongside it, the switch's own
@@ -339,7 +340,6 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
             <div style={columnHeaderLabelStyle}>Schedule</div>
             <div style={columnHeaderLabelStyle}>Cadence</div>
             <div style={columnHeaderLabelStyle}>Runs</div>
-            <div style={columnHeaderLabelStyle}>Environment</div>
             <div style={columnHeaderLabelStyle}>Next run</div>
             <div style={columnHeaderLabelStyle}>Enabled</div>
             <div />
@@ -357,8 +357,15 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
               }}
             >
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {schedule.name}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {schedule.name}
+                  </span>
+                  {schedule.environment_name && (
+                    <span style={{ flexShrink: 0 }}>
+                      <Pill tone="neutral">{schedule.environment_name}</Pill>
+                    </span>
+                  )}
                 </div>
                 {schedule.created_by_name && (
                   <div className="caption" style={{ fontSize: 11.5, marginTop: 2 }}>
@@ -371,9 +378,6 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
               </div>
               <div style={{ fontSize: 12.5, color: 'var(--fg-2)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={schedule.test_collection_name ?? 'All test cases'}>
                 {schedule.test_collection_name ?? 'All test cases'}
-              </div>
-              <div style={{ fontSize: 12.5, color: 'var(--fg-2)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={schedule.environment_name}>
-                {schedule.environment_name || '—'}
               </div>
               <div className="caption" style={{ fontSize: 12 }}>
                 {schedule.next_run_at ? formatDateTime(schedule.next_run_at) : '—'}

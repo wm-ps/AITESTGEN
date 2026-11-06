@@ -12,6 +12,7 @@ import {
   type TestRunRead,
 } from '../../api'
 import { StatusPill } from '../StatusPill'
+import { Pill } from '../../explorer/ui'
 import { ServiceErrorNote } from '../ServiceError'
 import { EmptyState, RunsIllustration } from '../EmptyState'
 import { SkeletonRows } from '../Skeleton'
@@ -308,7 +309,7 @@ const RESULT_GRID_TEMPLATE = '50% 1fr 1fr'
 // Run list row columns — same proportions as the prototype's Run/Trigger/
 // Results/Pass rate/chevron grid.
 const RUN_ROW_GRID_TEMPLATE =
-  'minmax(140px,1.3fr) minmax(110px,0.9fr) minmax(90px,0.8fr) 90px minmax(130px,1.4fr) 84px 20px'
+  'minmax(180px,1.6fr) minmax(110px,0.9fr) 90px minmax(130px,1.4fr) 84px 20px'
 
 type ResultBucket = 'passed' | 'healed' | 'failed'
 
@@ -1278,7 +1279,6 @@ function RunListHeader() {
     >
       <div style={columnHeaderLabelStyle}>Run</div>
       <div style={columnHeaderLabelStyle}>Triggered by</div>
-      <div style={columnHeaderLabelStyle}>Environment</div>
       <div style={{ ...columnHeaderLabelStyle, textAlign: 'center' }}>Duration</div>
       <div style={columnHeaderLabelStyle}>Results</div>
       <div style={{ ...columnHeaderLabelStyle, textAlign: 'right' }}>Pass rate</div>
@@ -1335,6 +1335,11 @@ function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
           <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={run.name}>
             {runTitle(run)}
           </span>
+          {run.environment_snapshot && (
+            <span style={{ flexShrink: 0 }}>
+              <Pill tone="neutral" title={run.target_base_url_snapshot}>{run.environment_snapshot}</Pill>
+            </span>
+          )}
         </div>
         <div className="caption" style={{ fontSize: 10.5, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {formatDateTimeWithZone(run.created_at)}
@@ -1342,14 +1347,6 @@ function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
       </div>
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 12.5, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{by}</div>
-      </div>
-      <div style={{ minWidth: 0 }}>
-        <div
-          style={{ fontSize: 12.5, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-          title={run.target_base_url_snapshot}
-        >
-          {run.environment_snapshot || '—'}
-        </div>
       </div>
       <div style={{ minWidth: 0, textAlign: 'center', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--fg-2)', whiteSpace: 'nowrap' }}>
         {formatDuration(runDurationMs(run))}

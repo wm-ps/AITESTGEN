@@ -11,6 +11,8 @@ import { AnchoredMenu } from '../AnchoredMenu'
 
 const REVEAL_FOR_MS = 15_000
 
+const DEFAULT_ENV_HINT = 'This is the environment that was explored when the application was onboarded'
+
 const labelStyle: React.CSSProperties = {
   fontSize: 11,
   fontWeight: 700,
@@ -230,7 +232,11 @@ export function AppSettingsTab({ applicationId }: { applicationId: string }) {
                 style={cardStyle}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                  {environment.is_default && <FontAwesomeIcon icon={faStar} style={{ fontSize: 14, color: 'var(--accent-2)' }} />}
+                  {environment.is_default && (
+                    <span title={DEFAULT_ENV_HINT} aria-label={DEFAULT_ENV_HINT} style={{ display: 'inline-flex', cursor: 'pointer' }}>
+                      <FontAwesomeIcon icon={faStar} style={{ fontSize: 14, color: 'var(--accent-2)' }} />
+                    </span>
+                  )}
                   <div style={{ ...cellTextStyle, flex: 1, fontSize: 16, fontWeight: 600, color: 'var(--fg)' }} title={environment.name}>
                     {environment.name}
                   </div>
