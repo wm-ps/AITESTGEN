@@ -47,6 +47,7 @@ from domain import (
     TestDataEntry,
     TestResult,
     TestResultArtifact,
+    TestCollection,
     TestRun,
     TestSuite,
     aggregation_key,
@@ -3657,6 +3658,7 @@ def download_test_suite_project(
     _not_viewer: NotViewerDep,
     user: CurrentUserDep,
     environment_id: uuid.UUID | None = None,
+    test_collection_id: uuid.UUID | None = None,
 ) -> Response:
     # Same org-scoped lookup as every other Application endpoint (AD-12) —
     # never by external_id alone, or one Organization could download
@@ -3668,6 +3670,21 @@ def download_test_suite_project(
     # rewritten to match.
     environment = (
         _get_environment_or_404(session, application, environment_id) if environment_id else None
+    )
+    # No `test_collection_id` = every current test case, exactly as before
+    # (the code below is not touched). Otherwise only that test suite's
+    # available test cases — the same resolver a run of the suite uses, so the
+    # zip, the run and the suite's count always agree; 404 for another
+    # application's suite, 409 `COLLECTION_EMPTY` when it has nothing to run.
+    collection = (
+        get_collection_for_run(session, application, test_collection_id)
+        if test_collection_id
+        else None
+    )
+    collection_asset_ids = (
+        set(resolve_runnable_asset_ids(session, application, collection))
+        if collection is not None
+        else None
     )
     default_url = application.url
     application_for_project = effective_application(application, environment)
@@ -3700,9 +3717,15 @@ def download_test_suite_project(
             TestAsset.current.is_(True),  # type: ignore[attr-defined]
         )
     ).all()
+    if collection_asset_ids is not None:
+        test_assets = [a for a in test_assets if a.external_id in collection_asset_ids]
     assets_by_suite: dict[uuid.UUID, list[TestAsset]] = {}
     for asset in test_assets:
         assets_by_suite.setdefault(asset.test_suite_id, []).append(asset)
+    if collection_asset_ids is not None:
+        # Only the journeys that hold one of the suite's tests get a folder —
+        # an empty one would be a stray `.gitkeep` directory.
+        test_suites = [ts for ts in test_suites if ts.id in assets_by_suite]
 
     scenario_ids = {a.scenario_id for a in test_assets}
     scenario_name_by_asset_id = {}
@@ -3740,6 +3763,7 @@ def download_test_suite_project(
             scenario_name_by_asset_id,
             login_evidence,
             default_url if environment is not None else None,
+            collection.name if collection is not None else None,
         )
     except TestSuiteExportError as exc:
         # Fail closed (AC 9) — never a 200 with partial/corrupt zip bytes.
@@ -3750,6 +3774,8 @@ def download_test_suite_project(
     filename = re.sub(r"[^A-Za-z0-9._ -]+", "_", application.name).strip(" ._-")
     if not filename:
         filename = sanitize_slug(application.name, fallback="application")
+    if collection is not None:
+        filename = f"{filename}-{sanitize_slug(collection.name, fallback='test-suite')}"
     if environment is not None:
         filename = f"{filename}-{sanitize_slug(environment.name, fallback='environment')}"
     record_activity(
@@ -3757,6 +3783,7 @@ def download_test_suite_project(
         user,
         "test_cases",
         f"Downloaded the test project for {application.name}"
+        + (f" — {collection.name}" if collection is not None else "")
         + (f" ({environment.name})" if environment is not None else ""),
         application=application,
         outcome="done",
@@ -4277,6 +4304,9 @@ class ScheduleCreate(BaseModel):
     # `ApplicationEnvironment` id the schedule's runs target; unset = the
     # application's own (default) environment.
     environment_id: uuid.UUID | None = None
+    # `TestCollection` ("Test suite") external id the schedule runs; unset =
+    # every current test case, as before.
+    test_collection_id: uuid.UUID | None = None
 
 
 class ScheduleUpdate(BaseModel):
@@ -4300,6 +4330,9 @@ class ScheduleUpdate(BaseModel):
     # the schedule back to the default environment — so it is applied whenever
     # the key is present in the request (`model_fields_set`).
     environment_id: uuid.UUID | None = None
+    # Same: explicit null moves the schedule back to "all test cases", while an
+    # omitted key leaves the suite alone (so a cadence-only edit keeps it).
+    test_collection_id: uuid.UUID | None = None
 
 
 class ScheduleRead(BaseModel):
@@ -4321,6 +4354,9 @@ class ScheduleRead(BaseModel):
     # is then the application's own environment label.
     environment_id: uuid.UUID | None = None
     environment_name: str = ""
+    # None = every current test case. The name is read live, so a rename shows.
+    test_collection_id: uuid.UUID | None = None
+    test_collection_name: str | None = None
 
 
 def _to_schedule_read(
@@ -4332,7 +4368,14 @@ def _to_schedule_read(
         else None
     )
     application = session.get(Application, schedule.application_id)
+    collection = (
+        session.get(TestCollection, schedule.test_collection_id)
+        if schedule.test_collection_id is not None
+        else None
+    )
     return ScheduleRead(
+        test_collection_id=collection.external_id if collection else None,
+        test_collection_name=collection.name if collection else None,
         environment_id=environment.external_id if environment else None,
         environment_name=(
             environment.name if environment else (application.environment if application else "")
@@ -4532,6 +4575,7 @@ async def _create_schedule_row(
     # seeded defaults, which have no owner.
     created_by_user_id: uuid.UUID | None = None,
     environment_id: uuid.UUID | None = None,
+    test_collection_id: uuid.UUID | None = None,
 ) -> Schedule:
     """Row + matching Temporal Schedule, shared by the user-triggered
     `create_schedule` endpoint and default-schedule seeding at Application
@@ -4563,6 +4607,7 @@ async def _create_schedule_row(
         created_by_name=created_by_name,
         created_by_user_id=created_by_user_id,
         environment_id=environment_id,
+        test_collection_id=test_collection_id,
     )
     schedule.temporal_schedule_id = f"app-schedule-{schedule.external_id}"
     session.add(schedule)
@@ -4704,6 +4749,11 @@ async def create_schedule(
         if payload.environment_id
         else None
     )
+    collection = (
+        _get_runnable_collection_or_error(session, application, payload.test_collection_id)
+        if payload.test_collection_id
+        else None
+    )
 
     try:
         schedule = await _create_schedule_row(
@@ -4721,6 +4771,7 @@ async def create_schedule(
             created_by_name=user.name,
             created_by_user_id=user.id,
             environment_id=environment.id if environment else None,
+            test_collection_id=collection.id if collection else None,
         )
     except ScheduleSpecError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
@@ -4775,6 +4826,14 @@ async def update_schedule(
         schedule.environment_id = (
             _get_environment_or_404(session, application, payload.environment_id).id
             if payload.environment_id
+            else None
+        )
+    if "test_collection_id" in payload.model_fields_set:
+        # Like the environment, read from this row when the run starts
+        # (`_prepare_test_run_sync`), so no Temporal action change is needed.
+        schedule.test_collection_id = (
+            _get_runnable_collection_or_error(session, application, payload.test_collection_id).id
+            if payload.test_collection_id
             else None
         )
     # Clear the fields the (possibly new) cadence type doesn't use, so a
@@ -4982,6 +5041,19 @@ async def disable_schedule(
     return _to_schedule_read(schedule, enabled=enabled, next_run_at=next_run_at, session=session)
 
 
+def _get_runnable_collection_or_error(
+    session: Session, application: Application, collection_id: uuid.UUID | None
+) -> TestCollection:
+    """The suite a schedule is saved against: 404 unless it is this
+    application's, 409 `COLLECTION_EMPTY` when it has nothing to run now —
+    the same answers a manual suite run gives. (It can still empty out later;
+    the fire-time gate then skips, see `check_schedule_gate_activity`.)"""
+    assert collection_id is not None
+    collection = get_collection_for_run(session, application, collection_id)
+    resolve_runnable_asset_ids(session, application, collection)
+    return collection
+
+
 # The statuses that mean "an execution is in flight for this Application" —
 # same vocabulary check_schedule_gate_activity uses.
 #
@@ -5012,6 +5084,13 @@ async def trigger_schedule_now(
     window between this check and the gate's own re-check, in which case
     the gate skips it, same as any other scheduled-vs-manual overlap."""
     schedule = _get_org_schedule(session, organization_id, external_id)
+    if schedule.test_collection_id is not None:
+        # Same save-time check as create/edit: an emptied suite is a 409 here,
+        # not a 202 followed by a gate skip nobody sees.
+        suite_application = session.get(Application, schedule.application_id)
+        suite = session.get(TestCollection, schedule.test_collection_id)
+        assert suite_application is not None and suite is not None
+        resolve_runnable_asset_ids(session, suite_application, suite)
     active = session.exec(
         select(TestRun.id)
         .where(

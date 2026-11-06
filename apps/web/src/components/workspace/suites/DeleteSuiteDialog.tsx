@@ -1,15 +1,24 @@
 import { useState } from 'react'
-import { ApiError, SUITE_HAS_RUNS, SUITE_RUN_IN_PROGRESS, api, type CollectionSummary } from '../../../api'
+import {
+  ApiError,
+  SUITE_HAS_RUNS,
+  SUITE_HAS_SCHEDULES,
+  SUITE_RUN_IN_PROGRESS,
+  api,
+  type CollectionSummary,
+} from '../../../api'
 import { LoadingDots } from '../../LoadingDots'
 import { SuiteModal, plural } from './SuiteModal'
 
 // Deleting a suite never touches its test cases. If it has runs, the user is
 // told those runs are removed too, and Cancel deletes nothing.
 export function DeleteSuiteDialog({
+  applicationId,
   suite,
   onClose,
   onDeleted,
 }: {
+  applicationId: string
   suite: CollectionSummary
   onClose: () => void
   onDeleted: () => void
@@ -27,6 +36,18 @@ export function DeleteSuiteDialog({
       onDeleted()
     } catch (err) {
       const code = err instanceof ApiError ? err.message : ''
+      if (code === SUITE_HAS_SCHEDULES) {
+        // Name the schedules that use it, so the user knows which to change.
+        const schedules = await api.listSchedules(applicationId).catch(() => [])
+        const names = schedules.filter((s) => s.test_collection_id === suite.id).map((s) => s.name)
+        setError(
+          names.length > 0
+            ? `This suite is used by ${names.join(', ')}. Change or delete ${names.length === 1 ? 'that schedule' : 'those schedules'} first.`
+            : 'This suite is used by a schedule. Change or delete that schedule first.',
+        )
+        setBusy(false)
+        return
+      }
       setError(
         code === SUITE_RUN_IN_PROGRESS
           ? 'A run of this suite is still in progress. Wait for it to finish or stop it first.'

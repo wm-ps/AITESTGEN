@@ -71,7 +71,8 @@ class ScheduleGateActivityInput:
 @dataclass
 class ScheduleGateActivityResult:
     proceed: bool
-    # "application_unavailable" | "schedule_unavailable" | "execution_in_progress"
+    # "application_unavailable" | "schedule_unavailable" | "suite_empty" |
+    # "execution_in_progress"
     reason: str | None = None
 
 

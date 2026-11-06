@@ -3691,6 +3691,8 @@ export interface components {
             cron_expression?: string | null;
             /** Environment Id */
             environment_id?: string | null;
+            /** Test Collection Id */
+            test_collection_id?: string | null;
         };
         /** ScheduleRead */
         ScheduleRead: {
@@ -3735,6 +3737,10 @@ export interface components {
              * @default
              */
             environment_name: string;
+            /** Test Collection Id */
+            test_collection_id?: string | null;
+            /** Test Collection Name */
+            test_collection_name?: string | null;
         };
         /**
          * ScheduleUpdate
@@ -3765,6 +3771,8 @@ export interface components {
             time_zone?: string | null;
             /** Environment Id */
             environment_id?: string | null;
+            /** Test Collection Id */
+            test_collection_id?: string | null;
         };
         /** ScreenRead */
         ScreenRead: {
@@ -8187,6 +8195,7 @@ export interface operations {
         parameters: {
             query?: {
                 environment_id?: string | null;
+                test_collection_id?: string | null;
             };
             header?: never;
             path: {

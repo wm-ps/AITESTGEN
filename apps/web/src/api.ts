@@ -470,6 +470,10 @@ export type ScheduleRead = {
   // then that environment's name.
   environment_id: string | null
   environment_name: string
+  // null = every test case; otherwise the test suite (`TestCollection`) the
+  // schedule runs, with its current name.
+  test_collection_id: string | null
+  test_collection_name: string | null
 }
 export type ScheduleCreate = {
   name: string
@@ -480,6 +484,8 @@ export type ScheduleCreate = {
   day_of_month?: number | null
   cron_expression?: string | null
   environment_id?: string | null
+  // Omitted leaves the suite alone on an edit; null means every test case.
+  test_collection_id?: string | null
 }
 export type ScheduleUpdate = Partial<ScheduleCreate>
 
@@ -507,6 +513,7 @@ export type CollectionRunRead = components['schemas']['CollectionRunRead']
 // Error `detail` codes the suite endpoints raise.
 export const SUITE_HAS_RUNS = 'SUITE_HAS_RUNS'
 export const SUITE_RUN_IN_PROGRESS = 'SUITE_RUN_IN_PROGRESS'
+export const SUITE_HAS_SCHEDULES = 'SUITE_HAS_SCHEDULES'
 export const COLLECTION_NAME_TAKEN = 'COLLECTION_NAME_TAKEN'
 export const COLLECTION_EMPTY = 'COLLECTION_EMPTY'
 
@@ -887,11 +894,15 @@ export const api = {
     request<OverviewRead>(`/applications/${applicationId}/overview`),
   // Not built on request<T>() — that helper always calls response.json(),
   // which throws on a binary zip body (Story 4.3).
-  downloadTestSuiteProject: async (applicationId: string, environmentId?: string) => {
+  // `environmentId` omitted = the default environment; `testCollectionId`
+  // omitted = every test case.
+  downloadTestSuiteProject: async (applicationId: string, environmentId?: string, testCollectionId?: string) => {
+    const query = new URLSearchParams()
+    if (environmentId) query.set('environment_id', environmentId)
+    if (testCollectionId) query.set('test_collection_id', testCollectionId)
+    const queryString = query.toString()
     const response = await fetch(
-      `${API_BASE}/applications/${applicationId}/test-suites/download${
-        environmentId ? `?environment_id=${encodeURIComponent(environmentId)}` : ''
-      }`,
+      `${API_BASE}/applications/${applicationId}/test-suites/download${queryString ? `?${queryString}` : ''}`,
       { credentials: 'include' },
     )
     if (!response.ok) {

@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, type EnvironmentRead, type ScheduleRead } from '../../api'
+import { ApiError, COLLECTION_EMPTY, api, type CollectionSummary, type EnvironmentRead, type ScheduleRead } from '../../api'
 import { RunSuiteButton } from '../workspace/RunSuiteButton'
 import { ScheduleDialog } from '../workspace/ScheduleDialog'
 import { DownloadEnvironmentDialog } from './DownloadEnvironmentDialog'
@@ -127,7 +127,7 @@ describe('Download project dialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Download' }))
 
     await waitFor(() => expect(onClose).toHaveBeenCalled())
-    expect(download).toHaveBeenCalledWith('app-1', undefined)
+    expect(download).toHaveBeenCalledWith('app-1', undefined, undefined)
   })
 
   it('downloads the project for the chosen environment', async () => {
@@ -137,7 +137,7 @@ describe('Download project dialog', () => {
     fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'env-uat' } })
     fireEvent.click(screen.getByRole('button', { name: 'Download' }))
 
-    await waitFor(() => expect(download).toHaveBeenCalledWith('app-1', 'env-uat'))
+    await waitFor(() => expect(download).toHaveBeenCalledWith('app-1', 'env-uat', undefined))
   })
 
   it('says what is written into the config, without claiming credentials are', () => {
@@ -170,6 +170,35 @@ describe('Download project dialog', () => {
   })
 })
 
+const SMOKE: CollectionSummary = { id: 'suite-smoke', name: 'Smoke', test_case_count: 3, unavailable_count: 0, run_count: 0 }
+
+describe('Download project dialog with a test suite', () => {
+  it('downloads a chosen suite on a chosen environment', async () => {
+    vi.spyOn(api, 'listCollections').mockResolvedValue([SMOKE])
+    const download = vi.spyOn(api, 'downloadTestSuiteProject').mockResolvedValue(undefined)
+    withEnvironments(<DownloadEnvironmentDialog applicationId="app-1" onClose={vi.fn()} />)
+
+    fireEvent.change(await screen.findByLabelText('Test suite'), { target: { value: 'suite-smoke' } })
+    fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'env-uat' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }))
+
+    await waitFor(() => expect(download).toHaveBeenCalledWith('app-1', 'env-uat', 'suite-smoke'))
+  })
+
+  it('says so when the chosen suite has nothing to download', async () => {
+    vi.spyOn(api, 'listCollections').mockResolvedValue([SMOKE])
+    vi.spyOn(api, 'downloadTestSuiteProject').mockRejectedValue(new ApiError(COLLECTION_EMPTY, 409))
+    const onClose = vi.fn()
+    withEnvironments(<DownloadEnvironmentDialog applicationId="app-1" onClose={onClose} />)
+
+    fireEvent.change(await screen.findByLabelText('Test suite'), { target: { value: 'suite-smoke' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }))
+
+    expect((await screen.findByRole('alert')).textContent).toBe('This test suite has no test cases to download.')
+    expect(onClose).not.toHaveBeenCalled()
+  })
+})
+
 describe('Schedule dialog', () => {
   const SCHEDULE: ScheduleRead = {
     id: 'sched-1',
@@ -188,6 +217,8 @@ describe('Schedule dialog', () => {
     created_at: '2026-01-01T00:00:00Z',
     environment_id: 'env-uat',
     environment_name: 'UAT',
+    test_collection_id: null,
+    test_collection_name: null,
   }
 
   it('creates a schedule on the chosen environment', async () => {
@@ -233,5 +264,57 @@ describe('Schedule dialog', () => {
 
     await waitFor(() => expect(update).toHaveBeenCalled())
     expect(update.mock.calls[0][1]).toHaveProperty('environment_id', null)
+  })
+
+  it('creates a schedule on a chosen test suite', async () => {
+    vi.spyOn(api, 'listCollections').mockResolvedValue([SMOKE])
+    const create = vi.spyOn(api, 'createSchedule').mockResolvedValue(SCHEDULE)
+    withEnvironments(<ScheduleDialog applicationId="app-1" initial={null} onClose={vi.fn()} onSaved={vi.fn()} />)
+
+    fireEvent.change(screen.getByPlaceholderText('Enter a name for this schedule'), { target: { value: 'Nightly' } })
+    fireEvent.change(await screen.findByLabelText('Test suite'), { target: { value: 'suite-smoke' } })
+    fireEvent.click(screen.getByRole('button', { name: /Create schedule/ }))
+
+    await waitFor(() => expect(create).toHaveBeenCalled())
+    expect(create.mock.calls[0][1]).toMatchObject({ name: 'Nightly', test_collection_id: 'suite-smoke' })
+  })
+
+  it('leaves test_collection_id out when no suite is chosen', async () => {
+    vi.spyOn(api, 'listCollections').mockResolvedValue([SMOKE])
+    const create = vi.spyOn(api, 'createSchedule').mockResolvedValue(SCHEDULE)
+    withEnvironments(<ScheduleDialog applicationId="app-1" initial={null} onClose={vi.fn()} onSaved={vi.fn()} />)
+
+    fireEvent.change(screen.getByPlaceholderText('Enter a name for this schedule'), { target: { value: 'Nightly' } })
+    await screen.findByLabelText('Test suite')
+    fireEvent.click(screen.getByRole('button', { name: /Create schedule/ }))
+
+    await waitFor(() => expect(create).toHaveBeenCalled())
+    expect(create.mock.calls[0][1]).not.toHaveProperty('test_collection_id')
+  })
+
+  it('keeps the suite on an untouched edit and sends null to clear it', async () => {
+    vi.spyOn(api, 'listCollections').mockResolvedValue([SMOKE])
+    const bound = { ...SCHEDULE, test_collection_id: 'suite-smoke', test_collection_name: 'Smoke' }
+    const update = vi.spyOn(api, 'updateSchedule').mockResolvedValue(bound)
+    withEnvironments(<ScheduleDialog applicationId="app-1" initial={bound} onClose={vi.fn()} onSaved={vi.fn()} />)
+
+    const select = (await screen.findByLabelText('Test suite')) as HTMLSelectElement
+    expect(select.value).toBe('suite-smoke')
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/ }))
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0][1]).not.toHaveProperty('test_collection_id')
+  })
+
+  it('moves a schedule back to every test case with an explicit null', async () => {
+    vi.spyOn(api, 'listCollections').mockResolvedValue([SMOKE])
+    const bound = { ...SCHEDULE, test_collection_id: 'suite-smoke', test_collection_name: 'Smoke' }
+    const update = vi.spyOn(api, 'updateSchedule').mockResolvedValue({ ...bound, test_collection_id: null })
+    withEnvironments(<ScheduleDialog applicationId="app-1" initial={bound} onClose={vi.fn()} onSaved={vi.fn()} />)
+
+    fireEvent.change(await screen.findByLabelText('Test suite'), { target: { value: '__all_test_cases__' } })
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/ }))
+
+    await waitFor(() => expect(update).toHaveBeenCalled())
+    expect(update.mock.calls[0][1]).toHaveProperty('test_collection_id', null)
   })
 })

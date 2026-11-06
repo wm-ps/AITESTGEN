@@ -4,6 +4,7 @@ import { ApiError, api, type ScheduleCadenceType, type ScheduleCreate, type Sche
 import { modalButton, modalCloseButton, modalFooter, modalHeader, modalOverlay, modalPanel, modalTitle } from '../modalStyles'
 import { LoadingDots } from '../LoadingDots'
 import { EnvironmentSelect } from '../environments/EnvironmentSelect'
+import { SuiteSelect } from './suites/SuiteSelect'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { faIcon } from '../../faIcon'
 
@@ -53,6 +54,8 @@ type FormState = {
   cronExpression: string
   // null = the application's own (default) environment.
   environmentId: string | null
+  // null = every test case.
+  testCollectionId: string | null
 }
 
 function blankForm(): FormState {
@@ -65,6 +68,7 @@ function blankForm(): FormState {
     dayOfMonth: 1,
     cronExpression: '',
     environmentId: null,
+    testCollectionId: null,
   }
 }
 
@@ -78,6 +82,7 @@ function formFromSchedule(schedule: ScheduleRead): FormState {
     dayOfMonth: schedule.day_of_month ?? 1,
     cronExpression: schedule.cron_expression ?? '',
     environmentId: schedule.environment_id ?? null,
+    testCollectionId: schedule.test_collection_id ?? null,
   }
 }
 
@@ -135,6 +140,11 @@ export function ScheduleDialog({
       if (form.environmentId !== (initial?.environment_id ?? null)) {
         payload.environment_id = form.environmentId
       }
+      // Same rule for the suite: an edit that doesn't touch it leaves it alone,
+      // and null moves the schedule back to every test case.
+      if (form.testCollectionId !== (initial?.test_collection_id ?? null)) {
+        payload.test_collection_id = form.testCollectionId
+      }
       if (initial) {
         await api.updateSchedule(initial.id, payload)
       } else {
@@ -159,7 +169,7 @@ export function ScheduleDialog({
           <div>
             <h2 style={modalTitle}>{initial ? 'Edit schedule' : 'New schedule'}</h2>
             <p className="caption" style={{ margin: '4px 0 0', fontSize: 13 }}>
-              Explore or run test cases automatically on a cadence.
+              Run all test cases or one test suite automatically on a cadence.
             </p>
           </div>
           <button type="button" aria-label="Close" onClick={onClose} style={modalCloseButton}>
@@ -179,6 +189,12 @@ export function ScheduleDialog({
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
               />
             </label>
+
+            <SuiteSelect
+              applicationId={applicationId}
+              value={form.testCollectionId}
+              onChange={(testCollectionId) => setForm({ ...form, testCollectionId })}
+            />
 
             <EnvironmentSelect
               label="Environment"

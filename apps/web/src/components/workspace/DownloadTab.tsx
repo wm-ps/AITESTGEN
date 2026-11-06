@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faChevronRight, faDownload, faFolderTree } from '@fortawesome/free-solid-svg-icons'
 import { api, type TestSuiteRead } from '../../api'
+import { useCanEdit } from '../../PermissionsContext'
 import { SkeletonRows } from '../Skeleton'
 import { DownloadIllustration, EmptyState } from '../EmptyState'
 import { DownloadEnvironmentDialog } from '../environments/DownloadEnvironmentDialog'
@@ -19,8 +20,10 @@ function slug(name: string): string {
 const VISIBLE_SUITES = 6
 
 export function DownloadTab({ applicationId, applicationName }: { applicationId: string; applicationName: string }) {
+  // The download is refused for viewers, so they aren't offered it.
+  const canEdit = useCanEdit()
   const [suites, setSuites] = useState<TestSuiteRead[] | null>(null)
-  // The button opens a dialog to pick the environment the project is built for.
+  // The button opens a dialog to pick the test suite and environment the project is built for.
   const [dialogOpen, setDialogOpen] = useState(false)
   const [showAllSuites, setShowAllSuites] = useState(false)
   const [expandedSuiteIds, setExpandedSuiteIds] = useState<Set<string>>(new Set())
@@ -59,7 +62,7 @@ export function DownloadTab({ applicationId, applicationName }: { applicationId:
           <div style={{ fontSize: 13.5, color: 'var(--fg-3)' }}>A ready-to-run Playwright repository for {applicationName}.</div>
         </div>
         <div style={{ flex: 1 }} />
-        {hasSuites && (
+        {hasSuites && canEdit && (
           <button
             type="button"
             onClick={() => setDialogOpen(true)}

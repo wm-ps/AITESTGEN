@@ -639,6 +639,7 @@ export function TestSuitesPage({ applicationId }: { applicationId: string }) {
       )}
       {dialog === 'delete' && selected && (
         <DeleteSuiteDialog
+          applicationId={applicationId}
           suite={selected}
           onClose={() => setDialog(null)}
           onDeleted={async () => {

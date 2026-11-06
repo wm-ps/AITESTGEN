@@ -18,21 +18,22 @@ dependency; every route is scoped to the caller's organization.
 
 import logging
 import uuid
-from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from domain import (
     Application,
     Journey,
     Scenario,
-    TestAsset,
+    Schedule,
     TestCollection,
     TestCollectionMember,
     TestResult,
     TestResultArtifact,
     TestRun,
-    TestSuite,
+    runnable_asset_external_ids,
+    runnable_by_scenario,
 )
+from domain.test_collection_resolver import Runnable
 from fastapi import APIRouter, HTTPException, Query, Response
 from object_store import ObjectStore
 from pydantic import BaseModel, field_validator
@@ -52,6 +53,7 @@ COLLECTION_NAME_TAKEN = "COLLECTION_NAME_TAKEN"
 COLLECTION_EMPTY = "COLLECTION_EMPTY"
 SUITE_HAS_RUNS = "SUITE_HAS_RUNS"
 SUITE_RUN_IN_PROGRESS = "SUITE_RUN_IN_PROGRESS"
+SUITE_HAS_SCHEDULES = "SUITE_HAS_SCHEDULES"
 
 _IN_PROGRESS = ("pending", "running")
 MAX_NAME_LENGTH = 60
@@ -175,34 +177,8 @@ def _get_collection(
     return row
 
 
-@dataclass
-class _Runnable:
-    scenario: Scenario
-    asset: TestAsset
-    journey: Journey
-
-
-def _runnable(session: Session, application: Application) -> dict[uuid.UUID, _Runnable]:
-    """`Scenario.id` -> its runnable test case, for this application. Same
-    filter as `list_test_suites` (the Test cases tab), so a suite's counts
-    always agree with that tab."""
-    rows = session.exec(
-        select(TestAsset, Scenario, Journey)
-        .join(TestSuite, col(TestSuite.id) == col(TestAsset.test_suite_id))
-        .join(Scenario, col(Scenario.id) == col(TestAsset.scenario_id))
-        .join(Journey, col(Journey.id) == col(TestSuite.journey_id))
-        .where(
-            Journey.application_id == application.id,
-            Journey.status == "candidate",
-            col(TestSuite.current).is_(True),
-            col(TestAsset.current).is_(True),
-            col(Scenario.current).is_(True),
-        )
-    ).all()
-    result: dict[uuid.UUID, _Runnable] = {}
-    for asset, scenario, journey in rows:
-        result.setdefault(scenario.id, _Runnable(scenario, asset, journey))
-    return result
+def _runnable(session: Session, application: Application) -> dict[uuid.UUID, Runnable]:
+    return runnable_by_scenario(session, application.id)
 
 
 def _member_ids(
@@ -248,15 +224,10 @@ def resolve_runnable_asset_ids(
     """The `TestAsset.external_id`s a run of this suite executes — its
     available members, resolved now. Raises 409 `COLLECTION_EMPTY` when there
     are none (an empty list would otherwise be read as a Complete run)."""
-    runnable = _runnable(session, application)
-    member_ids = _member_ids(session, [collection.id])[collection.id]
-    live = sorted(
-        (runnable[sid] for sid in member_ids if sid in runnable),
-        key=lambda r: r.scenario.test_case_number,
-    )
-    if not live:
+    ids = runnable_asset_external_ids(session, application.id, collection.id)
+    if not ids:
         raise HTTPException(status_code=409, detail=COLLECTION_EMPTY)
-    return [r.asset.external_id for r in live]
+    return ids
 
 
 def get_collection_for_run(
@@ -588,6 +559,20 @@ def delete_collection(
     UI); otherwise a suite with runs is refused and nothing changes. Test
     cases are never touched."""
     collection, application = _get_collection(session, organization_id, collection_id)
+    # Checked first and never overridden by `delete_runs`: a schedule would
+    # otherwise fire against a suite that no longer exists. Disabled schedules
+    # count too — they can be switched back on. The UI lists them (the schedule
+    # list already carries `test_collection_id`).
+    has_schedule = session.exec(
+        select(Schedule.id)
+        .where(
+            Schedule.test_collection_id == collection.id,
+            col(Schedule.deleted_at).is_(None),
+        )
+        .limit(1)
+    ).first()
+    if has_schedule is not None:
+        raise HTTPException(status_code=409, detail=SUITE_HAS_SCHEDULES)
     runs = session.exec(
         select(TestRun.id, TestRun.external_id, TestRun.status).where(
             TestRun.test_collection_id == collection.id

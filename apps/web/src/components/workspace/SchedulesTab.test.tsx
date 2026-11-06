@@ -86,12 +86,12 @@ describe('SchedulesTab', () => {
     // ("New schedule") duplicates the trigger button's, so disambiguate via
     // the dialog's unique subtitle instead of the (now ambiguous) heading text.
     await waitFor(() =>
-      expect(screen.getByText('Run exploration or the suite automatically on a cadence.')).toBeInTheDocument(),
+      expect(screen.getByText('Run all test cases or one test suite automatically on a cadence.')).toBeInTheDocument(),
     )
 
     fireEvent.keyDown(document, { key: 'Escape' })
     await waitFor(() =>
-      expect(screen.queryByText('Run exploration or the suite automatically on a cadence.')).not.toBeInTheDocument(),
+      expect(screen.queryByText('Run all test cases or one test suite automatically on a cadence.')).not.toBeInTheDocument(),
     )
   })
 
@@ -170,5 +170,31 @@ describe('SchedulesTab', () => {
     // A click outside the menu (not a menu item) closes it without acting.
     fireEvent.mouseDown(document.body)
     await waitFor(() => expect(screen.queryByText('Run now')).not.toBeInTheDocument())
+  })
+
+  it('shows which test suite each schedule runs, or all test cases', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (url.includes('/schedules')) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => [
+              { ...SCHEDULE_ROW, id: 'sched-1', name: 'Nightly Regression', test_collection_id: null, test_collection_name: null },
+              { ...SCHEDULE_ROW, id: 'sched-2', name: 'Smoke hourly', test_collection_id: 'c1', test_collection_name: 'Smoke' },
+            ],
+          }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      }),
+    )
+
+    render(<SchedulesTab applicationId="app-1" />)
+
+    await waitFor(() => expect(screen.getByText('Smoke hourly')).toBeInTheDocument())
+    expect(screen.getByText('Runs')).toBeInTheDocument()
+    expect(screen.getByText('Smoke')).toBeInTheDocument()
+    expect(screen.getByText('All test cases')).toBeInTheDocument()
   })
 })

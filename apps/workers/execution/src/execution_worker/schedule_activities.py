@@ -11,7 +11,7 @@ import logging
 import uuid
 from typing import Any, cast
 
-from domain import Application, Schedule, TestRun
+from domain import Application, Schedule, TestRun, runnable_asset_external_ids
 from sqlalchemy import ColumnElement
 from sqlmodel import Session, select
 from temporalio import activity
@@ -76,6 +76,26 @@ def check_schedule_gate_activity(
                 input.schedule_id,
             )
             return ScheduleGateActivityResult(proceed=False, reason="schedule_unavailable")
+
+        if schedule.test_collection_id is not None and not runnable_asset_external_ids(
+            session, application.id, schedule.test_collection_id
+        ):
+            # A suite emptied after the schedule was saved (the API refuses to
+            # save an empty one). Skip rather than fall back to running every
+            # test — the schedule keeps its suite and fires again once the
+            # suite has tests.
+            #
+            # ponytail: a skip is only logged and returned as
+            # "skipped:suite_empty" — no notification or Runs-tab entry, so an
+            # unattended schedule whose suite stays empty is silent. A fuller
+            # version records the skip on the schedule and tells its owner.
+            logger.info(
+                "CheckScheduleGateActivity: skipping schedule %s (%s) — its test suite has "
+                "no runnable test cases",
+                schedule.name,
+                input.schedule_id,
+            )
+            return ScheduleGateActivityResult(proceed=False, reason="suite_empty")
 
         in_progress = session.exec(
             select(TestRun.id)

@@ -13,7 +13,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from domain import Application, Organization, Schedule, TestRun
+from domain import Application, Organization, Schedule, TestCollection, TestRun
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session
@@ -199,3 +199,37 @@ def test_proceeds_when_a_run_is_completed_not_in_progress() -> None:
     )
 
     assert result.proceed is True
+
+
+def test_skips_when_the_schedules_suite_has_no_runnable_tests() -> None:
+    """A suite emptied after the schedule was saved skips — it never falls
+    back to running every test, and the schedule keeps its suite."""
+    init_db()
+    application = _seed_application()
+    with Session(engine) as session:
+        suite = TestCollection(application_id=application.id, name=f"Smoke {uuid.uuid4()}")
+        session.add(suite)
+        session.commit()
+        session.refresh(suite)
+        schedule = Schedule(
+            application_id=application.id,
+            name="Suite Nightly",
+            cadence_type="daily",
+            hour=2,
+            minute=0,
+            time_zone="UTC",
+            temporal_schedule_id=f"app-schedule-{uuid.uuid4()}",
+            test_collection_id=suite.id,
+        )
+        session.add(schedule)
+        session.commit()
+        session.refresh(schedule)
+
+    result = check_schedule_gate_activity(
+        ScheduleGateActivityInput(
+            application_id=str(application.external_id), schedule_id=str(schedule.external_id)
+        )
+    )
+
+    assert result.proceed is False
+    assert result.reason == "suite_empty"

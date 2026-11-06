@@ -56,6 +56,7 @@ from domain import (
     effective_application,
     find_environment,
     lock_test_run,
+    runnable_asset_external_ids,
     tally_result_counts,
 )
 from generation_worker import spec_linter
@@ -457,16 +458,45 @@ def _prepare_test_run_sync(
         # Application's own (default) environment. Resolved before claiming a
         # run_number so an unknown id never burns one.
         environment: ApplicationEnvironment | None = None
-        if input.environment_id is not None:
-            environment = find_environment(session, application, input.environment_id)
-        elif input.schedule_id is not None:
-            schedule_environment_pk = session.exec(
-                select(Schedule.environment_id).where(
+        schedule_environment_pk: uuid.UUID | None = None
+        schedule_collection_pk: uuid.UUID | None = None
+        if input.schedule_id is not None:
+            schedule_row = session.exec(
+                select(Schedule.environment_id, Schedule.test_collection_id).where(
                     Schedule.external_id == uuid.UUID(input.schedule_id)
                 )
             ).first()
-            if schedule_environment_pk is not None:
-                environment = session.get(ApplicationEnvironment, schedule_environment_pk)
+            if schedule_row is not None:
+                schedule_environment_pk, schedule_collection_pk = schedule_row
+        if input.environment_id is not None:
+            environment = find_environment(session, application, input.environment_id)
+        elif schedule_environment_pk is not None:
+            environment = session.get(ApplicationEnvironment, schedule_environment_pk)
+
+        # Test suites: which test cases and which suite this run records. A
+        # manual run hands them in; a scheduled suite run reads its suite from
+        # the schedule row *now* (read fresh, like the environment) and
+        # resolves the members now, so edits since the schedule was saved
+        # count. An explicit selection always wins over the schedule's suite.
+        collection_ref = input.test_collection_id
+        asset_id_refs = input.test_asset_ids
+        if schedule_collection_pk is not None and asset_id_refs is None and collection_ref is None:
+            schedule_collection = session.get(TestCollection, schedule_collection_pk)
+            assert schedule_collection is not None
+            live_ids = runnable_asset_external_ids(session, application.id, schedule_collection.id)
+            if not live_ids:
+                # Emptied since the gate looked: end the run before it
+                # exists — no run number burned, no 0-test run — through the
+                # workflow's existing early `blocked` return. Never falls
+                # back to running every test.
+                logger.info(
+                    "PrepareTestRunActivity: schedule %s's suite has no runnable tests — "
+                    "nothing to run",
+                    input.schedule_id,
+                )
+                return PrepareTestRunActivityResult(test_run_id="", blocked=True, executable=[])
+            collection_ref = str(schedule_collection.external_id)
+            asset_id_refs = [str(i) for i in live_ids]
         # Everything below that picks a URL, login or secret uses `target`.
         target = effective_application(application, environment)
         retarget_from = application.url if environment is not None else None
@@ -503,10 +533,10 @@ def _prepare_test_run_sync(
         # under the name it was triggered with.
         suite_name = input.suite_name
         test_collection_pk: uuid.UUID | None = None
-        if input.test_collection_id is not None:
+        if collection_ref is not None:
             collection = session.exec(
                 select(TestCollection).where(
-                    TestCollection.external_id == uuid.UUID(input.test_collection_id),
+                    TestCollection.external_id == uuid.UUID(collection_ref),
                     TestCollection.application_id == application.id,  # type: ignore[arg-type]
                 )
             ).first()
@@ -548,9 +578,7 @@ def _prepare_test_run_sync(
         test_results_by_asset_id: dict[uuid.UUID, TestResult] = {}
         try:
             test_asset_ids = (
-                {uuid.UUID(a) for a in input.test_asset_ids}
-                if input.test_asset_ids is not None
-                else None
+                {uuid.UUID(a) for a in asset_id_refs} if asset_id_refs is not None else None
             )
             inputs = _load_assembly_inputs_sync(session, target, test_asset_ids)
             test_assets = inputs.test_assets

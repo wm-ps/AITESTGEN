@@ -1,7 +1,7 @@
-"""Schedule — a user-created recurring trigger for "Run All Tests"
-(Schedules feature).
+"""Schedule — a user-created recurring trigger for "Run All Tests", or for one
+test suite (`test_collection_id`) (Schedules feature).
 
-Targets an Application, not a TestSuite: `TestSuite` is scoped per Journey x
+Targets an Application, not a journey `TestSuite`: `TestSuite` is scoped per Journey x
 generation_run, so there is no single canonical "the test suite" for an
 Application, and `_prepare_test_run_sync` already executes every current
 TestAsset for the Application unconditionally. One row per user-authored
@@ -90,6 +90,20 @@ class Schedule(SQLModel, table=True):
         sa_column=Column(
             PGUUID(as_uuid=True),
             ForeignKey("application_environment.id", ondelete="RESTRICT"),
+            nullable=True,
+            index=True,
+        ),
+    )
+
+    # Test suite (`TestCollection`) this schedule runs; NULL = every current
+    # test case, so every existing schedule keeps today's behavior. Resolved at
+    # fire time, never copied. No `ondelete`: deleting a suite that a live
+    # schedule uses is refused by the API (`SUITE_HAS_SCHEDULES`).
+    test_collection_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey("test_collection.id"),
             nullable=True,
             index=True,
         ),
