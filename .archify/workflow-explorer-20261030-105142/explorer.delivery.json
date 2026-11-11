@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "021ec9f4-9332-4f42-b048-c336bdaab2a4",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/workflow-explorer-20261030-105142/candidate.json",
+  "output": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/workflow-explorer-20261030-105142/explorer.html",
+  "specification": {
+    "sha256": "67dfbf975021923bb76093474fdb3b3341eb853e6324647dce50506aeafe5bbe",
+    "bytes": 9584
+  },
+  "artifact": {
+    "sha256": "0864b386ba3f74cfbec4f6a6e5b26819d501bb89f7556fd5a02eb0290a58a519",
+    "bytes": 769300
+  }
+}

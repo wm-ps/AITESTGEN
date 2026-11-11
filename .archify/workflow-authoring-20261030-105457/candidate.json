@@ -1,0 +1,365 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Authoring \u2014 test cases from your own request",
+    "output": ".archify/workflow-authoring-20261030-105457/authoring.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/wm-ps/AITESTGEN.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "050b7b5928f8c36df775ae0b6a8009b5ef76868b"
+    }
+  },
+  "lanes": [
+    {
+      "id": "you",
+      "label": "You"
+    },
+    {
+      "id": "run",
+      "label": "Authoring run (on Explorer)"
+    },
+    {
+      "id": "vantage",
+      "label": "Vantage results"
+    },
+    {
+      "id": "retry",
+      "label": "When the app shows nothing",
+      "variant": "exception"
+    }
+  ],
+  "groups": [
+    {
+      "id": "follow_group",
+      "label": "Follows your words, nothing else",
+      "lane": "run",
+      "fromCol": 0,
+      "toCol": 2,
+      "variant": "emphasis"
+    },
+    {
+      "id": "proof_group",
+      "label": "Only proven scenarios survive",
+      "lane": "run",
+      "fromCol": 3,
+      "toCol": 4,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "author",
+    "read",
+    "answer",
+    "walk",
+    "write",
+    "prove",
+    "added",
+    "written",
+    "open"
+  ],
+  "nodes": [
+    {
+      "id": "author",
+      "lane": "you",
+      "col": 0,
+      "type": "external",
+      "width": 172,
+      "label": "Author a test case",
+      "sublabel": "describe flow or cases",
+      "sources": [
+        {
+          "path": "apps/web/src/components/workspace/AuthorPromptCard.tsx",
+          "line": 33,
+          "label": "starts authoring"
+        },
+        {
+          "path": "apps/api/src/api/authoring.py",
+          "line": 31,
+          "label": "start_authoring endpoint"
+        }
+      ]
+    },
+    {
+      "id": "read",
+      "lane": "run",
+      "col": 0,
+      "type": "backend",
+      "width": 172,
+      "label": "Read the request",
+      "sublabel": "flow \u00b7 cases \u00b7 how many",
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/request.py",
+          "line": 46,
+          "label": "read_request"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/workflow.py",
+          "line": 99,
+          "label": "first step"
+        }
+      ]
+    },
+    {
+      "id": "answer",
+      "lane": "you",
+      "col": 1,
+      "type": "frontend",
+      "width": 172,
+      "label": "Answer & confirm",
+      "sublabel": "only if unclear",
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/request.py",
+          "line": 102,
+          "label": "start: ask or go"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/workflow.py",
+          "line": 109,
+          "label": "waits for Confirm"
+        }
+      ]
+    },
+    {
+      "id": "walk",
+      "lane": "run",
+      "col": 2,
+      "type": "backend",
+      "width": 172,
+      "label": "Walk your steps",
+      "sublabel": "word for word \u00b7 once",
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/plan.py",
+          "line": 44,
+          "label": "request_mission"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/missions.py",
+          "line": 191,
+          "label": "Explorer's run_mission"
+        }
+      ]
+    },
+    {
+      "id": "write",
+      "lane": "run",
+      "col": 3,
+      "type": "backend",
+      "width": 172,
+      "label": "Write scenarios",
+      "sublabel": "your request + extras",
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/plan.py",
+          "line": 291,
+          "label": "request word for word"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/plan.py",
+          "line": 274,
+          "label": "how many extras"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/plan.py",
+          "line": 330,
+          "label": "plan_tests"
+        }
+      ]
+    },
+    {
+      "id": "prove",
+      "lane": "run",
+      "col": 4,
+      "type": "backend",
+      "width": 172,
+      "label": "Build & prove",
+      "sublabel": "one at a time",
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/plan.py",
+          "line": 152,
+          "label": "one at a time"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/tests_stage.py",
+          "line": 565,
+          "label": "Explorer's build_and_prove"
+        }
+      ]
+    },
+    {
+      "id": "added",
+      "lane": "vantage",
+      "col": 4,
+      "type": "database",
+      "width": 172,
+      "label": "Scenarios added",
+      "sublabel": "never replace others",
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/promote.py",
+          "line": 44,
+          "label": "adds its own journey"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/promote.py",
+          "line": 35,
+          "label": "own identity key"
+        }
+      ]
+    },
+    {
+      "id": "written",
+      "lane": "vantage",
+      "col": 5,
+      "type": "database",
+      "width": 172,
+      "label": "Test cases written",
+      "sublabel": "Author test cases",
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/workflow.py",
+          "line": 170,
+          "label": "_add_test_cases"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/workflow.py",
+          "line": 179,
+          "label": "test-code generation"
+        }
+      ]
+    },
+    {
+      "id": "open",
+      "lane": "you",
+      "col": 5,
+      "type": "frontend",
+      "width": 172,
+      "label": "Opens Test cases",
+      "sublabel": "filtered for you",
+      "sources": [
+        {
+          "path": "apps/web/src/explorer/ExplorerTab.tsx",
+          "line": 88,
+          "label": "hands over when done"
+        }
+      ]
+    },
+    {
+      "id": "again",
+      "lane": "retry",
+      "col": 2,
+      "type": "security",
+      "width": 172,
+      "label": "Blank page",
+      "sublabel": "wait 30 s \u00b7 walk again",
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/plan.py",
+          "line": 119,
+          "label": "retry_if_nothing_seen"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/authoring/workflow.py",
+          "line": 133,
+          "label": "up to 2 more walks"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "request-read",
+      "from": "author",
+      "to": "read",
+      "label": "your request",
+      "variant": "emphasis"
+    },
+    {
+      "id": "read-ask",
+      "from": "read",
+      "to": "answer",
+      "label": "questions?",
+      "variant": "emphasis"
+    },
+    {
+      "id": "confirmed-walk",
+      "from": "answer",
+      "to": "walk",
+      "label": "confirm",
+      "variant": "emphasis"
+    },
+    {
+      "id": "walk-write",
+      "from": "walk",
+      "to": "write"
+    },
+    {
+      "id": "write-prove",
+      "from": "write",
+      "to": "prove"
+    },
+    {
+      "id": "proven-added",
+      "from": "prove",
+      "to": "added",
+      "label": "proven",
+      "variant": "emphasis"
+    },
+    {
+      "id": "added-written",
+      "from": "added",
+      "to": "written",
+      "label": "write code"
+    },
+    {
+      "id": "written-open",
+      "from": "written",
+      "to": "open",
+      "label": "done",
+      "variant": "emphasis"
+    },
+    {
+      "id": "walk-blank",
+      "from": "walk",
+      "to": "again",
+      "label": "saw nothing",
+      "variant": "security",
+      "role": "error"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "What you can ask for",
+      "items": [
+        "A flow: you get it plus the scenarios worth testing on it",
+        "A number: exactly that many",
+        "Listed scenarios: exactly those, in your order"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Same engine as Explorer",
+      "items": [
+        "Signs in with the app's saved login",
+        "Asks before risky presses, same questions",
+        "Same break-on-purpose and replay proof"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Kept apart from Explorer",
+      "items": [
+        "No first look; nothing from earlier runs",
+        "Its journeys never replace Explorer's",
+        "Shown with an Authoring label on the Explorer page"
+      ]
+    }
+  ]
+}

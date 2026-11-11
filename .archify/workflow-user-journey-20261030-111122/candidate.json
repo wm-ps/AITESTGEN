@@ -1,0 +1,406 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Your journey in Vantage \u2014 from adding an app to a running test suite",
+    "output": ".archify/workflow-user-journey-20261030-111122/user-journey.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/wm-ps/AITESTGEN.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "050b7b5928f8c36df775ae0b6a8009b5ef76868b"
+    }
+  },
+  "lanes": [
+    {
+      "id": "start",
+      "label": "Get started"
+    },
+    {
+      "id": "explorer",
+      "label": "Explorer tab"
+    },
+    {
+      "id": "asked",
+      "label": "When Explorer needs you",
+      "variant": "exception"
+    },
+    {
+      "id": "cases",
+      "label": "Test cases tab"
+    },
+    {
+      "id": "runs",
+      "label": "Runs"
+    }
+  ],
+  "groups": [
+    {
+      "id": "auto_group",
+      "label": "Explorer works for you",
+      "lane": "explorer",
+      "fromCol": 2,
+      "toCol": 4,
+      "variant": "emphasis"
+    },
+    {
+      "id": "own_group",
+      "label": "Add your own tests",
+      "lane": "cases",
+      "fromCol": 3,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "signin",
+    "addapp",
+    "live",
+    "confirm",
+    "scenarios",
+    "suite",
+    "run"
+  ],
+  "nodes": [
+    {
+      "id": "signin",
+      "lane": "start",
+      "col": 0,
+      "type": "external",
+      "width": 151,
+      "label": "Sign in",
+      "sublabel": "your Vantage account",
+      "sources": [
+        {
+          "path": "apps/web/src/components/SignIn.tsx",
+          "line": 23,
+          "label": "sign-in page"
+        }
+      ]
+    },
+    {
+      "id": "addapp",
+      "lane": "start",
+      "col": 1,
+      "type": "frontend",
+      "width": 151,
+      "label": "Add application",
+      "sublabel": "URL \u00b7 login \u00b7 Start",
+      "sources": [
+        {
+          "path": "apps/web/src/components/ConnectAppForm.tsx",
+          "line": 464,
+          "label": "Explore autonomously"
+        },
+        {
+          "path": "apps/web/src/components/ConnectAppForm.tsx",
+          "line": 102,
+          "label": "Start button"
+        }
+      ]
+    },
+    {
+      "id": "live",
+      "lane": "explorer",
+      "col": 2,
+      "type": "backend",
+      "width": 151,
+      "label": "Watch it explore",
+      "sublabel": "live screens \u00b7 activity",
+      "sources": [
+        {
+          "path": "apps/web/src/explorer/ExplorerTab.tsx",
+          "line": 480,
+          "label": "Start exploring card"
+        },
+        {
+          "path": "apps/web/src/explorer/ExplorerTab.tsx",
+          "line": 533,
+          "label": "Authoring label"
+        }
+      ]
+    },
+    {
+      "id": "confirm",
+      "lane": "explorer",
+      "col": 3,
+      "type": "frontend",
+      "width": 151,
+      "label": "Review & confirm",
+      "sublabel": "App Summary \u00b7 Goal",
+      "sources": [
+        {
+          "path": "apps/web/src/explorer/SummaryView.tsx",
+          "line": 214,
+          "label": "Questions for you"
+        },
+        {
+          "path": "apps/web/src/explorer/SummaryView.tsx",
+          "line": 139,
+          "label": "Looks right \u2014 confirm"
+        }
+      ]
+    },
+    {
+      "id": "scenarios",
+      "lane": "explorer",
+      "col": 4,
+      "type": "backend",
+      "width": 151,
+      "label": "Proven scenarios",
+      "sublabel": "press Generate tests",
+      "sources": [
+        {
+          "path": "apps/web/src/explorer/ScenariosView.tsx",
+          "line": 130,
+          "label": "Generate tests"
+        }
+      ]
+    },
+    {
+      "id": "questions",
+      "lane": "asked",
+      "col": 2,
+      "type": "security",
+      "width": 151,
+      "label": "Answer questions",
+      "sublabel": "bell icon \u00b7 email",
+      "sources": [
+        {
+          "path": "apps/web/src/explorer/ExplorerTab.tsx",
+          "line": 270,
+          "label": "Questions button"
+        },
+        {
+          "path": "apps/web/src/explorer/QuestionsView.tsx",
+          "line": 155,
+          "label": "question card"
+        }
+      ]
+    },
+    {
+      "id": "author",
+      "lane": "cases",
+      "col": 3,
+      "type": "frontend",
+      "width": 151,
+      "label": "Author a test case",
+      "sublabel": "describe it in words",
+      "sources": [
+        {
+          "path": "apps/web/src/components/workspace/TestSuiteTab.tsx",
+          "line": 930,
+          "label": "Author a test case"
+        },
+        {
+          "path": "apps/web/src/components/workspace/AuthorPromptCard.tsx",
+          "line": 33,
+          "label": "starts authoring"
+        }
+      ]
+    },
+    {
+      "id": "suite",
+      "lane": "cases",
+      "col": 4,
+      "type": "database",
+      "width": 151,
+      "label": "Your test suite",
+      "sublabel": "all test cases",
+      "sources": [
+        {
+          "path": "apps/web/src/components/workspace/TestSuiteTab.tsx",
+          "line": 17,
+          "label": "test cases tab"
+        }
+      ]
+    },
+    {
+      "id": "record",
+      "lane": "cases",
+      "col": 5,
+      "type": "frontend",
+      "width": 151,
+      "label": "Record and play",
+      "sublabel": "click through it once",
+      "sources": [
+        {
+          "path": "apps/web/src/components/RecordAndPlay.tsx",
+          "line": 264,
+          "label": "Record a flow"
+        }
+      ]
+    },
+    {
+      "id": "heal",
+      "lane": "runs",
+      "col": 3,
+      "type": "security",
+      "width": 151,
+      "label": "Self-healing",
+      "sublabel": "auto or Retry button",
+      "sources": [
+        {
+          "path": "apps/web/src/components/workspace/RunsTab.tsx",
+          "line": 662,
+          "label": "Retry with self-healing"
+        }
+      ]
+    },
+    {
+      "id": "run",
+      "lane": "runs",
+      "col": 4,
+      "type": "backend",
+      "width": 151,
+      "label": "Run & see results",
+      "sublabel": "all or chosen tests",
+      "sources": [
+        {
+          "path": "apps/web/src/components/workspace/Workspace.tsx",
+          "line": 101,
+          "label": "Run Suite / Run All"
+        },
+        {
+          "path": "apps/web/src/components/workspace/RunsTab.tsx",
+          "line": 1145,
+          "label": "run name and results"
+        }
+      ]
+    },
+    {
+      "id": "deliver",
+      "lane": "runs",
+      "col": 5,
+      "type": "cloud",
+      "width": 151,
+      "label": "Keep it running",
+      "sublabel": "schedules \u00b7 download",
+      "sources": [
+        {
+          "path": "apps/web/src/components/workspace/SchedulesTab.tsx",
+          "line": 189,
+          "label": "schedules"
+        },
+        {
+          "path": "apps/web/src/components/workspace/DownloadTab.tsx",
+          "line": 20,
+          "label": "download for CI"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "signin-add",
+      "from": "signin",
+      "to": "addapp",
+      "variant": "emphasis"
+    },
+    {
+      "id": "add-explore",
+      "from": "addapp",
+      "to": "live",
+      "label": "Start",
+      "variant": "emphasis"
+    },
+    {
+      "id": "live-confirm",
+      "from": "live",
+      "to": "confirm",
+      "label": "summary ready",
+      "variant": "emphasis"
+    },
+    {
+      "id": "confirm-scenarios",
+      "from": "confirm",
+      "to": "scenarios",
+      "label": "explores \u00b7 proves",
+      "variant": "emphasis"
+    },
+    {
+      "id": "live-questions",
+      "from": "live",
+      "to": "questions",
+      "label": "asks you",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "id": "scenarios-suite",
+      "from": "scenarios",
+      "to": "suite",
+      "label": "Generate tests",
+      "variant": "emphasis"
+    },
+    {
+      "id": "author-suite",
+      "from": "author",
+      "to": "suite",
+      "label": "your words",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "record-suite",
+      "from": "record",
+      "to": "suite",
+      "label": "your clicks",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "suite-run",
+      "from": "suite",
+      "to": "run",
+      "label": "Run",
+      "variant": "emphasis"
+    },
+    {
+      "id": "run-heal",
+      "from": "run",
+      "to": "heal",
+      "label": "test failed",
+      "variant": "security",
+      "role": "branch"
+    },
+    {
+      "id": "run-deliver",
+      "from": "run",
+      "to": "deliver",
+      "label": "keep it going",
+      "variant": "dashed",
+      "role": "branch"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Three ways to get tests",
+      "items": [
+        "Explorer: explores the whole app and proves scenarios",
+        "Author: describe a flow or exact cases in plain words",
+        "Record and play: click through a flow once"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Where you are asked",
+      "items": [
+        "App Summary questions and the Goal, before it explores",
+        "Bell icon and email when it needs data or a risky press",
+        "Possible bugs: you decide bug or not"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Make it yours",
+      "items": [
+        "Settings: Explorer limits, self-heal attempts, screenshots",
+        "Edit any test case's test data",
+        "Run all or chosen tests, on a schedule, or in your CI"
+      ]
+    }
+  ]
+}

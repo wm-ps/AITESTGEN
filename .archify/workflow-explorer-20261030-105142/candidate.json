@@ -1,0 +1,400 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Vantage Explorer \u2014 how an exploration run works",
+    "output": ".archify/workflow-explorer-20261030-105142/explorer.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/wm-ps/AITESTGEN.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "050b7b5928f8c36df775ae0b6a8009b5ef76868b"
+    }
+  },
+  "lanes": [
+    {
+      "id": "you",
+      "label": "You"
+    },
+    {
+      "id": "run",
+      "label": "Explorer run"
+    },
+    {
+      "id": "vantage",
+      "label": "Vantage results"
+    },
+    {
+      "id": "needs",
+      "label": "Questions & possible bugs",
+      "variant": "exception"
+    }
+  ],
+  "groups": [
+    {
+      "id": "explore_group",
+      "label": "Explore by walking real tasks",
+      "lane": "run",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "proof_group",
+      "label": "Only proven scenarios survive",
+      "lane": "run",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "dashed"
+    }
+  ],
+  "mainPath": [
+    "start",
+    "firstlook",
+    "confirm",
+    "missions",
+    "hunt",
+    "plan_tests",
+    "prove",
+    "results"
+  ],
+  "nodes": [
+    {
+      "id": "start",
+      "lane": "you",
+      "col": 0,
+      "type": "external",
+      "label": "Start exploring",
+      "sublabel": "add app or press Start",
+      "width": 172,
+      "sources": [
+        {
+          "path": "apps/api/src/api/explorer.py",
+          "line": 296,
+          "label": "start_run endpoint"
+        },
+        {
+          "path": "apps/api/src/api/explorer.py",
+          "line": 308,
+          "label": "begin_run starts workflow"
+        }
+      ]
+    },
+    {
+      "id": "firstlook",
+      "lane": "run",
+      "col": 0,
+      "type": "backend",
+      "label": "First look",
+      "sublabel": "reads screens \u00b7 App Summary",
+      "width": 172,
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/understand.py",
+          "line": 90,
+          "label": "understand_app"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/understand.py",
+          "line": 125,
+          "label": "first look walk"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/understand.py",
+          "line": 490,
+          "label": "App Summary written"
+        }
+      ]
+    },
+    {
+      "id": "confirm",
+      "lane": "you",
+      "col": 1,
+      "type": "frontend",
+      "label": "Review & confirm",
+      "sublabel": "answers \u00b7 Goal \u00b7 Confirm",
+      "width": 172,
+      "sources": [
+        {
+          "path": "apps/api/src/api/explorer.py",
+          "line": 529,
+          "label": "confirm_brief"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/workflow.py",
+          "line": 110,
+          "label": "waits for Confirm"
+        }
+      ]
+    },
+    {
+      "id": "missions",
+      "lane": "run",
+      "col": 2,
+      "type": "backend",
+      "label": "Missions",
+      "sublabel": "walk business tasks",
+      "tag": "3 at a time",
+      "width": 172,
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/missions.py",
+          "line": 88,
+          "label": "plan_missions"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/missions.py",
+          "line": 191,
+          "label": "run_mission"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/missions.py",
+          "line": 404,
+          "label": "follow_ups"
+        }
+      ]
+    },
+    {
+      "id": "hunt",
+      "lane": "run",
+      "col": 3,
+      "type": "backend",
+      "label": "Hidden screens",
+      "sublabel": "choices \u00b7 empty data",
+      "width": 172,
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/hunt.py",
+          "line": 166,
+          "label": "hunt"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/workflow.py",
+          "line": 138,
+          "end_line": 140,
+          "label": "hunt then breadth"
+        }
+      ]
+    },
+    {
+      "id": "plan_tests",
+      "lane": "run",
+      "col": 4,
+      "type": "backend",
+      "label": "Write scenarios",
+      "sublabel": "per screen + journeys",
+      "width": 172,
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/tests_stage.py",
+          "line": 223,
+          "label": "plan_tests"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/workflow.py",
+          "line": 147,
+          "label": "planning step"
+        }
+      ]
+    },
+    {
+      "id": "prove",
+      "lane": "run",
+      "col": 5,
+      "type": "backend",
+      "label": "Build & prove",
+      "sublabel": "break on purpose \u00b7 replay",
+      "width": 172,
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/tests_stage.py",
+          "line": 565,
+          "label": "build_and_prove"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/tests_stage.py",
+          "line": 825,
+          "label": "broken-on-purpose check"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/tests_stage.py",
+          "line": 853,
+          "label": "clean replays"
+        }
+      ]
+    },
+    {
+      "id": "results",
+      "lane": "vantage",
+      "col": 5,
+      "type": "database",
+      "label": "Scenarios & test cases",
+      "sublabel": "\u2192 Generate tests",
+      "width": 172,
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/promote.py",
+          "line": 84,
+          "label": "hand-off to Vantage"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/promote.py",
+          "line": 245,
+          "label": "proven code kept"
+        },
+        {
+          "path": "apps/api/src/api/main.py",
+          "line": 3203,
+          "label": "Generate tests"
+        }
+      ]
+    },
+    {
+      "id": "questions",
+      "lane": "needs",
+      "col": 2,
+      "type": "security",
+      "label": "Explorer asks you",
+      "sublabel": "data \u00b7 May I press?",
+      "width": 172,
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/memory.py",
+          "line": 123,
+          "label": "ask and wait"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/memory.py",
+          "line": 183,
+          "label": "emails who started it"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/pursue.py",
+          "line": 431,
+          "label": "risky press asks first"
+        }
+      ]
+    },
+    {
+      "id": "bug",
+      "lane": "needs",
+      "col": 4,
+      "type": "security",
+      "label": "Possible bug",
+      "sublabel": "you decide",
+      "width": 172,
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/tests_stage.py",
+          "line": 901,
+          "label": "known_bug when it differs"
+        },
+        {
+          "path": "apps/api/src/api/explorer.py",
+          "line": 1010,
+          "label": "your verdict"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "start-first-look",
+      "from": "start",
+      "to": "firstlook",
+      "label": "starts workflow",
+      "variant": "emphasis"
+    },
+    {
+      "id": "summary-review",
+      "from": "firstlook",
+      "to": "confirm",
+      "label": "App Summary",
+      "variant": "emphasis"
+    },
+    {
+      "id": "confirmed",
+      "from": "confirm",
+      "to": "missions",
+      "label": "Confirm",
+      "variant": "emphasis"
+    },
+    {
+      "id": "missions-hunt",
+      "from": "missions",
+      "to": "hunt"
+    },
+    {
+      "id": "hunt-plan",
+      "from": "hunt",
+      "to": "plan_tests",
+      "label": "screens known"
+    },
+    {
+      "id": "plan-prove",
+      "from": "plan_tests",
+      "to": "prove"
+    },
+    {
+      "id": "proven",
+      "from": "prove",
+      "to": "results",
+      "label": "proven",
+      "variant": "emphasis"
+    },
+    {
+      "id": "needs-you",
+      "from": "missions",
+      "to": "questions",
+      "label": "asks \u00b7 waits for answer",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "app-differs",
+      "from": "prove",
+      "to": "bug",
+      "label": "app differs",
+      "variant": "security",
+      "role": "error"
+    },
+    {
+      "id": "not-a-bug",
+      "from": "bug",
+      "to": "results",
+      "label": "not a bug",
+      "variant": "dashed",
+      "role": "branch"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "How it explores",
+      "items": [
+        "Real Chromium browser, signed in with the app's saved login",
+        "An AI model reads each screen and picks the next step",
+        "Missions walk whole business tasks, a few at a time"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Why scenarios are trusted",
+      "items": [
+        "Each scenario is tried in the app first",
+        "Replayed with its key step removed: the check must fail",
+        "Then replayed clean: it must pass every time"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "You stay in control",
+      "items": [
+        "Pause, Resume or Stop at any time",
+        "A Goal limits what it explores",
+        "It never confirms or answers for you"
+      ]
+    }
+  ]
+}

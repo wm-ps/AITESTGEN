@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "workflow",
+  "quality": "showcase",
+  "specification": {
+    "path": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/workflow-authoring-20261030-105457/candidate.json",
+    "sha256": "754fc121c3a2a03f5e2a555eb1f7ce06ca617860d97b0ad1719375e2efc1ec00",
+    "bytes": 8702
+  },
+  "artifact": {
+    "path": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/workflow-authoring-20261030-105457/authoring.html",
+    "sha256": "630a3e001a68bb1d2f8a0ce986f597a88c61126ab895ab76c4ac057a1138705b",
+    "bytes": 767272
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/workflow-authoring-20261030-105457/authoring.finalize.json",
+    "summaryReceipt": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/workflow-authoring-20261030-105457/authoring.finalize-summary.json",
+    "browserCheckReceipt": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/workflow-authoring-20261030-105457/authoring.browser-check.json"
+  },
+  "update": {
+    "status": "update_available",
+    "installedVersion": "3.0.1",
+    "availableVersion": "3.2.0",
+    "releaseNotes": "https://github.com/tt-a1i/archify/releases/tag/v3.2.0",
+    "severity": "normal",
+    "checkedAt": "2026-10-30T05:22:10.910Z",
+    "source": "cache",
+    "noticeRequired": true,
+    "noticeText": "Archify update: 3.0.1 → 3.2.0. A previous check at 2026-10-30T05:22:10.910Z found a newer release. Release notes: https://github.com/tt-a1i/archify/releases/tag/v3.2.0. The installed Skill has not changed; ask to snooze or ignore this reminder.",
+    "eventKey": "archify@sha256:70e210265c59f24dcbdf2a502ff671104b5454e7ee7d3554aecd86bad32384f5"
+  },
+  "visualReview": "not-requested",
+  "durationMs": 1764,
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "routesOverSuggestedBends": 1
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [],
+      "detours": [
+        {
+          "relationship": {
+            "id": "request-read",
+            "from": "author",
+            "to": "read",
+            "label": "your request",
+            "collectionIndex": 4,
+            "artifactIndex": 5
+          },
+          "bends": 3,
+          "stretch": 1.174
+        }
+      ],
+      "truncated": false
+    },
+    "hints": [
+      "author → read needs 3 bends: move node author or read so they share a row or column with matching centers, or sit diagonally with a clear corner."
+    ],
+    "repair": "Trace these relationships at the desktop viewport. For Architecture, use references/architecture-layout-repair.md: reflow a blocked main path or tangled connected scene, and repair an isolated defect locally only when the surrounding composition is accepted. Preserve all semantic content and user-fixed geometry. Rerun finalize once after the edit."
+  }
+}

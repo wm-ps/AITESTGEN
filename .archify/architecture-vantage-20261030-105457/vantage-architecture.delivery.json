@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "783da3f4-5d62-4adf-bc99-6b6c70083555",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/architecture-vantage-20261030-105457/candidate.json",
+  "output": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/architecture-vantage-20261030-105457/vantage-architecture.html",
+  "specification": {
+    "sha256": "1730fbd084d36f6b15dc7a508da90dc35028ec84016a846ac76125aec92cd8d5",
+    "bytes": 9975
+  },
+  "artifact": {
+    "sha256": "85215d328724517995b41a4c966a3ec77dcf3ccd204b9f2205491e4d17dc3174",
+    "bytes": 777793
+  }
+}
