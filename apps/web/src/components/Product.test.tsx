@@ -26,7 +26,7 @@ describe('Product', () => {
 
   it('opens the demo video and the contact form from the call to action', () => {
     render(<Product onNavigate={() => {}} onSignIn={() => {}} />)
-    fireEvent.click(screen.getByRole('button', { name: /Schedule a Demo/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Watch a Demo/ }))
     expect(screen.getByRole('dialog', { name: 'Vantage demo' })).toBeTruthy()
     fireEvent.keyDown(window, { key: 'Escape' })
     fireEvent.click(screen.getByRole('button', { name: 'Connect with Our Team' }))

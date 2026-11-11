@@ -252,7 +252,7 @@ function App() {
     if (!user || !testRunLink) return
     const { applicationId, testRunId } = testRunLink
     setTestRunLink(null)
-    window.history.replaceState({}, '', '/')
+    window.history.replaceState({}, '', '/signin')
     setGlobalLoading('Opening test run')
     Promise.all([api.getApplication(applicationId), api.getTestRun(applicationId, testRunId)])
       .then(([app]) => {
@@ -268,7 +268,7 @@ function App() {
   }, [user, testRunLink])
 
   function handleSignedIn(signedInUser: UserRead) {
-    window.history.replaceState({}, '', '/')
+    window.history.replaceState({}, '', '/signin')
     setUser(signedInUser)
     setInviteToken(null)
   }
@@ -276,7 +276,7 @@ function App() {
   // Unlike accept-invite, resetting a password never signs the user in —
   // they land back on the sign-in screen to enter their new credentials.
   function handleResetDone() {
-    window.history.replaceState({}, '', '/')
+    window.history.replaceState({}, '', '/signin')
     setResetToken(null)
     setUser(null)
   }
@@ -312,7 +312,7 @@ function App() {
       <SignIn
         onSignedIn={(signedInUser) => {
           // Deep-link URLs are left alone so they open once signed in.
-          if (window.location.pathname === '/signin') window.history.replaceState({}, '', '/')
+          if (window.location.pathname === '/signin') window.history.replaceState({}, '', '/signin')
           setUser(signedInUser)
         }}
       />
@@ -328,9 +328,9 @@ function App() {
     setGlobalLoading('Logging out')
     try {
       await api.logout()
-      window.history.replaceState({}, '', '/')
+      window.history.replaceState({}, '', '/signin')
       setUser(null)
-      setSignedOutPage('landing')
+      setSignedOutPage('signin')
       setView('overview')
       setApplication(null)
     } catch {

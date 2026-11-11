@@ -13,7 +13,7 @@ import {
   faWandMagicSparkles,
   type IconDefinition,
 } from '@fortawesome/free-solid-svg-icons'
-import { faCalendar, faCirclePlay, faEyeSlash, faHourglassHalf } from '@fortawesome/free-regular-svg-icons'
+import { faCirclePlay, faEyeSlash, faHourglassHalf } from '@fortawesome/free-regular-svg-icons'
 import {
   ContactDialog,
   DemoDialog,
@@ -481,8 +481,8 @@ export function Product({ onNavigate, onSignIn }: { onNavigate: (page: PublicPag
                 onClick={openDemo}
                 style={{ height: 54, gap: 10, padding: '0 26px', borderRadius: 12, fontSize: 15.5 }}
               >
-                <FontAwesomeIcon icon={faCalendar} style={{ fontSize: 14 }} />
-                Schedule a Demo
+                <FontAwesomeIcon icon={faCirclePlay} style={{ fontSize: 14 }} />
+                Watch a Demo
               </button>
               <button
                 type="button"
