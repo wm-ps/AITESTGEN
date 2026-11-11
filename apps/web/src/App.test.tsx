@@ -22,13 +22,22 @@ afterEach(() => {
 })
 
 describe('App', () => {
-  it('renders Sign in when there is no session, with the default tab title/favicon', async () => {
+  it('renders the Landing page when there is no session, with Product and Sign in reachable from it and the default tab title/favicon', async () => {
     vi.stubGlobal('fetch', mockFetchOnce({ detail: 'not signed in' }, false, 401))
     render(<App />)
 
     await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /Test smarter/ })).toBeTruthy()
+    })
+    fireEvent.click(screen.getByRole('link', { name: 'Product' }))
+    expect(window.location.pathname).toBe('/product')
+    expect(screen.getByRole('heading', { level: 1, name: /Rethink Software Testing/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+    await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Welcome back' })).toBeTruthy()
     })
+    expect(window.location.pathname).toBe('/signin')
+    window.history.replaceState({}, '', '/')
     expect(document.title).toBe('Vantage')
     expect(document.querySelector('link[rel="icon"]')?.getAttribute('href')).toBe('/favicon.png')
   })

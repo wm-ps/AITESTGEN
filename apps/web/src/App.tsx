@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faCircleDot, faCompass, faLayerGroup, faListCheck, faRoute } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, hasDiscovery, type ActivityItemRead, type ApplicationRead, type UserRead } from './api'
@@ -9,6 +9,9 @@ import { DiscoverJourneys } from './components/DiscoverJourneys'
 import { ExplorerTab } from './explorer/ExplorerTab'
 import { AppBootLoader, GlobalLoadingOverlay } from './components/GlobalLoadingOverlay'
 import { Home } from './components/Home'
+import { Landing } from './components/Landing'
+import { Product } from './components/Product'
+import type { PublicPage } from './components/marketing/MarketingChrome'
 import { Overview } from './components/Overview'
 import { RecordAndPlay } from './components/RecordAndPlay'
 import { getRecordingPopupParamsFromUrl, RecordingSessionWindow } from './components/RecordingSessionWindow'
@@ -101,6 +104,15 @@ function getResetTokenFromUrl(): string | null {
     : null
 }
 
+type SignedOutPage = PublicPage | 'signin'
+
+const SIGNED_OUT_PATHS: Record<SignedOutPage, string> = { landing: '/', product: '/product', signin: '/signin' }
+
+function signedOutPageFromUrl(): SignedOutPage {
+  const path = window.location.pathname
+  return path === '/signin' ? 'signin' : path === '/product' ? 'product' : 'landing'
+}
+
 type AppTab = 'journeys' | 'explorer' | 'scenarios' | 'record' | 'suites' | WorkspaceTab
 
 type View = 'overview' | 'home' | 'connect-app' | 'app' | 'settings' | 'team' | 'activity'
@@ -129,6 +141,14 @@ function App() {
   // /applications/:appId/test-runs/:runId — the run-completed email's "Open
   // in Vantage" link. Also needs a session; handled once signed in (below).
   const [testRunLink, setTestRunLink] = useState(getTestRunRouteFromUrl)
+  // Signed out, `/` is the Landing page, `/product` the Product page and
+  // `/signin` the SignIn screen. Deep links that need a session (report /
+  // test-run links) go straight to SignIn, as does an idle-timeout logout.
+  const [signedOutPage, setSignedOutPage] = useState<SignedOutPage>(() =>
+    allureReportRoute || testRunLink ? 'signin' : signedOutPageFromUrl(),
+  )
+  const userRef = useRef(user)
+  userRef.current = user
   // One-shot: the run the Runs tab opens on after following that link.
   const [openRunId, setOpenRunId] = useState<string | null>(null)
   // Covers logout and resume-application — both involve an API round trip
@@ -193,11 +213,23 @@ function App() {
   // below, so a stale tab bounces to Sign In instead of erroring silently.
   useEffect(() => {
     function handleExpired() {
+      // The mount-time me() 401 fires this too — only a session that was
+      // actually live skips Landing for SignIn.
+      if (userRef.current) setSignedOutPage('signin')
       setUser(null)
       setErrorToast('Your session expired from inactivity. Please sign in again.')
     }
     window.addEventListener('auth:expired', handleExpired)
     return () => window.removeEventListener('auth:expired', handleExpired)
+  }, [])
+
+  // Browser Back/Forward between the signed-out pages.
+  useEffect(() => {
+    function handlePopState() {
+      setSignedOutPage(signedOutPageFromUrl())
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
   }, [])
 
   useEffect(() => {
@@ -268,7 +300,23 @@ function App() {
   if (user === undefined) return <AppBootLoader />
 
   if (user === null) {
-    return <SignIn onSignedIn={setUser} />
+    const goTo = (page: SignedOutPage) => {
+      if (page === signedOutPage) return
+      window.history.pushState({}, '', SIGNED_OUT_PATHS[page])
+      window.scrollTo(0, 0)
+      setSignedOutPage(page)
+    }
+    if (signedOutPage === 'landing') return <Landing onNavigate={goTo} onSignIn={() => goTo('signin')} />
+    if (signedOutPage === 'product') return <Product onNavigate={goTo} onSignIn={() => goTo('signin')} />
+    return (
+      <SignIn
+        onSignedIn={(signedInUser) => {
+          // Deep-link URLs are left alone so they open once signed in.
+          if (window.location.pathname === '/signin') window.history.replaceState({}, '', '/')
+          setUser(signedInUser)
+        }}
+      />
+    )
   }
 
   if (allureReportRoute) {
@@ -280,7 +328,9 @@ function App() {
     setGlobalLoading('Logging out')
     try {
       await api.logout()
+      window.history.replaceState({}, '', '/')
       setUser(null)
+      setSignedOutPage('landing')
       setView('overview')
       setApplication(null)
     } catch {
