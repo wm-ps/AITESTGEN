@@ -95,3 +95,6 @@ _bmad/**/config.user.toml
 
 # /brag launch-video output
 brag-output*/
+
+# Local dev logs (scripts/dev-start.sh output, worker logs)
+logs/
