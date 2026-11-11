@@ -328,7 +328,10 @@ def _build_package_json() -> str:
         '    "test": "playwright test"\n'
         "  },\n"
         '  "devDependencies": {\n'
-        '    "@playwright/test": "^1.48.0",\n'
+        # Exact, so a new Playwright release never changes the browser under
+        # already-proven tests. 1.62.1: the oldest that runs on Node 24 (1.61
+        # crashes loading the config) and the one playwright_typecheck uses.
+        '    "@playwright/test": "1.62.1",\n'
         # Allure 3 (Node-only CLI, no Java): `allure-playwright` writes raw
         # results while tests run, `allure` turns them into the HTML report
         # configured by allurerc.mjs.

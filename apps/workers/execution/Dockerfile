@@ -37,7 +37,7 @@ RUN npm install -g @playwright/test && npx playwright install --with-deps chromi
 # packages, which observed live pushed PrepareTestRunActivity past its
 # 5-minute timeout.
 RUN mkdir /tmp/allure-cache-warm && cd /tmp/allure-cache-warm \
-    && npm install --no-save --no-audit --no-fund "@playwright/test@^1.48.0" "allure@^3.20.1" "allure-playwright@^3.13.0" \
+    && npm install --no-save --no-audit --no-fund "@playwright/test@1.62.1" "allure@^3.20.1" "allure-playwright@^3.13.0" \
     && cd / && rm -rf /tmp/allure-cache-warm
 
 # Invoke the venv directly — `uv run` re-syncs (and would pull dev deps
