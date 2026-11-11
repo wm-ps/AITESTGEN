@@ -92,7 +92,7 @@ async def measure(eyes: Eyes, name: str, url: str) -> list[str] | None:
     problems: list[str] = []
 
     def on_console(message: Any) -> None:
-        if message.type == "error":
+        if message.type == "error" and BROWSER_NOTICE not in message.text:
             problems.append(f"Script error: {message.text[:200]}")
 
     def on_page_error(error: Any) -> None:
@@ -128,6 +128,13 @@ async def measure(eyes: Eyes, name: str, url: str) -> list[str] | None:
                 page.remove_listener(event, handler)
 
 
+# Newer Chromium logs this as a console error when a page sets an "unload"
+# handler (being phased out by the browser). It's the browser's notice, not
+# an app script error, and older Chromium never logs it, so a test proven
+# on one browser failed on another. Skipped in both places.
+BROWSER_NOTICE = "Permissions policy violation: unload is not allowed"
+
+
 def playwright_code(title: str, name: str, url: str, tag: str | None, failing: str | None) -> str:
     """The exported test: the same measurement, as a Playwright assertion."""
     q = json.dumps
@@ -148,7 +155,7 @@ def playwright_code(title: str, name: str, url: str, tag: str | None, failing: s
         lines += [
             "  const problems: string[] = [];",
             f"  const origin = {q(origin)};",
-            "  page.on('console', (m) => { if (m.type() === 'error') problems.push(`Script error: ${m.text()}`); });",
+            f"  page.on('console', (m) => {{ if (m.type() === 'error' && !m.text().includes({q(BROWSER_NOTICE)})) problems.push(`Script error: ${{m.text()}}`); }});",
             "  page.on('pageerror', (e) => problems.push(`Script crashed: ${e.message}`));",
             "  page.on('response', (r) => { if (r.url().startsWith(origin) && r.status() >= 400) problems.push(`${r.status()} ${r.url()}`); });",
             "  page.on('requestfailed', (r) => { if (r.url().startsWith(origin)) problems.push(`Request failed: ${r.url()}`); });",

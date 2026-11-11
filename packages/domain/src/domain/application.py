@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -125,4 +126,13 @@ class Application(SQLModel, table=True):
     deleted_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    # This application's own settings (Application settings page), each a
+    # dict of the setting's name to its value. None: it uses the
+    # organisation-wide ExplorerSettings / DiscoverySettings values, as before.
+    explorer_limits: dict | None = Field(
+        default=None, sa_column=Column(JSONB(none_as_null=True), nullable=True)
+    )
+    generation_settings: dict | None = Field(
+        default=None, sa_column=Column(JSONB(none_as_null=True), nullable=True)
     )

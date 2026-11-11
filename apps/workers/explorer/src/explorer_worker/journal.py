@@ -23,6 +23,7 @@ from sqlmodel import Session, col, select
 
 from explorer_worker import llm
 from explorer_worker.db import engine
+from explorer_worker.field_checks import with_code_limits
 from explorer_worker.sense import url_pattern
 
 _LOG_LEVEL = {"error": logging.ERROR, "health": logging.WARNING}
@@ -197,6 +198,10 @@ class Journal:
                 # Keep the richer reading: later visits often see more fields.
                 if len(values.get("fields", [])) > len(existing.fields):
                     existing.fields = values["fields"]
+                else:
+                    # A screen copied from an earlier run gains the page code's
+                    # limits (min, maxlength, ...) when it is seen again.
+                    existing.fields = with_code_limits(existing.fields, values.get("fields"))
                 existing.hidden_hints = list(
                     dict.fromkeys(existing.hidden_hints + values.get("hidden_hints", []))
                 )
@@ -290,7 +295,7 @@ class Journal:
                     ExplorerHealthIssue.kind == kind,
                 )
             ).all()
-            if kind in ("server_error", "background_error"):
+            if kind in ("server_error", "api_error", "background_error"):
                 failed = _failure_key(detail)
                 existing = next((r for r in rows if r.title == title and _failure_key(r.detail) == failed), None)
             else:

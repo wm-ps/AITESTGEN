@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEye, faEyeSlash, faLock, faShieldHalved } from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faArrowRight, faEye, faEyeSlash, faGear, faLock, faShieldHalved } from '@fortawesome/free-solid-svg-icons'
 import {
   ApiError,
   api,
-  type HomeApplicationRead,
+  type GenerationSettings,
   type RetentionPeriod,
   type ScreenshotCapture,
   type SettingsRead,
@@ -12,7 +12,7 @@ import {
 } from '../api'
 import { ApprovedDomainsPanel } from './ApprovedDomainsPanel'
 import { LoadingDots } from './LoadingDots'
-import { explorerApi, type ExplorerSettings } from '../explorer/explorerApi'
+import { type ExplorerSettings } from '../explorer/explorerApi'
 import { PasswordInput } from './PasswordInput'
 import { SkeletonRows } from './Skeleton'
 import { AccessDeniedIllustration } from './EmptyState'
@@ -67,14 +67,6 @@ function CredentialsPanel() {
   const [loadError, setLoadError] = useState<string | null>(null)
   const [revealed, setRevealed] = useState<Record<string, string>>({})
   const [revealing, setRevealing] = useState<Record<string, boolean>>({})
-
-  const [apps, setApps] = useState<HomeApplicationRead[] | null>(null)
-  const [selectedAppId, setSelectedAppId] = useState('')
-  const [newUsername, setNewUsername] = useState('')
-  const [newPassword, setNewPassword] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState<string | null>(null)
-  const [saveSuccess, setSaveSuccess] = useState(false)
   const [switching, setSwitching] = useState<Record<string, boolean>>({})
   const [switchError, setSwitchError] = useState<string | null>(null)
 
@@ -100,29 +92,7 @@ function CredentialsPanel() {
 
   useEffect(() => {
     refreshCredentials()
-    api.getHome().then(setApps).catch(() => {
-      // best-effort — the "Add credentials" app picker just stays empty
-    })
   }, [])
-
-  async function handleAddCredentials(e: React.FormEvent) {
-    e.preventDefault()
-    if (!selectedAppId) return
-    setSaveError(null)
-    setSaveSuccess(false)
-    setSaving(true)
-    try {
-      await api.updateApplicationCredentials(selectedAppId, newUsername, newPassword)
-      setNewUsername('')
-      setNewPassword('')
-      setSaveSuccess(true)
-      await refreshCredentials()
-    } catch (err) {
-      setSaveError(err instanceof ApiError ? err.message : 'Could not save credentials.')
-    } finally {
-      setSaving(false)
-    }
-  }
 
   async function toggleReveal(applicationId: string) {
     if (revealed[applicationId] !== undefined) {
@@ -144,20 +114,12 @@ function CredentialsPanel() {
     }
   }
 
-  // Nothing to store or reuse credentials for yet — the panel (and its
-  // "add credentials" form) has no application to point at, so skip it
-  // entirely rather than show an empty shell.
-  if (apps !== null && apps.length === 0) return null
-
   return (
     <div style={panelStyle}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Saved credentials</div>
-          <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
-            Stored encrypted at project level and reused for exploring, generation and every run. Turn Sign-in
-            off for an app that has no login — exploring and tests then open it directly.
-          </div>
+        <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: 'var(--fg-4)' }}>
+          Turn Sign-in off for an app that has no login — exploring and tests then open it directly. To add or
+          change an application's credentials, open its Application settings → Sign-in credentials.
         </div>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 30, padding: '0 12px', borderRadius: 8, border: '1px solid var(--border-2)', background: 'var(--panel-2)', fontSize: 12, fontWeight: 500, color: 'var(--fg-2)', flex: 'none' }}>
           <FontAwesomeIcon icon={faShieldHalved} style={{ fontSize: 11, color: "var(--ok)" }} />
@@ -232,44 +194,71 @@ function CredentialsPanel() {
         </div>
       )}
 
-      <form
-        onSubmit={handleAddCredentials}
-        style={{ border: '1px solid var(--border-2)', borderRadius: 10, background: 'var(--panel)', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}
-      >
-        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--fg-1)' }}>Add credentials</div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,minmax(0,1fr))', gap: 14 }}>
-          <Field label="Application">
-            <select
-              required
-              value={selectedAppId}
-              onChange={(e) => setSelectedAppId(e.target.value)}
-              style={{ ...fieldInputStyle, background: 'var(--panel)' }}
-            >
-              <option value="" disabled>
-                Select an application
-              </option>
-              {(apps ?? []).map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-          </Field>
+    </div>
+  )
+}
+
+// Sign-in credentials for one application (its Settings tab): saved
+// encrypted, used by exploring, generation and every test run.
+export function CredentialsForm({
+  applicationId,
+  environment,
+  readOnly,
+  onSaved,
+}: {
+  applicationId: string
+  environment: string
+  readOnly?: boolean
+  onSaved?: () => void
+}) {
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [saveSuccess, setSaveSuccess] = useState(false)
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault()
+    setSaveError(null)
+    setSaveSuccess(false)
+    setSaving(true)
+    try {
+      await api.updateApplicationCredentials(applicationId, username, password)
+      setUsername('')
+      setPassword('')
+      setSaveSuccess(true)
+      onSaved?.()
+    } catch (err) {
+      setSaveError(err instanceof ApiError ? err.message : 'Could not save credentials.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form
+      onSubmit={handleSave}
+      style={{ border: '1px solid var(--border-2)', borderRadius: 10, background: 'var(--panel)', padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}
+    >
+      <fieldset disabled={readOnly} style={{ border: 0, margin: 0, padding: 0, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ flex: 1, fontSize: 12.5, fontWeight: 600, color: 'var(--fg-1)' }}>Add credentials</div>
+          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 30, padding: '0 12px', borderRadius: 8, border: '1px solid var(--border-2)', background: 'var(--panel-2)', fontSize: 12, fontWeight: 500, color: 'var(--fg-2)', flex: 'none' }}>
+            <FontAwesomeIcon icon={faShieldHalved} style={{ fontSize: 11, color: 'var(--ok)' }} />
+            Encrypted at rest
+          </div>
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(220px,1fr))', gap: 14 }}>
           <Field label="Environment">
-            <input
-              readOnly
-              value={apps?.find((a) => a.id === selectedAppId)?.environment ?? ''}
-              placeholder="Select an application first"
-              style={{ ...fieldInputStyle, background: 'var(--panel)' }}
-            />
+            <input readOnly value={environment} style={{ ...fieldInputStyle, background: 'var(--panel)' }} />
           </Field>
           <Field label="Username">
             <input
               required
               autoComplete="off"
               placeholder="Enter the username"
-              value={newUsername}
-              onChange={(e) => setNewUsername(e.target.value)}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
               style={{ ...fieldInputStyle, background: 'var(--panel)', fontFamily: 'var(--font-mono)' }}
             />
           </Field>
@@ -278,8 +267,8 @@ function CredentialsPanel() {
               required
               autoComplete="off"
               placeholder="Enter the password or token"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
               style={{ ...fieldInputStyle, background: 'var(--panel)', fontFamily: 'var(--font-mono)' }}
             />
           </Field>
@@ -289,26 +278,26 @@ function CredentialsPanel() {
             {saveError}
           </div>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button
-            type="submit"
-            disabled={saving || !selectedAppId}
-            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 34, padding: '0 16px', borderRadius: 8, background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: saving || !selectedAppId ? 'default' : 'pointer', opacity: saving || !selectedAppId ? 0.6 : 1, border: 'none' }}
-          >
-            <FontAwesomeIcon icon={faLock} style={{ fontSize: 11 }} />
-            {saving ? 'Saving…' : 'Save credentials'}
-          </button>
-          {saveSuccess && (
-            <span style={{ fontSize: 12, color: 'var(--ok)' }}>Credentials saved.</span>
-          )}
-        </div>
-      </form>
-    </div>
+        {!readOnly && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <button
+              type="submit"
+              disabled={saving}
+              style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 34, padding: '0 16px', borderRadius: 8, background: 'var(--accent)', color: '#fff', fontSize: 13, fontWeight: 600, cursor: saving ? 'default' : 'pointer', opacity: saving ? 0.6 : 1, border: 'none' }}
+            >
+              <FontAwesomeIcon icon={faLock} style={{ fontSize: 11 }} />
+              {saving ? <LoadingDots label="Saving" /> : 'Save credentials'}
+            </button>
+            {saveSuccess && <span style={{ fontSize: 12, color: 'var(--ok)' }}>Credentials saved.</span>}
+          </div>
+        )}
+      </fieldset>
+    </form>
   )
 }
 
 
-// Settings → Explorer limits: what really bounds an Explorer (or authoring)
+// Explorer limits (an application's Settings tab): what really bounds an Explorer (or authoring)
 // run's time and AI cost. A run copies them when it starts; Resume picks up
 // changes. "No limit" is null.
 type LimitOption = { value: number | null; label: string }
@@ -359,17 +348,12 @@ function LimitGroup({ title, children }: { title: string; children: React.ReactN
   )
 }
 
-function ExplorerLimitsSection({ limits, onChange }: { limits: ExplorerSettings; onChange: (limits: ExplorerSettings) => void }) {
+export function ExplorerLimitsSection({ limits, onChange }: { limits: ExplorerSettings; onChange: (limits: ExplorerSettings) => void }) {
   const set = <K extends keyof ExplorerSettings>(key: K, value: ExplorerSettings[K]) => onChange({ ...limits, [key]: value })
   const waitsForever = limits.question_wait_minutes == null
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <div>
-        <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Explorer limits</div>
-        <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>
-          Control how long Explorer and authoring runs take and how much AI they use. Each run uses the limits set when it starts.
-        </div>
-      </div>
+      <div style={{ fontSize: 12, color: 'var(--fg-4)' }}>Each run uses the limits set when it starts.</div>
 
       <LimitGroup title="Time">
         <Field label="Question wait" hint="How long a mission waits for your answer before carrying on without it.">
@@ -458,6 +442,22 @@ function ExplorerLimitsSection({ limits, onChange }: { limits: ExplorerSettings;
             onChange={(v) => set('steps_per_mission', v ?? 20)}
           />
         </Field>
+        <Field label="Steps per scenario" hint="Most clicks and entries Explorer may take to carry out one scenario.">
+          <LimitSelect
+            label="Steps per scenario"
+            value={limits.steps_per_scenario}
+            options={withValue(counts([10, 20, 30, 40, 60]), limits.steps_per_scenario)}
+            onChange={(v) => set('steps_per_scenario', v ?? 20)}
+          />
+        </Field>
+        <Field label="Steps per full-flow scenario" hint="Most clicks and entries for a scenario that runs a whole task from start to finish.">
+          <LimitSelect
+            label="Steps per full-flow scenario"
+            value={limits.steps_per_journey}
+            options={withValue(counts([20, 40, 60, 80, 120]), limits.steps_per_journey)}
+            onChange={(v) => set('steps_per_journey', v ?? 40)}
+          />
+        </Field>
         <Field label="Maximum scenarios" hint="Most scenarios Explorer tries to prove in one run.">
           <LimitSelect
             label="Maximum scenarios"
@@ -478,13 +478,297 @@ function ExplorerLimitsSection({ limits, onChange }: { limits: ExplorerSettings;
           />
         </Field>
       </LimitGroup>
+
+      <LimitGroup title="When to give up">
+        <Field
+          label="Same screen in a row"
+          hint="A mission or scenario stops when it lands on the same screen this many times in a row without moving on. Filling more fields on a form doesn't count."
+        >
+          <LimitSelect
+            label="Same screen in a row"
+            value={limits.same_screen_repeats}
+            options={withValue(counts([2, 3, 4, 5, 8]), limits.same_screen_repeats)}
+            onChange={(v) => set('same_screen_repeats', v ?? 3)}
+          />
+        </Field>
+        <Field label="Visits to one screen" hint="A mission or scenario stops when it comes back to one screen more than this many times.">
+          <LimitSelect
+            label="Visits to one screen"
+            value={limits.screen_visits}
+            options={withValue(counts([3, 4, 6, 8, 12]), limits.screen_visits)}
+            onChange={(v) => set('screen_visits', v ?? 4)}
+          />
+        </Field>
+        <Field label="Retries when a button does nothing" hint="How many more times Explorer adjusts its answers and presses again when the app doesn't move on, before asking you or giving up.">
+          <LimitSelect
+            label="Retries when a button does nothing"
+            value={limits.press_retries}
+            options={withValue(counts([0, 1, 2, 3, 5]), limits.press_retries)}
+            onChange={(v) => set('press_retries', v ?? 2)}
+          />
+        </Field>
+      </LimitGroup>
     </div>
   )
 }
 
+// Test case generation: how many scenarios and test cases are written, and
+// self-healing. Each application has its own (Application settings).
+export function GenerationSection({
+  settings,
+  onChange,
+}: {
+  settings: GenerationSettings
+  onChange: (settings: GenerationSettings) => void
+}) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 16 }}>
+      <Field label="Maximum scenarios / journey">
+        <input
+          type="number"
+          min={1}
+          placeholder="Unlimited"
+          value={settings.max_scenarios_per_journey ?? ''}
+          onChange={(e) =>
+            onChange({ ...settings, max_scenarios_per_journey: e.target.value === '' ? null : Number(e.target.value) })
+          }
+          style={fieldInputStyle}
+        />
+      </Field>
+
+      <Field label="Maximum test cases / application">
+        <input
+          type="number"
+          min={1}
+          placeholder="Unlimited"
+          value={settings.max_test_cases_per_application ?? ''}
+          onChange={(e) =>
+            onChange({
+              ...settings,
+              max_test_cases_per_application: e.target.value === '' ? null : Number(e.target.value),
+            })
+          }
+          style={fieldInputStyle}
+        />
+      </Field>
+
+      <Field label="Maximum self-heal attempts">
+        <select
+          value={settings.max_heal_attempts}
+          onChange={(e) => onChange({ ...settings, max_heal_attempts: Number(e.target.value) })}
+          style={fieldInputStyle}
+        >
+          {[0, 1, 2, 3, 5, 10].map((n) => (
+            <option key={n} value={n}>
+              {n === 0 ? 'Disabled' : n}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label="Screenshot capture">
+        <select
+          value={settings.screenshot_capture}
+          onChange={(e) => onChange({ ...settings, screenshot_capture: e.target.value as ScreenshotCapture })}
+          style={fieldInputStyle}
+        >
+          <option value="failed">Failed test cases</option>
+          <option value="passed">Passed test cases</option>
+          <option value="all">All</option>
+        </select>
+      </Field>
+    </div>
+  )
+}
+
+// A settings card on a hub page: what it is, and the way in.
+export type SettingsCard<K extends string> = { key: K; title: string; description: string }
+
+const cardStyle: React.CSSProperties = {
+  background: 'var(--panel)',
+  border: '1px solid var(--border-1)',
+  borderRadius: 14,
+  boxShadow: 'var(--panel-shadow)',
+}
+
+// The hub: one card per section, two columns at most (one on narrow screens).
+// Shared by the Settings page and an application's Settings tab.
+export function SettingsHub<K extends string>({
+  heading,
+  cards,
+  onOpen,
+}: {
+  heading?: React.ReactNode
+  cards: SettingsCard<K>[]
+  onOpen: (key: K) => void
+}) {
+  return (
+    <div style={{ maxWidth: 1560, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {heading}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(max(300px,calc(50% - 10px)),1fr))', gap: 20 }}>
+        {cards.map((s) => (
+          <div key={s.key} style={{ ...cardStyle, padding: '24px 28px', display: 'flex', flexDirection: 'column' }}>
+            <h2 style={{ fontSize: 17, fontWeight: 600, color: 'var(--fg)', margin: 0 }}>{s.title}</h2>
+            <p style={{ fontSize: 13.5, lineHeight: 1.5, color: 'var(--fg-3)', margin: '8px 0 0', flex: 1 }}>{s.description}</p>
+            <div style={{ height: 1, background: 'var(--line)', margin: '20px 0 14px' }} />
+            <button
+              type="button"
+              aria-label={`Configure ${s.title}`}
+              onClick={() => onOpen(s.key)}
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontSize: 13.5, fontWeight: 600, color: 'var(--accent-2)', fontFamily: 'inherit' }}
+            >
+              Configure Settings
+              <FontAwesomeIcon icon={faArrowRight} style={{ fontSize: 13, color: 'var(--fg-3)' }} />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// One section opened from the hub: Back, its title, the fields, and — for a
+// form — Discard / Save. `readOnly` shows the values without the footer.
+export function SettingsDetail({
+  heading,
+  card,
+  backLabel,
+  onBack,
+  form,
+  readOnly,
+  note,
+  submitting,
+  error,
+  onSubmit,
+  onDiscard,
+  children,
+}: {
+  heading?: React.ReactNode
+  card: { title: string; description: string }
+  backLabel: string
+  onBack: () => void
+  form: boolean
+  readOnly?: boolean
+  note?: string
+  submitting?: boolean
+  error?: string | null
+  onSubmit?: () => void
+  onDiscard?: () => void
+  children: React.ReactNode
+}) {
+  const body = (
+    <div style={{ padding: '24px 32px', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <button
+        type="button"
+        onClick={onBack}
+        style={{ alignSelf: 'flex-start', display: 'inline-flex', alignItems: 'center', gap: 8, border: 'none', background: 'none', padding: 0, cursor: 'pointer', fontSize: 13.5, color: 'var(--fg-2)', fontFamily: 'inherit' }}
+      >
+        <FontAwesomeIcon icon={faArrowLeft} style={{ fontSize: 12 }} />
+        {backLabel}
+      </button>
+      <div>
+        <h2 style={{ fontSize: 20, fontWeight: 600, color: 'var(--fg)', margin: 0 }}>{card.title}</h2>
+        <p style={{ fontSize: 13.5, color: 'var(--fg-3)', margin: '6px 0 0' }}>{card.description}</p>
+      </div>
+      <div style={{ height: 1, background: 'var(--line)' }} />
+      {note && <div style={{ fontSize: 12.5, color: 'var(--fg-3)' }}>{note}</div>}
+      {children}
+      {error && (
+        <div style={{ color: 'var(--bad)', fontSize: 13 }} role="alert">
+          {error}
+        </div>
+      )}
+    </div>
+  )
+
+  return (
+    <div style={{ maxWidth: 1560, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {heading}
+      {form ? (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            onSubmit?.()
+          }}
+          style={{ ...cardStyle, overflow: 'hidden' }}
+        >
+          <fieldset disabled={submitting || readOnly} style={{ border: 0, margin: 0, padding: 0, minWidth: 0 }}>
+            {body}
+            {!readOnly && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, padding: '16px 32px', background: 'var(--panel-2)', borderTop: '1px solid var(--line)' }}>
+                <button
+                  type="button"
+                  onClick={onDiscard}
+                  style={{ height: 38, padding: '0 18px', borderRadius: 8, border: '1px solid var(--border-2)', background: 'var(--panel)', fontSize: 13.5, fontWeight: 500, color: 'var(--fg-2)', cursor: 'pointer' }}
+                >
+                  Discard Changes
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  style={{
+                    height: 38,
+                    padding: '0 20px',
+                    borderRadius: 8,
+                    background: 'var(--accent)',
+                    color: '#fff',
+                    fontSize: 13.5,
+                    fontWeight: 600,
+                    cursor: submitting ? 'default' : 'pointer',
+                    boxShadow: 'var(--accent-glow)',
+                    border: 'none',
+                    opacity: submitting ? 0.75 : 1,
+                  }}
+                >
+                  {submitting ? <LoadingDots label="Saving" /> : 'Save Configuration'}
+                </button>
+              </div>
+            )}
+          </fieldset>
+        </form>
+      ) : (
+        <div style={cardStyle}>{body}</div>
+      )}
+    </div>
+  )
+}
+
+// Platform-level settings only; an application's own (environments, Explorer
+// limits, test case generation) are on its Settings tab.
+type SectionKey = 'credentials' | 'retention'
+
+// The hub's cards, in the order shown. `form`: has fields saved by the footer
+// (Saved credentials saves each row itself).
+const SECTIONS: (SettingsCard<SectionKey> & { form: boolean })[] = [
+  {
+    key: 'credentials',
+    title: 'Saved credentials',
+    description: 'See every application’s saved sign-in and turn sign-in on or off. Add credentials in an application’s settings.',
+    form: false,
+  },
+  {
+    key: 'retention',
+    title: 'Data retention',
+    description: 'Choose when data for removed projects is cleaned up.',
+    form: true,
+  },
+]
+
+function SettingsHeading() {
+  return (
+    <h1 style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>
+      <FontAwesomeIcon icon={faGear} style={{ fontSize: 17, color: 'var(--fg-2)' }} />
+      Settings
+    </h1>
+  )
+}
+
 export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => void }) {
+  // `savedSettings` is what the server has; the editable copy is reset to it
+  // on Discard and whenever you leave a section without saving.
+  const [savedSettings, setSavedSettings] = useState<SettingsRead | null>(null)
   const [settings, setSettings] = useState<SettingsRead | null>(null)
-  const [limits, setLimits] = useState<ExplorerSettings | null>(null)
+  const [section, setSection] = useState<SectionKey | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -499,10 +783,11 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
       setLoading(false)
       return
     }
-    Promise.all([api.getSettings(), explorerApi.getSettings()])
-      .then(([loaded, explorer]) => {
+    api
+      .getSettings()
+      .then((loaded) => {
+        setSavedSettings(loaded)
         setSettings(loaded)
-        setLimits(explorer)
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load settings.'))
       .finally(() => setLoading(false))
@@ -528,7 +813,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
           </div>
           <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--fg)' }}>Access denied</div>
           <p style={{ fontSize: 13.5, margin: '8px auto 0', maxWidth: 360, lineHeight: 1.5, color: 'var(--fg-3)' }}>
-            Explorer settings are limited to organization admins. Ask an admin on your team for access.
+            Settings are limited to organization admins. Ask an admin on your team for access.
           </p>
           <button
             type="button"
@@ -542,24 +827,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
     )
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!settings || !limits) return
-    setError(null)
-    setSubmitting(true)
-    try {
-      const [updated, explorer] = await Promise.all([api.updateSettings(settings), explorerApi.saveSettings(limits)])
-      setSettings(updated)
-      setLimits(explorer)
-      onCancel()
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Saving settings failed.')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  if (loading || !settings || !limits) {
+  if (loading || !settings) {
     return (
       <div style={{ maxWidth: 1560, margin: '0 auto', width: '100%' }} role="status">
         {error ?? <SkeletonRows count={5} height={38} gap={14} />}
@@ -567,144 +835,85 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
     )
   }
 
+  function discard() {
+    setSettings(savedSettings)
+    setError(null)
+  }
+
+  function open(key: SectionKey | null) {
+    discard()
+    setSection(key)
+  }
+
+  async function handleSubmit() {
+    if (!settings) return
+    setError(null)
+    setSubmitting(true)
+    try {
+      const updated = await api.updateSettings(settings)
+      setSavedSettings(updated)
+      setSettings(updated)
+      setSection(null)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Saving settings failed.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (section === null) {
+    return <SettingsHub heading={<SettingsHeading />} cards={SECTIONS} onOpen={open} />
+  }
+
+  const current = SECTIONS.find((s) => s.key === section)!
   return (
-    <div style={{ maxWidth: 1560, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: 18 }}>
-      <div>
-        <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Settings</h1>
-        <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 4 }}>Explorer limits, credentials and schedules.</div>
-      </div>
+    <SettingsDetail
+      heading={<SettingsHeading />}
+      card={current}
+      backLabel="Back to Settings"
+      onBack={() => open(null)}
+      form={current.form}
+      submitting={submitting}
+      error={error}
+      onSubmit={handleSubmit}
+      onDiscard={discard}
+    >
+      {section === 'credentials' && (
+        <>
+          <CredentialsPanel />
+          <ApprovedDomainsPanel />
+        </>
+      )}
 
-      <form onSubmit={handleSubmit} style={panelStyle}>
-        <fieldset disabled={submitting} style={{ border: 0, margin: 0, padding: 0, display: 'contents' }}>
-          <ExplorerLimitsSection limits={limits} onChange={setLimits} />
-
-          <div style={{ height: 1, background: 'var(--line)' }} />
-
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Test case generation</div>
-            <div style={{ fontSize: 12, color: 'var(--fg-4)', marginTop: 2 }}>How many test cases are written and how failing ones are handled.</div>
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(190px,1fr))', gap: 16 }}>
-            <Field label="Maximum scenarios / journey">
-              <input
-                type="number"
-                min={1}
-                placeholder="Unlimited"
-                value={settings.max_scenarios_per_journey ?? ''}
-                onChange={(e) =>
-                  setSettings({ ...settings, max_scenarios_per_journey: e.target.value === '' ? null : Number(e.target.value) })
-                }
-                style={fieldInputStyle}
-              />
-            </Field>
-
-            <Field label="Maximum test cases / application">
-              <input
-                type="number"
-                min={1}
-                placeholder="Unlimited"
-                value={settings.max_test_cases_per_application ?? ''}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    max_test_cases_per_application: e.target.value === '' ? null : Number(e.target.value),
-                  })
-                }
-                style={fieldInputStyle}
-              />
-            </Field>
-
-            <Field label="Maximum self-heal attempts">
-              <select
-                value={settings.max_heal_attempts}
-                onChange={(e) => setSettings({ ...settings, max_heal_attempts: Number(e.target.value) })}
-                style={fieldInputStyle}
-              >
-                {[0, 1, 2, 3, 5, 10].map((n) => (
-                  <option key={n} value={n}>
-                    {n === 0 ? 'Disabled' : n}
-                  </option>
-                ))}
-              </select>
-            </Field>
-
-            <Field label="Screenshot capture">
-              <select
-                value={settings.screenshot_capture}
-                onChange={(e) => setSettings({ ...settings, screenshot_capture: e.target.value as ScreenshotCapture })}
-                style={fieldInputStyle}
-              >
-                <option value="failed">Failed test cases</option>
-                <option value="passed">Passed test cases</option>
-                <option value="all">All</option>
-              </select>
-            </Field>
-          </div>
-
-          <div style={{ height: 1, background: 'var(--line)' }} />
-
+      {section === 'retention' && (
+        <>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+            {/* Always on: there is no setting to keep a removed project's data. */}
             <div title="Every removed project is cleaned up automatically" style={{ width: 36, height: 20, flex: 'none', borderRadius: 1000, padding: 2, display: 'flex', background: 'var(--ok)' }}>
               <div style={{ width: 16, height: 16, borderRadius: 1000, background: 'var(--on-ok)', transform: 'translateX(16px)' }} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--fg-1)' }}>Auto-clean up removed projects</div>
-              <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 2 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg-1)' }}>Auto-clean up removed projects</div>
+              <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 2 }}>
                 Deletes explored data, generated test cases, screenshots and run history for a project once it is removed.
               </div>
             </div>
+          </div>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg-1)' }}>Clean up</span>
             <select
               value={settings.delete_project_after}
               onChange={(e) => setSettings({ ...settings, delete_project_after: e.target.value as RetentionPeriod })}
-              style={{ height: 32, padding: '0 10px', border: '1px solid var(--border-2)', borderRadius: 8, fontSize: 12.5, color: 'var(--fg-1)', background: 'var(--panel)', flex: 'none' }}
+              style={fieldInputStyle}
             >
               <option value="1_day">After 1 day</option>
               <option value="1_week">After 1 week</option>
               <option value="1_month">After 1 month</option>
             </select>
-          </div>
-
-          {error && (
-            <div style={{ color: 'var(--bad)', fontSize: 13 }} role="alert">
-              {error}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-            <button
-              type="button"
-              onClick={onCancel}
-              style={{ height: 38, padding: '0 18px', borderRadius: 8, border: '1px solid var(--border-2)', background: 'var(--panel)', fontSize: 13.5, fontWeight: 500, color: 'var(--fg-2)', cursor: 'pointer' }}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={submitting}
-              style={{
-                height: 38,
-                padding: '0 20px',
-                borderRadius: 8,
-                background: 'var(--accent)',
-                color: '#fff',
-                fontSize: 13.5,
-                fontWeight: 600,
-                cursor: submitting ? 'default' : 'pointer',
-                boxShadow: 'var(--accent-glow)',
-                border: 'none',
-                opacity: submitting ? 0.75 : 1,
-              }}
-            >
-              {submitting ? <LoadingDots label="Saving" /> : 'Save settings'}
-            </button>
-          </div>
-        </fieldset>
-      </form>
-
-      <ApprovedDomainsPanel />
-
-      <CredentialsPanel />
-    </div>
+            <span style={{ fontSize: 12.5, color: 'var(--fg-4)' }}>Time after removal before data is deleted.</span>
+          </label>
+        </>
+      )}
+    </SettingsDetail>
   )
 }

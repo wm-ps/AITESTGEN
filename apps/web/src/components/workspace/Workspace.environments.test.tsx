@@ -79,6 +79,7 @@ describe('Workspace environments', () => {
     stubApi({ environments: [DEFAULT_ENV, UAT] })
     renderWorkspace('settings')
 
+    fireEvent.click(await screen.findByRole('button', { name: 'Configure Environment Settings' }))
     expect(await screen.findByTestId('environment-row-UAT')).toBeInTheDocument()
     expect(screen.getByTestId('environment-row-production')).toBeInTheDocument()
     expect(screen.getByText('Application settings', { selector: 'h1' })).toBeInTheDocument()
@@ -158,6 +159,7 @@ describe('Workspace environments', () => {
     stubApi({ environments: [DEFAULT_ENV, UAT] })
     renderWorkspace('settings', 'viewer')
 
+    fireEvent.click(await screen.findByRole('button', { name: 'Configure Environment Settings' }))
     expect(await screen.findByTestId('environment-row-UAT')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Add environment' })).toBeNull()
   })

@@ -221,12 +221,22 @@ _INVENTORY_JS = r"""
     const t = text(b); if (!t || !visible(b)) continue;
     buttons.push(t); if (buttons.length >= 60) break;
   }
+  // A required marker on the field's label: "*" or "(required)" in its
+  // text, a required/asterisk element or class, or a "*" drawn by CSS.
+  const requiredMark = (f) => {
+    const label = (f.id && document.querySelector(`label[for="${CSS.escape(f.id)}"]`)) || f.closest('label');
+    if (!label) return false;
+    if (/\*|\(required\)/i.test(label.innerText || '') || /required/i.test(String(label.className))) return true;
+    if (label.querySelector('[class*=required], [class*=asterisk], abbr[title*=required i]')) return true;
+    return ['::after', '::before'].some((p) => (getComputedStyle(label, p).content || '').includes('*'));
+  };
   const fields = [];
   for (const f of document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]), select, textarea')) {
     // Upload fields are usually hidden behind a styled button — read them
     // anyway: their `accept` is the app's own list of allowed file types.
     if (!visible(f) && f.type !== 'file') continue;
-    const item = { label: labelFor(f).slice(0, 80), type: f.tagName === 'SELECT' ? 'select' : (f.type || f.tagName.toLowerCase()), required: f.required || f.getAttribute('aria-required') === 'true' };
+    const item = { label: labelFor(f).slice(0, 80), type: f.tagName === 'SELECT' ? 'select' : (f.type || f.tagName.toLowerCase()), required: f.required || f.getAttribute('aria-required') === 'true' || requiredMark(f) };
+    if (f.getAttribute('aria-invalid') === 'true') item.invalid = true;
     if (f.tagName === 'SELECT') item.options = [...f.options].slice(0, 10).map(o => o.text.trim());
     for (const a of ['min', 'max', 'minlength', 'maxlength', 'pattern', 'accept']) if (f.getAttribute(a)) item[a] = f.getAttribute(a);
     if (f.type === 'file') item.multiple = f.hasAttribute('multiple');
@@ -248,9 +258,49 @@ _INVENTORY_JS = r"""
 """
 
 
+# Messages the app shows, recorded the moment they appear: a toast or
+# snackbar is often gone a few seconds later, before the screen is read.
+# Also the browser's own "Please fill out this field" prompt, which is never
+# part of the page (an `invalid` event). Sent to Python via a binding.
+_MESSAGES_JS = r"""
+(() => {
+  if (window.__explorerWatching) return;
+  window.__explorerWatching = true;
+  const SEL = '[role=alert], [role=alertdialog], [role=status], [aria-live=assertive], [aria-live=polite], '
+    + '[class*=toast], [class*=snackbar], [class*=notification], [class*=error], [class*=invalid-feedback], '
+    + '[class*=help-block], [class*=alert]';
+  const recent = new Map();
+  const say = (text) => {
+    const t = (text || '').replace(/\s+/g, ' ').trim();
+    if (t.length < 2 || t.length > 200 || Date.now() - (recent.get(t) || 0) < 2000) return;
+    recent.set(t, Date.now());
+    try { window.__explorerSaw(t); } catch (e) {}
+  };
+  // Only a message itself, never a whole form or field wrapper.
+  const said = (el) => { if (!el.querySelector('input, select, textarea, button')) say(el.innerText); };
+  const check = (node) => {
+    const el = node instanceof Element ? node : node.parentElement;
+    if (!el) return;
+    const hit = el.closest(SEL);
+    if (hit) said(hit.querySelector('input, select, textarea, button') ? el : hit);
+    if (node instanceof Element) node.querySelectorAll(SEL).forEach(said);
+  };
+  const watch = () => new MutationObserver((changes) => changes.forEach((m) => {
+    if (m.type === 'characterData') check(m.target); else m.addedNodes.forEach(check);
+  })).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+  document.addEventListener('invalid', (e) => {
+    const f = e.target;
+    const label = (f.labels && f.labels[0] && f.labels[0].innerText) || f.getAttribute('aria-label') || f.name || '';
+    say(`${label}: ${f.validationMessage}`);
+  }, true);
+  if (document.documentElement) watch(); else document.addEventListener('DOMContentLoaded', watch);
+})()
+"""
+
+
 @dataclass
 class HealthSignal:
-    kind: str  # crash | broken_link | server_error | background_error | slow
+    kind: str  # crash | broken_link | server_error | api_error | background_error | slow
     severity: str
     title: str
     detail: str
@@ -332,6 +382,9 @@ class Eyes:
         # The page's data calls (method, address, status), for API proofs.
         self.calls: list[tuple[str, str, int]] = []
         self._calls_from = 0
+        # Messages the app showed (see _MESSAGES_JS), oldest first.
+        self.messages: list[str] = []
+        self._messages_from = 0
         self._starts_fresh = False
         self._login: tuple[str, str, str] | None = None
         self._typed_name = ""  # last non-password value typed (lockout guard)
@@ -354,7 +407,10 @@ class Eyes:
             record_video_size=VIEWPORT if record_dir else None,
         )
         await self._context.route("**/*", _serve_static)
+        await self._context.expose_binding("__explorerSaw", self._on_message)
+        await self._context.add_init_script(_MESSAGES_JS)
         self.page = await self._context.new_page()
+        self.page.on("dialog", self._on_dialog)
         self.page.on("console", self._on_console)
         self.page.on("pageerror", self._on_page_error)
         self.page.on("response", self._on_response)
@@ -377,6 +433,25 @@ class Eyes:
         if self._pw is not None:
             await self._pw.stop()
         return path
+
+    # -- messages -----------------------------------------------------------
+    def _on_message(self, _source: Any, text: str) -> None:
+        self.messages.append(str(text)[:200])
+        if len(self.messages) > 300:  # ponytail: in memory; trim the oldest
+            del self.messages[:100]
+            self._messages_from = max(0, self._messages_from - 100)
+
+    async def _on_dialog(self, dialog: Any) -> None:
+        """A browser pop-up (alert/confirm): noted, then dismissed as
+        Playwright does when nothing listens."""
+        self._on_message(None, f"Browser pop-up: {dialog.message}")
+        try:
+            await dialog.dismiss()
+        except PlaywrightError:
+            pass
+
+    def messages_since_mark(self) -> list[str]:
+        return list(dict.fromkeys(self.messages[self._messages_from :]))
 
     # -- health listeners ---------------------------------------------------
     def _here(self) -> str:
@@ -423,11 +498,24 @@ class Eyes:
                     self._here(),
                 )
             )
+        elif status >= 400 and response.request.resource_type in ("xhr", "fetch"):
+            # A data call the app's server refused (400 bad input, 401/403 no
+            # access, 404 missing, 422 rejected): the screen may show nothing.
+            self._pending.append(
+                HealthSignal(
+                    "api_error",
+                    "medium",
+                    f"Data call refused ({status})",
+                    f"{response.request.method} {response.url[:300]}",
+                    self._here(),
+                )
+            )
 
     # -- actions ------------------------------------------------------------
     def mark_calls(self) -> None:
         """From here on, `calls_since_mark` only has the calls a test makes."""
         self._calls_from = len(self.calls)
+        self._messages_from = len(self.messages)
 
     def calls_since_mark(self) -> list[tuple[str, str, int]]:
         return self.calls[self._calls_from :]

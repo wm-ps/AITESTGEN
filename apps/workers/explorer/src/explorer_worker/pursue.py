@@ -14,7 +14,7 @@ from typing import Any
 from explorer_core import ExplorerScreen
 from sqlmodel import Session, col, select
 
-from explorer_worker import brain
+from explorer_worker import brain, limits
 from explorer_worker.browser import Eyes
 from explorer_worker.db import engine
 from explorer_worker.goal import stops_walk
@@ -22,6 +22,7 @@ from explorer_worker.journal import Journal
 from explorer_worker.mind import Mind
 from explorer_worker.samples import sample_file
 from explorer_worker.sense import (
+    entered_something_new,
     going_in_circles,
     is_risky_link,
     is_sign_out,
@@ -29,11 +30,11 @@ from explorer_worker.sense import (
     may_commit,
     needs_human_ok,
     page_link,
+    refused_calls,
     route_starts_at_entry,
     same_place,
 )
 
-MAX_RETRIES_ON_SAME_STEP = 2
 # Icon alt text read out with a label: "Logout Icon Logout" -> "Logout".
 _ICON_TEXT = re.compile(r"\b\w+ Icon\b\s*", re.I)
 _ASKS_FOR_FILE = re.compile(r"\b(files?|images?|photos?|pictures?|uploads?|attachments?)\b", re.I)
@@ -181,6 +182,9 @@ async def pursue(
         return name
 
     landed: list[str] = [arrived(step_name)]
+    filled: set[str] = set()  # "field = value" entered so far (see entered_something_new)
+    # When to give up: Settings → Explorer limits, as copied onto this run.
+    run_limits = limits.of(journal.run_id)
 
     async def ask_way_past(screen: str, what_happened: str) -> bool:
         """Before giving up on a screen, ask the person once how to get past
@@ -242,7 +246,9 @@ async def pursue(
             step_name = await mind.take_in(visit, "Signed back in")
             landed.append(arrived(step_name))
             continue
-        circling = going_in_circles(landed)
+        circling = going_in_circles(
+            landed, run_limits["same_screen_repeats"], run_limits["screen_visits"]
+        )
         if circling and await ask_way_past(step_name, "I keep coming back to it"):
             landed = landed[-1:]
             continue
@@ -384,10 +390,13 @@ async def pursue(
         if entered and not advance and not plan.get("done"):
             # What it entered may have revealed more of the form (a "Create
             # login" switch adds fields): look again instead of stopping.
-            # The visits-per-screen guard ends it if nothing new appears.
+            # New values are progress, not a revisit; the circles guard only
+            # counts a fill that repeats what was already entered.
+            progressed = entered_something_new(entered, filled)
             visit = await eyes.look(eyes.page.url, None, 0)
             step_name = await mind.take_in(visit, None)
-            landed.append(arrived(step_name))
+            if not progressed:
+                landed.append(arrived(step_name))
             continue
         if waiting_for_screen(plan, idle_looks):
             # "Still loading, I'll wait": no move and not done is not the end
@@ -457,6 +466,7 @@ async def pursue(
             )
 
         before = await eyes.fingerprint()
+        calls_before, messages_before = len(eyes.calls), len(eyes.messages)
         clicked = await eyes.click_text(str(advance), "button")
         if clicked and is_final:
             sent.add(str(advance))
@@ -469,28 +479,47 @@ async def pursue(
         visit = await eyes.look(eyes.page.url, None, 0)
         if not moved:
             stuck += 1
-            said = "; ".join(visit.inventory.get("alerts") or [])
+            # On screen now, plus any message that appeared and faded (a toast).
+            shown = [*(visit.inventory.get("alerts") or []), *eyes.messages[messages_before:]]
+            said = "; ".join(dict.fromkeys(shown))
+            # ponytail: the trim past 500 calls (browser) can shift this slice once.
+            refused = refused_calls(eyes.calls[calls_before:])
+            shot_id = journal.shot(visit.shot)
             journal.event(
                 "thought",
                 f"The app didn't move past {step_name}",
                 (
-                    f"It said: {said}"
-                    if said
-                    else "No message shown — I'll adjust my answers and try again."
+                    (
+                        f"It said: {said}"
+                        if said
+                        else "No message shown — I'll adjust my answers and try again."
+                    )
+                    + (f" The server refused: {refused}" if refused else "")
                 )[:600],
-                journal.shot(visit.shot),
+                shot_id,
             )
-            if stuck > MAX_RETRIES_ON_SAME_STEP and await ask_way_past(
+            # Refused by the server and nothing on screen says why: a user is
+            # left guessing. Only while exploring (a scenario's walk records
+            # no findings; its invalid input is meant to be refused).
+            if refused and not said and getattr(mind, "records_health", True):
+                title = f"“{advance}” was refused by the server with no message"
+                if journal.health_issue("api_error", "high", title, refused, visit.url, shot_id):
+                    journal.event("health", title, refused, shot_id)
+            if stuck > run_limits["press_retries"] and await ask_way_past(
                 step_name,
                 f"pressing “{advance}” " + (f"showed “{said[:120]}”" if said else "did nothing"),
             ):
                 stuck = 0
                 continue
-            if stuck > MAX_RETRIES_ON_SAME_STEP:
+            if stuck > run_limits["press_retries"]:
                 result.ended = "stuck"
                 result.outcome = f"Couldn't get past {step_name}" + (f": {said}" if said else "")
                 break
-            result.history.append(f"{step_name}: attempt rejected ({said or 'no message'})")
+            result.history.append(
+                f"{step_name}: attempt rejected ({said or 'no message'}"
+                + (f"; the server refused {refused}" if refused else "")
+                + ")"
+            )
             continue
         stuck = 0
         result.history.append(f"{step_name}: {'; '.join(entered) or 'no input'} -> {advance}")

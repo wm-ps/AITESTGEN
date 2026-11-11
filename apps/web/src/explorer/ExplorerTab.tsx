@@ -273,12 +273,6 @@ export function ExplorerTab({
             <div className="caption" style={{ fontSize: 13, marginTop: 3, display: 'flex', alignItems: 'center', gap: 8 }}>
               {working && <span style={{ width: 7, height: 7, borderRadius: 1000, background: 'var(--accent-2)', animation: 'v2-pulse 1.4s ease-in-out infinite' }} />}
               {run.headline}
-              {!!run.ai_spent_usd && (
-                <span title="AI spend so far in this run" style={{ color: 'var(--fg-4)' }}>
-                  · AI ${run.ai_spent_usd.toFixed(2)}
-                  {run.ai_budget_usd != null && ` of $${run.ai_budget_usd.toFixed(2)}`}
-                </span>
-              )}
             </div>
           )}
         </div>

@@ -58,7 +58,7 @@ async def start_authoring(
         application_id=application.id,
         prompt=prompt[:8000],
         started_by_id=user.id,
-        limits=limits_snapshot(session),  # Settings → Explorer limits, as of now
+        limits=limits_snapshot(session, application.explorer_limits),  # as of now
     )
     session.add(run)
     session.commit()

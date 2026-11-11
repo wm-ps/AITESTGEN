@@ -40,7 +40,6 @@ from domain import (
     CANCELLABLE_TEST_RUN_STATUSES,
     Application,
     ApplicationEnvironment,
-    DiscoverySettings,
     FailureExplanationRecord,
     Journey,
     PlatformUser,
@@ -55,6 +54,7 @@ from domain import (
     apply_test_run_cancel,
     effective_application,
     find_environment,
+    generation_settings_for,
     lock_test_run,
     runnable_asset_external_ids,
     tally_result_counts,
@@ -89,6 +89,7 @@ from workflows import (
     HEAL_TYPECHECK_ERROR_PREFIX,
     HEALABLE_STATUSES,
     TEST_RUN_STALE_AFTER,
+    UNKNOWN_FAILURE,
     CleanupCancelledTestRunActivityInput,
     ExecutableTest,
     ExecuteTestActivityInput,
@@ -99,7 +100,6 @@ from workflows import (
     PrepareTestRunActivityInput,
     PrepareTestRunActivityResult,
     SendTestRunReportEmailActivityInput,
-    UNKNOWN_FAILURE,
     clean_error,
     error_fingerprint,
     explain_failure,
@@ -966,7 +966,7 @@ def _build_subprocess_env(application: Application) -> dict:
     # Playwright has no "screenshot only on pass" mode — capture every test's
     # final screen when passed ones are wanted at all, and let
     # `_persist_test_result_sync` drop the ones the setting excludes.
-    if _load_screenshot_capture_sync() != "failed":
+    if _load_screenshot_capture_sync(application.id) != "failed":
         env["AITESTGEN_SCREENSHOT"] = "on"
     if application.auth_method in ("sso_session_reuse", "none"):
         env["AITESTGEN_STORAGE_STATE"] = credential.decode()
@@ -1212,10 +1212,10 @@ def _find_artifacts(output_dir: Path) -> list[Path]:
     return [p for p in output_dir.rglob("*") if p.is_file() and p.suffix in (".png", ".zip")]
 
 
-def _load_screenshot_capture_sync() -> str:
+def _load_screenshot_capture_sync(application_id: uuid.UUID) -> str:
+    """The application's Screenshot capture setting (Application settings)."""
     with Session(engine) as session:
-        settings = session.exec(select(DiscoverySettings)).first()
-        return settings.screenshot_capture if settings else "failed"
+        return generation_settings_for(session, application_id).screenshot_capture
 
 
 def _keep_artifact(artifact_type: str, status: str, screenshot_capture: str) -> bool:
@@ -1313,7 +1313,7 @@ def _persist_test_result_sync(
                 session.delete(artifact)
             session.flush()
 
-        screenshot_capture = _load_screenshot_capture_sync()
+        screenshot_capture = _load_screenshot_capture_sync(test_run.application_id)
         for path in outcome.get("artifact_paths", []):
             artifact_type = "trace" if path.suffix == ".zip" else "screenshot"
             if not _keep_artifact(artifact_type, outcome["status"], screenshot_capture):
@@ -1563,7 +1563,10 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
         if test_run_status == "cancelled":
             # No AI call and no attempt spent on a cancelled run.
             return None
-        discovery_settings = session.exec(select(DiscoverySettings)).one()
+        application_id = session.exec(
+            select(TestRun.application_id).where(TestRun.id == test_result.test_run_id)
+        ).one()
+        discovery_settings = generation_settings_for(session, application_id)
         if input.triggered_manually:
             current_count = test_result.manual_heal_attempt_count
             attempt_cap = discovery_settings.max_heal_attempts

@@ -156,9 +156,9 @@ def one_at_a_time(session: Session, run_id: uuid.UUID) -> bool:
     take parallel agents on one sign-in: they overwrite each other's state
     and the mess gets reported as app bugs."""
     screens = session.exec(
-        select(ExplorerScreen.name, ExplorerScreen.purpose).where(ExplorerScreen.run_id == run_id)
+        select(ExplorerScreen.name, ExplorerScreen.actions).where(ExplorerScreen.run_id == run_id)
     ).all()
-    return keeps_state([f"{name} {purpose or ''}" for name, purpose in screens])
+    return keeps_state([(name, actions) for name, actions in screens])
 
 
 def queued_missions(run_id: uuid.UUID) -> list[str]:

@@ -180,7 +180,7 @@ describe('ExplorerTab limit reached', () => {
     const wrapUp = vi.spyOn(explorerApi, 'wrapUp').mockResolvedValue({ ...paused, status: 'queued' as const, limit_reached: null })
     render(<ExplorerTab applicationId="a1" applicationName="FNOL" applicationUrl="https://x" />)
     expect(await screen.findByText('Reached the AI budget: $5.12 of $5.00.')).toBeTruthy()
-    expect(screen.getByText(/AI \$5\.12/)).toBeTruthy()
+    expect(screen.queryByText(/· AI \$/)).toBeNull()  // the run's AI cost is not shown
     expect(screen.getByRole('button', { name: 'Resume exploring' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: "Write scenarios from what's explored" }))
     await waitFor(() => expect(wrapUp).toHaveBeenCalledWith('r1'))

@@ -1,8 +1,17 @@
 import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faEllipsisVertical, faEye, faEyeSlash, faPlus, faStar } from '@fortawesome/free-solid-svg-icons'
-import { ApiError, api, type EnvironmentRead } from '../../api'
-import { useCanEdit } from '../../PermissionsContext'
+import { ApiError, api, type EnvironmentRead, type GenerationSettings } from '../../api'
+import { explorerApi, type ExplorerSettings } from '../../explorer/explorerApi'
+import { useCanEdit, useIsAdmin } from '../../PermissionsContext'
+import {
+  CredentialsForm,
+  ExplorerLimitsSection,
+  GenerationSection,
+  SettingsDetail,
+  SettingsHub,
+  type SettingsCard,
+} from '../Settings'
 import { EditEnvironmentDialog } from '../environments/EditEnvironmentDialog'
 import { useEnvironments } from '../environments/EnvironmentsContext'
 import { RemoveEnvironmentDialog } from '../environments/RemoveEnvironmentDialog'
@@ -143,10 +152,143 @@ function EnvironmentMenu({
   )
 }
 
-// Application settings: the application's own (default) environment and every
+type SectionKey = 'environments' | 'credentials' | 'explorer' | 'generation'
+
+const CARDS: SettingsCard<SectionKey>[] = [
+  {
+    key: 'environments',
+    title: 'Environment Settings',
+    description: 'Manage the URLs and sign-in details of every environment this application is tested against.',
+  },
+  {
+    key: 'credentials',
+    title: 'Sign-in credentials',
+    description: 'Save the username and password exploring, generation and every test run use to sign in.',
+  },
+  {
+    key: 'explorer',
+    title: 'Explorer limits',
+    description: 'Control run time, AI spend, and how much of this application Explorer maps and confirms.',
+  },
+  {
+    key: 'generation',
+    title: 'Test case generation',
+    description: 'Set how many scenarios and test cases are written and how failing steps are self-healed.',
+  },
+]
+
+const READ_ONLY_NOTE = 'Only organization admins can change these settings.'
+
+// An application's Settings tab: the same card hub as the Settings page, for
+// what belongs to this application — its environments, its Explorer limits
+// and its test case generation settings (admins change the last two).
+export function AppSettingsTab({ applicationId }: { applicationId: string }) {
+  const isAdmin = useIsAdmin()
+  const canEdit = useCanEdit()
+  const environments = useEnvironments()
+  const defaultEnvironment = environments?.environments.find((environment) => environment.is_default)
+  const [section, setSection] = useState<SectionKey | null>(null)
+  const [savedLimits, setSavedLimits] = useState<ExplorerSettings | null>(null)
+  const [limits, setLimits] = useState<ExplorerSettings | null>(null)
+  const [savedGeneration, setSavedGeneration] = useState<GenerationSettings | null>(null)
+  const [generation, setGeneration] = useState<GenerationSettings | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  // Loaded when their card is opened (the Environment Settings card needs neither).
+  const needsLimits = section === 'explorer' && !savedLimits
+  const needsGeneration = section === 'generation' && !savedGeneration
+  useEffect(() => {
+    if (!needsLimits && !needsGeneration) return
+    const load = needsLimits
+      ? explorerApi.getSettings(applicationId).then((loaded) => {
+          setSavedLimits(loaded)
+          setLimits(loaded)
+        })
+      : api.getGenerationSettings(applicationId).then((loaded) => {
+          setSavedGeneration(loaded)
+          setGeneration(loaded)
+        })
+    load.catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load settings.'))
+  }, [applicationId, needsLimits, needsGeneration])
+
+  function discard() {
+    setLimits(savedLimits)
+    setGeneration(savedGeneration)
+    setError(null)
+  }
+
+  function open(key: SectionKey | null) {
+    discard()
+    setSection(key)
+  }
+
+  async function handleSubmit() {
+    setError(null)
+    setSubmitting(true)
+    try {
+      if (section === 'explorer' && limits) {
+        const saved = await explorerApi.saveSettings(applicationId, limits)
+        setSavedLimits(saved)
+        setLimits(saved)
+      } else if (section === 'generation' && generation) {
+        const saved = await api.updateGenerationSettings(applicationId, generation)
+        setSavedGeneration(saved)
+        setGeneration(saved)
+      }
+      setSection(null)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Saving settings failed.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (section === null) return <SettingsHub cards={CARDS} onOpen={open} />
+
+  const card = CARDS.find((c) => c.key === section)!
+  const loading = section === 'explorer' ? !limits : section === 'generation' ? !generation : false
+  return (
+    <SettingsDetail
+      card={card}
+      backLabel="Back to Settings"
+      onBack={() => open(null)}
+      form={section === 'explorer' || section === 'generation'}
+      readOnly={!isAdmin}
+      note={
+        section === 'credentials'
+          ? canEdit
+            ? undefined
+            : 'Viewers can’t change credentials.'
+          : section !== 'environments' && !isAdmin
+            ? READ_ONLY_NOTE
+            : undefined
+      }
+      submitting={submitting}
+      error={error}
+      onSubmit={handleSubmit}
+      onDiscard={discard}
+    >
+      {section === 'environments' && <EnvironmentSettings applicationId={applicationId} />}
+      {section === 'credentials' && (
+        <CredentialsForm
+          applicationId={applicationId}
+          environment={defaultEnvironment?.name ?? ''}
+          readOnly={!canEdit}
+          onSaved={() => environments?.refresh()}
+        />
+      )}
+      {loading && !error && <SkeletonRows count={5} height={38} gap={14} />}
+      {section === 'explorer' && limits && <ExplorerLimitsSection limits={limits} onChange={setLimits} />}
+      {section === 'generation' && generation && <GenerationSection settings={generation} onChange={setGeneration} />}
+    </SettingsDetail>
+  )
+}
+
+// Environment Settings: the application's own (default) environment and every
 // extra one, with their URLs and sign-in details. Admins and members add, edit
 // and remove (and can reveal a password); a viewer sees the cards read-only.
-export function AppSettingsTab({ applicationId }: { applicationId: string }) {
+function EnvironmentSettings({ applicationId }: { applicationId: string }) {
   const canEdit = useCanEdit()
   const context = useEnvironments()
   const [editing, setEditing] = useState<EnvironmentRead | null>(null)

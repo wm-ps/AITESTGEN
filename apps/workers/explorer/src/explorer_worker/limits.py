@@ -27,8 +27,16 @@ BUILT_IN: dict[str, Any] = {
     "first_look_max_screens": int(os.environ.get("EXPLORER_FIRST_LOOK_SCREENS", "150")),
     "max_missions": 15,
     "steps_per_mission": int(os.environ.get("EXPLORER_MISSION_STEPS", "20")),
+    "steps_per_scenario": 20,
+    "steps_per_journey": 40,  # FNOL's full claim is ~27 actions
     "max_scenarios": 150,
     "proof_replays": int(os.environ.get("EXPLORER_PROOF_RUNS", "1")),
+    # A walk (mission or scenario) gives up after landing on the same screen
+    # this many times in a row, visiting one screen more than this often, or
+    # a button doing nothing this many retries over.
+    "same_screen_repeats": 3,
+    "screen_visits": 4,
+    "press_retries": 2,
 }
 
 

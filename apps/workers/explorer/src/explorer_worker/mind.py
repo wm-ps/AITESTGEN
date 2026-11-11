@@ -13,6 +13,7 @@ from explorer_core import GOAL_FITS
 
 from explorer_worker import brain
 from explorer_worker.browser import Visit
+from explorer_worker.field_checks import with_code_limits
 from explorer_worker.journal import Journal
 from explorer_worker.memory import remember_record
 from explorer_worker.sense import screen_signature, url_pattern
@@ -101,7 +102,7 @@ class Mind:
                 "purpose": reading.get("purpose"),
                 "url": visit.url,
                 "url_pattern": url_pattern(visit.url),
-                "fields": reading["fields"][:40],
+                "fields": with_code_limits(reading["fields"][:40], visit.inventory.get("fields")),
                 "actions": reading["actions"][:40],
                 "hidden_hints": [str(h) for h in reading["hidden_hints"]][:8],
                 "reached_by": reached_by,

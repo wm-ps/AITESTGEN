@@ -5,10 +5,11 @@ these settings are global, not per-Application/per-run. Every consumer can
 assume the row exists — the migration that creates this table seeds it.
 """
 
+import uuid
 from typing import Literal
 
 from sqlalchemy import CheckConstraint
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, Session, SQLModel, select
 
 InteractionLevel = Literal["passive", "normal", "aggressive"]
 RetentionPeriod = Literal["1_day", "1_week", "1_month"]
@@ -50,3 +51,27 @@ class DiscoverySettings(SQLModel, table=True):
     # Which finished TestResults keep a final-screen screenshot. str, not the
     # ScreenshotCapture Literal — same SQLModel/Literal limitation as above.
     screenshot_capture: str = Field(default="failed")
+
+
+# The test-case generation settings an application can set for itself
+# (Application settings page); the rest of DiscoverySettings stays global.
+GENERATION_KEYS = (
+    "max_scenarios_per_journey",
+    "max_test_cases_per_application",
+    "max_heal_attempts",
+    "screenshot_capture",
+)
+
+
+def generation_settings_for(
+    session: Session, application_id: uuid.UUID | None
+) -> DiscoverySettings:
+    """The settings in force for one application: the global row with the
+    application's own generation settings on top. A detached copy — never
+    saved back."""
+    from domain.application import Application
+
+    settings = session.exec(select(DiscoverySettings)).one()
+    application = session.get(Application, application_id) if application_id else None
+    own = (application.generation_settings if application else None) or {}
+    return settings.model_copy(update={k: own[k] for k in GENERATION_KEYS if k in own})

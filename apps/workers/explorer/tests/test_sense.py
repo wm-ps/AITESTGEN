@@ -151,10 +151,33 @@ def test_resolve_relative_dates_are_worked_out_at_run_time() -> None:
     assert resolve_relative("POL-10001", now) == "POL-10001"
 
 
+def _btns(*labels: str) -> list[dict]:
+    return [{"label": label} for label in labels]
+
+
 def test_keeps_state_spots_saved_drafts_and_carts() -> None:
-    assert keeps_state(["Resume claim report A returning policyholder can continue"])
-    assert keeps_state(["Shopping cart Review items"])
-    assert not keeps_state(["Quote list Agents browse quotes", "Policy details"])
+    assert keeps_state([("Resume claim", _btns("Pick up where I left off", "Start over instead"))])
+    assert keeps_state([("Claim type", _btns("Back", "Save and exit", "Continue"))])
+    assert keeps_state([("Products", _btns("Add to cart"))])
+    assert keeps_state([("Shopping cart", _btns("Remove"))])
+    assert not keeps_state([("Quote list", _btns("New quote")), ("Policy details", [])])
+
+
+def test_a_document_that_mentions_a_draft_is_not_saved_progress() -> None:
+    # Real CRM screens: legal pages whose buttons only jump to their own sections.
+    assert not keeps_state(
+        [
+            ("Data Processing Agreement", _btns("4. Security", "Annex I — Details of processing")),
+            ("Terms of Service", _btns("1. Agreement and acceptance", "19. Contact")),
+            ("Draft terms", _btns("Open")),
+        ]
+    )
+    # Drafting one record is not the account's saved progress.
+    assert not keeps_state(
+        [("Service Request layout builder", _btns("Save Draft", "Discard Draft"))]
+    )
+    # A "Cart" title with nothing to act on is just a word.
+    assert not keeps_state([("Cart", [])])
 
 
 def test_start_fresh_and_resume_labels() -> None:
@@ -184,6 +207,28 @@ def test_going_in_circles():
     assert "came back to Hub" in going_in_circles(
         ["Hub", "A", "Hub", "B", "Hub", "C", "Hub", "D", "Hub"]
     )
+
+
+def test_circling_limits_come_from_settings() -> None:
+    from explorer_worker.sense import going_in_circles
+
+    walk = ["Home", "Form", "Form", "Form"]
+    assert "stayed on Form 3 times" in going_in_circles(walk)  # default
+    assert going_in_circles(walk, repeats=5) is None  # raised in Settings
+    assert "came back to Form 3 times" in going_in_circles(
+        ["Form", "A", "Form", "B", "Form"], repeats=9, max_visits=2
+    )
+
+
+def test_filling_a_form_in_parts_is_progress_not_circling() -> None:
+    from explorer_worker.sense import entered_something_new
+
+    seen: set[str] = set()
+    assert entered_something_new(["Opportunity Name = QA 1", "Amount = 25000"], seen)
+    assert entered_something_new(["Account = QA"], seen)  # the lookup, next
+    # Typing the same values again is what a stuck walk does: no progress.
+    assert not entered_something_new(["Account = QA"], seen)
+    assert not entered_something_new([], seen)
 
 
 def test_dismiss_like_matches_only_warning_answers() -> None:
@@ -243,5 +288,5 @@ def test_a_link_to_another_page_is_only_navigation():
 
 
 def test_a_cv_resume_is_not_saved_progress():
-    assert not keeps_state(["Add candidate: upload the candidate's resume and contact details"])
-    assert keeps_state(["Resume claim report: pick up where you left off"])
+    assert not keeps_state([("Add candidate", _btns("Upload resume", "Save candidate"))])
+    assert keeps_state([("Claim", _btns("Resume my claim"))])

@@ -54,6 +54,7 @@ from domain import (
     apply_test_run_cancel,
     effective_application,
     find_environment,
+    generation_settings_for,
     lock_test_run,
 )
 from domain.login_fields import is_login_field, visible_fields
@@ -5366,7 +5367,7 @@ async def get_test_run(
         if journey_ids
         else {}
     )
-    max_heal_attempts = session.exec(select(DiscoverySettings)).one().max_heal_attempts
+    max_heal_attempts = generation_settings_for(session, application.id).max_heal_attempts
     # Same staleness rule as `heal_test_result` below and the worker's claim.
     heal_live_after = datetime.now(UTC) - HEAL_CLAIM_STALE_AFTER
     heal_kinds = {
@@ -5666,7 +5667,7 @@ async def heal_test_result(
     ):
         raise HTTPException(status_code=404, detail="test result not found")
 
-    discovery_settings = session.exec(select(DiscoverySettings)).one()
+    discovery_settings = generation_settings_for(session, application.id)
     if test_result.status not in HEALABLE_STATUSES:
         raise HTTPException(status_code=409, detail="test result is not in a healable state")
     # Same rule the heal activity applies: a failure raised inside an
@@ -6250,3 +6251,51 @@ def update_settings(
     session.commit()
     session.refresh(settings)
     return _to_settings_read(settings)
+
+
+class GenerationSettings(BaseModel):
+    """One application's test-case generation settings (Application settings)."""
+
+    max_scenarios_per_journey: int | None
+    max_test_cases_per_application: int | None
+    max_heal_attempts: int
+    screenshot_capture: ScreenshotCapture
+
+
+@app.get("/applications/{application_id}/generation-settings", response_model=GenerationSettings)
+def get_generation_settings(
+    application_id: uuid.UUID, session: SessionDep, organization_id: CurrentOrgIdDep
+) -> GenerationSettings:
+    """Its own, or the organisation's until it has its own. Readable by
+    everyone on the app; only admins change them."""
+    application = _get_org_application(session, organization_id, application_id)
+    settings = generation_settings_for(session, application.id)
+    return GenerationSettings.model_validate(settings, from_attributes=True)
+
+
+@app.put("/applications/{application_id}/generation-settings", response_model=GenerationSettings)
+def update_generation_settings(
+    application_id: uuid.UUID,
+    payload: GenerationSettings,
+    session: SessionDep,
+    organization_id: CurrentOrgIdDep,
+    admin: CurrentAdminDep,
+) -> GenerationSettings:
+    application = _get_org_application(session, organization_id, application_id)
+    before = GenerationSettings.model_validate(
+        generation_settings_for(session, application.id), from_attributes=True
+    ).model_dump()
+    application.generation_settings = payload.model_dump()
+    session.add(application)
+    changes = field_changes(before, payload.model_dump())
+    if changes:
+        record_activity(
+            session,
+            admin,
+            "settings",
+            changes_summary("", changes),
+            application=application,
+            details={"changes": changes},
+        )
+    session.commit()
+    return payload

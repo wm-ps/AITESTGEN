@@ -190,6 +190,12 @@ export type RecordingSessionMintRead = {
 export type InteractionLevel = 'passive' | 'normal' | 'aggressive'
 export type RetentionPeriod = '1_day' | '1_week' | '1_month'
 export type ScreenshotCapture = 'failed' | 'passed' | 'all'
+// The test-case generation settings each application sets for itself.
+export type GenerationSettings = Pick<
+  SettingsRead,
+  'max_scenarios_per_journey' | 'max_test_cases_per_application' | 'max_heal_attempts' | 'screenshot_capture'
+>
+
 export type SettingsRead = {
   max_pages: number
   max_discovery_duration_minutes: number | null
@@ -812,6 +818,14 @@ export const api = {
   getSettings: () => request<SettingsRead>('/settings'),
   updateSettings: (payload: SettingsUpdate) =>
     request<SettingsRead>('/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
+  // One application's own generation settings (Application settings).
+  getGenerationSettings: (applicationId: string) =>
+    request<GenerationSettings>(`/applications/${applicationId}/generation-settings`),
+  updateGenerationSettings: (applicationId: string, payload: GenerationSettings) =>
+    request<GenerationSettings>(`/applications/${applicationId}/generation-settings`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
   getExecutionPolicy: (applicationId: string) =>
     request<ExecutionPolicyRead>(`/applications/${applicationId}/execution-policy`),
   updateExecutionPolicy: (applicationId: string, payload: ExecutionPolicyUpdate) =>

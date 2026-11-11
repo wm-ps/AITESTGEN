@@ -41,14 +41,16 @@ from domain.diagnostic_record import DiagnosticRecord
 from domain.discovery_error import DiscoveryError, ErrorCode
 from domain.discovery_run import DiscoveryRun
 from domain.discovery_settings import (
+    GENERATION_KEYS,
     DiscoverySettings,
     InteractionLevel,
     RetentionPeriod,
     ScreenshotCapture,
+    generation_settings_for,
 )
 from domain.execution_policy import ExecutionPolicy
-from domain.failure_explanation import FailureExplanationRecord, FailureExplanationStatus
 from domain.exploration_step import ExplorationStep
+from domain.failure_explanation import FailureExplanationRecord, FailureExplanationStatus
 from domain.form import Form
 from domain.form_field import FormField
 from domain.invite import Invite
@@ -103,6 +105,8 @@ __all__ = [
     "ErrorCode",
     "DiscoveryRun",
     "DiscoverySettings",
+    "GENERATION_KEYS",
+    "generation_settings_for",
     "InteractionLevel",
     "RetentionPeriod",
     "ScreenshotCapture",

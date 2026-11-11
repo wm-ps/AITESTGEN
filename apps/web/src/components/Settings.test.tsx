@@ -17,20 +17,6 @@ const SETTINGS_BODY = {
   max_heal_attempts: 3,
 }
 
-const EXPLORER_LIMITS = {
-  question_wait_minutes: 30,
-  mission_time_limit_minutes: 75,
-  run_time_limit_minutes: null,
-  first_look_time_limit_minutes: 120,
-  hidden_screen_search_minutes: 25,
-  ai_budget_usd: null,
-  first_look_max_screens: 150,
-  max_missions: 15,
-  steps_per_mission: 20,
-  max_scenarios: 150,
-  proof_replays: 1,
-}
-
 const CREDENTIAL_ENTRY = {
   application_id: 'app-1',
   application_name: 'Checkout App',
@@ -55,20 +41,7 @@ function stubFetch() {
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.endsWith('/domains')) return { ok: true, status: 200, json: async () => [DOMAIN_IN_USE, DOMAIN_UNUSED] }
-      if (url.endsWith('/explorer/settings')) return { ok: true, status: 200, json: async () => EXPLORER_LIMITS }
       if (url.endsWith('/settings')) return { ok: true, status: 200, json: async () => SETTINGS_BODY }
-      // CredentialsPanel hides itself entirely when `apps` is empty (nothing
-      // to point an "Add credentials" form at) — must be non-empty for the
-      // credentials table (from `/credentials`, below) to render at all. A
-      // deliberately different name than CREDENTIAL_ENTRY's — this app just
-      // populates the separate "Add credentials" dropdown, and a shared name
-      // would make `getByText('Checkout App')` ambiguous (table row + option).
-      if (url.endsWith('/home'))
-        return {
-          ok: true,
-          status: 200,
-          json: async () => [{ id: 'app-2', name: 'Marketing Site', environment: 'staging' }],
-        }
       if (url.endsWith('/credentials')) return { ok: true, status: 200, json: async () => [CREDENTIAL_ENTRY] }
       if (url.endsWith('/credentials/app-1/reveal')) return { ok: true, status: 200, json: async () => ({ password: 'super-secret' }) }
       if (url.endsWith('/credentials/app-1/verify')) return { ok: true, status: 200, json: async () => ({ reachable: true, detail: null }) }
@@ -81,6 +54,12 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+// Settings opens on the hub of cards; each section is one click away.
+async function openSection(title: string) {
+  render(<Settings user={ADMIN} onCancel={vi.fn()} />)
+  fireEvent.click(await screen.findByRole('button', { name: `Configure ${title}` }))
+}
+
 describe('Settings', () => {
   it('shows Access denied for a non-admin', async () => {
     render(<Settings user={MEMBER} onCancel={vi.fn()} />)
@@ -89,7 +68,7 @@ describe('Settings', () => {
 
   it('shows approved domains as chips with no edit option', async () => {
     stubFetch()
-    render(<Settings user={ADMIN} onCancel={vi.fn()} />)
+    await openSection('Saved credentials')
 
     await screen.findByText('shop.example.com')
     expect(screen.getByText('spare.example.com')).toBeTruthy()
@@ -98,7 +77,7 @@ describe('Settings', () => {
 
   it('refuses to remove a domain an application uses, and says which applications', async () => {
     stubFetch()
-    render(<Settings user={ADMIN} onCancel={vi.fn()} />)
+    await openSection('Saved credentials')
     await screen.findByText('shop.example.com')
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove shop.example.com' }))
@@ -111,7 +90,7 @@ describe('Settings', () => {
 
   it('removes a domain no application uses', async () => {
     stubFetch()
-    render(<Settings user={ADMIN} onCancel={vi.fn()} />)
+    await openSection('Saved credentials')
     await screen.findByText('spare.example.com')
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove spare.example.com' }))
@@ -124,7 +103,7 @@ describe('Settings', () => {
 
   it('adds an approved domain on Enter', async () => {
     stubFetch()
-    render(<Settings user={ADMIN} onCancel={vi.fn()} />)
+    await openSection('Saved credentials')
     await screen.findByText('shop.example.com')
 
     const input = screen.getByLabelText('Add a domain')
@@ -138,9 +117,17 @@ describe('Settings', () => {
     })
   })
 
+  it('lists saved credentials but leaves adding them to each application', async () => {
+    stubFetch()
+    await openSection('Saved credentials')
+    expect(await screen.findByText('Checkout App')).toBeTruthy()
+    expect(screen.queryByText('Add credentials')).toBeNull()
+    expect(screen.getByText(/open its Application settings/)).toBeTruthy()
+  })
+
   it('lists saved credentials with a masked secret, and reveals it on click', async () => {
     stubFetch()
-    render(<Settings user={ADMIN} onCancel={vi.fn()} />)
+    await openSection('Saved credentials')
 
     await screen.findByText('Checkout App')
     expect(screen.getByText('qa-account')).toBeTruthy()
@@ -152,7 +139,7 @@ describe('Settings', () => {
 
   it('turns sign-in off for an app with no login', async () => {
     stubFetch()
-    render(<Settings user={ADMIN} onCancel={vi.fn()} />)
+    await openSection('Saved credentials')
     const toggle = await screen.findByRole('switch', { name: 'Checkout App requires sign-in' })
     expect(toggle.getAttribute('aria-checked')).toBe('true')
 
@@ -167,35 +154,35 @@ describe('Settings', () => {
     expect(JSON.parse(String(call[1]?.body))).toEqual({ requires_login: false })
   })
 
-  it('shows the Explorer limits, not the crawler-only fields', async () => {
+  it('opens on a hub with one card per section', async () => {
     stubFetch()
-    render(<Settings user={ADMIN} onCancel={() => {}} />)
-    expect(await screen.findByText('Explorer limits')).toBeTruthy()
-    for (const group of ['Time', 'AI cost', 'Coverage', 'Accuracy']) expect(screen.getByText(group)).toBeTruthy()
-    expect((screen.getByLabelText('Question wait') as HTMLSelectElement).value).toBe('30')
-    expect(screen.queryByText('Maximum pages')).toBeNull()
-    expect(screen.queryByText('Interaction level')).toBeNull()
+    render(<Settings user={ADMIN} onCancel={vi.fn()} />)
+    for (const title of ['Saved credentials', 'Data retention'])
+      expect(await screen.findByRole('button', { name: `Configure ${title}` })).toBeTruthy()
+    // An application's own settings live on its Settings tab, not here.
+    for (const title of ['Explorer limits', 'Test case generation'])
+      expect(screen.queryByRole('button', { name: `Configure ${title}` })).toBeNull()
   })
 
-  it('waiting until you answer takes the mission time limit off', async () => {
+  it('discards unsaved changes and goes back to the hub', async () => {
     stubFetch()
-    render(<Settings user={ADMIN} onCancel={() => {}} />)
-    fireEvent.change(await screen.findByLabelText('Question wait'), { target: { value: 'none' } })
-    const mission = screen.getByLabelText('Mission time limit') as HTMLSelectElement
-    expect(mission.value).toBe('none')
-    expect(mission.disabled).toBe(true)
+    await openSection('Data retention')
+    const cleanUp = (await screen.findByLabelText(/Clean up/)) as HTMLSelectElement
+    fireEvent.change(cleanUp, { target: { value: '1_day' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Discard Changes' }))
+    expect((screen.getByLabelText(/Clean up/) as HTMLSelectElement).value).toBe('1_week')
+    fireEvent.click(screen.getByText('Back to Settings'))
+    expect(await screen.findByRole('button', { name: 'Configure Data retention' })).toBeTruthy()
   })
 
-  it('saves the Explorer limits with the other settings', async () => {
+  it('saves the data retention period', async () => {
     stubFetch()
-    render(<Settings user={ADMIN} onCancel={() => {}} />)
-    fireEvent.change(await screen.findByLabelText('AI budget per run (USD)'), { target: { value: '25' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }))
-    const fetchMock = vi.mocked(fetch)
+    await openSection('Data retention')
+    fireEvent.change(await screen.findByLabelText(/Clean up/), { target: { value: '1_month' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Configuration' }))
     await waitFor(() => {
-      const put = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/explorer/settings') && init?.method === 'PUT')
-      expect(put).toBeTruthy()
-      expect(JSON.parse(String(put![1]!.body)).ai_budget_usd).toBe(25)
+      const patch = vi.mocked(fetch).mock.calls.find(([url, init]) => String(url).endsWith('/settings') && init?.method === 'PATCH')
+      expect(JSON.parse(String(patch![1]!.body)).delete_project_after).toBe('1_month')
     })
   })
 })

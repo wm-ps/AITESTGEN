@@ -13,6 +13,7 @@ const KIND: Record<string, { icon: IconDefinition; label: string }> = {
   looks_wrong: { icon: faBug, label: 'Looks wrong' },
   crash: { icon: faBan, label: 'Broken screen' },
   server_error: { icon: faServer, label: 'Server error' },
+  api_error: { icon: faServer, label: 'API error' },
   broken_link: { icon: faLinkSlash, label: 'Broken link' },
 }
 

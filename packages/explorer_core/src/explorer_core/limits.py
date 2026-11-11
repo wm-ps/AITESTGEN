@@ -17,8 +17,13 @@ LIMIT_KEYS = (
     "first_look_max_screens",
     "max_missions",
     "steps_per_mission",
+    "steps_per_scenario",
+    "steps_per_journey",
     "max_scenarios",
     "proof_replays",
+    "same_screen_repeats",
+    "screen_visits",
+    "press_retries",
 )
 
 
@@ -32,7 +37,9 @@ def current_settings(session: Session) -> ExplorerSettings:
     return settings
 
 
-def snapshot(session: Session) -> dict[str, Any]:
-    """The limits a run starting now uses."""
+def snapshot(session: Session, own: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The limits a run starting now uses: the organisation's, with the
+    application's own (`Application.explorer_limits`, Application settings
+    page) on top."""
     settings = current_settings(session)
-    return {key: getattr(settings, key) for key in LIMIT_KEYS}
+    return {key: (own or {}).get(key, getattr(settings, key)) for key in LIMIT_KEYS}
