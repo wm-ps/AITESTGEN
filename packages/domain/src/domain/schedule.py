@@ -109,6 +109,13 @@ class Schedule(SQLModel, table=True):
         ),
     )
 
+    # Browsers and window size this schedule's runs use (see `run_target`).
+    # NULL = Chromium at 1280x720, so every existing schedule keeps today's
+    # behavior. Copied onto each run at fire time.
+    browsers: list[str] | None = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    viewport_width: int | None = Field(default=None, sa_column=Column(Integer, nullable=True))
+    viewport_height: int | None = Field(default=None, sa_column=Column(Integer, nullable=True))
+
     enabled: bool = Field(default=True, sa_column=Column(Boolean, nullable=False))
     # Deterministic, derived once at create time from `external_id`
     # (f"app-schedule-{external_id}") and never rewritten — so the handle

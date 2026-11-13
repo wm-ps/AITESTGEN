@@ -17,7 +17,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Literal
 
-from sqlalchemy import Column, DateTime, ForeignKey, text
+from sqlalchemy import Column, DateTime, ForeignKey, String, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -56,6 +56,13 @@ class TestResult(SQLModel, table=True):
         sa_column=Column(
             PGUUID(as_uuid=True), ForeignKey("scenario.id"), nullable=False, index=True
         ),
+    )
+    # Which browser engine this result ran on. A run with several browsers has
+    # one result per test per browser. Defaults to chromium, so every result
+    # from before this column reads as what it was: a Chromium run.
+    browser: str = Field(
+        default="chromium",
+        sa_column=Column(String, nullable=False, server_default=text("'chromium'")),
     )
     status: str = Field(default="pending")
     duration_ms: int | None = Field(default=None)

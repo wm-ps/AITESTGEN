@@ -69,15 +69,20 @@ def _live_inspection_enabled() -> bool:
 
 
 async def _run_live_inspection(
-    *, target_url: str, auth_state_path: Path | None
+    *, target_url: str, auth_state_path: Path | None, viewport: tuple[int, int]
 ) -> LiveInspectionResult | None:
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=True)
         try:
+            # The run's own window size, set explicitly: a page that lays out or
+            # positions elements by available space must be inspected at the
+            # size the healed test will run at. (Unset, Playwright's default
+            # happens to be 1280x720 — only right for a default-size run.)
+            size = {"width": viewport[0], "height": viewport[1]}
             context = await (
-                browser.new_context(storage_state=str(auth_state_path))
+                browser.new_context(storage_state=str(auth_state_path), viewport=size, screen=size)
                 if auth_state_path is not None
-                else browser.new_context()
+                else browser.new_context(viewport=size, screen=size)
             )
             try:
                 page = await context.new_page()
@@ -116,6 +121,7 @@ async def run_live_inspection(
     project_dir: Path,
     target_url: str,
     timeout_seconds: int = LIVE_INSPECTION_TIMEOUT_SECONDS,
+    viewport: tuple[int, int] = (1280, 720),
 ) -> LiveInspectionResult | None:
     """Launch a scoped, single-page Chromium context reusing this TestRun's
     own auth session (`project_dir/.auth/state.json`, the same file the
@@ -133,6 +139,7 @@ async def run_live_inspection(
             _run_live_inspection(
                 target_url=target_url,
                 auth_state_path=auth_state_path if auth_state_path.exists() else None,
+                viewport=viewport,
             ),
             timeout=timeout_seconds,
         )

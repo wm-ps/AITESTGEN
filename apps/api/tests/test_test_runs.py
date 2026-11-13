@@ -231,6 +231,215 @@ class TestTriggerRecordsStarter:
         assert workflow_input.triggered_by_name == "Tester"
 
 
+class TestTriggerBrowsersAndWindowSize:
+    """Which browsers and which one window size a run uses. Unset is Chrome at
+    1280x720, so the workflow input must carry None (Prepare applies the
+    default, or the schedule's choice) rather than a made-up value."""
+
+    @staticmethod
+    def _trigger(monkeypatch: pytest.MonkeyPatch, org: str, body: dict | None):
+        from api import main as api_main
+
+        started: list = []
+
+        class _FakeClient:
+            async def start_workflow(self, _run, workflow_input, **_kwargs) -> None:
+                started.append(workflow_input)
+
+        async def _fake_client() -> _FakeClient:
+            return _FakeClient()
+
+        async def _has_pollers(client: object, task_queue: str) -> bool:
+            return True
+
+        init_db()
+        client, _ = _signed_in_client(org)
+        application = _create_application(client, "Browsers App")
+        monkeypatch.setattr(api_main, "get_temporal_client", _fake_client)
+        monkeypatch.setattr(api_main, "has_pollers", _has_pollers)
+        response = client.post(f"/applications/{application['id']}/test-runs", json=body)
+        return response, started
+
+    def test_browsers_and_window_size_reach_the_workflow(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        response, [workflow_input] = self._trigger(
+            monkeypatch,
+            "Org Trigger Browsers",
+            {"browsers": ["firefox", "chromium"], "viewport": {"width": 1920, "height": 1080}},
+        )
+
+        assert response.status_code == 202
+        assert workflow_input.browsers == ["firefox", "chromium"]
+        assert (workflow_input.viewport_width, workflow_input.viewport_height) == (1920, 1080)
+
+    def test_nothing_chosen_passes_none_so_the_default_applies(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        response, [workflow_input] = self._trigger(monkeypatch, "Org Trigger Default", {})
+
+        assert response.status_code == 202
+        assert workflow_input.browsers is None
+        assert (workflow_input.viewport_width, workflow_input.viewport_height) == (None, None)
+
+    @pytest.mark.parametrize(
+        ("body", "message"),
+        [
+            ({"browsers": []}, "Select at least one browser"),
+            ({"browsers": ["chromium", "chromium"]}, "only be selected once"),
+            ({"browsers": ["edge"]}, "browsers"),
+            ({"viewport": {"width": 799, "height": 720}}, "Width must be between"),
+            ({"viewport": {"width": 1280, "height": 2161}}, "Height must be between"),
+        ],
+    )
+    def test_a_bad_choice_is_a_422_and_starts_nothing(
+        self, monkeypatch: pytest.MonkeyPatch, body: dict, message: str
+    ) -> None:
+        response, started = self._trigger(monkeypatch, "Org Trigger Bad Choice", body)
+
+        assert response.status_code == 422
+        assert message in response.text
+        assert started == []
+
+
+class TestRunDetailBrowsers:
+    def test_detail_reports_each_results_browser_and_the_runs_window_size(self) -> None:
+        init_db()
+        client, _ = _signed_in_client("Org Detail Browsers")
+        application = _create_application(client, "Detail Browsers App")
+        application_pk, asset = _seed_test_asset(application)
+        run = _seed_test_run(
+            application_pk,
+            browsers=["chromium", "firefox"],
+            viewport_width=1920,
+            viewport_height=1080,
+            total_count=2,
+        )
+        with Session(engine) as session:
+            for browser in ("chromium", "firefox"):
+                session.add(
+                    TestResult(
+                        test_run_id=run.id,
+                        test_asset_id=asset.id,
+                        scenario_id=asset.scenario_id,
+                        browser=browser,
+                        status="passed" if browser == "chromium" else "failed",
+                        error_message=None if browser == "chromium" else "boom",
+                    )
+                )
+            session.commit()
+            scenario_external_id = session.get(Scenario, asset.scenario_id).external_id
+
+        body = client.get(f"/applications/{application['id']}/test-runs/{run.external_id}").json()
+
+        assert body["browsers"] == ["chromium", "firefox"]
+        assert (body["viewport_width"], body["viewport_height"]) == (1920, 1080)
+        assert sorted((r["browser"], r["status"]) for r in body["results"]) == [
+            ("chromium", "passed"),
+            ("firefox", "failed"),
+        ]
+        # Both results are for the same test: that is what the Runs tab groups on.
+        assert {r["scenario_id"] for r in body["results"]} == {str(scenario_external_id)}
+
+    def test_an_earlier_run_reads_as_chrome_at_1280x720(self) -> None:
+        init_db()
+        client, _ = _signed_in_client("Org Detail Default")
+        application = _create_application(client, "Detail Default App")
+        application_pk, _ = _seed_test_asset(application)
+        run = _seed_test_run(application_pk)
+
+        body = client.get(f"/applications/{application['id']}/test-runs/{run.external_id}").json()
+
+        assert body["browsers"] == ["chromium"]
+        assert (body["viewport_width"], body["viewport_height"]) == (1280, 720)
+
+
+class TestRunsOnSeveralBrowsers:
+    """A run on several browsers has one result per test per browser. Things
+    that used to assume one result per test must still say the right thing."""
+
+    @staticmethod
+    def _add_results(run: TestRun, asset: TestAsset, outcomes: dict[str, str]) -> None:
+        with Session(engine) as session:
+            for browser, status in outcomes.items():
+                session.add(
+                    TestResult(
+                        test_run_id=run.id,
+                        test_asset_id=asset.id,
+                        scenario_id=asset.scenario_id,
+                        browser=browser,
+                        status=status,
+                    )
+                )
+            session.commit()
+
+    def _suite_row_status(self, client: TestClient, application: dict) -> str:
+        body = client.get(f"/applications/{application['id']}/test-suite-status").json()
+        return body["items"][0]["status"]
+
+    def test_the_suite_row_fails_when_any_browser_failed_in_the_latest_run(self) -> None:
+        init_db()
+        client, _ = _signed_in_client("Org Browsers Suite Row")
+        application = _create_application(client, "Browsers Suite Row App")
+        app_id, asset = _seed_test_asset(application)
+        self._add_results(_seed_test_run(app_id), asset, {"chromium": "passed", "firefox": "failed"})
+
+        assert self._suite_row_status(client, application) == "failed"
+
+    def test_the_suite_row_reads_only_the_newest_run(self) -> None:
+        init_db()
+        client, _ = _signed_in_client("Org Browsers Suite Newest")
+        application = _create_application(client, "Browsers Suite Newest App")
+        app_id, asset = _seed_test_asset(application)
+        self._add_results(_seed_test_run(app_id), asset, {"chromium": "passed", "firefox": "failed"})
+        self._add_results(_seed_test_run(app_id), asset, {"chromium": "passed"})
+
+        assert self._suite_row_status(client, application) == "passed"
+
+    def _latest_is_flaky(self, org: str, runs: list[tuple[dict[str, str], dict]]) -> bool:
+        """Seeds one run per `(outcomes by browser, run overrides)`, oldest first,
+        and says whether the newest run's results are flagged flaky."""
+        init_db()
+        client, _ = _signed_in_client(org)
+        application = _create_application(client, f"{org} App")
+        app_id, asset = _seed_test_asset(application)
+        latest = None
+        for outcomes, overrides in runs:
+            latest = _seed_test_run(app_id, **overrides)
+            self._add_results(latest, asset, outcomes)
+        assert latest is not None
+        body = client.get(f"/applications/{application['id']}/test-runs/{latest.external_id}").json()
+        return any(r["is_flaky"] for r in body["results"])
+
+    def test_a_failing_second_browser_is_not_flakiness(self) -> None:
+        runs = [
+            ({"chromium": "passed", "firefox": "passed" if i % 2 else "failed"}, {})
+            for i in range(4)
+        ]
+        assert not self._latest_is_flaky("Org Browsers Not Flaky", runs)
+
+    def test_flip_flopping_on_the_reference_browser_is_still_flaky(self) -> None:
+        runs = [
+            ({"chromium": "passed" if i % 2 else "failed", "firefox": "passed"}, {})
+            for i in range(4)
+        ]
+        assert self._latest_is_flaky("Org Browsers Still Flaky", runs)
+
+    def test_a_different_window_size_is_not_flakiness(self) -> None:
+        """Passing at 1280 and failing at 1024 is a difference between sizes, not
+        a test that flips on its own."""
+        wide = {"viewport_width": 1280, "viewport_height": 720}
+        narrow = {"viewport_width": 1024, "viewport_height": 768}
+        runs = [
+            ({"chromium": "passed"}, wide),
+            ({"chromium": "failed"}, narrow),
+            ({"chromium": "passed"}, wide),
+            ({"chromium": "failed"}, narrow),
+            ({"chromium": "passed"}, wide),
+        ]
+        assert not self._latest_is_flaky("Org Browsers Sizes", runs)
+
+
 class TestExecutionStatus:
     @pytest.mark.skipif(not _temporal_available(), reason="requires Temporal reachable")
     def test_reports_unavailable_when_execution_queue_has_no_worker(
@@ -984,7 +1193,13 @@ class TestCancelTestRun:
 
     @staticmethod
     def _running_run_with_results(application: dict) -> tuple[TestRun, dict[str, uuid.UUID]]:
-        application_pk, asset = _seed_test_asset(application)
+        # One test per result, like a real run: results of the same test only
+        # repeat across browsers, and counts are per test.
+        seeded = {
+            label: _seed_test_asset(application, scenario_name=f"Cancel {label}")
+            for label in ("passed", "queued", "running")
+        }
+        application_pk = seeded["passed"][0]
         test_run = _seed_test_run(
             application_pk,
             status="running",
@@ -996,6 +1211,7 @@ class TestCancelTestRun:
         result_ids: dict[str, uuid.UUID] = {}
         with Session(engine) as session:
             for label, status in (("passed", "passed"), ("queued", "pending"), ("running", "pending")):
+                asset = seeded[label][1]
                 result = TestResult(
                     test_run_id=test_run.id,
                     test_asset_id=asset.id,

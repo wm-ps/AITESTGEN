@@ -502,6 +502,80 @@ async def test_execute_test_retries_once_after_session_invalidation(
         assert result.status == "passed"
 
 
+async def test_execute_test_runs_playwright_on_the_results_browser_and_the_runs_window_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The generated config reads AITESTGEN_BROWSER / AITESTGEN_VIEWPORT, so the
+    Playwright subprocess must be handed this result's browser and the run's
+    size — and nothing else about its env may be dropped."""
+    init_db()
+    application = _seed_application()
+    asset = _seed_test_asset(application, safety_classification="SAFE")
+
+    with Session(engine) as session:
+        test_run = TestRun(
+            application_id=application.id,
+            run_number=1,
+            status="running",
+            environment_snapshot="staging",
+            target_base_url_snapshot=application.url,
+            browsers=["chromium", "firefox"],
+            viewport_width=1920,
+            viewport_height=1080,
+        )
+        session.add(test_run)
+        session.flush()
+        test_result = TestResult(
+            test_run_id=test_run.id,
+            test_asset_id=asset.id,
+            scenario_id=asset.scenario_id,
+            browser="firefox",
+            status="pending",
+        )
+        session.add(test_result)
+        session.commit()
+        session.refresh(test_run)
+        session.refresh(test_result)
+        test_run_external_id = test_run.external_id
+        test_result_external_id = test_result.external_id
+
+    monkeypatch.setattr(activities_module, "_ensure_project_dir", lambda *a, **k: _noop())
+    monkeypatch.setattr(
+        activities_module, "_build_subprocess_env", lambda *a, **k: {"AITESTGEN_SCREENSHOT": "on"}
+    )
+    envs = []
+
+    async def fake_run_playwright_test(project_dir, spec_path, env, *a, **k):
+        envs.append(env)
+        return {
+            "status": "passed",
+            "duration_ms": 50,
+            "error_message": None,
+            "stack_trace": None,
+            "console_output": None,
+            "artifact_paths": [],
+        }
+
+    monkeypatch.setattr(activities_module, "_run_playwright_test", fake_run_playwright_test)
+
+    await activities_module.execute_test_activity(
+        ExecuteTestActivityInput(
+            application_id=str(application.external_id),
+            test_run_id=str(test_run_external_id),
+            test_result_id=str(test_result_external_id),
+            test_asset_id=str(asset.external_id),
+        )
+    )
+
+    assert envs == [
+        {
+            "AITESTGEN_SCREENSHOT": "on",
+            "AITESTGEN_BROWSER": "firefox",
+            "AITESTGEN_VIEWPORT": "1920x1080",
+        }
+    ]
+
+
 async def test_execute_test_does_not_retry_an_unrelated_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1060,6 +1134,78 @@ def test_collect_uses_only_each_executed_tests_persisted_attempt(tmp_path) -> No
     )
     # Only the persisted attempt's own attachment was copied.
     assert len(list(final_dir.glob("*-attachment.png"))) == 1
+
+
+def _write_attempt_with_history_id(project_dir, test_result: TestResult, history_id: str) -> str:
+    """Like `_write_attempt` (a passed result), but with the `historyId`
+    allure-playwright gives every result of the same test."""
+    attempt = uuid.uuid4().hex
+    folder = project_dir / "allure-results" / str(test_result.external_id) / attempt
+    folder.mkdir(parents=True)
+    result_uuid = str(uuid.uuid4())
+    (folder / f"{result_uuid}-result.json").write_text(
+        activities_module.json.dumps(
+            {
+                "uuid": result_uuid,
+                "name": "Completes checkout",
+                "status": "passed",
+                "historyId": history_id,
+                "parameters": [{"name": "Project", "value": "public"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return attempt
+
+
+def test_collect_keeps_the_same_test_on_two_browsers_as_two_results(tmp_path) -> None:
+    """The same test on two browsers shares allure-playwright's history id, which
+    Allure would read as retries of one test and merge. Firefox gets its own;
+    Chrome keeps the one it always had, so its trend continues."""
+    init_db()
+    test_run, asset = _seed_completed_test_run()
+    now = datetime.now(UTC)
+    for browser in ("chromium", "firefox"):
+        result = _add_test_result(test_run, asset, "passed", completed_at=now, browser=browser)
+        _mark_persisted(
+            tmp_path, result, _write_attempt_with_history_id(tmp_path, result, "history-1")
+        )
+
+    inventory, _ = activities_module._load_report_inventory_sync(str(test_run.external_id))
+    final_dir, used, synthesized = activities_module._collect_final_allure_results(
+        tmp_path, inventory
+    )
+
+    assert (used, synthesized) == (2, 0)
+    results = [
+        activities_module.json.loads(file.read_text(encoding="utf-8"))
+        for file in final_dir.glob("*-result.json")
+    ]
+    by_browser = {
+        next(p["value"] for p in r["parameters"] if p["name"] == "Browser"): r for r in results
+    }
+    assert set(by_browser) == {"Chrome", "Firefox"}
+    assert by_browser["Chrome"]["historyId"] == "history-1"
+    assert by_browser["Firefox"]["historyId"] == "history-1:firefox"
+    # The test's own parameters are kept.
+    assert {"name": "Project", "value": "public"} in by_browser["Firefox"]["parameters"]
+
+
+def test_collect_leaves_a_chrome_only_run_untouched(tmp_path) -> None:
+    init_db()
+    test_run, asset = _seed_completed_test_run()
+    result = _add_test_result(test_run, asset, "passed", completed_at=datetime.now(UTC))
+    _mark_persisted(tmp_path, result, _write_attempt_with_history_id(tmp_path, result, "history-1"))
+
+    inventory, _ = activities_module._load_report_inventory_sync(str(test_run.external_id))
+    final_dir, _, _ = activities_module._collect_final_allure_results(tmp_path, inventory)
+
+    (only,) = (
+        activities_module.json.loads(file.read_text(encoding="utf-8"))
+        for file in final_dir.glob("*-result.json")
+    )
+    assert only["historyId"] == "history-1"
+    assert only["parameters"] == [{"name": "Project", "value": "public"}]
 
 
 @pytest.mark.parametrize("make_empty_dir", [False, True])

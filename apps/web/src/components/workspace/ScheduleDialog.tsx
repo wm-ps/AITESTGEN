@@ -4,7 +4,9 @@ import { ApiError, api, type ScheduleCadenceType, type ScheduleCreate, type Sche
 import { modalButton, modalCloseButton, modalFooter, modalHeader, modalOverlay, modalPanel, modalTitle } from '../modalStyles'
 import { LoadingDots } from '../LoadingDots'
 import { EnvironmentSelect } from '../environments/EnvironmentSelect'
+import { DEFAULT_TARGET, isDefaultTarget, sameTarget, targetFromSchedule, viewportError, type RunTarget } from '../../runTarget'
 import { SuiteSelect } from './suites/SuiteSelect'
+import { TargetSelect } from './TargetSelect'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { faIcon } from '../../faIcon'
 
@@ -56,6 +58,8 @@ type FormState = {
   environmentId: string | null
   // null = every test case.
   testCollectionId: string | null
+  // The browsers and window size every run of this schedule uses.
+  target: RunTarget
 }
 
 function blankForm(): FormState {
@@ -69,6 +73,7 @@ function blankForm(): FormState {
     cronExpression: '',
     environmentId: null,
     testCollectionId: null,
+    target: DEFAULT_TARGET,
   }
 }
 
@@ -83,6 +88,7 @@ function formFromSchedule(schedule: ScheduleRead): FormState {
     cronExpression: schedule.cron_expression ?? '',
     environmentId: schedule.environment_id ?? null,
     testCollectionId: schedule.test_collection_id ?? null,
+    target: targetFromSchedule(schedule),
   }
 }
 
@@ -127,6 +133,7 @@ export function ScheduleDialog({
   const [form, setForm] = useState<FormState>(initial ? formFromSchedule(initial) : blankForm())
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const sizeError = viewportError(form.target.viewport)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -144,6 +151,13 @@ export function ScheduleDialog({
       // and null moves the schedule back to every test case.
       if (form.testCollectionId !== (initial?.test_collection_id ?? null)) {
         payload.test_collection_id = form.testCollectionId
+      }
+      // And for the browsers and window size: only when changed, and back to the
+      // default (Chrome at 1280 × 720) is an explicit null.
+      if (!sameTarget(form.target, initial ? targetFromSchedule(initial) : DEFAULT_TARGET)) {
+        const isDefault = isDefaultTarget(form.target)
+        payload.browsers = isDefault ? null : form.target.browsers
+        payload.viewport = isDefault ? null : form.target.viewport
       }
       if (initial) {
         await api.updateSchedule(initial.id, payload)
@@ -201,6 +215,8 @@ export function ScheduleDialog({
               value={form.environmentId}
               onChange={(environmentId) => setForm({ ...form, environmentId })}
             />
+
+            <TargetSelect value={form.target} onChange={(target) => setForm({ ...form, target })} />
 
             <label className="field">
               <FieldLabel>Cadence</FieldLabel>
@@ -331,8 +347,8 @@ export function ScheduleDialog({
             <button
               type="submit"
               className="button-primary"
-              disabled={submitting}
-              style={{ ...modalButton, cursor: submitting ? 'not-allowed' : 'pointer' }}
+              disabled={submitting || sizeError !== null}
+              style={{ ...modalButton, cursor: submitting || sizeError ? 'not-allowed' : 'pointer' }}
             >
               {submitting ? <LoadingDots label="Saving" /> : initial ? 'Save changes' : 'Create schedule'}
             </button>

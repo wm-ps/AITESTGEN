@@ -20,6 +20,10 @@ import httpx
 from ai_provider.hosted import HostedAIProvider
 from domain import (
     CANCELLABLE_TEST_RUN_STATUSES,
+    DEFAULT_BROWSER,
+    DEFAULT_VIEWPORT_HEIGHT,
+    DEFAULT_VIEWPORT_WIDTH,
+    HEAL_BROWSER,
     Action,
     ApiEndpoint,
     Application,
@@ -56,7 +60,10 @@ from domain import (
     find_environment,
     generation_settings_for,
     lock_test_run,
+    normalize_browsers,
+    validate_viewport,
 )
+from domain.run_target import Browser
 from domain.login_fields import is_login_field, visible_fields
 from domain.recorded_test_data import RecordedFieldsChanged, apply_recorded_test_data
 import hvac.exceptions
@@ -3912,6 +3919,13 @@ class TestResultRead(BaseModel):
     # display id — None only if the Scenario itself was hard-deleted since
     # this TestResult ran (scenario_name falls back to "" the same way).
     test_case_number: int | None
+    # The Scenario this result is for. A run on several browsers has one result
+    # per test per browser; the Runs tab groups them by this. None only if the
+    # Scenario was hard-deleted since.
+    scenario_id: uuid.UUID | None = None
+    # Which browser engine this result ran on (the run's window size is on the
+    # run, see `TestRunRead`).
+    browser: str = DEFAULT_BROWSER
     status: str
     duration_ms: int | None
     error_message: str | None
@@ -3994,6 +4008,11 @@ class TestRunRead(BaseModel):
     blocked_reason: str | None
     environment_snapshot: str
     target_base_url_snapshot: str
+    # The browsers and the one window size this run executed against (Chrome at
+    # 1280x720 for every run from before they were selectable).
+    browsers: list[str] = [DEFAULT_BROWSER]
+    viewport_width: int = DEFAULT_VIEWPORT_WIDTH
+    viewport_height: int = DEFAULT_VIEWPORT_HEIGHT
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
@@ -4058,6 +4077,9 @@ def _to_test_run_read(
         blocked_reason=test_run.blocked_reason,
         environment_snapshot=test_run.environment_snapshot,
         target_base_url_snapshot=test_run.target_base_url_snapshot,
+        browsers=test_run.browsers,
+        viewport_width=test_run.viewport_width,
+        viewport_height=test_run.viewport_height,
         created_at=test_run.created_at,
         started_at=test_run.started_at,
         completed_at=test_run.completed_at,
@@ -4067,7 +4089,31 @@ def _to_test_run_read(
     )
 
 
-class TriggerTestRunRequest(BaseModel):
+class ViewportBody(BaseModel):
+    width: int
+    height: int
+
+
+class RunTargetFields(BaseModel):
+    """The browsers and the one window size a run (or a schedule's runs)
+    executes against. Both optional: unset is Chrome at 1280x720, what a run
+    always was. Checked here so a bad request is a 422 with a readable message,
+    and again, cheaply, by the worker that acts on it."""
+
+    browsers: list[Browser] | None = None
+    viewport: ViewportBody | None = None
+
+    @model_validator(mode="after")
+    def _valid_run_target(self) -> "RunTargetFields":
+        # ValueError becomes a 422 whose message is the rule's own wording.
+        if self.browsers is not None:
+            normalize_browsers(self.browsers)
+        if self.viewport is not None:
+            validate_viewport(self.viewport.width, self.viewport.height)
+        return self
+
+
+class TriggerTestRunRequest(RunTargetFields):
     # Run Suite Flow: both unset (the default, empty-body request) is a Full
     # Suite run — unscoped, unchanged behavior. `suite_name` set means a
     # "Run Journey(s)" run; `test_case_ids` are `TestCaseRead.id` values
@@ -4139,6 +4185,9 @@ async def trigger_test_run(
             test_asset_ids=test_asset_ids,
             environment_id=str(body.environment_id) if body.environment_id else None,
             test_collection_id=str(collection.external_id) if collection else None,
+            browsers=list(body.browsers) if body.browsers else None,
+            viewport_width=body.viewport.width if body.viewport else None,
+            viewport_height=body.viewport.height if body.viewport else None,
         ),
         # Every run is a genuinely new TestRun (no rerun/idempotency key the
         # way suite-{journey_id}-{attempt} has) — the id only needs to be
@@ -4289,7 +4338,7 @@ async def execution_status(
 # --------------------------------------------------------------------------
 
 
-class ScheduleCreate(BaseModel):
+class ScheduleCreate(RunTargetFields):
     """No `time_zone` — every new schedule (manual or auto-seeded) gets
     `SCHEDULE_DEFAULT_TIME_ZONE` unconditionally, see `create_schedule`
     below. `ScheduleUpdate.time_zone` still exists for an explicit PATCH
@@ -4310,7 +4359,7 @@ class ScheduleCreate(BaseModel):
     test_collection_id: uuid.UUID | None = None
 
 
-class ScheduleUpdate(BaseModel):
+class ScheduleUpdate(RunTargetFields):
     """Every field optional — PATCH-merge, only non-None values applied,
     same convention as TestDataEntryUpdate. The merged result is then
     re-validated as a whole by `validate_cadence` (never just the supplied
@@ -4358,6 +4407,10 @@ class ScheduleRead(BaseModel):
     # None = every current test case. The name is read live, so a rename shows.
     test_collection_id: uuid.UUID | None = None
     test_collection_name: str | None = None
+    # What this schedule's runs use; Chrome at 1280x720 when none was chosen.
+    browsers: list[str] = [DEFAULT_BROWSER]
+    viewport_width: int = DEFAULT_VIEWPORT_WIDTH
+    viewport_height: int = DEFAULT_VIEWPORT_HEIGHT
 
 
 def _to_schedule_read(
@@ -4375,6 +4428,9 @@ def _to_schedule_read(
         else None
     )
     return ScheduleRead(
+        browsers=schedule.browsers or [DEFAULT_BROWSER],
+        viewport_width=schedule.viewport_width or DEFAULT_VIEWPORT_WIDTH,
+        viewport_height=schedule.viewport_height or DEFAULT_VIEWPORT_HEIGHT,
         test_collection_id=collection.external_id if collection else None,
         test_collection_name=collection.name if collection else None,
         environment_id=environment.external_id if environment else None,
@@ -4577,6 +4633,9 @@ async def _create_schedule_row(
     created_by_user_id: uuid.UUID | None = None,
     environment_id: uuid.UUID | None = None,
     test_collection_id: uuid.UUID | None = None,
+    browsers: list[str] | None = None,
+    viewport_width: int | None = None,
+    viewport_height: int | None = None,
 ) -> Schedule:
     """Row + matching Temporal Schedule, shared by the user-triggered
     `create_schedule` endpoint and default-schedule seeding at Application
@@ -4609,6 +4668,9 @@ async def _create_schedule_row(
         created_by_user_id=created_by_user_id,
         environment_id=environment_id,
         test_collection_id=test_collection_id,
+        browsers=browsers,
+        viewport_width=viewport_width,
+        viewport_height=viewport_height,
     )
     schedule.temporal_schedule_id = f"app-schedule-{schedule.external_id}"
     session.add(schedule)
@@ -4773,6 +4835,9 @@ async def create_schedule(
             created_by_user_id=user.id,
             environment_id=environment.id if environment else None,
             test_collection_id=collection.id if collection else None,
+            browsers=normalize_browsers(payload.browsers) if payload.browsers else None,
+            viewport_width=payload.viewport.width if payload.viewport else None,
+            viewport_height=payload.viewport.height if payload.viewport else None,
         )
     except ScheduleSpecError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from None
@@ -4829,6 +4894,14 @@ async def update_schedule(
             if payload.environment_id
             else None
         )
+    # Like the environment, read from this row when the run starts
+    # (`_prepare_test_run_sync`), so no Temporal action change is needed. An
+    # explicit null puts the schedule back on Chrome at 1280x720.
+    if "browsers" in payload.model_fields_set:
+        schedule.browsers = normalize_browsers(payload.browsers) if payload.browsers else None
+    if "viewport" in payload.model_fields_set:
+        schedule.viewport_width = payload.viewport.width if payload.viewport else None
+        schedule.viewport_height = payload.viewport.height if payload.viewport else None
     if "test_collection_id" in payload.model_fields_set:
         # Like the environment, read from this row when the run starts
         # (`_prepare_test_run_sync`), so no Temporal action change is needed.
@@ -5261,6 +5334,8 @@ def _flaky_histories(
     persist the first-attempt status / an attempts table."""
     current: dict[uuid.UUID, bool] = {}
     for r in results:
+        if r.browser != DEFAULT_BROWSER:
+            continue
         if r.status in _FLAKY_PASS_STATUSES and r.healed_test_asset_id is None:
             current[r.scenario_id] = True
         elif r.status in _FLAKY_FAIL_STATUSES:
@@ -5285,6 +5360,12 @@ def _flaky_histories(
             TestRun.status == "completed",
             TestRun.run_number < test_run.run_number,
             TestRun.triggered_by_name.is_distinct_from(_INTERNAL_VERIFICATION_TRIGGER_NAME),  # type: ignore[union-attr]
+            # Flaky means the same conditions giving different outcomes, so only
+            # earlier results on the same browser and window size count — a test
+            # that passes at 1920 and fails at 1024 is a difference, not flakiness.
+            TestResult.browser == DEFAULT_BROWSER,  # type: ignore[arg-type]
+            TestRun.viewport_width == test_run.viewport_width,  # type: ignore[arg-type]
+            TestRun.viewport_height == test_run.viewport_height,  # type: ignore[arg-type]
             TestResult.scenario_id.in_(current),  # type: ignore[attr-defined]
             TestResult.status.in_(_FLAKY_PASS_STATUSES | _FLAKY_FAIL_STATUSES),  # type: ignore[attr-defined]
             or_(
@@ -5411,6 +5492,10 @@ async def get_test_run(
             test_case_number=scenarios_by_id[r.scenario_id].test_case_number
             if r.scenario_id in scenarios_by_id
             else None,
+            scenario_id=scenarios_by_id[r.scenario_id].external_id
+            if r.scenario_id in scenarios_by_id
+            else None,
+            browser=r.browser,
             status=r.status,
             duration_ms=r.duration_ms,
             error_message=r.error_message,
@@ -5668,6 +5753,10 @@ async def heal_test_result(
         raise HTTPException(status_code=404, detail="test result not found")
 
     discovery_settings = generation_settings_for(session, application.id)
+    # Same rule as `heal_test_activity`: a heal rewrites the one test every
+    # browser shares, so only the reference browser's failures are healed.
+    if test_result.browser != HEAL_BROWSER:
+        raise HTTPException(status_code=409, detail="self-heal only runs on Chrome results")
     if test_result.status not in HEALABLE_STATUSES:
         raise HTTPException(status_code=409, detail="test result is not in a healable state")
     # Same rule the heal activity applies: a failure raised inside an
@@ -5821,10 +5910,26 @@ def _latest_result_by_scenario(
         )
         .order_by(TestResult.created_at.desc())  # type: ignore[arg-type]
     ).all()
-    latest_by_scenario: dict[uuid.UUID, TestResult] = {}
+    # A run on several browsers has one result per browser. The row reads the
+    # newest run's results as one: a failure on any browser shows as failed.
+    latest_run_by_scenario: dict[uuid.UUID, uuid.UUID] = {}
+    latest_run_results: dict[uuid.UUID, list[TestResult]] = {}
     for result in results:
-        latest_by_scenario.setdefault(result.scenario_id, result)
-    return latest_by_scenario
+        run_id = latest_run_by_scenario.setdefault(result.scenario_id, result.test_run_id)
+        if run_id == result.test_run_id:
+            latest_run_results.setdefault(result.scenario_id, []).append(result)
+    return {
+        scenario_id: min(rows, key=_suite_row_badness)
+        for scenario_id, rows in latest_run_results.items()
+    }
+
+
+def _suite_row_badness(result: TestResult) -> int:
+    """Lower is shown first: a failure beats a pass, which beats an unfinished
+    result (`min` keeps the first of equals, so a one-browser run is unchanged)."""
+    if result.status in ("failed", "timed_out", "errored"):
+        return 0
+    return 1 if result.status == "passed" else 2
 
 
 def _collapse_to_suite_row_status(result: TestResult | None) -> str:

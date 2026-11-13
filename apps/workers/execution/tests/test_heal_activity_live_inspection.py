@@ -214,6 +214,8 @@ async def test_live_inspection_runs_and_heal_attempt_count_increments_exactly_on
     # application's own URL rather than any page-specific one).
     fake_run_live_inspection.assert_awaited_once()
     assert fake_run_live_inspection.await_args.kwargs["target_url"] == application.url
+    # ...at the run's window size (the default one for this seed).
+    assert fake_run_live_inspection.await_args.kwargs["viewport"] == (1280, 720)
 
     # ...and its output reached the AI call.
     assert len(_FakeAIProvider.calls) == 1

@@ -29,7 +29,7 @@ import shutil
 import subprocess
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -37,7 +37,10 @@ from pathlib import Path
 
 from ai_provider.hosted import HostedAIProvider, invented_locator_names
 from domain import (
+    BROWSER_LABELS,
     CANCELLABLE_TEST_RUN_STATUSES,
+    DEFAULT_BROWSER,
+    HEAL_BROWSER,
     Application,
     ApplicationEnvironment,
     FailureExplanationRecord,
@@ -52,12 +55,15 @@ from domain import (
     TestRun,
     TestSuite,
     apply_test_run_cancel,
+    count_tests,
     effective_application,
     find_environment,
     generation_settings_for,
     lock_test_run,
+    normalize_browsers,
     runnable_asset_external_ids,
     tally_result_counts,
+    validate_viewport,
 )
 from generation_worker import spec_linter
 from generation_worker.activities import (
@@ -76,7 +82,9 @@ from sqlmodel import Session, select
 from temporalio import activity
 from test_suite_assembler import (
     ALLURE_RESULTS_DIR_ENV,
+    BROWSER_ENV,
     REPORT_TITLE_ENV,
+    VIEWPORT_ENV,
     assemble_test_suite_project_to_dir,
     compute_spec_paths,
     find_login_page_evidence,
@@ -404,7 +412,7 @@ def _rebuild_project_dir_sync(test_run_id: uuid.UUID, application_id: uuid.UUID)
             inputs.login_evidence,
             retarget_from,
         )
-    _install_project(dest_dir)
+    _install_project(dest_dir, run.browsers)
     # This function only runs when the project dir was missing (evicted
     # from local disk mid-TestRun, e.g. by a worker restart) — a rebuild
     # must recreate .auth/state.json too when the app needs one, exactly
@@ -460,14 +468,40 @@ def _prepare_test_run_sync(
         environment: ApplicationEnvironment | None = None
         schedule_environment_pk: uuid.UUID | None = None
         schedule_collection_pk: uuid.UUID | None = None
+        schedule_browsers: list[str] | None = None
+        schedule_viewport: tuple[int | None, int | None] = (None, None)
         if input.schedule_id is not None:
             schedule_row = session.exec(
-                select(Schedule.environment_id, Schedule.test_collection_id).where(
-                    Schedule.external_id == uuid.UUID(input.schedule_id)
-                )
+                select(
+                    Schedule.environment_id,
+                    Schedule.test_collection_id,
+                    Schedule.browsers,
+                    Schedule.viewport_width,
+                    Schedule.viewport_height,
+                ).where(Schedule.external_id == uuid.UUID(input.schedule_id))
             ).first()
             if schedule_row is not None:
-                schedule_environment_pk, schedule_collection_pk = schedule_row
+                (
+                    schedule_environment_pk,
+                    schedule_collection_pk,
+                    schedule_browsers,
+                    schedule_width,
+                    schedule_height,
+                ) = schedule_row
+                schedule_viewport = (schedule_width, schedule_height)
+
+        # Browsers and the one window size this run executes against: the ones
+        # asked for, else the triggering schedule's (read fresh, like the
+        # environment), else Chromium at 1280x720 — what every run did before
+        # they were selectable. The API validated them already; this also
+        # normalizes (reference browser first) and covers a schedule row.
+        browsers = normalize_browsers(input.browsers or schedule_browsers)
+        if input.viewport_width is not None or input.viewport_height is not None:
+            viewport_width, viewport_height = validate_viewport(
+                input.viewport_width, input.viewport_height
+            )
+        else:
+            viewport_width, viewport_height = validate_viewport(*schedule_viewport)
         if input.environment_id is not None:
             environment = find_environment(session, application, input.environment_id)
         elif schedule_environment_pk is not None:
@@ -553,6 +587,9 @@ def _prepare_test_run_sync(
             environment_snapshot=target.environment,
             target_base_url_snapshot=target.url,
             environment_id=environment.id if environment is not None else None,
+            browsers=browsers,
+            viewport_width=viewport_width,
+            viewport_height=viewport_height,
             triggered_by_name=input.triggered_by_name,
             triggered_by_user_id=(
                 uuid.UUID(input.triggered_by_user_id) if input.triggered_by_user_id else None
@@ -575,7 +612,8 @@ def _prepare_test_run_sync(
         # stuck "running" with an inconsistent set of TestResult rows.
         executable: list[ExecutableTest] = []
         pending_assets: list = []
-        test_results_by_asset_id: dict[uuid.UUID, TestResult] = {}
+        # One TestResult per test per browser (a one-browser run: per test).
+        test_results_by_asset_id: dict[tuple[uuid.UUID, str], TestResult] = {}
         try:
             test_asset_ids = (
                 {uuid.UUID(a) for a in asset_id_refs} if asset_id_refs is not None else None
@@ -597,15 +635,17 @@ def _prepare_test_run_sync(
                 session.commit()
                 return empty_result
             for asset in test_assets:
-                test_result = TestResult(
-                    test_run_id=test_run.id,
-                    test_asset_id=asset.id,
-                    scenario_id=asset.scenario_id,
-                    status="pending",
-                )
-                session.add(test_result)
-                session.flush()
-                test_results_by_asset_id[asset.id] = test_result
+                for browser in browsers:
+                    test_result = TestResult(
+                        test_run_id=test_run.id,
+                        test_asset_id=asset.id,
+                        scenario_id=asset.scenario_id,
+                        browser=browser,
+                        status="pending",
+                    )
+                    session.add(test_result)
+                    session.flush()
+                    test_results_by_asset_id[(asset.id, browser)] = test_result
 
             test_run.total_count = len(test_assets)
             session.add(test_run)
@@ -628,7 +668,7 @@ def _prepare_test_run_sync(
                 inputs.login_evidence,
                 retarget_from,
             )
-            _install_project(dest_dir)
+            _install_project(dest_dir, browsers)
             if inputs.login_evidence is not None:
                 _run_auth_setup_once(dest_dir, target)
         except Exception as exc:  # noqa: BLE001 — infra failure, not a test outcome
@@ -649,8 +689,8 @@ def _prepare_test_run_sync(
                 test_result.error_message = f"failed to prepare the test project: {exc}"
                 test_result.completed_at = datetime.now(UTC)
                 session.add(test_result)
-            test_run.total_count = len(test_results_by_asset_id)
-            test_run.errored_count = len(test_results_by_asset_id)
+            test_run.total_count = count_tests(test_results_by_asset_id.values())
+            test_run.errored_count = test_run.total_count
             test_run.status = "completed"
             test_run.completed_at = datetime.now(UTC)
             session.add(test_run)
@@ -666,15 +706,19 @@ def _prepare_test_run_sync(
 
         if _test_run_cancelled_sync(test_run_id=str(test_run.external_id)):
             return empty_result
-        for asset in pending_assets:
-            test_result = test_results_by_asset_id[asset.id]
-            executable.append(
-                ExecutableTest(
-                    test_result_id=str(test_result.external_id),
-                    test_asset_id=str(asset.external_id),
-                    signs_in_itself=_signs_in_itself(asset),
+        # Browser-major: the workflow runs one wave per browser in the order
+        # seen, so the reference browser's results come first.
+        for browser in browsers:
+            for asset in pending_assets:
+                test_result = test_results_by_asset_id[(asset.id, browser)]
+                executable.append(
+                    ExecutableTest(
+                        test_result_id=str(test_result.external_id),
+                        test_asset_id=str(asset.external_id),
+                        signs_in_itself=_signs_in_itself(asset),
+                        browser=browser,
+                    )
                 )
-            )
 
         # An app that keeps progress per login (saved drafts, a cart) can't
         # take several tests at once on its one test account: they overwrite
@@ -805,17 +849,20 @@ async def _refresh_auth_once(
         await asyncio.to_thread(_run_auth_setup_once, dest_dir, application)
 
 
-def _install_project(dest_dir: Path) -> None:
+def _install_project(dest_dir: Path, browsers: Sequence[str] = ("chromium",)) -> None:
     """`npm install`, not `npm ci` — the assembled project has no
     `package-lock.json` (generated fresh every run, never checked into
-    anything a lockfile could pin against). Chromium is pre-installed at the
-    Docker image layer (see this app's Dockerfile), but `playwright install`
-    still runs per-project as a cheap cache-hit safety net in case the
-    pinned `@playwright/test` version in `package.json` ever drifts from the
-    image's pre-installed browser revision."""
+    anything a lockfile could pin against). The browsers are pre-installed at
+    the Docker image layer (see this app's Dockerfile), but `playwright
+    install` still runs per-project as a cheap cache-hit safety net in case
+    the pinned `@playwright/test` version in `package.json` ever drifts from
+    the image's pre-installed browser revision. Only the run's own browsers
+    are installed — plus Chromium, which the shared login (`setup` project)
+    always uses."""
     run_process_sync([_resolve_bin("npm"), "install"], cwd=str(dest_dir), timeout=300)
+    engines = ["chromium", *(b for b in browsers if b != "chromium")]
     run_process_sync(
-        [_resolve_bin("npx"), "playwright", "install", "chromium"], cwd=str(dest_dir), timeout=300
+        [_resolve_bin("npx"), "playwright", "install", *engines], cwd=str(dest_dir), timeout=300
     )
 
 
@@ -824,6 +871,22 @@ class _ExecutionContext:
     application: Application
     test_result_pk: uuid.UUID
     spec_path: str
+    # The browser this result runs on and the run's window size — what
+    # `_browser_env` hands the Playwright subprocess. Defaults are what every
+    # run did before they were selectable.
+    browser: str = "chromium"
+    viewport_width: int = 1280
+    viewport_height: int = 720
+
+
+def _browser_env(env: dict, browser: str, viewport_width: int, viewport_height: int) -> dict:
+    """`env` plus the browser and window size the generated Playwright config
+    reads (see test_suite_assembler's `_DEVICE_LINES`)."""
+    return {
+        **env,
+        BROWSER_ENV: browser,
+        VIEWPORT_ENV: f"{viewport_width}x{viewport_height}",
+    }
 
 
 @activity.defn(name="ExecuteTestActivity")
@@ -852,13 +915,21 @@ async def _execute_test(input: ExecuteTestActivityInput) -> str:
         return input.test_result_id
 
     logger.info(
-        "ExecuteTestActivity: test_result_id=%s starting spec_path=%s",
+        "ExecuteTestActivity: test_result_id=%s starting spec_path=%s browser=%s viewport=%dx%d",
         input.test_result_id,
         context.spec_path,
+        context.browser,
+        context.viewport_width,
+        context.viewport_height,
     )
     test_run_id = uuid.UUID(input.test_run_id)
     await _ensure_project_dir(test_run_id, uuid.UUID(input.application_id))
-    env = await asyncio.to_thread(_build_subprocess_env, context.application)
+    env = _browser_env(
+        await asyncio.to_thread(_build_subprocess_env, context.application),
+        context.browser,
+        context.viewport_width,
+        context.viewport_height,
+    )
     project_dir = project_dir_for(test_run_id)
     test_started_at = time.monotonic()
     outcome = await _run_playwright_test(
@@ -956,6 +1027,9 @@ def _load_execution_context_sync(input: ExecuteTestActivityInput) -> _ExecutionC
             application=application,
             test_result_pk=test_result.id,
             spec_path=spec_path_by_asset_id[test_asset.id],
+            browser=test_result.browser,
+            viewport_width=test_run.viewport_width,
+            viewport_height=test_run.viewport_height,
         )
 
 
@@ -1534,6 +1608,11 @@ class _HealContext:
     # environment shares it), so a heal shows the model — and writes to the
     # project dir — the environment's URLs, but only saves default-hosted code.
     retarget_from: str | None = None
+    # The run's window size. A heal inspects the live page, and re-runs the
+    # healed test, at this size — so what it fixes is validated at the size the
+    # user selected, not at the default.
+    viewport_width: int = 1280
+    viewport_height: int = 720
 
 
 def _code_for_run(code: str | None, ctx: _HealContext) -> str | None:
@@ -1562,6 +1641,20 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
         ).one()
         if test_run_status == "cancelled":
             # No AI call and no attempt spent on a cancelled run.
+            return None
+        # ponytail: heal only on the reference browser (Chromium). A heal
+        # rewrites the one test every browser shares, so healing a Firefox or
+        # Safari failure would hide a real browser difference instead of fixing
+        # a stale locator. Healing per browser would need a test version per
+        # browser. Same safe no-op as the ineligible cases below, so the
+        # workflow still calls this unconditionally after every execute.
+        if test_result.browser != HEAL_BROWSER:
+            logger.info(
+                "HealTestActivity: test_result_id=%s ran on %s, not healed (only %s is)",
+                input.test_result_id,
+                test_result.browser,
+                HEAL_BROWSER,
+            )
             return None
         application_id = session.exec(
             select(TestRun.application_id).where(TestRun.id == test_result.test_run_id)
@@ -1647,6 +1740,8 @@ def _load_heal_context_sync(input: HealTestActivityInput) -> _HealContext | None
                 app_overlay_dismissals_sync(session, journey.application_id),
             ),
             attempt_cap=attempt_cap,
+            viewport_width=test_run.viewport_width,
+            viewport_height=test_run.viewport_height,
         )
 
 
@@ -1851,9 +1946,21 @@ async def _heal_test(input: HealTestActivityInput) -> None:
 
         await _ensure_project_dir(uuid.UUID(input.test_run_id), uuid.UUID(input.application_id))
         project_dir = project_dir_for(uuid.UUID(input.test_run_id))
-        env = await asyncio.to_thread(_build_subprocess_env, ctx.application)
+        # Every rerun below uses the run's window size (and the reference
+        # browser — nothing else is ever healed, see `_load_heal_context_sync`).
+        env = _browser_env(
+            await asyncio.to_thread(_build_subprocess_env, ctx.application),
+            HEAL_BROWSER,
+            ctx.viewport_width,
+            ctx.viewport_height,
+        )
         exec_context = _ExecutionContext(
-            application=ctx.application, test_result_pk=ctx.test_result_pk, spec_path=ctx.spec_path
+            application=ctx.application,
+            test_result_pk=ctx.test_result_pk,
+            spec_path=ctx.spec_path,
+            browser=HEAL_BROWSER,
+            viewport_width=ctx.viewport_width,
+            viewport_height=ctx.viewport_height,
         )
 
         # Step 2 — infra check on the failure that triggered healing, before
@@ -1943,7 +2050,9 @@ async def _heal_test(input: HealTestActivityInput) -> None:
                     "locator_failure_classifier" if locator_failure_matched else "ai_requested",
                 )
                 live_inspection_result = await run_live_inspection(
-                    project_dir=project_dir, target_url=target_url
+                    project_dir=project_dir,
+                    target_url=target_url,
+                    viewport=(ctx.viewport_width, ctx.viewport_height),
                 )
 
             try:
@@ -2126,6 +2235,7 @@ class _ReportInventoryItem:
     stack_trace: str | None
     name: str
     spec_path: str | None
+    browser: str = "chromium"
 
 
 def _load_report_inventory_sync(test_run_id: str) -> tuple[list[_ReportInventoryItem], str]:
@@ -2180,6 +2290,7 @@ def _load_report_inventory_sync(test_run_id: str) -> tuple[list[_ReportInventory
                 stack_trace=r.stack_trace,
                 name=scenarios[r.scenario_id].name if r.scenario_id in scenarios else "Test",
                 spec_path=spec_path_by_scenario_id.get(r.scenario_id),
+                browser=r.browser,
             )
             for r in results
         ]
@@ -2259,6 +2370,29 @@ def _synthesized_result(item: _ReportInventoryItem) -> dict:
     }
 
 
+def _browser_parameter(browser: str) -> dict:
+    return {"name": "Browser", "value": BROWSER_LABELS.get(browser, browser)}
+
+
+def _write_result_for_browser(source: Path, dest: Path, browser: str) -> None:
+    """Copies one Allure `*-result.json`, adding a "Browser" parameter and — for
+    a browser other than Chrome — a history id of its own, so the same test on
+    two browsers stays two results in the report. Chrome keeps its history id,
+    so its trend continues from earlier single-browser runs. A file that isn't
+    the JSON object Allure writes is copied untouched."""
+    try:
+        result = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        result = None
+    if not isinstance(result, dict):
+        shutil.copy2(source, dest)
+        return
+    result["parameters"] = [*(result.get("parameters") or []), _browser_parameter(browser)]
+    if browser != DEFAULT_BROWSER and result.get("historyId"):
+        result["historyId"] = f"{result['historyId']}:{browser}"
+    dest.write_text(json.dumps(result), encoding="utf-8")
+
+
 def _collect_final_allure_results(
     project_dir: Path, inventory: list[_ReportInventoryItem]
 ) -> tuple[Path, int, int]:
@@ -2274,6 +2408,11 @@ def _collect_final_allure_results(
     shutil.rmtree(final_dir, ignore_errors=True)
     final_dir.mkdir(parents=True)
     used = synthesized = 0
+    # A run on one browser (Chrome) reports exactly as before. With several,
+    # every result says which browser it ran on, and a non-Chrome result gets
+    # its own history id: the same test on two browsers would otherwise share
+    # one, and Allure reads that as retries of a single test.
+    multi_browser = any(item.browser != DEFAULT_BROWSER for item in inventory)
     for item in inventory:
         folder = results_root / item.external_id
         if not folder.is_dir():
@@ -2281,11 +2420,17 @@ def _collect_final_allure_results(
         attempt_dir = _valid_final_attempt(folder, item)
         if attempt_dir is not None:
             for file in attempt_dir.iterdir():
-                if file.is_file():
+                if not file.is_file():
+                    continue
+                if multi_browser and file.name.endswith("-result.json"):
+                    _write_result_for_browser(file, final_dir / file.name, item.browser)
+                else:
                     shutil.copy2(file, final_dir / file.name)
             used += 1
         else:
             synthetic = _synthesized_result(item)
+            if multi_browser:
+                synthetic["parameters"] = [_browser_parameter(item.browser)]
             (final_dir / f"{synthetic['uuid']}-result.json").write_text(
                 json.dumps(synthetic), encoding="utf-8"
             )
@@ -2538,7 +2683,12 @@ def _load_run_email_sync(
             base_url=FRONTEND_BASE_URL,
             failed_tests=[
                 FailedTest(
-                    name=scenario.name,
+                    # A test that failed on two browsers is two lines; say which.
+                    name=(
+                        f"{scenario.name} — {BROWSER_LABELS.get(result.browser, result.browser)}"
+                        if len(test_run.browsers) > 1
+                        else scenario.name
+                    ),
                     journey=journey.name if journey is not None else None,
                     status=result.status,
                     error_message=_test_failure_message(result.error_message),
@@ -2713,7 +2863,7 @@ def _finalize_test_run_sync(input: FinalizeTestRunActivityInput) -> None:
                 session.add(result)
 
         counts = _tally_counts(results)
-        test_run.total_count = len(results)
+        test_run.total_count = count_tests(results)
         test_run.passed_count = counts["passed"]
         test_run.failed_count = counts["failed"]
         test_run.timed_out_count = counts["timed_out"]

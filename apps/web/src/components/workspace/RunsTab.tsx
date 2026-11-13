@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowUpRightFromSquare, faCircleExclamation, faClapperboard, faImage, faShieldHalved, faTriangleExclamation, faWandMagicSparkles, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faArrowUpRightFromSquare, faCheck, faCircleExclamation, faClapperboard, faImage, faMinus, faShieldHalved, faTriangleExclamation, faWandMagicSparkles, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis, type TooltipContentProps } from 'recharts'
 import {
   ApiError,
@@ -11,6 +11,7 @@ import {
   type TestResultRead,
   type TestRunRead,
 } from '../../api'
+import { BouncingDots } from '../LoadingDots'
 import { StatusPill } from '../StatusPill'
 import { Pill } from '../../explorer/ui'
 import { ServiceErrorNote } from '../ServiceError'
@@ -22,6 +23,20 @@ import { modalCloseButton, modalHeader, modalOverlay, modalPanel, modalTitle } f
 import { useCanEdit, useIsViewer } from '../../PermissionsContext'
 import { ChevronIcon } from './TestSuiteTab'
 import { allureReportRoute } from '../../allureReportRoute'
+import { browserLabel, targetLabel, type Browser, type Viewport } from '../../runTarget'
+import { BrowserIcon } from './BrowserIcon'
+import {
+  failsOnlyOn,
+  failsOnlyOnLabel,
+  groupDurationMs,
+  groupResultsByTest,
+  groupStatus,
+  resultBrowser,
+  runBrowsers,
+  runTargetSummary,
+  runViewport,
+  type TestGroup,
+} from './runResults'
 
 const POLL_INTERVAL_MS = 1500
 // ~10s: how long a manual Retry's own poll waits for the heal to show as in
@@ -313,15 +328,15 @@ const RUN_ROW_GRID_TEMPLATE =
 
 type ResultBucket = 'passed' | 'healed' | 'failed'
 
-// Every finished result lands in exactly one bucket by its own status, so the
-// buckets always sum to the run's finished results. A self-healed test passed
-// (after healing) and gets its own bucket so healing stays visible; it counts
-// toward the pass rate. Pending/blocked/cancelled results have no bucket.
+// Every finished test lands in exactly one bucket (one per test, so the counts
+// agree with the rows and the run's Total): failed on any browser is failed;
+// passed on every browser is passed, or self-healed if any of them was healed
+// (it counts toward the pass rate). Still running or skipped has no bucket.
 // Flaky is not a bucket — `is_flaky` is a separate overlay count (see `RunDetail`).
-function resultBucket(result: TestResultRead): ResultBucket | null {
-  if (result.status !== 'passed' && !NON_PASSED_STATUSES.has(result.status)) return null
-  if (result.status !== 'passed') return 'failed'
-  return result.healed_test_asset_id != null ? 'healed' : 'passed'
+function groupBucket(results: TestResultRead[]): ResultBucket | null {
+  const status = groupStatus(results)
+  if (status === 'passed') return results.some((r) => r.healed_test_asset_id != null) ? 'healed' : 'passed'
+  return NON_PASSED_STATUSES.has(status) ? 'failed' : null
 }
 
 const emptyBuckets = (): Record<ResultBucket, number> => ({ passed: 0, healed: 0, failed: 0 })
@@ -338,21 +353,23 @@ function passRateColor(rate: number): string {
 // re-learning the layout.
 type ResultSortKey = 'name' | 'duration' | 'status'
 
-function resultSortValue(result: TestResultRead, key: ResultSortKey): string | number {
+function groupSortValue(group: TestGroup, key: ResultSortKey): string | number {
   switch (key) {
     case 'name':
-      return result.scenario_name.toLowerCase()
+      return group.results[0].scenario_name.toLowerCase()
     case 'duration':
-      return result.duration_ms ?? -1
+      return groupDurationMs(group.results) ?? -1
     case 'status':
-      return result.status
+      return groupStatus(group.results)
   }
 }
 
-function sortResults(results: TestResultRead[], key: ResultSortKey, dir: 'asc' | 'desc'): TestResultRead[] {
-  const sorted = [...results].sort((a, b) => {
-    const av = resultSortValue(a, key)
-    const bv = resultSortValue(b, key)
+// A row is a test, which on several browsers is several results: it sorts by
+// its name, its total time and its overall status.
+function sortGroups(groups: TestGroup[], key: ResultSortKey, dir: 'asc' | 'desc'): TestGroup[] {
+  const sorted = [...groups].sort((a, b) => {
+    const av = groupSortValue(a, key)
+    const bv = groupSortValue(b, key)
     if (av < bv) return -1
     if (av > bv) return 1
     return 0
@@ -417,18 +434,21 @@ function ResultListHeader({
   )
 }
 
-function TestResultRow({
+// Everything one TestResult keeps while its row is on screen: its live copy
+// (a heal can change it between run polls), its own heal poll, its lazily
+// loaded artifacts, and what the heal chips should say. Shared by a one-browser
+// row and by each browser section of a multi-browser row.
+function useResultState({
   applicationId,
   runId,
   result,
-  isCurrentlyRunning,
+  expanded,
 }: {
   applicationId: string
   runId: string
   result: TestResultRead
-  isCurrentlyRunning?: boolean
+  expanded: boolean
 }) {
-  const [expanded, setExpanded] = useState(false)
   const [artifacts, setArtifacts] = useState<TestResultArtifactRead[] | null>(null)
   const [artifactsError, setArtifactsError] = useState<string | null>(null)
   const [liveResult, setLiveResult] = useState(result)
@@ -503,6 +523,10 @@ function TestResultRow({
     }
   }, [expanded, canLoadArtifacts, artifacts, liveResult.id])
 
+  // Only Chrome results are ever healed: a heal rewrites the one test every
+  // browser shares, so healing a Firefox or Safari failure would hide a real
+  // browser difference. Same rule as the API and the worker.
+  const canHeal = resultBrowser(liveResult) === 'chromium'
   // Manual eligibility is independent of automatic's own state — a test
   // whose automatic healing already used its fixed 2 attempts still offers
   // a manual retry, as long as manual's own separate budget isn't spent.
@@ -510,6 +534,7 @@ function TestResultRow({
   // Self-healing/Self-healed/Exhausted labels are status, so they still show.
   const canRetryHeal =
     canEdit &&
+    canHeal &&
     NON_PASSED_STATUSES.has(liveResult.status) &&
     liveResult.manual_heal_attempt_count < liveResult.max_heal_attempts
   // Self-healing never acts on a failure raised inside an assertion — the
@@ -522,6 +547,7 @@ function TestResultRow({
   // retry still available, same as a test that was never auto-healed at
   // all. Only the manual loop reaching max_heal_attempts is exhaustion.
   const healExhausted =
+    canHeal &&
     liveResult.max_heal_attempts > 0 &&
     NON_PASSED_STATUSES.has(liveResult.status) &&
     liveResult.manual_heal_attempt_count >= liveResult.max_heal_attempts
@@ -545,6 +571,173 @@ function TestResultRow({
       setHealing(false)
     }
   }
+
+  return {
+    liveResult,
+    artifacts,
+    artifactsError,
+    healError,
+    canShowArtifacts,
+    canLoadArtifacts,
+    canRetryHeal,
+    healBlockedReason,
+    healExhausted,
+    wasAutoHealed,
+    showHealing,
+    healingTitle,
+    handleHeal,
+  }
+}
+
+type ResultState = ReturnType<typeof useResultState>
+
+// Self-healing status/action lives right on the test case it applies to, not
+// off in its own column — a labeled chip (not a bare icon) so the state reads on
+// its own without a hover tooltip. Healed/retry/healing/exhausted are mutually
+// exclusive (status passed vs. non-passed), so only one chip ever renders per
+// row. `showFlaky` is false in a browser section: flakiness belongs to the test,
+// shown once on its row.
+function HealChips({ state, showFlaky }: { state: ResultState; showFlaky: boolean }) {
+  const { liveResult, wasAutoHealed, showHealing, canRetryHeal, healBlockedReason, healExhausted, handleHeal } = state
+  return (
+    <>
+      {wasAutoHealed && (
+        <span title="Failed on first run — automatically remediated by self-healing." style={healChipStyle('var(--good)')}>
+          <AutoHealedIcon />
+          Self-healed
+        </span>
+      )}
+      {/* An overlay next to the status, not a bucket: a flaky result
+          also counts as Passed or Failed in the summary. */}
+      {showFlaky && liveResult.is_flaky && (
+        <span style={healChipStyle('var(--flaky)')}>
+          Flaky
+        </span>
+      )}
+      {!showHealing && canRetryHeal && healBlockedReason && (
+        <button
+          type="button"
+          disabled
+          title={healBlockedReason}
+          aria-label={`Retry with self-healing unavailable: ${healBlockedReason}`}
+          style={{ ...healChipStyle('var(--fg-4)'), cursor: 'not-allowed', fontFamily: 'inherit', opacity: 0.6 }}
+        >
+          <SelfHealIcon />
+          Retry
+        </button>
+      )}
+      {!showHealing && canRetryHeal && !healBlockedReason && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation()
+            handleHeal()
+          }}
+          title="Retry this test with self-healing"
+          style={{ ...healChipStyle('var(--accent)'), cursor: 'pointer', fontFamily: 'inherit' }}
+        >
+          <SelfHealIcon />
+          Retry
+        </button>
+      )}
+      {/* No separate "Healing" chip while a heal runs — the status pill
+          on the right already reads "Self-healing" with trailing dots
+          and carries this attempt tooltip, so one label, not two. */}
+      {/* Exhausted — its own chip + warn tint (not the retry chip
+          faded), so "no more heal attempts, needs a human" doesn't
+          read as a merely-disabled version of the retry chip above. */}
+      {!showHealing && healExhausted && (
+        <span
+          title={`Self-healing remediation exhausted after ${liveResult.max_heal_attempts} manual attempts — manual triage required.`}
+          style={healChipStyle('var(--warn-strong)')}
+        >
+          <HealExhaustedIcon />
+          Heal exhausted
+        </span>
+      )}
+    </>
+  )
+}
+
+// What an opened result shows: why it failed, and its screenshot and trace.
+function ResultBody({ state }: { state: ResultState }) {
+  const { liveResult, healError, artifacts, artifactsError, canShowArtifacts, canLoadArtifacts } = state
+  return (
+    <>
+      {liveResult.status === 'passed' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 0 10px' }}>
+          <PassedIllustration />
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>Passed cleanly</div>
+            <div className="caption" style={{ fontSize: 12, marginTop: 2 }}>
+              No errors — this scenario ran with nothing to flag.
+            </div>
+          </div>
+        </div>
+      )}
+      {liveResult.status === 'blocked' && liveResult.blocked_reason && (
+        <p className="caption" style={{ margin: '0 0 10px', fontSize: 12.5 }}>
+          {liveResult.blocked_reason}
+        </p>
+      )}
+      {canShowArtifacts && (liveResult.error_message || liveResult.failure_title) && (
+        <FailureDetails result={liveResult} />
+      )}
+      {healError && <p style={{ color: 'var(--danger-strong)', fontSize: 12, margin: '0 0 10px' }}>{healError}</p>}
+      {canLoadArtifacts && (
+        <>
+          {artifactsError && (
+            <p style={{ color: 'var(--danger-strong)', fontSize: 12, margin: '0 0 10px' }}>{artifactsError}</p>
+          )}
+          {artifacts === null && !artifactsError && (
+            <p className="caption" style={{ fontSize: 12 }}>
+              Loading screenshot/trace…
+            </p>
+          )}
+          {canShowArtifacts && artifacts !== null && artifacts.length === 0 && !artifactsError && (
+            <p className="caption" style={{ fontSize: 12 }}>
+              No screenshot or trace was captured for this failure.
+            </p>
+          )}
+          {artifacts !== null && artifacts.length > 0 && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              {artifacts.map((artifact) => (
+                <a
+                  key={artifact.id}
+                  href={artifact.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="button-secondary"
+                  style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                >
+                  {artifact.artifact_type === 'trace' ? <FontAwesomeIcon icon={faClapperboard} style={{ fontSize: 12 }} /> : <FontAwesomeIcon icon={faImage} style={{ fontSize: 12 }} />}
+                  {artifact.artifact_type === 'trace' ? 'Playwright trace' : 'Screenshot'} (
+                  {Math.max(1, Math.round(artifact.size_bytes / 1024))} KB)
+                </a>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </>
+  )
+}
+
+// A test that ran on one browser: one row, as it always was.
+function TestResultRow({
+  applicationId,
+  runId,
+  result,
+  isCurrentlyRunning,
+}: {
+  applicationId: string
+  runId: string
+  result: TestResultRead
+  isCurrentlyRunning?: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const state = useResultState({ applicationId, runId, result, expanded })
+  const { liveResult, showHealing, healingTitle } = state
 
   return (
     <div>
@@ -581,66 +774,7 @@ function TestResultRow({
           >
             {formatTestCaseNumber(liveResult.test_case_number)} — {liveResult.scenario_name}
           </span>
-          {/* Self-healing status/action lives right on the test case it
-              applies to, not off in its own column — a labeled chip (not a
-              bare icon) so the state reads on its own without a hover
-              tooltip. Healed/retry/healing/exhausted are mutually exclusive
-              (status passed vs. non-passed), so only one chip ever renders
-              per row. */}
-          {wasAutoHealed && (
-            <span title="Failed on first run — automatically remediated by self-healing." style={healChipStyle('var(--good)')}>
-              <AutoHealedIcon />
-              Self-healed
-            </span>
-          )}
-          {/* An overlay next to the status, not a bucket: a flaky result
-              also counts as Passed or Failed in the summary. */}
-          {liveResult.is_flaky && (
-            <span style={healChipStyle('var(--flaky)')}>
-              Flaky
-            </span>
-          )}
-          {!showHealing && canRetryHeal && healBlockedReason && (
-            <button
-              type="button"
-              disabled
-              title={healBlockedReason}
-              aria-label={`Retry with self-healing unavailable: ${healBlockedReason}`}
-              style={{ ...healChipStyle('var(--fg-4)'), cursor: 'not-allowed', fontFamily: 'inherit', opacity: 0.6 }}
-            >
-              <SelfHealIcon />
-              Retry
-            </button>
-          )}
-          {!showHealing && canRetryHeal && !healBlockedReason && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation()
-                handleHeal()
-              }}
-              title="Retry this test with self-healing"
-              style={{ ...healChipStyle('var(--accent)'), cursor: 'pointer', fontFamily: 'inherit' }}
-            >
-              <SelfHealIcon />
-              Retry
-            </button>
-          )}
-          {/* No separate "Healing" chip while a heal runs — the status pill
-              on the right already reads "Self-healing" with trailing dots
-              and carries this attempt tooltip, so one label, not two. */}
-          {/* Exhausted — its own chip + warn tint (not the retry chip
-              faded), so "no more heal attempts, needs a human" doesn't
-              read as a merely-disabled version of the retry chip above. */}
-          {!showHealing && healExhausted && (
-            <span
-              title={`Self-healing remediation exhausted after ${liveResult.max_heal_attempts} manual attempts — manual triage required.`}
-              style={healChipStyle('var(--warn-strong)')}
-            >
-              <HealExhaustedIcon />
-              Heal exhausted
-            </span>
-          )}
+          <HealChips state={state} showFlaky />
         </div>
         <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>
           {liveResult.duration_ms != null ? `${(liveResult.duration_ms / 1000).toFixed(1)}s` : '—'}
@@ -661,61 +795,243 @@ function TestResultRow({
 
       {expanded && (
         <div style={{ padding: '0 16px 14px 40px' }}>
-          {liveResult.status === 'passed' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 0 10px' }}>
-              <PassedIllustration />
-              <div>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-2)' }}>Passed cleanly</div>
-                <div className="caption" style={{ fontSize: 12, marginTop: 2 }}>
-                  No errors — this scenario ran with nothing to flag.
-                </div>
-              </div>
+          <ResultBody state={state} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+const CHIP_STATUS_TEXT: Record<string, string> = {
+  passed: 'Passed',
+  failed: 'Failed',
+  timed_out: 'Timed out',
+  errored: 'Errored',
+  pending: 'Running',
+  blocked: 'Skipped',
+  cancelled: 'Cancelled',
+}
+
+// One browser's result for a test: its logo and how it went in words, so it reads
+// "validated in Chrome: Passed" without relying on colour. Hovering says the size.
+function BrowserChip({ result, viewport }: { result: TestResultRead; viewport: Viewport }) {
+  const browser = resultBrowser(result)
+  const failed = NON_PASSED_STATUSES.has(result.status)
+  const color = result.status === 'passed' ? 'var(--good-strong)' : failed ? 'var(--danger-strong)' : 'var(--fg-4)'
+  const text = CHIP_STATUS_TEXT[result.status] ?? result.status
+  const label = `${targetLabel(browser, viewport)} · ${text}`
+  return (
+    <span role="img" aria-label={label} title={label} style={{ ...healChipStyle(color), padding: '2px 8px', gap: 5 }}>
+      <BrowserIcon browser={browser} size={16} />
+      {text}
+      {result.status === 'pending' && <BouncingDots size={3} />}
+    </span>
+  )
+}
+
+// One browser's panel of an opened test: what happened on that browser, with
+// the same body a one-browser row shows. Only the selected browser's tab mounts it.
+function BrowserPanel({
+  applicationId,
+  runId,
+  result,
+  onLive,
+}: {
+  applicationId: string
+  runId: string
+  result: TestResultRead
+  onLive: (result: TestResultRead) => void
+}) {
+  const state = useResultState({ applicationId, runId, result, expanded: true })
+  const { liveResult, showHealing, healingTitle } = state
+  useEffect(() => {
+    onLive(liveResult)
+  }, [liveResult, onLive])
+
+  return (
+    <div role="tabpanel" style={{ paddingTop: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <HealChips state={state} showFlaky={false} />
+        <span style={{ flex: 1 }} />
+        <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>
+          {liveResult.duration_ms != null ? `${(liveResult.duration_ms / 1000).toFixed(1)}s` : '—'}
+        </span>
+        <span title={showHealing ? healingTitle : undefined}>
+          <StatusPill
+            status={liveResult.status}
+            label={showHealing ? 'Self-healing' : undefined}
+            pulsing={showHealing}
+            variant="flat"
+          />
+        </span>
+      </div>
+      <ResultBody state={state} />
+    </div>
+  )
+}
+
+// The browsers of an opened test as horizontal tabs: logo, name and size, and a
+// mark for how it went. A failed browser is selected first, else the first one.
+function BrowserTabs({
+  applicationId,
+  runId,
+  results,
+  viewport,
+  onLive,
+}: {
+  applicationId: string
+  runId: string
+  results: TestResultRead[]
+  viewport: Viewport
+  onLive: (result: TestResultRead) => void
+}) {
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const selected =
+    results.find((r) => r.id === selectedId) ?? results.find((r) => NON_PASSED_STATUSES.has(r.status)) ?? results[0]
+
+  return (
+    <div>
+      <div role="tablist" style={{ display: 'flex', gap: 20, borderBottom: '1px solid var(--border-2)' }}>
+        {results.map((r) => {
+          const active = r.id === selected.id
+          const browser = resultBrowser(r)
+          const failed = NON_PASSED_STATUSES.has(r.status)
+          const markColor = r.status === 'passed' ? 'var(--good-strong)' : failed ? 'var(--danger-strong)' : 'var(--fg-4)'
+          return (
+            <button
+              key={r.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              aria-label={targetLabel(browser, viewport)}
+              tabIndex={active ? 0 : -1}
+              onClick={() => setSelectedId(r.id)}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                background: 'none',
+                border: 'none',
+                borderBottom: `2px solid ${active ? 'var(--accent)' : 'transparent'}`,
+                padding: '8px 0',
+                marginBottom: -1,
+                fontSize: 13,
+                fontWeight: 600,
+                color: active ? 'var(--fg)' : 'var(--fg-4)',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              <BrowserIcon browser={browser} size={18} />
+              {targetLabel(browser, viewport)}
+              {r.status === 'pending' ? (
+                <BouncingDots size={3} />
+              ) : (
+                <FontAwesomeIcon
+                  icon={r.status === 'passed' ? faCheck : failed ? faXmark : faMinus}
+                  style={{ fontSize: 11, color: markColor }}
+                  aria-hidden="true"
+                />
+              )}
+            </button>
+          )
+        })}
+      </div>
+      <BrowserPanel key={selected.id} applicationId={applicationId} runId={runId} result={selected} onLive={onLive} />
+    </div>
+  )
+}
+
+// A test that ran on several browsers: still one row. Its browsers are the
+// chips, hovering one says "Chrome - 1280 × 720"; opening the row gives one
+// tab per browser.
+function TestGroupRow({
+  applicationId,
+  runId,
+  results,
+  viewport,
+}: {
+  applicationId: string
+  runId: string
+  results: TestResultRead[]
+  viewport: Viewport
+}) {
+  const [expanded, setExpanded] = useState(false)
+  // A manual heal inside a section can change its result after the run's last
+  // poll; sections report it here so the chips and the row's status keep up.
+  const [liveById, setLiveById] = useState<Record<string, TestResultRead>>({})
+  const handleLive = useCallback(
+    (live: TestResultRead) => setLiveById((prev) => (prev[live.id] === live ? prev : { ...prev, [live.id]: live })),
+    [],
+  )
+  const current = results.map((r) => liveById[r.id] ?? r)
+  const status = groupStatus(current)
+  const differsOn = failsOnlyOn(current)
+  const healing = current.some((r) => r.heal_in_progress)
+  const duration = groupDurationMs(current)
+  const first = current[0]
+
+  return (
+    <div>
+      <div
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        onClick={() => setExpanded((o) => !o)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') setExpanded((o) => !o)
+        }}
+        style={{
+          display: 'grid',
+          gridTemplateColumns: RESULT_GRID_TEMPLATE,
+          alignItems: 'center',
+          gap: 20,
+          width: '100%',
+          padding: '16px 16px',
+          textAlign: 'left',
+          cursor: 'pointer',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <ChevronIcon open={expanded} />
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, color: 'var(--fg)', minWidth: 0 }}>
+                {formatTestCaseNumber(first.test_case_number)} — {first.scenario_name}
+              </span>
+              {current.some((r) => r.is_flaky) && <span style={healChipStyle('var(--flaky)')}>Flaky</span>}
             </div>
-          )}
-          {liveResult.status === 'blocked' && liveResult.blocked_reason && (
-            <p className="caption" style={{ margin: '0 0 10px', fontSize: 12.5 }}>
-              {liveResult.blocked_reason}
-            </p>
-          )}
-          {canShowArtifacts && (liveResult.error_message || liveResult.failure_title) && (
-            <FailureDetails result={liveResult} />
-          )}
-          {healError && <p style={{ color: 'var(--danger-strong)', fontSize: 12, margin: '0 0 10px' }}>{healError}</p>}
-          {canLoadArtifacts && (
-            <>
-              {artifactsError && (
-                <p style={{ color: 'var(--danger-strong)', fontSize: 12, margin: '0 0 10px' }}>{artifactsError}</p>
-              )}
-              {artifacts === null && !artifactsError && (
-                <p className="caption" style={{ fontSize: 12 }}>
-                  Loading screenshot/trace…
-                </p>
-              )}
-              {canShowArtifacts && artifacts !== null && artifacts.length === 0 && !artifactsError && (
-                <p className="caption" style={{ fontSize: 12 }}>
-                  No screenshot or trace was captured for this failure.
-                </p>
-              )}
-              {artifacts !== null && artifacts.length > 0 && (
-                <div style={{ display: 'flex', gap: 8 }}>
-                  {artifacts.map((artifact) => (
-                    <a
-                      key={artifact.id}
-                      href={artifact.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="button-secondary"
-                      style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: 6 }}
-                    >
-                      {artifact.artifact_type === 'trace' ? <FontAwesomeIcon icon={faClapperboard} style={{ fontSize: 12 }} /> : <FontAwesomeIcon icon={faImage} style={{ fontSize: 12 }} />}
-                      {artifact.artifact_type === 'trace' ? 'Playwright trace' : 'Screenshot'} (
-                      {Math.max(1, Math.round(artifact.size_bytes / 1024))} KB)
-                    </a>
-                  ))}
-                </div>
-              )}
-            </>
-          )}
+            {differsOn.length > 0 && (
+              <div className="caption" style={{ fontSize: 11.5, marginTop: 4 }}>
+                {failsOnlyOnLabel(differsOn)}
+              </div>
+            )}
+          </div>
+        </div>
+        <span className="caption" style={{ fontSize: 11.5, whiteSpace: 'nowrap' }}>
+          {duration != null ? `${(duration / 1000).toFixed(1)}s` : '—'}
+        </span>
+        <div style={{ justifySelf: 'start', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
+          {/* The browser chips are the status; the pill only adds the one thing they
+              don't say, that a self-heal is under way. */}
+          {healing && <StatusPill status={status} label="Self-healing" pulsing variant="flat" />}
+          <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 6 }}>
+            {current.map((r) => (
+              <BrowserChip key={r.id} result={r} viewport={viewport} />
+            ))}
+          </span>
+        </div>
+      </div>
+
+      {expanded && (
+        <div style={{ padding: '0 16px 14px 40px' }}>
+          <BrowserTabs
+            applicationId={applicationId}
+            runId={runId}
+            results={results}
+            viewport={viewport}
+            onLive={handleLive}
+          />
         </div>
       )}
     </div>
@@ -796,6 +1112,7 @@ function SummaryTile({
   value,
   valueColor,
   hint,
+  sub,
   onClick,
   active,
 }: {
@@ -803,6 +1120,8 @@ function SummaryTile({
   value: string
   valueColor?: string
   hint?: string
+  // A quiet second line under the value.
+  sub?: string
   onClick?: () => void
   active?: boolean
 }) {
@@ -833,6 +1152,7 @@ function SummaryTile({
         {label}
       </div>
       <div style={{ fontSize: 21, fontWeight: 600, color: valueColor ?? 'var(--fg)', marginTop: 8 }}>{value}</div>
+      {sub && <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 3 }}>{sub}</div>}
     </div>
   )
 }
@@ -937,6 +1257,81 @@ function ResultSplitDonut({
   )
 }
 
+// Pass/fail per browser for a multi-browser run, as its own compact card under
+// the result split: one bar per browser, each test counted once on that browser,
+// so every bar totals the run's tests and a browser that fails more tests than
+// the rest stands out. Hovering a bar says how many passed and failed.
+function ResultsByBrowser({ results, browsers }: { results: TestResultRead[]; browsers: Browser[] }) {
+  const [hovered, setHovered] = useState<Browser | null>(null)
+  const rows = browsers.map((browser) => {
+    const counts = emptyBuckets()
+    for (const r of results) {
+      if (resultBrowser(r) !== browser) continue
+      if (r.status === 'passed') counts[r.healed_test_asset_id != null ? 'healed' : 'passed'] += 1
+      else if (NON_PASSED_STATUSES.has(r.status)) counts.failed += 1
+    }
+    return { browser, counts, total: counts.passed + counts.healed + counts.failed }
+  })
+  // Same scale for every bar, so a browser that ran fewer tests reads shorter.
+  const widest = Math.max(1, ...rows.map((row) => row.total))
+  return (
+    <div style={tileCardStyle}>
+      <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Results by browser</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 16 }}>
+        {rows.map(({ browser, counts, total }) => (
+          <div key={browser} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12.5 }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, width: 92, flex: 'none', color: 'var(--fg-1)' }}>
+              <BrowserIcon browser={browser} size={18} />
+              {browserLabel(browser)}
+            </span>
+            <div
+              style={{ position: 'relative', flex: 1, minWidth: 0 }}
+              onMouseEnter={() => setHovered(browser)}
+              onMouseLeave={() => setHovered(null)}
+            >
+              <div style={{ display: 'flex', height: 12, borderRadius: 6, overflow: 'hidden', background: 'var(--panel-2)', cursor: 'default' }}>
+                {RESULT_SEGMENTS.map(({ key, color }) =>
+                  counts[key] > 0 ? (
+                    <div key={key} style={{ width: `${(counts[key] / widest) * 100}%`, background: color }} />
+                  ) : null,
+                )}
+              </div>
+              {hovered === browser && (
+                <div
+                  role="tooltip"
+                  style={{
+                    position: 'absolute',
+                    bottom: 'calc(100% + 8px)',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    zIndex: 5,
+                    whiteSpace: 'nowrap',
+                    pointerEvents: 'none',
+                    background: 'var(--panel)',
+                    border: '1px solid var(--border-2)',
+                    borderRadius: 8,
+                    boxShadow: 'var(--panel-shadow)',
+                    padding: '8px 12px',
+                    fontSize: 11.5,
+                  }}
+                >
+                  <div style={{ fontWeight: 600, color: 'var(--fg)', marginBottom: 3 }}>{browserLabel(browser)}</div>
+                  <div style={{ color: 'var(--fg-3)', marginBottom: 3 }}>
+                    {total} test case{total === 1 ? '' : 's'}
+                  </div>
+                  <div style={{ color: 'var(--good-strong)' }}>{counts.passed} Passed</div>
+                  {counts.healed > 0 && <div style={{ color: 'var(--healed)' }}>{counts.healed} Self-healed</div>}
+                  <div style={{ color: 'var(--danger-strong)' }}>{counts.failed} Failed</div>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // One stacked bar per Journey (a Journey's Scenarios compile into one spec
 // file/suite) — same pass/failed buckets as the Result split
 // donut, just broken out per suite instead of aggregated across the run.
@@ -972,12 +1367,12 @@ function ResultsBySuiteTooltip({ active, payload }: TooltipContentProps<number, 
   )
 }
 
-function ResultsBySuite({ results }: { results: TestResultRead[] }) {
+function ResultsBySuite({ groups }: { groups: TestGroup[] }) {
   const bySuite = new Map<string, Record<ResultBucket, number>>()
-  for (const r of results) {
-    const key = r.journey_name || 'Other'
+  for (const g of groups) {
+    const key = g.results[0].journey_name || 'Other'
     const bucket = bySuite.get(key) ?? emptyBuckets()
-    const kind = resultBucket(r)
+    const kind = groupBucket(g.results)
     if (kind) bucket[kind] += 1
     bySuite.set(key, bucket)
   }
@@ -995,12 +1390,12 @@ function ResultsBySuite({ results }: { results: TestResultRead[] }) {
     Failed: v.failed,
   }))
   return (
-    <div style={tileCardStyle}>
+    <div style={{ ...tileCardStyle, display: 'flex', flexDirection: 'column' }}>
       <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Results by journey</div>
       {/* Legend pinned to the top, clear of the chart body — the bottom
           margin already belongs to the rotated x-axis labels below, and a
           bottom-anchored legend used to sit right on top of them. */}
-      <div style={{ marginTop: 18, height: 280 }}>
+      <div style={{ marginTop: 18, flex: 1, minHeight: 280 }}>
         <ResponsiveContainer width="100%" height="100%">
           <BarChart data={chartData} margin={{ top: 0, right: 0, left: 0, bottom: 60 }} barCategoryGap="30%">
             <CartesianGrid vertical={false} stroke="var(--border-2)" strokeDasharray="3 3" />
@@ -1046,24 +1441,40 @@ function RunDetail({
   const [resultSortKey, setResultSortKey] = useState<ResultSortKey | null>(null)
   const [resultSortDir, setResultSortDir] = useState<'asc' | 'desc'>('asc')
   const results = run.results ?? []
+  // A run on several browsers has one result per test per browser; the list shows
+  // one row per test, and the counts and the donut below count tests too.
+  const browsers = runBrowsers(run)
+  const viewport = runViewport(run)
+  const groups = groupResultsByTest(results, browsers)
+  const multiBrowser = groups.some((g) => g.results.length > 1)
   const bucketCounts: Record<ResultBucket, number> = emptyBuckets()
-  for (const r of results) {
-    const kind = resultBucket(r)
+  for (const g of groups) {
+    const kind = groupBucket(g.results)
     if (kind) bucketCounts[kind] += 1
   }
   // Overlay, not a bucket: flaky results are also counted above as Passed/Failed.
-  const flakyCount = results.filter((r) => r.is_flaky).length
+  const flakyCount = groups.filter((g) => g.results.some((r) => r.is_flaky)).length
   const [flakyOnly, setFlakyOnly] = useState(false)
-  const visibleResults = flakyOnly ? results.filter((r) => r.is_flaky) : results
+  // Tests that failed on a browser Chrome passed on: a difference between browsers.
+  const differsCount = groups.filter((g) => failsOnlyOn(g.results).length > 0).length
+  const [differsOnly, setDiffersOnly] = useState(false)
+  const visibleGroups = groups.filter(
+    (g) =>
+      (!flakyOnly || g.results.some((r) => r.is_flaky)) &&
+      (!differsOnly || failsOnlyOn(g.results).length > 0),
+  )
   const runningResultId = run.status === 'running' ? results.find((r) => r.status === 'pending')?.id : undefined
   // Finished (passed/failed/etc.) first, still-pending ones last — each
   // group keeps its original request order (stable sort on one boolean).
   // Only the default order, used until the viewer picks a column to sort by.
-  const orderedResults = resultSortKey
-    ? sortResults(visibleResults, resultSortKey, resultSortDir)
-    : [...visibleResults].sort((a, b) => (a.status === 'pending' ? 1 : 0) - (b.status === 'pending' ? 1 : 0))
-  const resultsTotalPages = Math.max(1, Math.ceil(orderedResults.length / RESULTS_PER_PAGE))
-  const pagedResults = orderedResults.slice(
+  const orderedGroups = resultSortKey
+    ? sortGroups(visibleGroups, resultSortKey, resultSortDir)
+    : [...visibleGroups].sort(
+        (a, b) =>
+          (groupStatus(a.results) === 'pending' ? 1 : 0) - (groupStatus(b.results) === 'pending' ? 1 : 0),
+      )
+  const resultsTotalPages = Math.max(1, Math.ceil(orderedGroups.length / RESULTS_PER_PAGE))
+  const pagedGroups = orderedGroups.slice(
     resultsPage * RESULTS_PER_PAGE,
     resultsPage * RESULTS_PER_PAGE + RESULTS_PER_PAGE,
   )
@@ -1108,6 +1519,7 @@ function RunDetail({
           <div className="caption" style={{ fontSize: 13, marginTop: 5 }}>
             {run.trigger} · {formatDateTime(run.created_at)}
             {run.environment_snapshot ? ` · ${run.environment_snapshot}` : ''}
+            {runTargetSummary(run) ? ` · ${runTargetSummary(run)?.short}` : ''}
           </div>
         </div>
         {/* A plain link to the app's own report route (which fetches a
@@ -1142,7 +1554,11 @@ function RunDetail({
       {!isRunning && run.results && results.length > 0 && (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: 14 }}>
-            <SummaryTile label="Total" value={String(run.total_count)} />
+            <SummaryTile
+              label="Total"
+              value={String(groups.length)}
+              sub={multiBrowser ? `ran in ${browsers.length} browsers` : undefined}
+            />
             {RESULT_SEGMENTS.map(({ key, color, label }) => (
               <SummaryTile key={key} label={label} value={String(bucketCounts[key])} valueColor={color} />
             ))}
@@ -1156,16 +1572,31 @@ function RunDetail({
                 setResultsPage(0)
               }}
             />
+            {differsCount > 0 && (
+              <SummaryTile
+                label="Browser differences"
+                value={String(differsCount)}
+                valueColor="var(--warn-strong)"
+                hint="Tests that failed on a browser where Chrome passed"
+                active={differsOnly}
+                onClick={() => {
+                  setDiffersOnly((v) => !v)
+                  setResultsPage(0)
+                }}
+              />
+            )}
             <SummaryTile label="Duration" value={formatDuration(runDurationMs(run))} />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(320px,1fr))', gap: 14 }}>
-            <div style={tileCardStyle}>
+            {/* Left column: the result split with the per-browser card beneath it. */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, minWidth: 0 }}>
+            <div style={{ ...tileCardStyle, flex: 1 }}>
               <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg)' }}>Result split</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 22, marginTop: 18 }}>
                 <ResultSplitDonut
                   counts={bucketCounts}
-                  total={run.total_count}
+                  total={groups.length}
                   hovered={hoveredSegment}
                   onHover={setHoveredSegment}
                 />
@@ -1194,7 +1625,9 @@ function RunDetail({
                 </div>
               </div>
             </div>
-            <ResultsBySuite results={results} />
+            {multiBrowser && <ResultsByBrowser results={results} browsers={browsers} />}
+            </div>
+            <ResultsBySuite groups={groups} />
           </div>
         </>
       )}
@@ -1234,19 +1667,29 @@ function RunDetail({
       {run.results && results.length > 0 && (
         <div style={{ ...mainPanelStyle, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
           <ResultListHeader sortKey={resultSortKey} sortDir={resultSortDir} onSort={handleResultSort} />
-          {pagedResults.map((result) => (
-            <TestResultRow
-              key={result.id}
-              applicationId={applicationId}
-              runId={run.id}
-              result={result}
-              isCurrentlyRunning={result.id === runningResultId}
-            />
-          ))}
+          {pagedGroups.map((group) =>
+            group.results.length > 1 ? (
+              <TestGroupRow
+                key={group.key}
+                applicationId={applicationId}
+                runId={run.id}
+                results={group.results}
+                viewport={viewport}
+              />
+            ) : (
+              <TestResultRow
+                key={group.results[0].id}
+                applicationId={applicationId}
+                runId={run.id}
+                result={group.results[0]}
+                isCurrentlyRunning={group.results[0].id === runningResultId}
+              />
+            ),
+          )}
           <Pagination
             page={resultsPage}
             totalPages={resultsTotalPages}
-            totalItems={orderedResults.length}
+            totalItems={orderedGroups.length}
             pageSize={RESULTS_PER_PAGE}
             onPrev={() => setResultsPage((p) => p - 1)}
             onNext={() => setResultsPage((p) => p + 1)}
@@ -1338,6 +1781,11 @@ function RunListRow({ run, onOpen }: { run: TestRunRead; onOpen: () => void }) {
           {run.environment_snapshot && (
             <span style={{ flexShrink: 0 }}>
               <Pill tone="neutral" title={run.target_base_url_snapshot}>{run.environment_snapshot}</Pill>
+            </span>
+          )}
+          {runTargetSummary(run) && (
+            <span style={{ flexShrink: 0 }}>
+              <Pill tone="neutral" title={runTargetSummary(run)?.full}>{runTargetSummary(run)?.short}</Pill>
             </span>
           )}
         </div>

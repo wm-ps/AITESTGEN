@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 from typing import Literal
 
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -106,6 +107,21 @@ class TestRun(SQLModel, table=True):
             nullable=True,
             index=True,
         ),
+    )
+    # The browsers and the one window size this run executed against (see
+    # `run_target`). Frozen at start, like `environment_snapshot`, so a later
+    # change to a schedule never rewrites what a past run ran on. Defaults are
+    # what execution always did (Chromium at 1280x720), so earlier runs read
+    # correctly with no backfill.
+    browsers: list[str] = Field(
+        default_factory=lambda: ["chromium"],
+        sa_column=Column(JSONB, nullable=False, server_default=text("""'["chromium"]'::jsonb""")),
+    )
+    viewport_width: int = Field(
+        default=1280, sa_column=Column(Integer, nullable=False, server_default=text("1280"))
+    )
+    viewport_height: int = Field(
+        default=720, sa_column=Column(Integer, nullable=False, server_default=text("720"))
     )
     triggered_by_name: str | None = Field(default=None)
     # Who clicked Run, for a manual run — the run-completed email goes to

@@ -6,6 +6,7 @@ import { AppIdentityLine } from '../AppIdentityLine'
 import { ServiceErrorNote } from '../ServiceError'
 import { Toast } from '../Toast'
 import { useCanEdit } from '../../PermissionsContext'
+import { DEFAULT_TARGET, targetRequest, type RunTarget } from '../../runTarget'
 import { AddEnvironmentDialog } from '../environments/AddEnvironmentDialog'
 import { EnvironmentsProvider, useEnvironmentList } from '../environments/EnvironmentsContext'
 import { AppSettingsTab } from './AppSettingsTab'
@@ -150,6 +151,9 @@ export function Workspace({
   // Run test suite dialog (a saved group of test cases), same environment hand-off.
   const [suitesDialogOpen, setSuitesDialogOpen] = useState(false)
   const [suitesEnvironmentId, setSuitesEnvironmentId] = useState<string | null>(null)
+  // The browsers and window size chosen in the Run dialog, carried into both
+  // of those dialogs the same way as the environment.
+  const [pendingTarget, setPendingTarget] = useState<RunTarget>(DEFAULT_TARGET)
   // Snapshotted at mount — App.tsx only ever mounts this component fresh
   // right after a "Run All Tests" click, so the effect below should fire
   // (or not) based on that one moment, not re-run if the prop identity
@@ -222,6 +226,8 @@ export function Workspace({
     environmentId?: string | null,
     // A saved test suite: the API resolves its test cases and names the run.
     collectionId?: string,
+    // Browsers and window size; omitted = Chrome at 1280 × 720.
+    target: RunTarget = DEFAULT_TARGET,
   ) {
     setRunning(true)
     setTriggerError(null)
@@ -230,13 +236,14 @@ export function Workspace({
     try {
       await api.triggerTestRun(
         applicationId,
-        journeyRun || environmentId || collectionId
+        journeyRun || environmentId || collectionId || Object.keys(targetRequest(target)).length > 0
           ? {
               ...(journeyRun
                 ? { suite_name: journeyRun.suiteName, test_case_ids: journeyRun.testCaseIds }
                 : {}),
               ...(environmentId ? { environment_id: environmentId } : {}),
               ...(collectionId ? { test_collection_id: collectionId } : {}),
+              ...targetRequest(target),
             }
           : undefined,
       )
@@ -314,13 +321,17 @@ export function Workspace({
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>
               <RunSuiteButton
                 running={running}
-                onFullSuite={(environmentId) => handleRunSuite(undefined, environmentId)}
-                onOpenJourneysDialog={(environmentId) => {
+                onFullSuite={(environmentId, target) =>
+                  handleRunSuite(undefined, environmentId, undefined, target)
+                }
+                onOpenJourneysDialog={(environmentId, target) => {
                   setJourneysEnvironmentId(environmentId)
+                  setPendingTarget(target)
                   setJourneysDialogOpen(true)
                 }}
-                onOpenSuitesDialog={(environmentId) => {
+                onOpenSuitesDialog={(environmentId, target) => {
                   setSuitesEnvironmentId(environmentId)
+                  setPendingTarget(target)
                   setSuitesDialogOpen(true)
                 }}
               />
@@ -394,7 +405,7 @@ export function Workspace({
           onClose={() => setJourneysDialogOpen(false)}
           onExecute={(suiteName, testCaseIds) => {
             setJourneysDialogOpen(false)
-            handleRunSuite({ suiteName, testCaseIds }, journeysEnvironmentId)
+            handleRunSuite({ suiteName, testCaseIds }, journeysEnvironmentId, undefined, pendingTarget)
           }}
         />
       )}
@@ -406,7 +417,7 @@ export function Workspace({
           onClose={() => setSuitesDialogOpen(false)}
           onRun={(collectionId, environmentId) => {
             setSuitesDialogOpen(false)
-            handleRunSuite(undefined, environmentId, collectionId)
+            handleRunSuite(undefined, environmentId, collectionId, pendingTarget)
           }}
         />
       )}
