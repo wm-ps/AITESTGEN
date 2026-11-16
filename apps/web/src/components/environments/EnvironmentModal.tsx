@@ -40,13 +40,12 @@ export function EnvironmentModal({
   const Shell = onSubmit ? 'form' : 'div'
 
   return (
-    <div onClick={onClose} style={{ ...modalOverlay, zIndex: 90 }}>
+    <div style={{ ...modalOverlay, zIndex: 90 }}>
       <Shell
         role="dialog"
         aria-modal="true"
         aria-label={title}
         noValidate={onSubmit ? true : undefined}
-        onClick={(e: React.MouseEvent) => e.stopPropagation()}
         onSubmit={onSubmit}
         style={{ ...modalPanel, maxWidth }}
       >

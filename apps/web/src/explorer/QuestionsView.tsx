@@ -132,7 +132,7 @@ export function QuestionsDialog({
 }) {
   useEscapeToClose(onClose)
   return (
-    <div onClick={onClose} style={{ ...modalOverlay, zIndex: 90, padding: 24 }}>
+    <div style={{ ...modalOverlay, zIndex: 90, padding: 24 }}>
       <div
         role="dialog"
         aria-label="Questions for you"

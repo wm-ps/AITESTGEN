@@ -173,12 +173,8 @@ export function ScheduleDialog({
   }
 
   return (
-    <div onClick={onClose} style={{ ...modalOverlay, zIndex: 90 }}>
-      <form
-        onClick={(e) => e.stopPropagation()}
-        onSubmit={handleSubmit}
-        style={{ ...modalPanel, maxWidth: 440 }}
-      >
+    <div style={{ ...modalOverlay, zIndex: 90 }}>
+      <form onSubmit={handleSubmit} style={{ ...modalPanel, maxWidth: 440 }}>
         <div style={modalHeader}>
           <div>
             <h2 style={modalTitle}>{initial ? 'Edit schedule' : 'New schedule'}</h2>

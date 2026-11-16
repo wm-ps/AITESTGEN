@@ -163,12 +163,9 @@ function CancelRunDialog({
       role="dialog"
       aria-modal="true"
       aria-label="Cancel run"
-      onClick={() => {
-        if (!cancelling) onClose()
-      }}
       style={{ ...modalOverlay, zIndex: 100 }}
     >
-      <div onClick={(e) => e.stopPropagation()} style={{ ...modalPanel, maxWidth: 440 }}>
+      <div style={{ ...modalPanel, maxWidth: 440 }}>
         <div style={modalHeader}>
           <h2 style={modalTitle}>Cancel run #{runNumber}?</h2>
           <button type="button" aria-label="Close" disabled={cancelling} onClick={onClose} style={modalCloseButton}>

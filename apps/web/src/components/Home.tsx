@@ -365,10 +365,7 @@ function ApplicationRow({
             role="dialog"
             aria-modal="true"
             aria-label="Delete application"
-            onClick={(e) => {
-              e.stopPropagation()
-              if (!deleting) setConfirmingDelete(false)
-            }}
+            onClick={(e) => e.stopPropagation()}
             style={{ ...modalOverlay, zIndex: 100 }}
           >
             <div onClick={(e) => e.stopPropagation()} style={{ ...modalPanel, maxWidth: 440 }}>

@@ -265,10 +265,9 @@ export function ArtifactsModal({ testResult, onClose }: { testResult: TestResult
       role="dialog"
       aria-modal="true"
       aria-label={`${testResult.scenario_name} artifacts`}
-      onClick={onClose}
       style={{ ...modalOverlay, zIndex: 100 }}
     >
-      <div onClick={(e) => e.stopPropagation()} style={{ ...modalPanel, maxWidth: 560 }}>
+      <div style={{ ...modalPanel, maxWidth: 560 }}>
         <div style={modalHeader}>
           <h2 style={modalTitle}>{testResult.scenario_name} — failure artifacts</h2>
           <button type="button" aria-label="Close" onClick={onClose} style={modalCloseButton}>
@@ -817,14 +816,49 @@ const CHIP_STATUS_TEXT: Record<string, string> = {
 function BrowserChip({ result, viewport }: { result: TestResultRead; viewport: Viewport }) {
   const browser = resultBrowser(result)
   const failed = NON_PASSED_STATUSES.has(result.status)
-  const color = result.status === 'passed' ? 'var(--good-strong)' : failed ? 'var(--danger-strong)' : 'var(--fg-4)'
   const text = CHIP_STATUS_TEXT[result.status] ?? result.status
   const label = `${targetLabel(browser, viewport)} · ${text}`
+  // The logo with a small verdict badge on its corner; the full wording is in the
+  // tooltip and aria-label.
+  const badge =
+    result.status === 'passed'
+      ? { mark: '✓', bg: 'var(--good-strong)' }
+      : failed
+        ? { mark: '✕', bg: 'var(--danger-strong)' }
+        : { mark: '!', bg: 'var(--warn)' }
+  const running = result.status === 'pending'
   return (
-    <span role="img" aria-label={label} title={label} style={{ ...healChipStyle(color), padding: '2px 8px', gap: 5 }}>
-      <BrowserIcon browser={browser} size={16} />
-      {text}
-      {result.status === 'pending' && <BouncingDots size={3} />}
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+    >
+      <span style={{ position: 'relative', display: 'inline-flex' }}>
+        <BrowserIcon browser={browser} size={28} />
+        {!running && (
+          <span
+            style={{
+              position: 'absolute',
+              right: -6,
+              bottom: -4,
+              width: 13,
+              height: 13,
+              borderRadius: '50%',
+              background: badge.bg,
+              color: 'white',
+              fontSize: 8,
+              fontWeight: 700,
+              lineHeight: '13px',
+              textAlign: 'center',
+              boxShadow: '0 0 0 1.5px var(--bg-card, white)',
+            }}
+          >
+            {badge.mark}
+          </span>
+        )}
+      </span>
+      {running && <BouncingDots size={3} />}
     </span>
   )
 }
@@ -1015,7 +1049,7 @@ function TestGroupRow({
           {/* The browser chips are the status; the pill only adds the one thing they
               don't say, that a self-heal is under way. */}
           {healing && <StatusPill status={status} label="Self-healing" pulsing variant="flat" />}
-          <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 6 }}>
+          <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 26 }}>
             {current.map((r) => (
               <BrowserChip key={r.id} result={r} viewport={viewport} />
             ))}

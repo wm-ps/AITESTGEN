@@ -48,12 +48,8 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div onClick={onClose} style={{ ...modalOverlay, zIndex: 90 }}>
-      <form
-        onClick={(e) => e.stopPropagation()}
-        onSubmit={handleSubmit}
-        style={{ ...modalPanel, maxWidth: 520 }}
-      >
+    <div style={{ ...modalOverlay, zIndex: 90 }}>
+      <form onSubmit={handleSubmit} style={{ ...modalPanel, maxWidth: 520 }}>
         <div style={modalHeader}>
           <div>
             <h2 style={modalTitle}>Invite member</h2>

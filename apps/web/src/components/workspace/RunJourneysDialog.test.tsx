@@ -19,11 +19,11 @@ function suite(id: string, journey: string, caseCount: number): TestSuiteRead {
 
 const SUITES = [suite('s1', 'Authentication', 4), suite('s2', 'Claim submission', 3), suite('s3', 'Empty journey', 0)]
 
-async function renderDialog(onExecute = vi.fn(), onClose = vi.fn()) {
+async function renderDialog(onExecute = vi.fn(), onClose = vi.fn(), onBack = vi.fn()) {
   vi.spyOn(api, 'listTestSuites').mockResolvedValue(SUITES)
-  render(<RunJourneysDialog applicationId="app-1" onClose={onClose} onExecute={onExecute} />)
+  render(<RunJourneysDialog applicationId="app-1" onClose={onClose} onBack={onBack} onExecute={onExecute} />)
   await screen.findByText('Authentication')
-  return { onExecute, onClose }
+  return { onExecute, onClose, onBack }
 }
 
 afterEach(() => {
@@ -102,6 +102,16 @@ describe('RunJourneysDialog', () => {
     fireEvent.change(screen.getByPlaceholderText('Enter a name for this run'), { target: { value: 'Smoke' } })
     fireEvent.click(screen.getByRole('button', { name: /Run journeys/ }))
     expect(onExecute).not.toHaveBeenCalled()
+  })
+
+  it('Back goes to the previous dialog and the backdrop does not close it', async () => {
+    const { onBack, onClose } = await renderDialog()
+    fireEvent.click(screen.getByRole('dialog').parentElement as HTMLElement)
+    expect(onClose).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(onBack).toHaveBeenCalledTimes(1)
+    expect(onClose).not.toHaveBeenCalled()
   })
 
   it('first Esc clears the search, second Esc closes', async () => {

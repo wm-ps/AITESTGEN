@@ -22,10 +22,12 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
 export function RunJourneysDialog({
   applicationId,
   onClose,
+  onBack,
   onExecute,
 }: {
   applicationId: string
   onClose: () => void
+  onBack: () => void
   onExecute: (suiteName: string, testCaseIds: string[]) => void
 }) {
   useEscapeToClose(onClose)
@@ -123,7 +125,6 @@ export function RunJourneysDialog({
 
   return (
     <div
-      onClick={onClose}
       style={{
         position: 'fixed',
         inset: 0,
@@ -137,7 +138,6 @@ export function RunJourneysDialog({
       <div
         role="dialog"
         aria-label="Selective Run"
-        onClick={(e) => e.stopPropagation()}
         style={{
           background: 'var(--panel)',
           border: '1px solid var(--border-2)',
@@ -424,7 +424,7 @@ export function RunJourneysDialog({
             {loading ? '' : `${plural(selectedCount, 'test case')} across ${plural(selectedJourneyCount, 'journey')}`}
           </span>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button type="button" className="button-secondary" onClick={onClose} style={{ padding: '10px 22px', fontSize: 14 }}>
+            <button type="button" className="button-secondary" onClick={onBack} style={{ padding: '10px 22px', fontSize: 14 }}>
               Back
             </button>
             <button

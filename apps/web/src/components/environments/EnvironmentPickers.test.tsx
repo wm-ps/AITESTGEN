@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, COLLECTION_EMPTY, api, type CollectionSummary, type EnvironmentRead, type ScheduleRead } from '../../api'
-import { RunSuiteButton } from '../workspace/RunSuiteButton'
+import { RunSuiteHarness } from '../workspace/RunSuiteHarness'
 import { ScheduleDialog } from '../workspace/ScheduleDialog'
 import { DownloadEnvironmentDialog } from './DownloadEnvironmentDialog'
 import { EnvironmentSelect } from './EnvironmentSelect'
@@ -84,7 +84,7 @@ describe('EnvironmentSelect', () => {
 describe('Run tests dialog', () => {
   function openDialog(onFullSuite = vi.fn(), onOpenJourneysDialog = vi.fn()) {
     withEnvironments(
-      <RunSuiteButton running={false} onFullSuite={onFullSuite} onOpenJourneysDialog={onOpenJourneysDialog} />,
+      <RunSuiteHarness onFullSuite={onFullSuite} onOpenJourneysDialog={onOpenJourneysDialog} />,
     )
     fireEvent.click(screen.getByRole('button', { name: 'Run' }))
     return { onFullSuite, onOpenJourneysDialog }
@@ -93,28 +93,29 @@ describe('Run tests dialog', () => {
   it('runs on the default environment unless another is chosen', () => {
     const { onFullSuite } = openDialog()
 
-    expect((screen.getByLabelText('Run on environment') as HTMLSelectElement).value).toBe('__default_environment__')
-    fireEvent.click(screen.getByRole('button', { name: /All test cases/ }))
+    expect((screen.getByLabelText('Environment') as HTMLSelectElement).value).toBe('__default_environment__')
+    fireEvent.click(screen.getByRole('button', { name: 'Run all test cases' }))
 
-    expect(onFullSuite).toHaveBeenCalledWith(null)
+    expect(onFullSuite).toHaveBeenCalledWith(null, expect.anything())
   })
 
   it('runs the whole suite on the chosen environment', () => {
     const { onFullSuite } = openDialog()
 
-    fireEvent.change(screen.getByLabelText('Run on environment'), { target: { value: 'env-uat' } })
-    fireEvent.click(screen.getByRole('button', { name: /All test cases/ }))
+    fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'env-uat' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Run all test cases' }))
 
-    expect(onFullSuite).toHaveBeenCalledWith('env-uat')
+    expect(onFullSuite).toHaveBeenCalledWith('env-uat', expect.anything())
   })
 
   it('carries the chosen environment into the selective run', () => {
     const { onOpenJourneysDialog } = openDialog()
 
-    fireEvent.change(screen.getByLabelText('Run on environment'), { target: { value: 'env-uat' } })
+    fireEvent.change(screen.getByLabelText('Environment'), { target: { value: 'env-uat' } })
     fireEvent.click(screen.getByRole('button', { name: /Selective run/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Choose tests…' }))
 
-    expect(onOpenJourneysDialog).toHaveBeenCalledWith('env-uat')
+    expect(onOpenJourneysDialog).toHaveBeenCalledWith('env-uat', expect.anything())
   })
 })
 
