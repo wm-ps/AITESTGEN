@@ -95,3 +95,6 @@ _bmad/**/config.user.toml
 
 # /brag launch-video output
 brag-output*/
+
+# design-taste-frontend skill checker output (headless Chrome profiles, gate state)
+.taste-skill/

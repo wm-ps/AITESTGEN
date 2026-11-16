@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCheck, faChevronDown, faRightToBracket, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faCheck, faChevronDown, faPlay, faRightToBracket, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faComments } from '@fortawesome/free-regular-svg-icons'
 
 // Shared header, footer and dialogs for the signed-out pages (Landing at `/`,
 // Product at `/product`). App owns the routing; these only call onNavigate.
@@ -63,7 +64,7 @@ export function MarketingHeader({
             e.preventDefault()
             onNavigate('landing')
           }}
-          style={{ justifySelf: 'start', display: 'flex', alignItems: 'center', gap: 12, textDecoration: 'none' }}
+          style={{ justifySelf: 'start', minHeight: 44, display: 'flex', alignItems: 'center', gap: 12, textDecoration: 'none' }}
         >
           <svg width="28" height="26" viewBox="0 0 28 26" aria-hidden="true" style={{ flex: 'none' }}>
             <path d="M3 12.5 L14 3.5 L25 12.5" fill="none" stroke={TEAL} strokeWidth="4.6" strokeLinejoin="miter" strokeLinecap="butt" />
@@ -93,7 +94,7 @@ export function MarketingHeader({
           type="button"
           className="landing-btn landing-btn-teal"
           onClick={onSignIn}
-          style={{ justifySelf: 'end', height: 40, gap: 9, padding: '0 18px', borderRadius: 10, fontSize: 14.5 }}
+          style={{ justifySelf: 'end', height: 44, gap: 9, padding: '0 18px', borderRadius: 10, fontSize: 14.5 }}
         >
           <FontAwesomeIcon icon={faRightToBracket} style={{ fontSize: 12 }} />
           Sign in
@@ -118,6 +119,48 @@ export function MarketingFooter({ current }: { current: PublicPage }) {
         © 2026 Vantage. An initiative of Omnewave.
       </div>
     </footer>
+  )
+}
+
+// The two calls to action, drawn the same on every signed-out page. `onTeal`
+// is for a teal band, where the teal demo button turns white.
+export function WatchDemoButton({ onClick, onTeal = false }: { onClick: () => void; onTeal?: boolean }) {
+  return (
+    <button
+      type="button"
+      className={`landing-btn landing-btn-lift ${onTeal ? 'product-btn-white' : 'landing-btn-teal'}`}
+      onClick={onClick}
+      style={{ height: 54, gap: 12, padding: '0 24px 0 9px', borderRadius: 12, fontSize: 15.5 }}
+    >
+      <span
+        style={{
+          width: 36,
+          height: 36,
+          borderRadius: 9,
+          background: onTeal ? 'rgba(15,118,110,0.1)' : 'rgba(255,255,255,0.16)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <FontAwesomeIcon icon={faPlay} style={{ fontSize: 12, marginLeft: 2 }} />
+      </span>
+      Watch a demo
+    </button>
+  )
+}
+
+export function ConnectTeamButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="landing-btn landing-btn-ink landing-btn-lift"
+      onClick={onClick}
+      style={{ height: 54, gap: 10, padding: '0 24px', borderRadius: 12, fontSize: 15.5 }}
+    >
+      <FontAwesomeIcon icon={faComments} style={{ fontSize: 14 }} />
+      Connect with our team
+    </button>
   )
 }
 

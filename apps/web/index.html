@@ -10,7 +10,12 @@
       href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
+    <meta name="description" content="Vantage explores your web application, writes its tests with AI, runs them and keeps every suite in one place." />
     <title>Vantage</title>
+    <!-- Signed-in hint (src/signedInHint.ts): hide a prerendered public page
+         before first paint; main.tsx then shows the boot loader instead. -->
+    <script>try{if(localStorage.getItem('vantage.signedIn')==='1')document.documentElement.setAttribute('data-signed-in-hint','')}catch(e){}</script>
+    <style>[data-signed-in-hint] #root{visibility:hidden}</style>
   </head>
   <body>
     <div id="root"></div>

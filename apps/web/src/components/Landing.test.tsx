@@ -22,7 +22,7 @@ describe('Landing', () => {
 
   it('shows the thank-you message after the contact form is sent', () => {
     render(<Landing onNavigate={() => {}} onSignIn={() => {}} />)
-    fireEvent.click(screen.getByRole('button', { name: /Connect with team/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Connect with our team/ }))
     expect(screen.getByRole('dialog', { name: "Let's connect" })).toBeTruthy()
     fireEvent.change(screen.getByLabelText(/Full Name/), { target: { value: 'Sam Lee' } })
     fireEvent.change(screen.getByLabelText(/Work Email/), { target: { value: 'sam@example.com' } })
