@@ -1,6 +1,8 @@
 from test_suite_assembler.assembler import (
     ALLURE_RESULTS_DIR_ENV,
+    BROWSER_ENV,
     REPORT_TITLE_ENV,
+    VIEWPORT_ENV,
     LoginPageEvidence,
     TestSuiteExportError,
     assemble_test_suite_project,
@@ -14,7 +16,9 @@ from test_suite_assembler.assembler import (
 
 __all__ = [
     "ALLURE_RESULTS_DIR_ENV",
+    "BROWSER_ENV",
     "REPORT_TITLE_ENV",
+    "VIEWPORT_ENV",
     "LoginPageEvidence",
     "TestSuiteExportError",
     "assemble_test_suite_project",

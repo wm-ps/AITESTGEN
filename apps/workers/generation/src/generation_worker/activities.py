@@ -30,7 +30,6 @@ from domain import (
     Application,
     Component,
     ComponentLocator,
-    DiscoverySettings,
     Form,
     FormField,
     Journey,
@@ -40,6 +39,7 @@ from domain import (
     TestAsset,
     TestSuite,
     ValidationRule,
+    generation_settings_for,
 )
 from domain.login_fields import is_generated_login_field, visible_fields
 from domain.test_asset import supersede_test_asset  # re-exported: heal imports it from here
@@ -730,7 +730,7 @@ async def scenario_generation_activity(input: ScenarioGenerationActivityInput) -
                 object.__setattr__(page, "stage_label", step.stage_label)
                 ordered_pages.append(page)
 
-            settings = session.exec(select(DiscoverySettings)).one()
+            settings = generation_settings_for(session, journey.application_id)
             candidates = await HostedAIProvider().generate_scenarios(
                 journey,
                 ordered_pages,
@@ -1267,15 +1267,14 @@ def _existing_test_asset_id_sync(scenario_external_id: str) -> str | None:
 
 def _test_case_limit_reached_sync(scenario_external_id: str) -> bool:
     with Session(engine) as session:
-        settings = session.exec(select(DiscoverySettings)).one()
-        if settings.max_test_cases_per_application is None:
-            return False
-
         scenario = session.exec(
             select(Scenario).where(Scenario.external_id == uuid.UUID(scenario_external_id))
         ).one()
         journey = session.get(Journey, scenario.journey_id)
         assert journey is not None
+        settings = generation_settings_for(session, journey.application_id)
+        if settings.max_test_cases_per_application is None:
+            return False
 
         current_count = session.exec(
             select(func.count())

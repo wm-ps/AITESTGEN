@@ -237,6 +237,77 @@ class TestCreateSchedule:
             creator = session.get(PlatformUser, row.created_by_user_id)
             assert creator is not None and creator.name == "Tester"
 
+    def test_a_schedule_with_no_browser_choice_reads_as_chrome_at_1280x720(
+        self, temporal_schedule_cleanup: list[str]
+    ) -> None:
+        init_db()
+        client = _signed_in_client("Org Schedule Browsers Default")
+        application = _create_application(
+            client, "Schedule Browsers Default App", temporal_schedule_cleanup
+        )
+
+        body = _create_schedule(client, application["id"], temporal_schedule_cleanup)
+
+        assert body["browsers"] == ["chromium"]
+        assert (body["viewport_width"], body["viewport_height"]) == (1280, 720)
+
+    def test_browsers_and_window_size_are_saved_and_can_be_cleared(
+        self, temporal_schedule_cleanup: list[str]
+    ) -> None:
+        init_db()
+        client = _signed_in_client("Org Schedule Browsers")
+        application = _create_application(client, "Schedule Browsers App", temporal_schedule_cleanup)
+
+        created = _create_schedule(
+            client,
+            application["id"],
+            temporal_schedule_cleanup,
+            browsers=["webkit", "chromium"],
+            viewport={"width": 1366, "height": 768},
+        )
+
+        assert created["browsers"] == ["chromium", "webkit"]  # reference browser first
+        assert (created["viewport_width"], created["viewport_height"]) == (1366, 768)
+        # What Prepare reads when the schedule fires.
+        with Session(engine) as session:
+            row = session.exec(
+                select(Schedule).where(Schedule.external_id == uuid.UUID(created["id"]))
+            ).one()
+            assert (row.browsers, row.viewport_width, row.viewport_height) == (
+                ["chromium", "webkit"],
+                1366,
+                768,
+            )
+
+        # An edit that leaves them out keeps them; an explicit null clears them.
+        kept = client.patch(f"/schedules/{created['id']}", json={"name": "Renamed Browsers"}).json()
+        assert kept["browsers"] == ["chromium", "webkit"]
+        assert kept["viewport_width"] == 1366
+        cleared = client.patch(
+            f"/schedules/{created['id']}", json={"browsers": None, "viewport": None}
+        ).json()
+        assert cleared["browsers"] == ["chromium"]
+        assert (cleared["viewport_width"], cleared["viewport_height"]) == (1280, 720)
+
+    def test_a_bad_browser_or_window_size_is_rejected(
+        self, temporal_schedule_cleanup: list[str]
+    ) -> None:
+        init_db()
+        client = _signed_in_client("Org Schedule Browsers Bad")
+        application = _create_application(
+            client, "Schedule Browsers Bad App", temporal_schedule_cleanup
+        )
+
+        for overrides in (
+            {"browsers": []},
+            {"browsers": ["edge"]},
+            {"viewport": {"width": 100, "height": 720}},
+        ):
+            created = _create_schedule(
+                client, application["id"], temporal_schedule_cleanup, **overrides
+            )
+            assert created["__status__"] == 422
+
     def test_create_weekly_non_contiguous_days_round_trips(
         self, temporal_schedule_cleanup: list[str]
     ) -> None:

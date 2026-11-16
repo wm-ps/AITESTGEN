@@ -483,10 +483,12 @@ F-01 Form loads: all fields are visible.
 F-02 Defaults: a new form shows its default values.
 F-03 Dropdown options: each dropdown offers the options the server provides.
 F-04 Edit pre-fill: editing an existing record shows its saved values.
-F-05 Required fields: submitting empty shows an error on each required field and saves nothing.
+F-05 Required fields: SKIP — written separately for every field marked required.
 F-06 Invalid format: a bad email / phone / number / date shows a field-level error.
 F-07 Max length: text beyond the limit is blocked or refused.
 F-08 Min length: text below the minimum is refused.
+(F-06 to F-08: skip a field whose notes already state that rule, e.g. "Must be a valid \
+email address" or "at least 8 characters" — those are written separately too.)
 F-09 Range: a number or date outside the allowed range is refused.
 F-10 Error clears: fixing an invalid field removes its error.
 F-11 Dependent field: changing a parent field updates its child (e.g. country -> states).
@@ -680,9 +682,18 @@ proves the outcome. Reply with ONLY:
   "observed": "what the app actually did, in one plain sentence",
   "matches_expected": true,
   "set_up_ok": true,
-  "check": {"kind": "text_visible | url_contains | api_call", "value": "for api_call: the method and a stable part of the address of one listed data call that proves the outcome, e.g. 'POST /api/claims' (no record ids or dates); for text_visible: an EXACT short piece of text visible on the final screen (copy it character for character, e.g. the validation message or the heading of the screen reached); for url_contains: a distinctive part of the screen address"}
+  "check": {"kind": "text_visible | url_contains | api_call | field_invalid", "value": "for api_call: the method and a stable part of the address of one listed data call that proves the outcome, e.g. 'POST /api/claims' (no record ids or dates); for text_visible: an EXACT short piece of text visible on the final screen or listed in 'Messages the app showed' (copy it character for character, e.g. the validation message or the heading of the screen reached); for url_contains: a distinctive part of the screen address; for field_invalid: the exact label of a field the app flagged as not valid (marked invalid in the reading, or refused by the browser's own check)"}
 }
 Rules:
+- How apps say a field is required or wrong varies: a message next to the field, a \
+summary at the top, a pop-up or toast that disappears after a few seconds (it is in \
+'Messages the app showed' even when gone from the screenshot), the browser's own \
+'Please fill out this field' prompt (listed there too, never in the screenshot), or the \
+field itself flagged. Any of them is the app telling the user; many apps name only the \
+first missing field. A red * next to a field's name is the 'required' marker shown \
+before saving — it is NOT an error message and NOT the field flagged.
+- Prefer text_visible with the message's text; use field_invalid only when the app \
+flagged the field and showed no text you can copy.
 - Never use text that changes from run to run (a reference or order number the app just generated, today's date or time, a count that grows): replays would fail. Use the stable message or heading around it instead (e.g. 'Claim submitted', not the claim number).
 - Use api_call when the test is about the server (data matches, filter call, save / \
 update / delete succeeded) and a listed data call proves it; else prefer what the \
@@ -710,6 +721,7 @@ async def decide_check(
     history: list[str],
     rejected: list[str] | None = None,
     calls: list[tuple[str, str, int]] | None = None,
+    messages: list[str] | None = None,
 ) -> dict[str, Any]:
     seen = [
         f"{m} {urlsplit(u).path}{'?' + urlsplit(u).query if urlsplit(u).query else ''} -> {st}"
@@ -717,6 +729,12 @@ async def decide_check(
     ][-30:]
     user = (
         (f"Data calls the page made during the test: {seen}\n" if seen else "")
+        + (
+            "Messages the app showed during the test, in order (some disappear after a few "
+            f"seconds, so they may be gone from the screenshot): {(messages or [])[-15:]}\n"
+            if messages
+            else ""
+        )
         + 
         (
             "These proofs were rejected because they were ALREADY true before the test did "

@@ -40,6 +40,7 @@ from sqlmodel import Session, col, select
 from explorer_worker import brain, limits, quality
 from explorer_worker.browser import Visit
 from explorer_worker.db import engine
+from explorer_worker.field_checks import CODE_LIMITS, FIELD_CHECK, field_checks
 from explorer_worker.goal import ensure_scope, screens_in_goal
 from explorer_worker.journal import Journal
 from explorer_worker.mind import Mind
@@ -60,6 +61,7 @@ from explorer_worker.testkit import (
     holds,
     playwright_code,
     replay,
+    seen_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -78,14 +80,18 @@ def test_cap(screen_count: int, most: int = MAX_TESTS) -> int:
 # scenario is kept. They use the very locators and proof check the exported
 # test uses (recorded locators, `holds`), from the entry point, so a route
 # that only worked in the live browser is caught here, never in your test
-# run. One by default (the broken-on-purpose run comes first); 2 also catch
+# run. One by default (plus the broken-on-purpose run when it is on); 2 also catch
 # an app that behaves differently from run to run; 0 turns proving off.
 PROOF_RUNS = int(os.environ.get("EXPLORER_PROOF_RUNS", "1"))
+# The broken-on-purpose run (replay without the key step; the proof must
+# then fail). Off for now: it dropped tests that were fine (a "leave it
+# empty" check has no key step to remove). EXPLORER_BREAK_ON_PURPOSE=1 turns
+# it back on.
+BREAK_ON_PURPOSE = os.environ.get("EXPLORER_BREAK_ON_PURPOSE", "0") == "1"
 
 # Journey scenarios: one whole business flow each, from the app's start to the
 # task's final outcome — built first, so even a stopped run has them.
 MAX_JOURNEYS = 8
-JOURNEY_STEPS = 40  # FNOL's full claim is ~27 actions; screen checks get 20-24
 _FOLLOW_UP = re.compile(r"^(Try “|Carry on from )")
 
 
@@ -119,6 +125,8 @@ class QuietMind(Mind):
     page itself; nothing new is learned. It still saves the screenshot, so
     the Live view keeps moving while scenarios are tried (no screenshot
     here left Live frozen on the last mission for the whole stage)."""
+
+    records_health = False  # pursue: a scenario's walk records no findings
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -273,11 +281,14 @@ async def plan_tests(run_id: uuid.UUID) -> int:
                 "fields": [
                     {
                         "label": f.get("label"),
+                        "type": f.get("type"),
                         "required": f.get("required"),
                         "notes": f.get("notes"),
+                        # The page code's own limits (field_checks.with_code_limits).
+                        **{k: f[k] for k in CODE_LIMITS if f.get(k)},
                     }
                     for f in s.fields
-                ][:25],
+                ][:40],
                 "buttons": [a.get("label") for a in s.actions][:20],
             }
             for s in screens
@@ -319,7 +330,11 @@ async def plan_tests(run_id: uuid.UUID) -> int:
     parts = await asyncio.gather(
         *(plan_part(i, c) for i, c in enumerate(chunks or [[]])), return_exceptions=True
     )
-    planned = [t for part in parts if isinstance(part, list) for t in part]
+    # The recorded field rules first: the review then leaves out the
+    # planner's copies of them as duplicates (it keeps the earlier one).
+    planned = field_checks(screen_info) + [
+        t for part in parts if isinstance(part, list) for t in part
+    ]
     # Review the whole plan once before trying anything: a duplicate, or a
     # scenario needing a flow exploring never saw, cost minutes each to try.
     try:
@@ -439,7 +454,7 @@ async def plan_tests(run_id: uuid.UUID) -> int:
         f"{kept} scenarios to try",
         f"The plan had {len(planned)} ideas"
         + (
-            f"; the {cap} most important are tried (up to 6 per screen)"
+            f"; the field checks and the {cap} most important others are tried"
             if len(planned) > cap
             else ""
         )
@@ -566,6 +581,43 @@ def drop(journal: Journal, test_id: uuid.UUID, title: str, reason: str) -> str:
     _update(test_id, status="dropped", drop_reason=reason, finished_at=datetime.now(UTC))
     journal.event("thought", f"Left out: {title}", reason)
     return "dropped"
+
+
+async def _breaks_on_purpose(
+    target: Any,
+    journal: Journal,
+    signed_out: bool,
+    script: list[dict[str, Any]],
+    own_from: int | None,
+    home_script: list[dict[str, Any]],
+    check: Any,
+    heartbeat: Callable[[], None],
+) -> bool | None:
+    """Whether the proof fails once the key step is gone; None when it
+    couldn't sign in."""
+    eyes = await open_signed_out(target) if signed_out else await open_signed_in(target, journal)
+    if eyes is None:
+        return None
+    catches = False
+    try:
+        for broken in broken_variants(script, own_from) or [home_script]:
+            heartbeat()
+            if signed_out:
+                await eyes.forget_session()
+            await replay(eyes, broken)
+            await eyes.settle()  # let a slow answer arrive before looking briefly
+            if not await holds(eyes, check, ABSENT_WAIT_MS):
+                catches = True
+                break
+    finally:
+        await eyes.close()
+    journal.event(
+        "action",
+        "Broken-on-purpose check: "
+        + ("the test caught it" if catches else "the test did not notice"),
+        "Replayed without its key step, to make sure the test fails when the app misbehaves.",
+    )
+    return catches
 
 
 async def build_and_prove(
@@ -706,6 +758,7 @@ async def build_and_prove(
                 # A clean walk in (not signed out, not continuing a draft) is a
                 # route the next scenario on the same screen can replay.
                 mind.screen_ids = route_screens(journal.screen_rows())
+            run_steps = limits.of(run_id)
             result = await pursue(
                 eyes,
                 mind,
@@ -717,8 +770,12 @@ async def build_and_prove(
                 + " Carry out every step above first (enter the values, press the buttons, reopen"
                 " the record when asked); stop (done) only once the outcome is visible on screen.",
                 # Checklist items such as "save, reopen, compare" take more steps.
+                # Settings → Explorer limits; walking in from the start (an app
+                # that keeps saved progress, no shortcut) costs 4 more.
                 max_steps=(
-                    JOURNEY_STEPS if kind == "journey" else 24 if stateful and not lead_in else 20
+                    run_steps["steps_per_journey"]
+                    if kind == "journey"
+                    else run_steps["steps_per_scenario"] + (4 if stateful and not lead_in else 0)
                 ),
                 non_production=target.non_production,
                 lead_in=lead_in,
@@ -740,6 +797,7 @@ async def build_and_prove(
                     result.history,
                     rejected,
                     calls=eyes.calls_since_mark(),
+                    messages=eyes.messages_since_mark(),
                 )
                 check = verdict.get("check") if isinstance(verdict.get("check"), dict) else None
                 if not check or not proof_was_there_before(
@@ -784,7 +842,12 @@ async def build_and_prove(
                 return drop(
                     journal, test_id, title, f"Couldn't set up what the test needed: {observed}"[:400]
                 )
-            if not check or not await holds(eyes, check):
+            # A message the app showed during the test counts though it has
+            # faded by now (a toast): the replays below check it right after
+            # the action, while it is still on screen.
+            if not check or not (
+                seen_message(check, eyes.messages_since_mark()) or await holds(eyes, check)
+            ):
                 return drop(journal, test_id, title, "Couldn't find a reliable proof on the screen")
     finally:
         await eyes.close()
@@ -811,36 +874,22 @@ async def build_and_prove(
     # 2) Break it on purpose first, without the model: a proof that still
     # holds without the step it depends on proves nothing, and finding that
     # out now spares the repeat runs (same verdict, a fraction of the time).
-    eyes = await open_signed_out(target) if signed_out else await open_signed_in(target, journal)
-    if eyes is None:
-        return drop(journal, test_id, title, "Couldn't sign in for the proof runs")
-    catches = False
-    try:
-        for broken in broken_variants(script, own_from) or [home_script]:
-            heartbeat()
-            if signed_out:
-                await eyes.forget_session()
-            await replay(eyes, broken)
-            await eyes.settle()  # let a slow answer arrive before looking briefly
-            if not await holds(eyes, check, ABSENT_WAIT_MS):
-                catches = True
-                break
-    finally:
-        await eyes.close()
-    journal.event(
-        "action",
-        "Broken-on-purpose check: "
-        + ("the test caught it" if catches else "the test did not notice"),
-        "Replayed without its key step, to make sure the test fails when the app misbehaves.",
-    )
-    if not catches:
-        _update(test_id, catches_breakage=False)
-        return drop(
-            journal,
-            test_id,
-            title,
-            "Still passed with its key step removed, so it wouldn't catch a real problem",
+    # Off for now (BREAK_ON_PURPOSE): only the repeat runs decide.
+    catches: bool | None = None
+    if BREAK_ON_PURPOSE:
+        catches = await _breaks_on_purpose(
+            target, journal, signed_out, script, own_from, home_script, check, heartbeat
         )
+        if catches is None:
+            return drop(journal, test_id, title, "Couldn't sign in for the proof runs")
+        if not catches:
+            _update(test_id, catches_breakage=False)
+            return drop(
+                journal,
+                test_id,
+                title,
+                "Still passed with its key step removed, so it wouldn't catch a real problem",
+            )
 
     # 3) Prove: replay without the model, recorded as the proof video.
     with tempfile.TemporaryDirectory(
@@ -963,6 +1012,10 @@ def proof_was_there_before(
         return api_call_count(calls or [], str(check.get("value"))) > 1
     if check.get("kind") == "url_contains":
         return value in start_url.lower()
+    if check.get("kind") == "field_invalid":
+        # Its value is a field's name, on screen from the start; the flag
+        # itself (aria-invalid, the browser refusing it) comes from acting.
+        return False
     return " ".join(value.split()) in " ".join(start_text.lower().split())
 
 
@@ -1118,17 +1171,30 @@ def left_out(planned: list[dict[str, Any]], verdicts: list[dict[str, Any]]) -> d
     return out if len(out) * 3 <= len(planned) else {}
 
 
+# Checklist items that only prove a screen opened or shows its columns: the
+# page checks already open every screen, so these are trimmed first.
+_JUST_OPENS = re.compile(r"^(F-01|F-02|L-01|L-02|L-22|P-01)\b")
+
+
+def _tier(t: dict[str, Any]) -> int:
+    coverage = str(t.get("coverage") or "").upper()
+    if coverage == FIELD_CHECK.upper():
+        return 0
+    if _JUST_OPENS.match(coverage):
+        return 3
+    return 2 if coverage.startswith("X") else 1
+
+
 def balanced(planned: list[dict[str, Any]], cap: int) -> list[dict[str, Any]]:
-    """Up to `cap` scenarios, taking each screen in turn and, within a
-    screen, each kind of check in turn — so a cap never silently drops a
-    whole screen or kind; the planner's order is kept inside each. The
-    checklist items come before Explorer's own extras ("X-..."), so a cap
-    trims extras first."""
-
-    def is_extra(t: dict[str, Any]) -> bool:
-        return str(t.get("coverage") or "").upper().startswith("X")
-
-    checklist = [t for t in planned if not is_extra(t)]
-    extras = [t for t in planned if is_extra(t)]
-    ordered = _round_robin(_round_robin(checklist, "kind"), "start_screen")
-    return (ordered + _round_robin(extras, "start_screen"))[:cap]
+    """The recorded field rules (already a few per form, see field_checks),
+    then up to `cap` more: the checklist items that test behaviour
+    (validation, saving, search, flows), then Explorer's own extras, then the
+    "screen opens" items — so a cap trims the least telling ones first, and
+    a form-heavy app's field rules never crowd out its behaviour tests.
+    Within each, every screen in turn and each kind of check in turn, keeping
+    the planner's order inside each."""
+    tiers: list[list[dict[str, Any]]] = [[], [], [], []]
+    for t in planned:
+        tiers[_tier(t)].append(t)
+    field, *rest = [_round_robin(_round_robin(tier, "kind"), "start_screen") for tier in tiers]
+    return field + [t for tier in rest for t in tier][:cap]

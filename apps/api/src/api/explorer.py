@@ -350,7 +350,8 @@ async def begin_run(
         application_id=application.id,
         notes=(notes or "").strip() or None,
         started_by_id=started_by,
-        limits=limits_snapshot(session),  # Settings → Explorer limits, as of now
+        # The app's Explorer limits (Application settings), as of now.
+        limits=limits_snapshot(session, application.explorer_limits),
     )
     session.add(run)
     # Notes (test data like a policy number) are remembered for later runs —
@@ -731,7 +732,7 @@ async def resume_run(
     await _end_leftover_workflow(run, "Resumed by the user")
     # Today's limits from Settings: raising the one that paused it is how a
     # run reaching its budget or time carries on.
-    run.limits = limits_snapshot(session)
+    run.limits = limits_snapshot(session, application.explorer_limits)
     run.status, run.headline, run.updated_at = "queued", "Resuming", datetime.now(UTC)
     session.add(run)
     if not run.prompt:  # an authoring run is not the app's discovery
@@ -840,8 +841,57 @@ class ExplorerSettingsBody(BaseModel):
     first_look_max_screens: int = Field(default=150, ge=5, le=1000)
     max_missions: int = Field(default=15, ge=1, le=100)
     steps_per_mission: int = Field(default=20, ge=5, le=200)
+    steps_per_scenario: int = Field(default=20, ge=5, le=200)
+    steps_per_journey: int = Field(default=40, ge=5, le=300)
     max_scenarios: int = Field(default=150, ge=1, le=1000)
     proof_replays: int = Field(default=1, ge=0, le=5)
+    same_screen_repeats: int = Field(default=3, ge=2, le=20)
+    screen_visits: int = Field(default=4, ge=2, le=50)
+    press_retries: int = Field(default=2, ge=0, le=10)
+
+
+def _check_limits(payload: ExplorerSettingsBody) -> None:
+    wait, mission = payload.question_wait_minutes, payload.mission_time_limit_minutes
+    if mission is not None and (wait is None or wait >= mission):
+        raise HTTPException(
+            status_code=422,
+            detail="Give missions more time than the question wait — a mission waiting for "
+            "your answer counts toward its time limit",
+        )
+
+
+@router.get("/applications/{application_id}/settings", response_model=ExplorerSettingsBody)
+def get_application_explorer_settings(
+    application_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep
+) -> ExplorerSettingsBody:
+    """The limits this application's runs use (Application settings): its own,
+    or the organisation's until it has its own. Readable by everyone on the
+    app; only admins change them."""
+    application = _owned_application(session, application_id, org_id)
+    limits = limits_snapshot(session, application.explorer_limits)
+    session.commit()  # the organisation row may have just been created
+    return ExplorerSettingsBody.model_validate(limits)
+
+
+@router.put("/applications/{application_id}/settings", response_model=ExplorerSettingsBody)
+def update_application_explorer_settings(
+    application_id: uuid.UUID,
+    payload: ExplorerSettingsBody,
+    session: SessionDep,
+    org_id: CurrentOrgIdDep,
+    admin: CurrentAdminDep,
+) -> ExplorerSettingsBody:
+    """This application's own limits; its next runs use them (a run going now
+    keeps the limits it started with, Resume picks up the new ones)."""
+    _check_limits(payload)
+    application = _owned_application(session, application_id, org_id)
+    application.explorer_limits = payload.model_dump()
+    session.add(application)
+    record_activity(
+        session, admin, "settings", "Changed the Explorer limits", application=application
+    )
+    session.commit()
+    return ExplorerSettingsBody.model_validate(application.explorer_limits)
 
 
 @router.get("/settings", response_model=ExplorerSettingsBody)
@@ -857,13 +907,7 @@ def update_explorer_settings(
 ) -> ExplorerSettingsBody:
     """New runs use these; a run going now keeps the limits it started with
     (Resume picks up the new ones)."""
-    wait, mission = payload.question_wait_minutes, payload.mission_time_limit_minutes
-    if mission is not None and (wait is None or wait >= mission):
-        raise HTTPException(
-            status_code=422,
-            detail="Give missions more time than the question wait — a mission waiting for "
-            "your answer counts toward its time limit",
-        )
+    _check_limits(payload)
     settings = current_settings(session)
     for key, value in payload.model_dump().items():
         setattr(settings, key, value)

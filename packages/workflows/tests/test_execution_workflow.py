@@ -484,6 +484,71 @@ async def test_self_signing_in_tests_run_after_shared_session_tests() -> None:
 
 
 @pytest.mark.asyncio
+async def test_browsers_run_as_waves_and_the_first_wave_heals_before_the_next_starts() -> None:
+    """Prepare lists the reference browser (Chromium) first. Its heals must
+    finish before another browser runs the (possibly healed) test, and the
+    chosen browsers and window size must reach Prepare."""
+    executable = [
+        ExecutableTest(test_result_id="c1", test_asset_id="a1", browser="chromium"),
+        ExecutableTest(test_result_id="c2", test_asset_id="a2", browser="chromium"),
+        ExecutableTest(test_result_id="f1", test_asset_id="a1", browser="firefox"),
+        ExecutableTest(test_result_id="f2", test_asset_id="a2", browser="firefox"),
+    ]
+    events: list[str] = []
+    prepare_inputs: list[PrepareTestRunActivityInput] = []
+
+    @activity.defn(name=PREPARE_TEST_RUN_ACTIVITY_NAME)
+    async def _fake_prepare(input: PrepareTestRunActivityInput) -> PrepareTestRunActivityResult:
+        prepare_inputs.append(input)
+        return PrepareTestRunActivityResult(test_run_id="run-1", blocked=False, executable=executable)
+
+    @activity.defn(name=EXECUTE_TEST_ACTIVITY_NAME)
+    async def _fake_execute(input: ExecuteTestActivityInput) -> str:
+        await asyncio.sleep(0.05)
+        events.append(f"execute:{input.test_result_id}")
+        return input.test_result_id
+
+    @activity.defn(name=HEAL_TEST_ACTIVITY_NAME)
+    async def _fake_heal_recording(input: HealTestActivityInput) -> None:
+        await asyncio.sleep(0.05)
+        events.append(f"heal:{input.test_result_id}")
+
+    @activity.defn(name=FINALIZE_TEST_RUN_ACTIVITY_NAME)
+    async def _fake_finalize(input: FinalizeTestRunActivityInput) -> None:
+        pass
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue=EXECUTION_TASK_QUEUE,
+            workflows=[ApplicationTestExecutionWorkflow],
+            activities=[_fake_prepare, _fake_execute, _fake_finalize, _fake_heal_recording],
+        ):
+            await env.client.execute_workflow(
+                ApplicationTestExecutionWorkflow.run,
+                ExecutionWorkflowInput(
+                    application_id="app-1",
+                    browsers=["chromium", "firefox"],
+                    viewport_width=1920,
+                    viewport_height=1080,
+                ),
+                id=f"execution-test-{uuid.uuid4()}",
+                task_queue=EXECUTION_TASK_QUEUE,
+            )
+
+    assert prepare_inputs[0].browsers == ["chromium", "firefox"]
+    assert (prepare_inputs[0].viewport_width, prepare_inputs[0].viewport_height) == (1920, 1080)
+    # Everything Chromium (execute and heal) is done before the first Firefox execute.
+    first_firefox = min(i for i, e in enumerate(events) if e.startswith("execute:f"))
+    assert sorted(events[:first_firefox]) == [
+        "execute:c1",
+        "execute:c2",
+        "heal:c1",
+        "heal:c2",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_email_failure_never_fails_the_completed_run() -> None:
     order = await _run_with_allure(email_fails=True)
     # Retried (up to 3 attempts), then swallowed: the workflow still returns.

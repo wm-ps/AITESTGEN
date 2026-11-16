@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "b56179fb-9109-421d-b2ab-7b5c34329944",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/workflow-record-and-play-20261030-105457/candidate.json",
+  "output": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/workflow-record-and-play-20261030-105457/record-and-play.html",
+  "specification": {
+    "sha256": "2c1da0f8bca1dc90308216e881760891d2119eabaac55d83fcdc7976b49e480f",
+    "bytes": 8951
+  },
+  "artifact": {
+    "sha256": "4bfec4089d25e5e0c504c6404bc4657c7aedffc189226c68c555589aa14a046d",
+    "bytes": 767142
+  }
+}

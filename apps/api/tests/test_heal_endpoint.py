@@ -182,6 +182,21 @@ def test_heal_returns_404_for_unknown_test_result() -> None:
     assert response.status_code == 404
 
 
+@pytest.mark.parametrize("browser", ["firefox", "webkit"])
+def test_heal_returns_409_for_a_result_on_a_browser_that_is_not_healed(browser: str) -> None:
+    """A heal rewrites the one test every browser shares, so only Chrome's
+    failures are healed — same rule as `heal_test_activity`."""
+    init_db()
+    client = _signed_in_client(f"Org Heal {browser}")
+    application = _create_application(client, "App")
+    result = _seed_test_result(application, browser=browser)
+
+    response = client.post(f"/test-results/{result.external_id}/heal")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "self-heal only runs on Chrome results"
+
+
 def test_heal_returns_404_for_a_result_in_another_organization() -> None:
     init_db()
     owner_client = _signed_in_client("Org Heal Owner")

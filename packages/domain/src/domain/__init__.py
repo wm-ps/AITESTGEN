@@ -41,14 +41,16 @@ from domain.diagnostic_record import DiagnosticRecord
 from domain.discovery_error import DiscoveryError, ErrorCode
 from domain.discovery_run import DiscoveryRun
 from domain.discovery_settings import (
+    GENERATION_KEYS,
     DiscoverySettings,
     InteractionLevel,
     RetentionPeriod,
     ScreenshotCapture,
+    generation_settings_for,
 )
 from domain.execution_policy import ExecutionPolicy
-from domain.failure_explanation import FailureExplanationRecord, FailureExplanationStatus
 from domain.exploration_step import ExplorationStep
+from domain.failure_explanation import FailureExplanationRecord, FailureExplanationStatus
 from domain.form import Form
 from domain.form_field import FormField
 from domain.invite import Invite
@@ -61,6 +63,17 @@ from domain.page_transition import PageTransition
 from domain.password_reset import PasswordReset
 from domain.platform_user import PlatformUser
 from domain.recording_session import RecordingAuthMode, RecordingSession, RecordingSessionStatus
+from domain.run_target import (
+    BROWSER_LABELS,
+    BROWSERS,
+    DEFAULT_BROWSER,
+    DEFAULT_VIEWPORT_HEIGHT,
+    DEFAULT_VIEWPORT_WIDTH,
+    HEAL_BROWSER,
+    Browser,
+    normalize_browsers,
+    validate_viewport,
+)
 from domain.scenario import Scenario, ScenarioSource, ScenarioType
 from domain.schedule import Schedule, ScheduleCadenceType
 from domain.synthetic_data_entry import SyntheticDataEntry
@@ -75,6 +88,7 @@ from domain.test_run_cancel import (
     CANCELLABLE_TEST_RUN_STATUSES,
     RUN_CANCELLED_MESSAGE,
     apply_test_run_cancel,
+    count_tests,
     lock_test_run,
     tally_result_counts,
 )
@@ -103,6 +117,8 @@ __all__ = [
     "ErrorCode",
     "DiscoveryRun",
     "DiscoverySettings",
+    "GENERATION_KEYS",
+    "generation_settings_for",
     "InteractionLevel",
     "RetentionPeriod",
     "ScreenshotCapture",
@@ -146,6 +162,7 @@ __all__ = [
     "CANCELLABLE_TEST_RUN_STATUSES",
     "RUN_CANCELLED_MESSAGE",
     "apply_test_run_cancel",
+    "count_tests",
     "lock_test_run",
     "tally_result_counts",
     "TestSuite",
@@ -153,4 +170,13 @@ __all__ = [
     "aggregation_key",
     "effective_application",
     "find_environment",
+    "BROWSERS",
+    "BROWSER_LABELS",
+    "DEFAULT_BROWSER",
+    "DEFAULT_VIEWPORT_HEIGHT",
+    "DEFAULT_VIEWPORT_WIDTH",
+    "HEAL_BROWSER",
+    "Browser",
+    "normalize_browsers",
+    "validate_viewport",
 ]

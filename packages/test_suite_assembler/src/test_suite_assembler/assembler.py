@@ -328,7 +328,10 @@ def _build_package_json() -> str:
         '    "test": "playwright test"\n'
         "  },\n"
         '  "devDependencies": {\n'
-        '    "@playwright/test": "^1.48.0",\n'
+        # Exact, so a new Playwright release never changes the browser under
+        # already-proven tests. 1.62.1: the oldest that runs on Node 24 (1.61
+        # crashes loading the config) and the one playwright_typecheck uses.
+        '    "@playwright/test": "1.62.1",\n'
         # Allure 3 (Node-only CLI, no Java): `allure-playwright` writes raw
         # results while tests run, `allure` turns them into the HTML report
         # configured by allurerc.mjs.
@@ -353,6 +356,30 @@ _ALLURE_REPORTER_LINES = (
     f"  reporter: process.env.{ALLURE_RESULTS_DIR_ENV}\n"
     f"    ? [['json'], ['allure-playwright', {{ resultsDir: process.env.{ALLURE_RESULTS_DIR_ENV} }}]]\n"
     "    : [['list'], ['allure-playwright']],\n"
+)
+
+# Which browser and window size one `npx playwright test` invocation uses. The
+# execution worker sets these per result (one browser per invocation, so the
+# config needs no extra projects and `--no-deps` / `--project=setup` keep
+# working). Unset — an exported suite, or any run from before browsers were
+# selectable — it is exactly what the config always was: bundled Chromium at
+# Playwright's Desktop Chrome size, 1280x720. `screen` follows `viewport` so a
+# page that reads `window.screen` sees the chosen size too.
+BROWSER_ENV = "AITESTGEN_BROWSER"
+VIEWPORT_ENV = "AITESTGEN_VIEWPORT"
+_DEVICE_LINES = (
+    "const BROWSER_DEVICES = {\n"
+    "  chromium: 'Desktop Chrome',\n"
+    "  firefox: 'Desktop Firefox',\n"
+    "  webkit: 'Desktop Safari',\n"
+    "} as const\n"
+    f"const browser = (process.env.{BROWSER_ENV} ?? 'chromium') as keyof typeof BROWSER_DEVICES\n"
+    f"const [width, height] = (process.env.{VIEWPORT_ENV} ?? '1280x720').split('x').map(Number)\n"
+    "const device = {\n"
+    "  ...devices[BROWSER_DEVICES[browser]],\n"
+    "  viewport: { width, height },\n"
+    "  screen: { width, height },\n"
+    "}\n\n"
 )
 
 # Report title override the execution worker passes to `allure generate`
@@ -418,6 +445,7 @@ def _build_playwright_config(
     if not has_login:
         return (
             "import { defineConfig, devices } from '@playwright/test'\n\n"
+            f"{_DEVICE_LINES}"
             "export default defineConfig({\n"
             "  testDir: './tests',\n"
             "  fullyParallel: true,\n"
@@ -428,13 +456,14 @@ def _build_playwright_config(
             "    // AITESTGEN_SCREENSHOT is set by the execution worker from the Screenshot\n"
             "    // capture setting; unset (e.g. an exported suite) keeps only-on-failure.\n"
             "    screenshot: (process.env.AITESTGEN_SCREENSHOT as 'on' | 'only-on-failure') ?? 'only-on-failure',\n"
-            "    ...devices['Desktop Chrome'],\n"
+            "    ...device,\n"
             "  },\n"
             "})\n"
         )
     return (
         "import { defineConfig, devices } from '@playwright/test'\n"
         "import { existsSync } from 'fs'\n\n"
+        f"{_DEVICE_LINES}"
         "export default defineConfig({\n"
         "  testDir: './tests',\n"
         "  fullyParallel: true,\n"
@@ -470,14 +499,14 @@ def _build_playwright_config(
         "      name: 'authenticated',\n"
         "      testMatch: /.*\\.spec\\.ts$/,\n"
         "      grep: /@auth/,\n"
-        "      use: { ...devices['Desktop Chrome'], storageState: '.auth/state.json' },\n"
+        "      use: { ...device, storageState: '.auth/state.json' },\n"
         "      dependencies: ['setup'],\n"
         "    },\n"
         "    {\n"
         "      name: 'public',\n"
         "      testMatch: /.*\\.spec\\.ts$/,\n"
         "      grepInvert: /@auth/,\n"
-        "      use: { ...devices['Desktop Chrome'] },\n"
+        "      use: { ...device },\n"
         "    },\n"
         "  ],\n"
         "})\n"

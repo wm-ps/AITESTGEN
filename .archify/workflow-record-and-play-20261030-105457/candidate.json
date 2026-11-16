@@ -1,0 +1,377 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Record and play \u2014 a test case from your own clicks",
+    "output": ".archify/workflow-record-and-play-20261030-105457/record-and-play.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/wm-ps/AITESTGEN.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "050b7b5928f8c36df775ae0b6a8009b5ef76868b"
+    }
+  },
+  "lanes": [
+    {
+      "id": "you",
+      "label": "You (browser tab)"
+    },
+    {
+      "id": "vantage",
+      "label": "Vantage (web + API)"
+    },
+    {
+      "id": "service",
+      "label": "Recording service"
+    },
+    {
+      "id": "unsaved",
+      "label": "Not saved",
+      "variant": "exception"
+    }
+  ],
+  "groups": [
+    {
+      "id": "live_group",
+      "label": "Live recording",
+      "lane": "service",
+      "fromCol": 1,
+      "toCol": 3,
+      "variant": "emphasis"
+    }
+  ],
+  "mainPath": [
+    "name",
+    "session",
+    "screen",
+    "signin",
+    "codegen",
+    "act",
+    "stop",
+    "clean",
+    "added"
+  ],
+  "nodes": [
+    {
+      "id": "name",
+      "lane": "you",
+      "col": 0,
+      "type": "external",
+      "width": 172,
+      "label": "Name the flow",
+      "sublabel": "signed in or signed out",
+      "sources": [
+        {
+          "path": "apps/web/src/components/RecordAndPlay.tsx",
+          "line": 37,
+          "label": "sign-in choice"
+        },
+        {
+          "path": "apps/web/src/components/RecordAndPlay.tsx",
+          "line": 62,
+          "label": "starts a session"
+        }
+      ]
+    },
+    {
+      "id": "session",
+      "lane": "vantage",
+      "col": 1,
+      "type": "backend",
+      "width": 172,
+      "label": "Recording session",
+      "sublabel": "30-min token \u00b7 links",
+      "sources": [
+        {
+          "path": "apps/api/src/api/main.py",
+          "line": 3029,
+          "label": "sessions endpoint"
+        },
+        {
+          "path": "apps/api/src/api/recordings.py",
+          "line": 34,
+          "label": "mint_recording_session"
+        },
+        {
+          "path": "apps/api/src/api/recordings.py",
+          "line": 59,
+          "label": "screen + control links"
+        }
+      ]
+    },
+    {
+      "id": "screen",
+      "lane": "service",
+      "col": 1,
+      "type": "cloud",
+      "width": 172,
+      "label": "Virtual screen",
+      "sublabel": "streamed to your tab",
+      "sources": [
+        {
+          "path": "apps/workers/recording/src/recording_worker/display.py",
+          "line": 108,
+          "label": "Xvfb screen"
+        },
+        {
+          "path": "apps/workers/recording/src/recording_worker/display.py",
+          "line": 135,
+          "label": "x11vnc"
+        },
+        {
+          "path": "apps/workers/recording/src/recording_worker/app.py",
+          "line": 88,
+          "label": "screen websocket"
+        }
+      ]
+    },
+    {
+      "id": "signin",
+      "lane": "service",
+      "col": 2,
+      "type": "security",
+      "width": 172,
+      "label": "Sign in first",
+      "sublabel": "only if signed in chosen",
+      "sources": [
+        {
+          "path": "apps/workers/recording/src/recording_worker/runtime.py",
+          "line": 140,
+          "label": "when signed in"
+        },
+        {
+          "path": "apps/workers/recording/src/recording_worker/auth_mode.py",
+          "line": 27,
+          "label": "app's saved login"
+        }
+      ]
+    },
+    {
+      "id": "codegen",
+      "lane": "service",
+      "col": 3,
+      "type": "backend",
+      "width": 172,
+      "label": "Playwright records",
+      "sublabel": "every click and entry",
+      "sources": [
+        {
+          "path": "apps/workers/recording/src/recording_worker/runtime.py",
+          "line": 142,
+          "label": "starts recorder"
+        },
+        {
+          "path": "apps/workers/recording/src/recording_worker/codegen_session.py",
+          "line": 53,
+          "label": "playwright codegen"
+        }
+      ]
+    },
+    {
+      "id": "act",
+      "lane": "you",
+      "col": 3,
+      "type": "frontend",
+      "width": 172,
+      "label": "Use the app",
+      "sublabel": "click \u00b7 type \u00b7 assert",
+      "sources": [
+        {
+          "path": "apps/web/src/components/RecordingSessionWindow.tsx",
+          "line": 2,
+          "label": "live screen in your tab"
+        },
+        {
+          "path": "apps/web/src/components/RecordAndPlay.tsx",
+          "line": 70,
+          "label": "opens the tab"
+        }
+      ]
+    },
+    {
+      "id": "stop",
+      "lane": "you",
+      "col": 4,
+      "type": "frontend",
+      "width": 172,
+      "label": "Stop & Save",
+      "sublabel": "or Cancel",
+      "sources": [
+        {
+          "path": "apps/workers/recording/src/recording_worker/app.py",
+          "line": 121,
+          "label": "control websocket"
+        },
+        {
+          "path": "apps/workers/recording/src/recording_worker/runtime.py",
+          "line": 218,
+          "label": "request_stop"
+        }
+      ]
+    },
+    {
+      "id": "clean",
+      "lane": "service",
+      "col": 4,
+      "type": "backend",
+      "width": 172,
+      "label": "Tidy & check",
+      "sublabel": "assertions \u00b7 compiles",
+      "sources": [
+        {
+          "path": "apps/workers/recording/src/recording_worker/runtime.py",
+          "line": 242,
+          "label": "assertions switched on"
+        },
+        {
+          "path": "apps/workers/recording/src/recording_worker/runtime.py",
+          "line": 243,
+          "label": "test shape"
+        },
+        {
+          "path": "apps/workers/recording/src/recording_worker/runtime.py",
+          "line": 245,
+          "label": "type check"
+        }
+      ]
+    },
+    {
+      "id": "added",
+      "lane": "vantage",
+      "col": 5,
+      "type": "database",
+      "width": 172,
+      "label": "Test case added",
+      "sublabel": "runs like any test",
+      "sources": [
+        {
+          "path": "apps/workers/recording/src/recording_worker/persistence.py",
+          "line": 146,
+          "label": "save_recording_sync"
+        },
+        {
+          "path": "apps/workers/recording/src/recording_worker/persistence.py",
+          "line": 177,
+          "label": "editable test data"
+        },
+        {
+          "path": "apps/web/src/components/RecordAndPlay.tsx",
+          "line": 106,
+          "label": "TC-NNN was added"
+        }
+      ]
+    },
+    {
+      "id": "failed",
+      "lane": "unsaved",
+      "col": 4,
+      "type": "security",
+      "width": 172,
+      "label": "Not saved",
+      "sublabel": "empty or doesn't compile",
+      "sources": [
+        {
+          "path": "apps/workers/recording/src/recording_worker/runtime.py",
+          "line": 245,
+          "label": "type check errors"
+        },
+        {
+          "path": "apps/workers/recording/src/recording_worker/runtime.py",
+          "line": 218,
+          "label": "nothing recorded"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "name-session",
+      "from": "name",
+      "to": "session",
+      "label": "Record a flow",
+      "variant": "emphasis"
+    },
+    {
+      "id": "session-screen",
+      "from": "session",
+      "to": "screen",
+      "label": "connect"
+    },
+    {
+      "id": "screen-signin",
+      "from": "screen",
+      "to": "signin"
+    },
+    {
+      "id": "signin-codegen",
+      "from": "signin",
+      "to": "codegen"
+    },
+    {
+      "id": "codegen-act",
+      "from": "codegen",
+      "to": "act",
+      "label": "records you",
+      "variant": "emphasis"
+    },
+    {
+      "id": "act-stop",
+      "from": "act",
+      "to": "stop"
+    },
+    {
+      "id": "stop-clean",
+      "from": "stop",
+      "to": "clean",
+      "label": "save",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "clean-added",
+      "from": "clean",
+      "to": "added",
+      "label": "passes",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "bottom"
+    },
+    {
+      "id": "clean-failed",
+      "from": "clean",
+      "to": "failed",
+      "label": "fails",
+      "variant": "security",
+      "role": "error"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "What gets recorded",
+      "items": [
+        "Playwright's own recorder (codegen): no AI",
+        "Its Inspector adds the checks (assertions) you click",
+        "Typed values become editable test data (never passwords)"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Signed in or not",
+      "items": [
+        "Signed in: starts on the app with its saved login, tagged @auth",
+        "Signed out: you record the login yourself, tagged @public"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "After saving",
+      "items": [
+        "Runs in every test run and schedule",
+        "Can be self-healed like any test",
+        "Closing the tab for over 90 s ends the session"
+      ]
+    }
+  ]
+}

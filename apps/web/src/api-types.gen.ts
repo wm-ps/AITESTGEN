@@ -488,6 +488,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/explorer/applications/{application_id}/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Application Explorer Settings
+         * @description The limits this application's runs use (Application settings): its own,
+         *     or the organisation's until it has its own. Readable by everyone on the
+         *     app; only admins change them.
+         */
+        get: operations["get_application_explorer_settings_explorer_applications__application_id__settings_get"];
+        /**
+         * Update Application Explorer Settings
+         * @description This application's own limits; its next runs use them (a run going now
+         *     keeps the limits it started with, Resume picks up the new ones).
+         */
+        put: operations["update_application_explorer_settings_explorer_applications__application_id__settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/explorer/settings": {
         parameters: {
             query?: never;
@@ -2266,6 +2293,28 @@ export interface paths {
         patch: operations["update_settings_settings_patch"];
         trace?: never;
     };
+    "/applications/{application_id}/generation-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Generation Settings
+         * @description Its own, or the organisation's until it has its own. Readable by
+         *     everyone on the app; only admins change them.
+         */
+        get: operations["get_generation_settings_applications__application_id__generation_settings_get"];
+        /** Update Generation Settings */
+        put: operations["update_generation_settings_applications__application_id__generation_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2900,6 +2949,16 @@ export interface components {
              */
             steps_per_mission: number;
             /**
+             * Steps Per Scenario
+             * @default 20
+             */
+            steps_per_scenario: number;
+            /**
+             * Steps Per Journey
+             * @default 40
+             */
+            steps_per_journey: number;
+            /**
              * Max Scenarios
              * @default 150
              */
@@ -2909,11 +2968,43 @@ export interface components {
              * @default 1
              */
             proof_replays: number;
+            /**
+             * Same Screen Repeats
+             * @default 3
+             */
+            same_screen_repeats: number;
+            /**
+             * Screen Visits
+             * @default 4
+             */
+            screen_visits: number;
+            /**
+             * Press Retries
+             * @default 2
+             */
+            press_retries: number;
         };
         /** ForgotPasswordRequest */
         ForgotPasswordRequest: {
             /** Email */
             email: string;
+        };
+        /**
+         * GenerationSettings
+         * @description One application's test-case generation settings (Application settings).
+         */
+        GenerationSettings: {
+            /** Max Scenarios Per Journey */
+            max_scenarios_per_journey: number | null;
+            /** Max Test Cases Per Application */
+            max_test_cases_per_application: number | null;
+            /** Max Heal Attempts */
+            max_heal_attempts: number;
+            /**
+             * Screenshot Capture
+             * @enum {string}
+             */
+            screenshot_capture: "failed" | "passed" | "all";
         };
         /** GlobalStatsRead */
         GlobalStatsRead: {
@@ -3672,6 +3763,9 @@ export interface components {
          *     override; there is just no create-time input for it anymore.
          */
         ScheduleCreate: {
+            /** Browsers */
+            browsers?: ("chromium" | "firefox" | "webkit")[] | null;
+            viewport?: components["schemas"]["ViewportBody"] | null;
             /** Name */
             name: string;
             /** Cadence Type */
@@ -3741,6 +3835,23 @@ export interface components {
             test_collection_id?: string | null;
             /** Test Collection Name */
             test_collection_name?: string | null;
+            /**
+             * Browsers
+             * @default [
+             *       "chromium"
+             *     ]
+             */
+            browsers: string[];
+            /**
+             * Viewport Width
+             * @default 1280
+             */
+            viewport_width: number;
+            /**
+             * Viewport Height
+             * @default 720
+             */
+            viewport_height: number;
         };
         /**
          * ScheduleUpdate
@@ -3753,6 +3864,9 @@ export interface components {
          *     are last-`commit()`-wins, an accepted low-severity v1 race.
          */
         ScheduleUpdate: {
+            /** Browsers */
+            browsers?: ("chromium" | "firefox" | "webkit")[] | null;
+            viewport?: components["schemas"]["ViewportBody"] | null;
             /** Name */
             name?: string | null;
             /** Cadence Type */
@@ -4035,6 +4149,13 @@ export interface components {
             journey_name: string;
             /** Test Case Number */
             test_case_number: number | null;
+            /** Scenario Id */
+            scenario_id?: string | null;
+            /**
+             * Browser
+             * @default chromium
+             */
+            browser: string;
             /** Status */
             status: string;
             /** Duration Ms */
@@ -4124,6 +4245,23 @@ export interface components {
             /** Target Base Url Snapshot */
             target_base_url_snapshot: string;
             /**
+             * Browsers
+             * @default [
+             *       "chromium"
+             *     ]
+             */
+            browsers: string[];
+            /**
+             * Viewport Width
+             * @default 1280
+             */
+            viewport_width: number;
+            /**
+             * Viewport Height
+             * @default 720
+             */
+            viewport_height: number;
+            /**
              * Created At
              * Format: date-time
              */
@@ -4159,6 +4297,9 @@ export interface components {
         };
         /** TriggerTestRunRequest */
         TriggerTestRunRequest: {
+            /** Browsers */
+            browsers?: ("chromium" | "firefox" | "webkit")[] | null;
+            viewport?: components["schemas"]["ViewportBody"] | null;
             /** Suite Name */
             suite_name?: string | null;
             /** Test Case Ids */
@@ -4194,6 +4335,13 @@ export interface components {
         VerdictRequest: {
             /** Verdict */
             verdict: string;
+        };
+        /** ViewportBody */
+        ViewportBody: {
+            /** Width */
+            width: number;
+            /** Height */
+            height: number;
         };
         /** TestCaseRead */
         api__explorer__TestCaseRead: {
@@ -5360,6 +5508,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_application_explorer_settings_explorer_applications__application_id__settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExplorerSettingsBody"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_application_explorer_settings_explorer_applications__application_id__settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExplorerSettingsBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExplorerSettingsBody"];
                 };
             };
             /** @description Validation Error */
@@ -9040,6 +9258,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SettingsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_generation_settings_applications__application_id__generation_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerationSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_generation_settings_applications__application_id__generation_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                application_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GenerationSettings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GenerationSettings"];
                 };
             };
             /** @description Validation Error */

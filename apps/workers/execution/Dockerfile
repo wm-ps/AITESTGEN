@@ -22,12 +22,15 @@ RUN uv sync --frozen --no-dev --package execution-worker
 # its node_modules here too, same as generation's own Dockerfile step.
 RUN cd packages/playwright_typecheck/typecheck && npm install
 
-# Pre-install @playwright/test + Chromium once at image-build time. Every
-# TestRun's own assembled project still runs `npm ci` against its own
-# package.json, but the browser binaries this installs land in the OS-level
-# cache (~/.cache/ms-playwright) so a fresh TestRun's browser install is a
-# cache hit, not a multi-hundred-MB download per run.
-RUN npm install -g @playwright/test && npx playwright install --with-deps chromium
+# Pre-install @playwright/test + all three browsers a run can choose
+# (Chromium, Firefox, WebKit — "Chrome", "Firefox", "Safari" in the UI) once at
+# image-build time. Every TestRun's own assembled project still runs `npm ci`
+# against its own package.json, but the browser binaries this installs land in
+# the OS-level cache (~/.cache/ms-playwright) so a fresh TestRun's browser
+# install is a cache hit, not a multi-hundred-MB download per run. Firefox and
+# WebKit roughly triple this layer's size; `_install_project` only installs the
+# ones a run actually uses.
+RUN npm install -g @playwright/test && npx playwright install --with-deps chromium firefox webkit
 
 # Warm npm's cache with the Allure report packages every assembled project
 # now lists (allure + allure-playwright, see test_suite_assembler's
@@ -37,7 +40,7 @@ RUN npm install -g @playwright/test && npx playwright install --with-deps chromi
 # packages, which observed live pushed PrepareTestRunActivity past its
 # 5-minute timeout.
 RUN mkdir /tmp/allure-cache-warm && cd /tmp/allure-cache-warm \
-    && npm install --no-save --no-audit --no-fund "@playwright/test@^1.48.0" "allure@^3.20.1" "allure-playwright@^3.13.0" \
+    && npm install --no-save --no-audit --no-fund "@playwright/test@1.62.1" "allure@^3.20.1" "allure-playwright@^3.13.0" \
     && cd / && rm -rf /tmp/allure-cache-warm
 
 # Invoke the venv directly — `uv run` re-syncs (and would pull dev deps

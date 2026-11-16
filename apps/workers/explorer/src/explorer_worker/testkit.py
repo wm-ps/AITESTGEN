@@ -183,6 +183,26 @@ def api_call_count(calls: list[tuple[str, str, int]], value: str) -> int:
     )
 
 
+# A field the app flagged after the test acted: marked invalid for screen
+# readers (aria-invalid), or refused by the browser's own check, which focuses
+# the first field it refuses. Shared by `holds` and the exported test.
+FIELD_FLAGGED_JS = (
+    "e => e.getAttribute('aria-invalid') === 'true' || "
+    "(!!e.validity && !e.validity.valid && document.activeElement === e)"
+)
+
+
+def seen_message(check: dict[str, Any], messages: list[str]) -> bool:
+    """A text proof the app showed during the test, though it may be gone
+    by now (a toast fades after a few seconds)."""
+    value = " ".join(str(check.get("value") or "").split()).lower()
+    return (
+        check.get("kind") in (None, "", "text_visible")
+        and bool(value)
+        and any(value in " ".join(m.split()).lower() for m in messages)
+    )
+
+
 # Same as the exported test's ASSERTION_TIMEOUT_MS for its final check.
 PROOF_WAIT_MS = 15000
 # Proving a proof is ABSENT (the broken-on-purpose run): the page has already
@@ -201,6 +221,17 @@ async def holds(eyes: Eyes, check: dict[str, Any], wait_ms: int = PROOF_WAIT_MS)
         return value.lower() in eyes.page.url.lower()
     if check.get("kind") == "api_call":
         return api_call_made(eyes.calls_since_mark(), value)
+    if check.get("kind") == "field_invalid":
+        field = eyes.page.get_by_label(value).first
+        try:
+            await eyes.page.wait_for_function(
+                f"el => ({FIELD_FLAGGED_JS})(el)",
+                arg=await field.element_handle(timeout=wait_ms),
+                timeout=wait_ms,
+            )
+            return True
+        except Exception:  # noqa: BLE001 — no such field, or never flagged
+            return False
     # Exactly what the exported test checks (`getByText(value)`, visible): one
     # element showing the text. Several labels joined into one string ("Mobile
     # number Email Continue") are in the page's text but in no single element,
@@ -541,6 +572,11 @@ def playwright_code(
         body.append(
             f"  await expect(page).toHaveURL(new RegExp({_q(re.escape(str(check['value'])))}), "
             "{ timeout: ASSERTION_TIMEOUT_MS });"
+        )
+    elif check and check.get("kind") == "field_invalid":
+        body.append(
+            f"  await expect.poll(() => page.getByLabel({_q(check['value'])}).first()"
+            f".evaluate({FIELD_FLAGGED_JS}), {{ timeout: ASSERTION_TIMEOUT_MS }}).toBe(true);"
         )
     elif check:
         body.append(

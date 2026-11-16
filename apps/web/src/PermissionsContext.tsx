@@ -18,3 +18,9 @@ export function useCanEdit(): boolean {
 export function useIsViewer(): boolean {
   return useContext(PermissionsContext) === 'viewer'
 }
+
+// True for an organization admin: the only role that changes an
+// application's Explorer limits and test case generation settings.
+export function useIsAdmin(): boolean {
+  return useContext(PermissionsContext) === 'admin'
+}

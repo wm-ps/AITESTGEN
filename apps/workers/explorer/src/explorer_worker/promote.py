@@ -558,6 +558,8 @@ def _proof_sentence(check: dict[str, Any] | None) -> str:
         return ""
     if check.get("kind") == "url_contains":
         return f" Proof of success: the address contains “{check['value']}”."
+    if check.get("kind") == "field_invalid":
+        return f" Proof of success: the field “{check['value']}” is flagged as not valid."
     return f" Proof of success: the screen shows “{check['value']}”."
 
 

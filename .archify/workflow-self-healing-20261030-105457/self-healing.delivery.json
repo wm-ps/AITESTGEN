@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "178a0b7c-ba5d-4c59-afef-f987b9573101",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/workflow-self-healing-20261030-105457/candidate.json",
+  "output": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/workflow-self-healing-20261030-105457/self-healing.html",
+  "specification": {
+    "sha256": "b680f51e5dab225b4155d3ff1d423b4f67c84de247ee0f7ee600c2465b077c04",
+    "bytes": 9408
+  },
+  "artifact": {
+    "sha256": "2fe394a6ef7cbb60d9fd22cfbedcb7de583e93ee7402190b11d955aa463bb5c4",
+    "bytes": 769015
+  }
+}

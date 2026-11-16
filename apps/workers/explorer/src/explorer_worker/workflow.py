@@ -5,7 +5,7 @@ mode="full":
            Summary (a signal — free while waiting, survives restarts);
   Stage 2  plan the Mission Board and keep up to MAX_PARALLEL missions
            running until none are queued (missions added meanwhile too);
-  Stage 5  write test cases and build/prove them, MAX_PARALLEL at a time.
+  Stage 5  write test cases and build/prove them, SCENARIOS_AT_ONCE at a time.
 mode="missions": re-enter at Stage 2 for missions added after a finished run.
 mode="tests":    re-enter at Stage 5 (write and prove test cases again).
 mode="resume":   carry on a paused/stopped/failed run from the step it reached
@@ -45,6 +45,9 @@ with workflow.unsafe.imports_passed_through():
     )
 
 MAX_PARALLEL = 3
+# Scenarios proven at once. Each opens fresh browsers that sign in; drop to 1
+# if an app throttles or drops the sign-in with several on one account.
+SCENARIOS_AT_ONCE = 3
 # A browser session isn't safely replayable mid-way; activities turn their own
 # failures into visible failed runs/missions/tests instead of retrying.
 _ONCE = RetryPolicy(maximum_attempts=1)
@@ -141,14 +144,22 @@ class ExplorerRunWorkflow:
             if mode == "missions":
                 return "explored"
 
-        tests = 0
         if doing("plan_tests"):
-            tests = await self._bonus(
-                PLAN_TESTS_ACTIVITY, run_id, timedelta(minutes=20), heartbeat=False
+            # 60 minutes: a big app is ~25 planning calls, and a slow spell of
+            # the AI service once pushed 20 past its limit (the plan then
+            # landed after the run had ended with 0 scenarios).
+            await self._bonus(
+                PLAN_TESTS_ACTIVITY, run_id, timedelta(minutes=60), heartbeat=False
             )
-        if tests or start == "build_tests":
+        # Whatever scenarios are saved get tried, even if planning was cut off
+        # (an empty list ends the pool at once).
+        if doing("build_tests"):
             await self._pool(
-                run_id, PLANNED_TESTS_ACTIVITY, BUILD_TEST_ACTIVITY, REQUEUE_TEST_ACTIVITY
+                run_id,
+                PLANNED_TESTS_ACTIVITY,
+                BUILD_TEST_ACTIVITY,
+                REQUEUE_TEST_ACTIVITY,
+                most=SCENARIOS_AT_ONCE,
             )
         await workflow.execute_activity(
             FINISH_TESTING_ACTIVITY, run_id, start_to_close_timeout=_QUICK
@@ -179,9 +190,14 @@ class ExplorerRunWorkflow:
             return None
 
     async def _pool(
-        self, run_id: str, list_activity: str, run_activity: str, requeue_activity: str
+        self,
+        run_id: str,
+        list_activity: str,
+        run_activity: str,
+        requeue_activity: str,
+        most: int = MAX_PARALLEL,
     ) -> None:
-        """Keep up to MAX_PARALLEL items running until none are waiting. An
+        """Keep up to `most` items running until none are waiting. An
         item whose worker died (restart/timeout) gets one more try (the
         requeue activity gives up on the second)."""
         running: dict[str, asyncio.Task[str]] = {}
@@ -190,7 +206,7 @@ class ExplorerRunWorkflow:
                 list_activity, run_id, start_to_close_timeout=_QUICK
             )
             for item_id in waiting:
-                if len(running) >= MAX_PARALLEL:
+                if len(running) >= most:
                     break
                 if item_id not in running:
                     running[item_id] = asyncio.ensure_future(

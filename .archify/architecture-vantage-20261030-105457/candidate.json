@@ -1,0 +1,477 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Vantage \u2014 overall architecture",
+    "output": ".archify/architecture-vantage-20261030-105457/vantage-architecture.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/wm-ps/AITESTGEN.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "050b7b5928f8c36df775ae0b6a8009b5ef76868b"
+    }
+  },
+  "components": [
+    {
+      "id": "users",
+      "type": "external",
+      "label": "QA team",
+      "sublabel": "browser",
+      "pos": [
+        40,
+        300
+      ],
+      "size": [
+        130,
+        60
+      ],
+      "sources": [
+        {
+          "path": "apps/web/src/main.tsx",
+          "line": 7,
+          "label": "web app entry"
+        }
+      ]
+    },
+    {
+      "id": "web",
+      "type": "frontend",
+      "label": "Web app",
+      "sublabel": "React \u00b7 Vite",
+      "pos": [
+        240,
+        300
+      ],
+      "size": [
+        140,
+        60
+      ],
+      "sources": [
+        {
+          "path": "apps/web/src/main.tsx",
+          "line": 7,
+          "label": "React root"
+        },
+        {
+          "path": "apps/web/src/api.ts",
+          "line": 464,
+          "label": "API base URL"
+        }
+      ]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "API",
+      "sublabel": "FastAPI",
+      "pos": [
+        460,
+        300
+      ],
+      "size": [
+        140,
+        60
+      ],
+      "sources": [
+        {
+          "path": "apps/api/src/api/main.py",
+          "line": 180,
+          "label": "FastAPI app"
+        },
+        {
+          "path": "apps/api/src/api/main.py",
+          "line": 222,
+          "end_line": 224,
+          "label": "Explorer + authoring routes"
+        }
+      ]
+    },
+    {
+      "id": "temporal",
+      "type": "messagebus",
+      "label": "Temporal",
+      "sublabel": "workflows \u00b7 task queues",
+      "pos": [
+        680,
+        300
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "sources": [
+        {
+          "path": "apps/api/src/api/temporal_client.py",
+          "line": 34,
+          "label": "API connects"
+        },
+        {
+          "path": "ops/k8s/05-temporal.yaml",
+          "line": 21,
+          "label": "Temporal deployment"
+        }
+      ]
+    },
+    {
+      "id": "explorer",
+      "type": "backend",
+      "label": "Explorer worker",
+      "sublabel": "explore \u00b7 authoring",
+      "pos": [
+        920,
+        80
+      ],
+      "size": [
+        160,
+        60
+      ],
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/worker.py",
+          "line": 48,
+          "end_line": 50,
+          "label": "explorer queue"
+        },
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/browser.py",
+          "line": 348,
+          "label": "Chromium"
+        }
+      ]
+    },
+    {
+      "id": "generation",
+      "type": "backend",
+      "label": "Generation worker",
+      "sublabel": "scenarios \u00b7 test code",
+      "pos": [
+        920,
+        220
+      ],
+      "size": [
+        160,
+        60
+      ],
+      "sources": [
+        {
+          "path": "apps/workers/generation/src/generation_worker/worker.py",
+          "line": 58,
+          "end_line": 60,
+          "label": "generation queue"
+        },
+        {
+          "path": "apps/workers/generation/src/generation_worker/activities.py",
+          "line": 972,
+          "label": "AI writes test code"
+        }
+      ]
+    },
+    {
+      "id": "execution",
+      "type": "backend",
+      "label": "Execution worker",
+      "sublabel": "test runs \u00b7 self-healing",
+      "pos": [
+        920,
+        360
+      ],
+      "size": [
+        160,
+        60
+      ],
+      "sources": [
+        {
+          "path": "apps/workers/execution/src/execution_worker/worker.py",
+          "line": 83,
+          "end_line": 85,
+          "label": "execution queue"
+        },
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 1807,
+          "label": "self-heal AI call"
+        }
+      ]
+    },
+    {
+      "id": "recording",
+      "type": "backend",
+      "label": "Recording service",
+      "sublabel": "record and play",
+      "pos": [
+        240,
+        520
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "sources": [
+        {
+          "path": "apps/workers/recording/src/recording_worker/app.py",
+          "line": 35,
+          "label": "websocket service"
+        },
+        {
+          "path": "apps/workers/recording/src/recording_worker/codegen_session.py",
+          "line": 53,
+          "label": "Playwright codegen"
+        }
+      ]
+    },
+    {
+      "id": "postgres",
+      "type": "database",
+      "label": "PostgreSQL",
+      "sublabel": "apps \u00b7 runs \u00b7 test cases",
+      "pos": [
+        460,
+        520
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "sources": [
+        {
+          "path": "apps/api/src/api/db.py",
+          "line": 14,
+          "label": "DATABASE_URL"
+        }
+      ]
+    },
+    {
+      "id": "vault",
+      "type": "security",
+      "label": "Vault",
+      "sublabel": "app logins",
+      "pos": [
+        680,
+        520
+      ],
+      "size": [
+        140,
+        60
+      ],
+      "sources": [
+        {
+          "path": "packages/secrets_client/src/secrets_client/vault_client.py",
+          "line": 33,
+          "label": "Vault client"
+        },
+        {
+          "path": "apps/api/src/api/main.py",
+          "line": 874,
+          "label": "login stored"
+        }
+      ]
+    },
+    {
+      "id": "llm",
+      "type": "cloud",
+      "label": "AI gateway",
+      "sublabel": "LiteLLM",
+      "pos": [
+        1180,
+        150
+      ],
+      "size": [
+        140,
+        60
+      ],
+      "sources": [
+        {
+          "path": "apps/workers/explorer/src/explorer_worker/llm.py",
+          "line": 19,
+          "label": "Explorer's client"
+        },
+        {
+          "path": "packages/ai_provider/src/ai_provider/hosted.py",
+          "line": 42,
+          "label": "shared client"
+        }
+      ]
+    },
+    {
+      "id": "target",
+      "type": "external",
+      "label": "App under test",
+      "sublabel": "your application",
+      "pos": [
+        1180,
+        430
+      ],
+      "size": [
+        140,
+        60
+      ],
+      "sources": [
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 751,
+          "label": "tests run against it"
+        }
+      ]
+    },
+    {
+      "id": "s3",
+      "type": "cloud",
+      "label": "S3",
+      "sublabel": "screenshots \u00b7 traces",
+      "pos": [
+        1180,
+        600
+      ],
+      "size": [
+        140,
+        60
+      ],
+      "sources": [
+        {
+          "path": "packages/object_store/src/object_store/client.py",
+          "line": 36,
+          "label": "object store"
+        },
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 1210,
+          "label": "run artifacts"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Vantage platform",
+      "wraps": [
+        "web",
+        "api",
+        "temporal",
+        "explorer",
+        "generation",
+        "execution",
+        "recording",
+        "postgres",
+        "vault"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "users-web",
+      "from": "users",
+      "to": "web",
+      "label": "HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "web-api",
+      "from": "web",
+      "to": "api",
+      "label": "REST",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api-temporal",
+      "from": "api",
+      "to": "temporal",
+      "label": "start",
+      "variant": "emphasis"
+    },
+    {
+      "id": "temporal-explorer",
+      "from": "temporal",
+      "to": "explorer",
+      "label": "explore"
+    },
+    {
+      "id": "temporal-generation",
+      "from": "temporal",
+      "to": "generation",
+      "label": "generate"
+    },
+    {
+      "id": "temporal-execution",
+      "from": "temporal",
+      "to": "execution",
+      "label": "run"
+    },
+    {
+      "id": "web-recording",
+      "from": "web",
+      "to": "recording",
+      "label": "live screen",
+      "variant": "dashed"
+    },
+    {
+      "id": "api-postgres",
+      "from": "api",
+      "to": "postgres",
+      "label": "SQL"
+    },
+    {
+      "id": "api-vault",
+      "from": "api",
+      "to": "vault",
+      "label": "logins",
+      "variant": "security"
+    },
+    {
+      "id": "explorer-llm",
+      "from": "explorer",
+      "to": "llm",
+      "label": "AI"
+    },
+    {
+      "id": "generation-llm",
+      "from": "generation",
+      "to": "llm",
+      "label": "AI"
+    },
+    {
+      "id": "execution-target",
+      "from": "execution",
+      "to": "target",
+      "label": "Playwright"
+    },
+    {
+      "id": "execution-s3",
+      "from": "execution",
+      "to": "s3",
+      "label": "artifacts",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "How work flows",
+      "items": [
+        "The web app calls the API",
+        "The API starts Temporal workflows",
+        "Each worker takes its own queue's work",
+        "Explorer, Generation and self-healing call the AI gateway"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "Feature \u2192 where it runs",
+      "items": [
+        "Explorer and Authoring: Explorer worker",
+        "Test runs and self-healing: Execution worker",
+        "Record and play: Recording service"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "Shared by all workers",
+      "items": [
+        "PostgreSQL for every record",
+        "Vault for each app's saved login",
+        "Explorer, test runs and recording drive real Chromium on the app under test"
+      ]
+    }
+  ]
+}

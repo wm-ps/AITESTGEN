@@ -242,14 +242,30 @@ def date_variants(value: str) -> list[str]:
     return list(dict.fromkeys(candidates))
 
 
-# Screens that show the app keeps progress per account (a saved draft, a
-# cart). Parallel agents on one account would overwrite each other's state
-# there — and report the mess as app bugs.
-_KEEPS_STATE = re.compile(
-    # "resume" alone is often a CV ("upload resume"): only resuming work counts.
-    r"\b(resume (your |my |the |a )?(saved |unfinished )?(report|progress|application|draft|"
-    r"claim|order|form|where)|unfinished|saved (report|progress|application|draft|form)|draft|"
-    r"where you left off|shopping cart|basket)\b",
+# Does the app keep progress per account (a saved draft, a cart)? Parallel
+# agents on one account would overwrite each other's state there — and report
+# the mess as app bugs. Decided from what a screen lets you DO, never from its
+# prose: "Users review the draft terms" (a document) mentions a draft but
+# offers nothing to resume, and once made a whole CRM run serial and skipped
+# every page-quality check.
+#   Buttons that act on the account's saved progress. Not "Save Draft" /
+#   "Discard Draft" in a record editor: that drafts one record and never
+#   brings up a "resume where you left off?" prompt. "resume" alone is often
+#   a CV ("Upload resume"): only resuming work counts.
+_STATE_ACTION = re.compile(
+    r"^\s*resume\s*$|\b(pick up where|carry on (where|with)|where (you|i) left off|"
+    r"continue (where|my|your|(the |a )?(saved|draft|unfinished))|"
+    r"resume (your |my |the |a )?(saved |unfinished )?(report|progress|application|draft|"
+    r"claim|order|form|checkout)|"
+    r"save (and|&) (exit|finish later|continue later)|finish later|"
+    r"add to (cart|basket|bag)|(view|go to|my) (cart|basket|bag)|checkout)\b",
+    re.IGNORECASE,
+)
+#   A screen that IS the store of saved work (its own title), when it has
+#   something to act on.
+_STATE_SCREEN = re.compile(
+    r"^\s*((my |saved |your )?(drafts?|shopping cart|cart|basket|bag)|"
+    r"(resume|continue) (your |my |a |the )?(saved |unfinished )?\w+)\s*$",
     re.IGNORECASE,
 )
 # The "start fresh" answer to a "resume your saved progress?" prompt.
@@ -280,10 +296,21 @@ DISMISS_LIKE = re.compile(
 )
 
 
-def keeps_state(screen_texts: list[str]) -> bool:
-    """ponytail: keyword guess from screen names/purposes; a per-app
-    'keeps state' answer from the user would be the exact version."""
-    return any(_KEEPS_STATE.search(t or "") for t in screen_texts)
+def keeps_state(screens: list[tuple[str, list[dict]]]) -> bool:
+    """`screens` is (name, actions) per screen. True only when a screen
+    offers to resume / save-and-exit progress or a cart, or is itself the
+    drafts/cart page with something to act on. The model-written purpose is
+    deliberately not read: it describes content (a "draft" policy) as
+    readily as a feature.
+    ponytail: label patterns over recorded buttons; a per-app 'keeps state'
+    answer from the user would be the exact version."""
+    for name, actions in screens:
+        labels = [str(a.get("label") or "") for a in actions or []]
+        if any(_STATE_ACTION.search(label) for label in labels):
+            return True
+        if labels and _STATE_SCREEN.match(name or ""):
+            return True
+    return False
 
 
 def resumes_saved_progress(script: list[dict]) -> bool:
@@ -321,23 +348,44 @@ CYCLE_REPEATS = 3
 MAX_VISITS_PER_SCREEN = 4
 
 
-def going_in_circles(screens: list[str]) -> str | None:
+def refused_calls(calls: list[tuple[str, str, int]]) -> str:
+    """The data calls the server refused (4xx/5xx), e.g. 'POST //app/api/leads -> 422'."""
+    return "; ".join(f"{m} {url_pattern(u)} -> {s}" for m, u, s in calls if s >= 400)[:400]
+
+
+def entered_something_new(entered: list[str], seen: set[str]) -> bool:
+    """Did this partial fill put new values on the form? Filling a long form
+    in parts (7 fields, then an Account lookup, then a contact) is progress,
+    not going in circles: counting each part as landing on the form again
+    stopped most CRM missions and scenario walks after 3 actions. Values it
+    already entered are what a stuck walk repeats, and those still count."""
+    new = [e for e in entered if e not in seen]
+    seen.update(new)
+    return bool(new)
+
+
+def going_in_circles(
+    screens: list[str],
+    repeats: int = CYCLE_REPEATS,
+    max_visits: int = MAX_VISITS_PER_SCREEN,
+) -> str | None:
     """The screens a walk has landed on, in order. Returns a plain sentence
-    when the tail is the same 1-3 screens repeating CYCLE_REPEATS times, or
-    one screen has been landed on more than MAX_VISITS_PER_SCREEN times."""
+    when the tail is the same 1-3 screens repeating `repeats` times, or one
+    screen has been landed on more than `max_visits` times (Settings →
+    Explorer limits)."""
     for period in (1, 2, 3):
-        span = period * CYCLE_REPEATS
+        span = period * repeats
         if len(screens) >= span:
             tail = screens[-span:]
             loop = tail[:period]
             if all(tail[i] == loop[i % period] for i in range(span)):
                 if period == 1:
-                    return f"stayed on {loop[0]} {CYCLE_REPEATS} times without moving on"
-                return "kept going round " + " → ".join(loop) + f" ({CYCLE_REPEATS} times)"
+                    return f"stayed on {loop[0]} {repeats} times without moving on"
+                return "kept going round " + " → ".join(loop) + f" ({repeats} times)"
     counts: dict[str, int] = {}
     for name in screens:
         counts[name] = counts.get(name, 0) + 1
-        if counts[name] > MAX_VISITS_PER_SCREEN:
+        if counts[name] > max_visits:
             return f"came back to {name} {counts[name]} times without finishing"
     return None
 

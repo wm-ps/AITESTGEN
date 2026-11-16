@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "de0366e2-9f03-4148-a5d3-7ea21e96d332",
+  "status": "current",
+  "command": "deliver",
+  "type": "workflow",
+  "input": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/workflow-authoring-20261030-105457/candidate.json",
+  "output": "/Users/pavank_500328/Downloads/AITESTGEN/.archify/workflow-authoring-20261030-105457/authoring.html",
+  "specification": {
+    "sha256": "754fc121c3a2a03f5e2a555eb1f7ce06ca617860d97b0ad1719375e2efc1ec00",
+    "bytes": 8702
+  },
+  "artifact": {
+    "sha256": "630a3e001a68bb1d2f8a0ce986f597a88c61126ab895ab76c4ac057a1138705b",
+    "bytes": 767272
+  }
+}

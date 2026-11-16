@@ -1,0 +1,569 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Explorer Metrics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f6f9;
+  --surface: #ffffff;
+  --surface-2: #f8f9fb;
+  --border: #e3e7ee;
+  --text: #0f172a;
+  --text-2: #475569;
+  --muted: #64748b;
+  --brand: #12325e;
+  --brand-2: #1d4f91;
+  --on-brand: #ffffff;
+  --on-brand-2: #c9d6ea;
+  --accent: #2a78d6;
+  --track: #e3e8f0;
+  --good: #0f7b3f;  --good-bg: #e6f4ec;
+  --warn: #9a6200;  --warn-bg: #fdf3dc;
+  --crit: #b42318;  --crit-bg: #fde8e7;
+  --info-bg: #eaf2fc;
+  --shadow: 0 1px 2px rgba(15,23,42,.05), 0 1px 3px rgba(15,23,42,.06);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0d1117; --surface: #151b24; --surface-2: #1a212c; --border: #273142;
+    --text: #e6ebf2; --text-2: #b4bfcd; --muted: #8b97a8;
+    --brand: #0f2340; --brand-2: #173a6a; --on-brand: #f1f5fb; --on-brand-2: #a9bcd8;
+    --accent: #3987e5; --track: #263040;
+    --good: #5fcf8d; --good-bg: #13291d; --warn: #e5b04a; --warn-bg: #2c2210;
+    --crit: #f08a80; --crit-bg: #331716; --info-bg: #13243b;
+    --shadow: none;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d1117; --surface: #151b24; --surface-2: #1a212c; --border: #273142;
+  --text: #e6ebf2; --text-2: #b4bfcd; --muted: #8b97a8;
+  --brand: #0f2340; --brand-2: #173a6a; --on-brand: #f1f5fb; --on-brand-2: #a9bcd8;
+  --accent: #3987e5; --track: #263040;
+  --good: #5fcf8d; --good-bg: #13291d; --warn: #e5b04a; --warn-bg: #2c2210;
+  --crit: #f08a80; --crit-bg: #331716; --info-bg: #13243b;
+  --shadow: none;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg); color: var(--text);
+  font: 15px/1.55 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+
+/* Header */
+header.hero { background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: var(--on-brand); }
+header.hero .wrap { padding-top: 28px; padding-bottom: 32px; }
+.topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 22px; }
+.brandmark { display: flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: .01em; }
+.brandmark .dot { width: 26px; height: 26px; border-radius: 7px; background: rgba(255,255,255,.14); display: grid; place-items: center; }
+.theme-btn { background: rgba(255,255,255,.12); color: var(--on-brand); border: 1px solid rgba(255,255,255,.22); border-radius: 8px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+.theme-btn:hover { background: rgba(255,255,255,.2); }
+h1 { font-size: clamp(26px, 4vw, 36px); line-height: 1.15; margin: 0 0 8px; font-weight: 700; letter-spacing: -.01em; }
+.hero p.lede { margin: 0; max-width: 720px; color: var(--on-brand-2); font-size: 16px; }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.chip { font-size: 12px; padding: 4px 10px; border-radius: 999px; background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.18); color: var(--on-brand); }
+
+/* Nav */
+nav.toc { position: sticky; top: 0; z-index: 5; background: var(--surface); border-bottom: 1px solid var(--border); }
+nav.toc .wrap { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+nav.toc a { white-space: nowrap; padding: 12px 10px; font-size: 13px; font-weight: 500; color: var(--text-2); text-decoration: none; border-bottom: 2px solid transparent; }
+nav.toc a:hover { color: var(--text); border-bottom-color: var(--accent); }
+
+main .wrap { padding-top: 28px; padding-bottom: 56px; }
+section { margin-bottom: 40px; scroll-margin-top: 56px; }
+h2 { font-size: 20px; margin: 0 0 4px; font-weight: 650; letter-spacing: -.005em; }
+.sub { color: var(--text-2); margin: 0 0 16px; max-width: 760px; }
+h3 { font-size: 14px; margin: 0 0 12px; font-weight: 600; }
+
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; box-shadow: var(--shadow); }
+.grid { display: grid; gap: 16px; }
+.g4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
+.g3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+.g2 { grid-template-columns: repeat(2, minmax(0,1fr)); }
+@media (max-width: 900px) { .g4 { grid-template-columns: repeat(2, minmax(0,1fr)); } .g3 { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .g4, .g2 { grid-template-columns: 1fr; } }
+
+/* KPI tiles */
+.kpi .label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.kpi .value { font-size: 30px; font-weight: 700; margin: 6px 0 2px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.kpi .note { font-size: 13px; color: var(--text-2); }
+
+/* Callouts */
+.callout { border-radius: 10px; padding: 12px 14px; font-size: 14px; display: flex; gap: 10px; align-items: flex-start; border: 1px solid transparent; }
+.callout svg { flex: none; margin-top: 2px; }
+.callout.warn { background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 30%, transparent); }
+.callout.info { background: var(--info-bg); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.callout.warn svg { color: var(--warn); }
+.callout.info svg { color: var(--accent); }
+
+/* Bars */
+.bars { display: grid; gap: 10px; }
+.bar-row { display: grid; grid-template-columns: 170px 1fr 92px; gap: 12px; align-items: center; font-size: 13px; }
+.bar-row .name { color: var(--text-2); }
+.bar-row .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--text); font-weight: 500; }
+.track { position: relative; height: 14px; background: var(--track); border-radius: 0 4px 4px 0; }
+.fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 0 4px 4px 0; }
+.fill.plan { background: color-mix(in srgb, var(--accent) 28%, var(--track)); }
+.fill.proven { background: var(--accent); top: 3px; bottom: 3px; }
+.hit { position: absolute; inset: -6px 0; cursor: default; }
+@media (max-width: 640px) { .bar-row { grid-template-columns: 1fr 64px; } .bar-row .track { grid-column: 1 / -1; grid-row: 2; } }
+
+.legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-2); margin: 0 0 12px; flex-wrap: wrap; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+
+/* Stage timeline */
+.timeline { display: flex; height: 36px; border-radius: 8px; overflow: hidden; gap: 2px; background: var(--surface); }
+.seg { position: relative; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: #fff; min-width: 0; overflow: hidden; white-space: nowrap; cursor: default; }
+.tl-legend { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px,1fr)); gap: 8px 16px; margin-top: 14px; font-size: 13px; }
+.tl-legend div { display: flex; gap: 8px; align-items: baseline; }
+.tl-legend b { font-variant-numeric: tabular-nums; margin-left: auto; font-weight: 600; }
+
+/* Tables */
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+table { width: 100%; border-collapse: collapse; font-size: 13.5px; background: var(--surface); }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--surface-2); font-size: 12px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; }
+tr:last-child td { border-bottom: 0; }
+td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tag { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.tag.m { background: var(--good-bg); color: var(--good); }
+.tag.p { background: var(--info-bg); color: var(--accent); }
+.tag.h { background: var(--crit-bg); color: var(--crit); }
+.tag.md { background: var(--warn-bg); color: var(--warn); }
+.tag.l { background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); }
+
+/* Lists */
+ul.clean { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; font-size: 14px; }
+ul.clean li { display: flex; gap: 10px; align-items: flex-start; }
+ul.clean li svg { flex: none; margin-top: 3px; }
+.yes svg { color: var(--good); }
+.no svg { color: var(--crit); }
+.mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; }
+.codes { display: flex; flex-wrap: wrap; gap: 6px; }
+.codes span { font-size: 12px; padding: 3px 8px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
+.codes span b { color: var(--text); font-weight: 600; margin-right: 4px; }
+
+blockquote.pitch { margin: 0; padding: 20px 22px; border-left: 4px solid var(--accent); background: var(--surface); border-radius: 0 12px 12px 0; font-size: 16.5px; line-height: 1.6; box-shadow: var(--shadow); }
+details { border-top: 1px solid var(--border); padding-top: 12px; margin-top: 16px; }
+summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent); }
+footer { color: var(--muted); font-size: 12.5px; border-top: 1px solid var(--border); padding: 20px 0 40px; }
+
+#tip { position: fixed; pointer-events: none; z-index: 20; background: var(--text); color: var(--bg); font-size: 12px; padding: 6px 9px; border-radius: 6px; opacity: 0; transition: opacity .1s; max-width: 260px; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brandmark">
+        <span class="dot"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
+        Vantage · Explorer
+      </div>
+      <button class="theme-btn" id="themeBtn" type="button">Toggle theme</button>
+    </div>
+    <h1>Explorer Metrics</h1>
+    <p class="lede">What one Explorer run covers, how long it takes, what it costs, and how every test is proven before it ships. All figures are measured from completed runs unless marked <em>projected</em>.</p>
+    <div class="meta">
+      <span class="chip">Source: 5 completed runs · 1 test application</span>
+      <span class="chip">~64 screens per run</span>
+      <span class="chip">Data as of Nov 2026</span>
+    </div>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <div class="wrap">
+    <a href="#summary">Summary</a>
+    <a href="#time">Time</a>
+    <a href="#complexity">By complexity</a>
+    <a href="#cost">Cost</a>
+    <a href="#coverage">Coverage</a>
+    <a href="#fields">Field checks</a>
+    <a href="#proof">Proof gate</a>
+    <a href="#findings">Findings</a>
+    <a href="#scope">Scope</a>
+    <a href="#method">Method</a>
+  </div>
+</nav>
+
+<main>
+<div class="wrap">
+
+<!-- SUMMARY -->
+<section id="summary">
+  <h2>At a glance</h2>
+  <p class="sub">Typical result of one full run on a medium application (~60 screens).</p>
+  <div class="grid g4">
+    <div class="card kpi"><div class="label">Screens discovered</div><div class="value">~64</div><div class="note">range 57 – 68 · ~175 links mapped</div></div>
+    <div class="card kpi"><div class="label">Proven tests</div><div class="value">~130</div><div class="note">on a good run · ~25 of them functional</div></div>
+    <div class="card kpi"><div class="label">Machine time</div><div class="value">~4.8 h</div><div class="note">range 4.3 – 5.4 h, end to end</div></div>
+    <div class="card kpi"><div class="label">AI cost per app</div><div class="value">~$36</div><div class="note">range $33 – $43 · $0 to re-run tests</div></div>
+  </div>
+  <div class="callout warn" style="margin-top:16px">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+    <div><b>Read before quoting “~130 tests”.</b> About 79% of proven tests are automatic page-quality checks (loads cleanly, no broken images, labelled fields). Functional tests — navigation, data, validation, forms — are about 20–25 per run.</div>
+  </div>
+</section>
+
+<!-- TIME -->
+<section id="time">
+  <h2>How long a run takes</h2>
+  <p class="sub">Median of the three representative runs, stage by stage. Missions and test building run three at a time in parallel.</p>
+  <div class="card">
+    <div class="timeline" id="timeline" role="img" aria-label="Stage durations: first look 83 minutes, plan missions 1, missions 58, hidden screens and breadth 24, plan tests 7, build and prove 89."></div>
+    <div class="tl-legend" id="tlLegend"></div>
+    <div class="callout info" style="margin-top:16px">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v5h1"/></svg>
+      <div>Two human pauses add calendar time but no machine time: <b>confirming the App Summary</b> (2–5 min in these runs; the run waits up to 14 days) and <b>answering questions</b> during missions (only the asking mission waits).</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:16px">
+    <h3>Every run, every stage (minutes)</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Run</th><th class="n">First look</th><th class="n">Missions</th><th class="n">Hidden + breadth</th><th class="n">Plan tests</th><th class="n">Build + prove</th><th class="n">Machine total</th><th>Used</th></tr></thead>
+        <tbody>
+          <tr><td>Run A</td><td class="n">83</td><td class="n">125</td><td class="n">20</td><td class="n">7</td><td class="n">89</td><td class="n">325 (5.4 h)</td><td><span class="tag m">Representative</span></td></tr>
+          <tr><td>Run B</td><td class="n">119</td><td class="n">51</td><td class="n">25</td><td class="n">8</td><td class="n">85</td><td class="n">288 (4.8 h)</td><td><span class="tag m">Representative</span></td></tr>
+          <tr><td>Run C</td><td class="n">70</td><td class="n">58</td><td class="n">24</td><td class="n">7</td><td class="n">98</td><td class="n">258 (4.3 h)</td><td><span class="tag m">Representative</span></td></tr>
+          <tr><td>Run D</td><td class="n">84</td><td class="n">397</td><td class="n">27</td><td class="n">8</td><td class="n">508</td><td class="n">1,025</td><td><span class="tag l">Outlier</span></td></tr>
+          <tr><td>Run E</td><td class="n">1,242</td><td class="n">97</td><td class="n">22</td><td class="n">8</td><td class="n">85</td><td class="n">1,456</td><td><span class="tag l">Outlier</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin:12px 0 0;font-size:13px">Outliers are excluded from the medians: one stage in each ran 4–15× longer than in every other run. Their cause is not recorded in the run data.</p>
+  </div>
+</section>
+
+<!-- COMPLEXITY -->
+<section id="complexity">
+  <h2>Time and cost by application complexity</h2>
+  <p class="sub">Medium is measured. Small and Large are <b>projected</b> from the measured per-unit rates below and the run's built-in limits — confirm them with real runs before committing to a client.</p>
+
+  <div class="grid g3">
+    <div class="card kpi"><div class="label">First look</div><div class="value">1 – 2 min</div><div class="note">per screen · capped at 150 screens / 2 h</div></div>
+    <div class="card kpi"><div class="label">Missions</div><div class="value">51 – 125 min</div><div class="note">for 15 missions, 3 at a time · capped at 15</div></div>
+    <div class="card kpi"><div class="label">Build + prove</div><div class="value">~20 s</div><div class="note">per scenario, 3 at a time (~290 scenarios in ~90 min)</div></div>
+  </div>
+
+  <div class="table-wrap" style="margin-top:16px">
+    <table>
+      <thead><tr><th>Complexity</th><th>Screens</th><th>Typical example</th><th class="n">Machine time</th><th class="n">AI cost</th><th>Basis</th></tr></thead>
+      <tbody>
+        <tr><td><b>Small</b></td><td>up to ~20</td><td>a single module: a few lists and forms</td><td class="n">~1.5 – 3 h</td><td class="n">~$10 – $15</td><td><span class="tag p">Projected</span></td></tr>
+        <tr><td><b>Medium</b></td><td>~60</td><td>a CRM-sized app: leads, accounts, contacts, reports, admin</td><td class="n">4.3 – 5.4 h</td><td class="n">$33 – $43</td><td><span class="tag m">Measured</span></td></tr>
+        <tr><td><b>Large</b></td><td>100 – 150</td><td>multi-module enterprise portal</td><td class="n">~7 – 9 h</td><td class="n">~$60 – $90</td><td><span class="tag p">Projected</span></td></tr>
+        <tr><td><b>Very large</b></td><td>150+</td><td>suite of apps behind one sign-in</td><td class="n">split into runs</td><td class="n">per run as above</td><td><span class="tag l">Guidance</span></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <details>
+    <summary>How the projection works</summary>
+    <ul class="clean" style="margin-top:12px">
+      <li>Time grows with screens, but <b>sub-linearly</b>: first look stops at 150 screens or 2 hours, missions at 15, the hidden-screen search at 25 minutes. Past those caps a bigger app gets <em>less coverage per screen</em>, not a longer run.</li>
+      <li>Build + prove grows with scenario count (about 4–5 per screen), at ~20 s each with 3 in parallel.</li>
+      <li>Cost is projected at the measured $0.51 – $0.64 per screen.</li>
+      <li>For 150+ screens, set a <b>Goal for this run</b> (one module or flow per run). Each run then behaves like a Small or Medium one.</li>
+    </ul>
+  </details>
+</section>
+
+<!-- COST -->
+<section id="cost">
+  <h2>Cost</h2>
+  <p class="sub">AI spend is recorded per run from the AI gateway's own cost for every model call. Per-screen and per-test figures are that total divided out.</p>
+  <div class="grid g4">
+    <div class="card kpi"><div class="label">Per application</div><div class="value">~$36</div><div class="note">one full run · $33 – $43</div></div>
+    <div class="card kpi"><div class="label">Per screen</div><div class="value">~$0.57</div><div class="note">$0.51 – $0.64</div></div>
+    <div class="card kpi"><div class="label">Per proven test</div><div class="value">~$0.36</div><div class="note">$0.27 – $0.32 on good runs</div></div>
+    <div class="card kpi"><div class="label">Re-running tests</div><div class="value">$0</div><div class="note">replays and exported Playwright tests use no AI</div></div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <h3>AI cost per run (USD)</h3>
+    <div class="bars" id="costBars"></div>
+    <p class="sub" style="margin:14px 0 0;font-size:13px"><b>Cost control:</b> set an AI budget in Settings. The run checks it between missions and between scenarios and pauses when it is reached; Resume continues from the same step.</p>
+  </div>
+</section>
+
+<!-- COVERAGE -->
+<section id="coverage">
+  <h2>What the tests cover</h2>
+  <p class="sub">Scenarios planned and proven across all five runs, by kind.</p>
+  <div class="card">
+    <div class="legend"><span><i class="sw" style="background:color-mix(in srgb,var(--accent) 28%,var(--track))"></i>Planned</span><span><i class="sw" style="background:var(--accent)"></i>Proven</span></div>
+    <div class="bars" id="kindBars"></div>
+    <details>
+      <summary>Show as table</summary>
+      <div class="table-wrap" style="margin-top:12px">
+        <table>
+          <thead><tr><th>Kind</th><th>What it checks</th><th class="n">Planned</th><th class="n">Proven</th></tr></thead>
+          <tbody id="kindTable"></tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+
+  <div class="grid g2" style="margin-top:16px">
+    <div class="card">
+      <h3>List screens — 23 checks</h3>
+      <div class="codes" id="listCodes"></div>
+    </div>
+    <div class="card">
+      <h3>Form screens — 20 checks</h3>
+      <div class="codes" id="formCodes"></div>
+    </div>
+  </div>
+  <div class="grid g3" style="margin-top:16px">
+    <div class="card"><h3>Every other screen</h3><p class="sub" style="margin:0;font-size:14px">Page loads with its main content; links and tabs lead to the right screen; Back and Refresh keep the user in place.</p></div>
+    <div class="card"><h3>Sign-in</h3><p class="sub" style="margin:0;font-size:14px">Valid login works; wrong login refused with a clear message; required fields; a protected page while signed out; sign out ends the session.</p></div>
+    <div class="card"><h3>App-specific (X-)</h3><p class="sub" style="margin:0;font-size:14px">Tests from the user's answers and confirmed rules, choices that lead to hidden screens, and suspected bugs.</p></div>
+  </div>
+</section>
+
+<!-- FIELDS -->
+<section id="fields">
+  <h2>Field-level checks</h2>
+  <p class="sub">Written automatically for every form, from the field's own HTML rules and from rules shown on the screen (e.g. “Must be a valid email”, “Maximum 255 characters”). Tried before any other scenario.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Check</th><th>Triggered by</th><th>What the test does</th></tr></thead>
+      <tbody>
+        <tr><td><b>Empty form</b></td><td>any required field</td><td>Submits with everything empty; each required field must show its message and nothing is saved</td></tr>
+        <tr><td><b>Each required field</b></td><td><span class="mono">required</span> / <span class="mono">aria-required</span></td><td>Fills everything validly except that one field</td></tr>
+        <tr><td><b>Email format</b></td><td><span class="mono">type=email</span> or an on-screen email rule</td><td>Enters an address without an @ sign</td></tr>
+        <tr><td><b>Pattern</b></td><td><span class="mono">pattern</span></td><td>Enters a value that doesn't match</td></tr>
+        <tr><td><b>Length</b></td><td><span class="mono">minlength</span> / <span class="mono">maxlength</span> or on-screen text</td><td>Enters text one under the minimum / over the maximum</td></tr>
+        <tr><td><b>Number range</b></td><td><span class="mono">min</span> / <span class="mono">max</span></td><td>Enters a value just outside the allowed range</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="sub" style="margin-top:12px;font-size:13px">Never applied to password-change forms, sign-in (covered separately), settings/layout builders, or read-only detail views.</p>
+</section>
+
+<!-- PROOF -->
+<section id="proof">
+  <h2>How a test is proven</h2>
+  <p class="sub">A scenario becomes a test only if it passes all three gates. About 59% of planned scenarios are dropped here — tests that can't fail or don't behave the same way twice never reach the client.</p>
+  <div class="grid g3">
+    <div class="card"><h3>1 · Replays without AI</h3><p class="sub" style="margin:0;font-size:14px">The recorded steps are replayed in a fresh browser, using the exact locators the exported Playwright test will use, and must pass. The number of replays is configurable.</p></div>
+    <div class="card"><h3>2 · Fails when broken</h3><p class="sub" style="margin:0;font-size:14px">Replayed with its key step removed; the proof must <b>not</b> hold. This shows the test would catch a real regression.</p></div>
+    <div class="card"><h3>3 · Proof is new</h3><p class="sub" style="margin:0;font-size:14px">The proof — visible text, a URL, or an accepted API call — must not have been on screen before the test acted.</p></div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <h3>Why scenarios were dropped (top reasons, five runs)</h3>
+    <div class="bars" id="dropBars"></div>
+  </div>
+</section>
+
+<!-- FINDINGS -->
+<section id="findings">
+  <h2>Other findings per run</h2>
+  <p class="sub">Reported alongside the tests: roughly 200 per run across the five runs.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Finding</th><th>Severity</th><th class="n">5 runs</th><th>How to present it</th></tr></thead>
+      <tbody>
+        <tr><td>Crashes</td><td><span class="tag h">High</span></td><td class="n">30</td><td>Measured fact</td></tr>
+        <tr><td>Failed API calls</td><td><span class="tag md">Medium</span></td><td class="n">2</td><td>Measured fact</td></tr>
+        <tr><td>Background (console) errors</td><td><span class="tag l">Low</span></td><td class="n">54</td><td>Measured fact</td></tr>
+        <tr><td>Slow screens</td><td><span class="tag l">Low</span></td><td class="n">92</td><td>Measured fact</td></tr>
+        <tr><td>Wording issues</td><td><span class="tag l">Low</span></td><td class="n">138</td><td>For review</td></tr>
+        <tr><td>“Looks wrong”</td><td><span class="tag md">Medium</span></td><td class="n">561</td><td>For review — the model's judgement, not a confirmed defect</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="sub" style="margin-top:12px;font-size:13px">Health score per run: 42 – 74 out of 100.</p>
+</section>
+
+<!-- SCOPE -->
+<section id="scope">
+  <h2>Scope</h2>
+  <div class="grid g2">
+    <div class="card">
+      <h3>Explorer does</h3>
+      <ul class="clean yes">
+        <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Discover screens by meaning — 1,000 customer pages count as one screen</li>
+        <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Find hidden screens by trying options and amounts, and by simulating server errors inside its own browser</li>
+        <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Build an access chart for each user role you add</li>
+        <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Find pages no menu links to, and measure how much of the app's code ran</li>
+        <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Export proven tests as standard Playwright and feed them into Journeys, Scenarios and Test cases</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Explorer does not</h3>
+      <ul class="clean no">
+        <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>Press a final Submit, Pay or Delete without the user's OK</li>
+        <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>Save data on production — only on environments marked non-production</li>
+        <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>Break the real server</li>
+        <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>Load, performance or security testing</li>
+        <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>Phone-layout (responsive) tests — not currently planned</li>
+      </ul>
+    </div>
+  </div>
+  <div class="card" style="margin-top:16px">
+    <h3>Default limits per run (adjustable in Settings)</h3>
+    <div class="codes">
+      <span><b>150</b>screens on first look</span>
+      <span><b>2 h</b>first-look time</span>
+      <span><b>15</b>missions</span>
+      <span><b>20</b>steps per mission</span>
+      <span><b>45 min</b>per mission</span>
+      <span><b>25 min</b>hidden-screen search</span>
+      <span><b>150</b>planned scenarios</span>
+      <span><b>none</b>AI budget unless set</span>
+    </div>
+  </div>
+</section>
+
+<!-- PITCH -->
+<section>
+  <h2>The one-line answer for a client</h2>
+  <blockquote class="pitch">On a medium application (~60 screens), one Explorer run takes about <b>4–5 hours</b> of machine time and about <b>$36</b> in AI. It discovers ~64 screens and produces ~130 proven, replayable Playwright tests — about 25 of them functional, the rest automatic page-quality checks — each one verified to fail when the app breaks. Re-running the tests costs nothing in AI.</blockquote>
+</section>
+
+<!-- METHOD -->
+<section id="method">
+  <h2>Method and limits of this data</h2>
+  <ul class="clean" style="color:var(--text-2)">
+    <li>• Source: 5 completed Explorer runs on one test application (a CRM-style app, 57–68 screens). Treat as early results, not benchmarks; repeat on 2–3 different applications before quoting widely.</li>
+    <li>• Cost is tracked per run only (the gateway's reported cost for each model call). It is not broken down by stage or by page; per-screen and per-test figures are divided from the run total.</li>
+    <li>• Stage times are measured from each run's own stage events. “Machine total” excludes the wait for the user to confirm the App Summary.</li>
+    <li>• Small and Large estimates are projections from the measured per-unit rates and the default limits.</li>
+  </ul>
+</section>
+
+</div>
+</main>
+
+<footer><div class="wrap">Vantage Explorer · metrics report · figures from internal runs, Nov 2026</div></footer>
+
+<div id="tip" role="tooltip"></div>
+
+<script>
+(() => {
+  // Theme toggle (per-viewer convenience only).
+  const root = document.documentElement;
+  try { const t = localStorage.getItem('xm-theme'); if (t) root.dataset.theme = t; } catch (e) {}
+  document.getElementById('themeBtn').addEventListener('click', () => {
+    const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+    root.dataset.theme = dark ? 'light' : 'dark';
+    try { localStorage.setItem('xm-theme', root.dataset.theme); } catch (e) {}
+  });
+
+  // Tooltip
+  const tip = document.getElementById('tip');
+  document.addEventListener('mousemove', (e) => {
+    const el = e.target.closest('[data-tip]');
+    if (!el) { tip.style.opacity = 0; return; }
+    tip.textContent = el.dataset.tip;
+    tip.style.opacity = 1;
+    const x = Math.min(e.clientX + 12, innerWidth - tip.offsetWidth - 8);
+    tip.style.left = x + 'px';
+    tip.style.top = (e.clientY + 14) + 'px';
+  });
+
+  const el = (tag, cls, html) => { const n = document.createElement(tag); if (cls) n.className = cls; if (html != null) n.innerHTML = html; return n; };
+
+  // Stage timeline: one hue, stepped lightness (sequence, not identity).
+  const stages = [
+    ['First look', 83, '#12325e'],
+    ['Plan missions', 1, '#1d4f91'],
+    ['Missions', 58, '#2a6bc2'],
+    ['Hidden screens + breadth', 24, '#4a8ad8'],
+    ['Plan tests', 7, '#6fa3e2'],
+    ['Build + prove', 89, '#2a78d6'],
+  ];
+  const total = stages.reduce((s, x) => s + x[1], 0);
+  const tl = document.getElementById('timeline'), lg = document.getElementById('tlLegend');
+  stages.forEach(([name, min, c]) => {
+    const seg = el('div', 'seg', min >= 20 ? min + 'm' : '');
+    seg.style.flex = Math.max(min, 1) + ' 0 0';
+    seg.style.background = c;
+    seg.dataset.tip = `${name}: ${min} min (${Math.round(min / total * 100)}%)`;
+    tl.appendChild(seg);
+    const row = el('div', null, `<i class="sw" style="background:${c}"></i><span>${name}</span><b>${min} min</b>`);
+    lg.appendChild(row);
+  });
+  lg.appendChild(el('div', null, `<span><b style="margin:0">Total</b></span><b>${total} min ≈ ${(total / 60).toFixed(1)} h</b>`));
+
+  // Single-series bar list
+  function bars(id, rows, fmt, max) {
+    const host = document.getElementById(id);
+    const top = max || Math.max(...rows.map(r => r[1]));
+    rows.forEach(([name, v, tipText]) => {
+      const r = el('div', 'bar-row');
+      r.appendChild(el('div', 'name', name));
+      const t = el('div', 'track');
+      const f = el('div', 'fill'); f.style.width = (v / top * 100) + '%';
+      t.appendChild(f);
+      const h = el('div', 'hit'); h.dataset.tip = tipText || `${name}: ${fmt(v)}`; t.appendChild(h);
+      r.appendChild(t);
+      r.appendChild(el('div', 'num', fmt(v)));
+      host.appendChild(r);
+    });
+  }
+
+  bars('costBars', [
+    ['Run A', 35.54], ['Run B', 35.38], ['Run C', 36.07], ['Run D', 33.15], ['Run E', 43.15],
+  ], v => '$' + v.toFixed(2), 45);
+
+  bars('dropBars', [
+    ['Passed with key step removed', 162],
+    ['Different results on repeat', 90],
+    ["Form couldn't be carried out", 38],
+    ['No reliable proof on screen', 33],
+    ['Proof already on screen', 31],
+    ['Nothing on screen to check', 18],
+  ], v => String(v));
+
+  // Planned vs proven by kind
+  const kinds = [
+    ['Page quality', 561, 401, 'Loads with no script errors or failed requests, no broken images, every field labelled'],
+    ['Form submission', 220, 14, 'Completing a form works and the result is kept'],
+    ['Navigation', 190, 40, 'Menus, links, tabs, Back, Refresh, direct addresses'],
+    ['Data load', 153, 32, 'Lists, search, sort, filters, paging, details'],
+    ['Validation', 129, 22, 'Required, format, length, range rules'],
+    ['Error state', 68, 0, 'Empty results, rejected input, not found'],
+    ['End-to-end journey', 11, 1, 'A full business flow from start to finish'],
+  ];
+  const kb = document.getElementById('kindBars'), kt = document.getElementById('kindTable');
+  const kmax = 561;
+  kinds.forEach(([name, plan, proven, what]) => {
+    const r = el('div', 'bar-row');
+    r.appendChild(el('div', 'name', name));
+    const t = el('div', 'track');
+    const p = el('div', 'fill plan'); p.style.width = (plan / kmax * 100) + '%'; t.appendChild(p);
+    const q = el('div', 'fill proven'); q.style.width = (proven / kmax * 100) + '%'; t.appendChild(q);
+    const h = el('div', 'hit'); h.dataset.tip = `${name}: ${proven} proven of ${plan} planned (${Math.round(proven / plan * 100)}%)`; t.appendChild(h);
+    r.appendChild(t);
+    r.appendChild(el('div', 'num', `${proven} / ${plan}`));
+    kb.appendChild(r);
+    kt.appendChild(el('tr', null, `<td>${name}</td><td>${what}</td><td class="n">${plan}</td><td class="n">${proven}</td>`));
+  });
+  kt.appendChild(el('tr', null, `<td><b>Total</b></td><td></td><td class="n"><b>1,332</b></td><td class="n"><b>510</b></td>`));
+
+  // Checklists
+  const list = ['Page loads','Columns shown','Data matches server','Total count','Field formatting','Empty state','Search match','Search clear','Filter single','Filter combined','Filter reset','Filter call','Sort ascending','Sort descending','Next / previous page','Page size','No duplicates across pages','Open a record','Edit from list','Delete then cancel','Delete then confirm','Add new','Export'];
+  const form = ['Form loads','Defaults','Dropdown options','Edit pre-fill','Required fields','Invalid format','Max length','Min length','Range','Error clears','Dependent field','Conditional field','Create success','Saved data correct','Appears in list','Update success','Cancel','Reset','Double submit','Server error'];
+  const pad = n => String(n).padStart(2, '0');
+  const lc = document.getElementById('listCodes'), fc = document.getElementById('formCodes');
+  list.forEach((n, i) => lc.appendChild(el('span', null, `<b>L-${pad(i + 1)}</b>${n}`)));
+  form.forEach((n, i) => fc.appendChild(el('span', null, `<b>F-${pad(i + 1)}</b>${n}`)));
+})();
+</script>
+</body>
+</html>

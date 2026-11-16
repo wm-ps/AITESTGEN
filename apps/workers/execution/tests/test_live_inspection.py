@@ -97,7 +97,11 @@ async def test_reuses_existing_storage_state_and_never_logs_in(
 
     assert result is not None
     assert result.url == "https://app.example.com/checkout"
-    browser.new_context.assert_awaited_once_with(storage_state=str(state_file))
+    # No size given: the default window size, set explicitly.
+    size = {"width": 1280, "height": 720}
+    browser.new_context.assert_awaited_once_with(
+        storage_state=str(state_file), viewport=size, screen=size
+    )
     # Exactly one navigation, to the target page — never a login/auth URL.
     page.goto.assert_awaited_once()
     goto_args, goto_kwargs = page.goto.await_args
@@ -122,7 +126,30 @@ async def test_missing_auth_file_still_completes_without_storage_state(
     result = await run_live_inspection(project_dir=tmp_path, target_url="https://app.example.com/")
 
     assert result is not None
-    browser.new_context.assert_awaited_once_with()
+    size = {"width": 1280, "height": 720}
+    browser.new_context.assert_awaited_once_with(viewport=size, screen=size)
+
+
+@pytest.mark.asyncio
+async def test_inspects_at_the_runs_window_size(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A heal must look at the page at the size the healed test will run at."""
+    page = _FakePage()
+    context = _FakeContext(page)
+    browser = _FakeBrowser(context)
+    _install_fake_playwright(monkeypatch, browser)
+    monkeypatch.setattr(
+        "execution_worker.live_inspection.extract_page_locator_snapshot",
+        AsyncMock(return_value=[]),
+    )
+
+    await run_live_inspection(
+        project_dir=tmp_path, target_url="https://app.example.com/", viewport=(1920, 1080)
+    )
+
+    size = {"width": 1920, "height": 1080}
+    browser.new_context.assert_awaited_once_with(viewport=size, screen=size)
 
 
 @pytest.mark.asyncio

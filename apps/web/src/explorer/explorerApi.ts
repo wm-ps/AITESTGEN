@@ -229,8 +229,13 @@ export type ExplorerSettings = {
   first_look_max_screens: number
   max_missions: number
   steps_per_mission: number
+  steps_per_scenario: number
+  steps_per_journey: number
   max_scenarios: number
   proof_replays: number
+  same_screen_repeats: number
+  screen_visits: number
+  press_retries: number
 }
 
 export const explorerApi = {
@@ -250,9 +255,13 @@ export const explorerApi = {
   getRun: (runId: string) => request<ExplorerRun>(`/explorer/runs/${runId}`),
   // Skip the exploring left and write scenarios from what was explored.
   wrapUp: (runId: string) => request<ExplorerRun>(`/explorer/runs/${runId}/wrap-up`, { method: 'POST' }),
-  getSettings: () => request<ExplorerSettings>('/explorer/settings'),
-  saveSettings: (settings: ExplorerSettings) =>
-    request<ExplorerSettings>('/explorer/settings', { method: 'PUT', body: JSON.stringify(settings) }),
+  // One application's own Explorer limits (Application settings).
+  getSettings: (applicationId: string) => request<ExplorerSettings>(`/explorer/applications/${applicationId}/settings`),
+  saveSettings: (applicationId: string, settings: ExplorerSettings) =>
+    request<ExplorerSettings>(`/explorer/applications/${applicationId}/settings`, {
+      method: 'PUT',
+      body: JSON.stringify(settings),
+    }),
   events: (runId: string, after: number) =>
     request<ExplorerEvent[]>(`/explorer/runs/${runId}/events?after=${after}`),
   screens: (runId: string) => request<ExplorerScreen[]>(`/explorer/runs/${runId}/screens`),

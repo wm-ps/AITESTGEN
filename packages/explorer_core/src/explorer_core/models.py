@@ -230,7 +230,7 @@ class ExplorerHealthIssue(SQLModel, table=True):
 
     id: uuid.UUID = _uuid_pk()
     run_id: uuid.UUID = _run_fk()
-    # crash | broken_link | server_error | background_error | slow | wording
+    # crash | broken_link | server_error | api_error | background_error | slow | wording
     kind: str
     severity: str  # high | medium | low
     title: str
@@ -495,6 +495,12 @@ class ExplorerSettings(SQLModel, table=True):
     first_look_max_screens: int = Field(default=150)
     max_missions: int = Field(default=15)
     steps_per_mission: int = Field(default=20)
+    steps_per_scenario: int = Field(default=20)
+    steps_per_journey: int = Field(default=40)
     max_scenarios: int = Field(default=150)
     # Accuracy
     proof_replays: int = Field(default=1)
+    # When a walk gives up (missions and scenarios alike)
+    same_screen_repeats: int = Field(default=3)
+    screen_visits: int = Field(default=4)
+    press_retries: int = Field(default=2)

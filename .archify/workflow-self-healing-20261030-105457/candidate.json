@@ -1,0 +1,390 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Self-healing \u2014 how a failing test fixes itself",
+    "output": ".archify/workflow-self-healing-20261030-105457/self-healing.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/wm-ps/AITESTGEN.git",
+      "provider": "github",
+      "link_mode": "web",
+      "revision": "050b7b5928f8c36df775ae0b6a8009b5ef76868b"
+    }
+  },
+  "lanes": [
+    {
+      "id": "you",
+      "label": "You"
+    },
+    {
+      "id": "run",
+      "label": "Test run (execution worker)"
+    },
+    {
+      "id": "heal",
+      "label": "Self-healing (per failed test)"
+    },
+    {
+      "id": "never",
+      "label": "Never healed",
+      "variant": "exception"
+    }
+  ],
+  "groups": [
+    {
+      "id": "heal_loop",
+      "label": "Up to 2 automatic attempts",
+      "lane": "heal",
+      "fromCol": 3,
+      "toCol": 5,
+      "variant": "emphasis"
+    }
+  ],
+  "mainPath": [
+    "start",
+    "prepare",
+    "execute",
+    "check",
+    "rewrite",
+    "guard",
+    "rerun",
+    "report"
+  ],
+  "nodes": [
+    {
+      "id": "start",
+      "lane": "you",
+      "col": 0,
+      "type": "external",
+      "width": 164,
+      "label": "Run test cases",
+      "sublabel": "all, chosen or schedule",
+      "sources": [
+        {
+          "path": "apps/api/src/api/main.py",
+          "line": 3866,
+          "label": "start a test run"
+        },
+        {
+          "path": "packages/workflows/src/workflows/execution_workflow.py",
+          "line": 200,
+          "label": "execution workflow"
+        }
+      ]
+    },
+    {
+      "id": "prepare",
+      "lane": "run",
+      "col": 0,
+      "type": "backend",
+      "width": 164,
+      "label": "Prepare the run",
+      "sublabel": "project \u00b7 sign in once",
+      "sources": [
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 410,
+          "label": "prepare test run"
+        },
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 616,
+          "label": "shared sign-in"
+        }
+      ]
+    },
+    {
+      "id": "execute",
+      "lane": "run",
+      "col": 1,
+      "type": "backend",
+      "width": 164,
+      "label": "Run each test",
+      "sublabel": "Playwright \u00b7 in parallel",
+      "sources": [
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 751,
+          "label": "execute one test"
+        },
+        {
+          "path": "packages/workflows/src/workflows/execution_workflow.py",
+          "line": 261,
+          "label": "run step"
+        }
+      ]
+    },
+    {
+      "id": "check",
+      "lane": "heal",
+      "col": 2,
+      "type": "security",
+      "width": 164,
+      "label": "Can it be healed?",
+      "sublabel": "failed \u00b7 tries left",
+      "sources": [
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 1418,
+          "label": "heal eligibility"
+        },
+        {
+          "path": "packages/workflows/src/workflows/execution_workflow.py",
+          "line": 71,
+          "label": "healable statuses"
+        },
+        {
+          "path": "packages/workflows/src/workflows/execution_workflow.py",
+          "line": 77,
+          "label": "2 automatic attempts"
+        }
+      ]
+    },
+    {
+      "id": "rewrite",
+      "lane": "heal",
+      "col": 3,
+      "type": "backend",
+      "width": 164,
+      "label": "AI rewrites test",
+      "sublabel": "error \u00b7 screenshot \u00b7 page",
+      "sources": [
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 1802,
+          "label": "live page inspection"
+        },
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 1807,
+          "label": "AI call"
+        },
+        {
+          "path": "packages/ai_provider/src/ai_provider/hosted.py",
+          "line": 2077,
+          "label": "generate_playwright"
+        }
+      ]
+    },
+    {
+      "id": "guard",
+      "lane": "heal",
+      "col": 4,
+      "type": "security",
+      "width": 164,
+      "label": "Safety checks",
+      "sublabel": "compiles \u00b7 same checks",
+      "sources": [
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 1838,
+          "label": "type check"
+        },
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 1858,
+          "label": "no invented locators"
+        },
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 1884,
+          "label": "assertions unchanged"
+        }
+      ]
+    },
+    {
+      "id": "rerun",
+      "lane": "heal",
+      "col": 5,
+      "type": "backend",
+      "width": 164,
+      "label": "Save & rerun",
+      "sublabel": "new test version",
+      "sources": [
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 1605,
+          "label": "new version saved"
+        },
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 1923,
+          "label": "rerun the test"
+        },
+        {
+          "path": "apps/workers/execution/src/execution_worker/activities.py",
+          "line": 1137,
+          "label": "result + counts"
+        }
+      ]
+    },
+    {
+      "id": "report",
+      "lane": "run",
+      "col": 5,
+      "type": "database",
+      "width": 164,
+      "label": "Results & report",
+      "sublabel": "Allure \u00b7 email",
+      "sources": [
+        {
+          "path": "packages/workflows/src/workflows/execution_workflow.py",
+          "line": 349,
+          "label": "Allure report"
+        },
+        {
+          "path": "packages/workflows/src/workflows/execution_workflow.py",
+          "line": 368,
+          "label": "final tally"
+        },
+        {
+          "path": "packages/workflows/src/workflows/execution_workflow.py",
+          "line": 403,
+          "label": "report email"
+        }
+      ]
+    },
+    {
+      "id": "retry",
+      "lane": "heal",
+      "col": 1,
+      "type": "frontend",
+      "width": 164,
+      "label": "Retry with healing",
+      "sublabel": "your button, any time",
+      "sources": [
+        {
+          "path": "apps/api/src/api/main.py",
+          "line": 5303,
+          "label": "heal endpoint"
+        },
+        {
+          "path": "packages/workflows/src/workflows/execution_workflow.py",
+          "line": 417,
+          "label": "manual heal workflow"
+        }
+      ]
+    },
+    {
+      "id": "nope",
+      "lane": "never",
+      "col": 2,
+      "type": "security",
+      "width": 164,
+      "label": "Left as failed",
+      "sublabel": "assertion \u00b7 no tries left",
+      "sources": [
+        {
+          "path": "packages/workflows/src/workflows/heal_policy.py",
+          "line": 25,
+          "label": "assertions never healed"
+        },
+        {
+          "path": "packages/workflows/src/workflows/heal_policy.py",
+          "line": 106,
+          "label": "heal_eligibility"
+        }
+      ]
+    }
+  ],
+  "edges": [
+    {
+      "id": "start-prepare",
+      "from": "start",
+      "to": "prepare",
+      "label": "test run",
+      "variant": "emphasis"
+    },
+    {
+      "id": "prepare-execute",
+      "from": "prepare",
+      "to": "execute"
+    },
+    {
+      "id": "failed-check",
+      "from": "execute",
+      "to": "check",
+      "label": "failed",
+      "variant": "security"
+    },
+    {
+      "id": "check-rewrite",
+      "from": "check",
+      "to": "rewrite",
+      "label": "yes",
+      "variant": "emphasis"
+    },
+    {
+      "id": "rewrite-guard",
+      "from": "rewrite",
+      "to": "guard"
+    },
+    {
+      "id": "guard-rerun",
+      "from": "guard",
+      "to": "rerun",
+      "label": "safe"
+    },
+    {
+      "id": "rerun-report",
+      "from": "rerun",
+      "to": "report",
+      "label": "passed \u2192 Self-healed",
+      "variant": "emphasis"
+    },
+    {
+      "id": "passed-report",
+      "from": "execute",
+      "to": "report",
+      "label": "passed",
+      "variant": "emphasis",
+      "role": "branch"
+    },
+    {
+      "id": "manual-retry",
+      "from": "retry",
+      "to": "check",
+      "label": "manual",
+      "variant": "dashed",
+      "role": "branch"
+    },
+    {
+      "id": "check-no",
+      "from": "check",
+      "to": "nope",
+      "label": "no",
+      "variant": "security",
+      "role": "error"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "What the AI gets",
+      "items": [
+        "The error, stack trace and failure screenshot",
+        "The test's current code and known locators",
+        "A live look at the page when a locator broke"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "What it may not do",
+      "items": [
+        "Change what the test checks (assertions)",
+        "Use locators that appear nowhere on the page",
+        "Keep code that doesn't compile"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Limits",
+      "items": [
+        "2 automatic attempts per failed test",
+        "Manual retries: Settings \u2192 self-heal attempts",
+        "Assertion failures and Explorer's known bugs stay failed"
+      ]
+    }
+  ]
+}

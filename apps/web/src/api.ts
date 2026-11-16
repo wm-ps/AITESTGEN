@@ -1,4 +1,5 @@
 import type { components } from './api-types.gen'
+import type { Browser, Viewport } from './runTarget'
 
 // `role` isn't in api-types.gen.ts yet (that file is generated from a
 // running API's OpenAPI schema, regenerate via `npm run generate:api-types`)
@@ -190,6 +191,12 @@ export type RecordingSessionMintRead = {
 export type InteractionLevel = 'passive' | 'normal' | 'aggressive'
 export type RetentionPeriod = '1_day' | '1_week' | '1_month'
 export type ScreenshotCapture = 'failed' | 'passed' | 'all'
+// The test-case generation settings each application sets for itself.
+export type GenerationSettings = Pick<
+  SettingsRead,
+  'max_scenarios_per_journey' | 'max_test_cases_per_application' | 'max_heal_attempts' | 'screenshot_capture'
+>
+
 export type SettingsRead = {
   max_pages: number
   max_discovery_duration_minutes: number | null
@@ -230,6 +237,12 @@ export type TestResultRead = {
   // Test Case Number feature — see ScenarioRead's own comment. null only if
   // the Scenario itself was hard-deleted since this result ran.
   test_case_number: number | null
+  // The Scenario this result is for. A run on several browsers has one result
+  // per test per browser; the Runs tab groups them by this.
+  scenario_id?: string | null
+  // Which browser this result ran on (Chrome for every run from before browsers
+  // were selectable). The run's window size is on TestRunRead.
+  browser?: Browser
   status: TestResultStatus
   duration_ms: number | null
   error_message: string | null
@@ -290,6 +303,11 @@ export type TestRunRead = {
   blocked_reason: string | null
   environment_snapshot: string
   target_base_url_snapshot: string
+  // The browsers and the one window size this run used (Chrome at 1280 × 720
+  // for every run from before they were selectable).
+  browsers?: Browser[]
+  viewport_width?: number
+  viewport_height?: number
   created_at: string
   started_at: string | null
   completed_at: string | null
@@ -474,6 +492,10 @@ export type ScheduleRead = {
   // schedule runs, with its current name.
   test_collection_id: string | null
   test_collection_name: string | null
+  // What this schedule's runs use; Chrome at 1280 × 720 when none was chosen.
+  browsers?: Browser[]
+  viewport_width?: number
+  viewport_height?: number
 }
 export type ScheduleCreate = {
   name: string
@@ -486,6 +508,10 @@ export type ScheduleCreate = {
   environment_id?: string | null
   // Omitted leaves the suite alone on an edit; null means every test case.
   test_collection_id?: string | null
+  // Omitted leaves them alone on an edit; null puts the schedule back on Chrome
+  // at 1280 × 720.
+  browsers?: Browser[] | null
+  viewport?: Viewport | null
 }
 export type ScheduleUpdate = Partial<ScheduleCreate>
 
@@ -812,6 +838,14 @@ export const api = {
   getSettings: () => request<SettingsRead>('/settings'),
   updateSettings: (payload: SettingsUpdate) =>
     request<SettingsRead>('/settings', { method: 'PATCH', body: JSON.stringify(payload) }),
+  // One application's own generation settings (Application settings).
+  getGenerationSettings: (applicationId: string) =>
+    request<GenerationSettings>(`/applications/${applicationId}/generation-settings`),
+  updateGenerationSettings: (applicationId: string, payload: GenerationSettings) =>
+    request<GenerationSettings>(`/applications/${applicationId}/generation-settings`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
   getExecutionPolicy: (applicationId: string) =>
     request<ExecutionPolicyRead>(`/applications/${applicationId}/execution-policy`),
   updateExecutionPolicy: (applicationId: string, payload: ExecutionPolicyUpdate) =>
@@ -828,6 +862,9 @@ export const api = {
       environment_id?: string
       // A saved test suite: the server resolves its test cases and run name.
       test_collection_id?: string
+      // Omitted = Chrome at 1280 × 720.
+      browsers?: Browser[]
+      viewport?: Viewport
     },
   ) =>
     request<{ started: boolean }>(`/applications/${applicationId}/test-runs`, {
