@@ -6,6 +6,7 @@ import { AppIdentityLine } from '../AppIdentityLine'
 import { ServiceErrorNote } from '../ServiceError'
 import { Toast } from '../Toast'
 import { useCanEdit } from '../../PermissionsContext'
+import { DEFAULT_TARGET, targetRequest, type RunTarget } from '../../runTarget'
 import { AddEnvironmentDialog } from '../environments/AddEnvironmentDialog'
 import { EnvironmentsProvider, useEnvironmentList } from '../environments/EnvironmentsContext'
 import { AppSettingsTab } from './AppSettingsTab'
@@ -142,14 +143,15 @@ export function Workspace({
   // can sit next to this page's own "Test Runs" title instead of RunsTab
   // rendering a second, duplicate heading of its own.
   const [runsBack, setRunsBack] = useState<(() => void) | null>(null)
-  // Run Suite Flow: "Run Journey(s)…" wizard, opened from this page's
-  // toolbar RunSuiteButton.
+  // Run Suite Flow: the Run tests dialog (toolbar RunSuiteButton) and the two
+  // dialogs it leads to — "Run Journey(s)…" wizard and Run test suite. What was
+  // chosen in the first one (environment, browsers, window size) is kept here so
+  // Back from either of the others reopens it exactly as the user left it.
+  const [runDialogOpen, setRunDialogOpen] = useState(false)
+  const [runEnvironmentId, setRunEnvironmentId] = useState<string | null>(null)
+  const [runTarget, setRunTarget] = useState<RunTarget>(DEFAULT_TARGET)
   const [journeysDialogOpen, setJourneysDialogOpen] = useState(false)
-  // The environment chosen in the Run dialog, carried into the selective-run wizard.
-  const [journeysEnvironmentId, setJourneysEnvironmentId] = useState<string | null>(null)
-  // Run test suite dialog (a saved group of test cases), same environment hand-off.
   const [suitesDialogOpen, setSuitesDialogOpen] = useState(false)
-  const [suitesEnvironmentId, setSuitesEnvironmentId] = useState<string | null>(null)
   // Snapshotted at mount — App.tsx only ever mounts this component fresh
   // right after a "Run All Tests" click, so the effect below should fire
   // (or not) based on that one moment, not re-run if the prop identity
@@ -222,6 +224,8 @@ export function Workspace({
     environmentId?: string | null,
     // A saved test suite: the API resolves its test cases and names the run.
     collectionId?: string,
+    // Browsers and window size; omitted = Chrome at 1280 × 720.
+    target: RunTarget = DEFAULT_TARGET,
   ) {
     setRunning(true)
     setTriggerError(null)
@@ -230,13 +234,14 @@ export function Workspace({
     try {
       await api.triggerTestRun(
         applicationId,
-        journeyRun || environmentId || collectionId
+        journeyRun || environmentId || collectionId || Object.keys(targetRequest(target)).length > 0
           ? {
               ...(journeyRun
                 ? { suite_name: journeyRun.suiteName, test_case_ids: journeyRun.testCaseIds }
                 : {}),
               ...(environmentId ? { environment_id: environmentId } : {}),
               ...(collectionId ? { test_collection_id: collectionId } : {}),
+              ...targetRequest(target),
             }
           : undefined,
       )
@@ -314,15 +319,15 @@ export function Workspace({
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>
               <RunSuiteButton
                 running={running}
-                onFullSuite={(environmentId) => handleRunSuite(undefined, environmentId)}
-                onOpenJourneysDialog={(environmentId) => {
-                  setJourneysEnvironmentId(environmentId)
-                  setJourneysDialogOpen(true)
-                }}
-                onOpenSuitesDialog={(environmentId) => {
-                  setSuitesEnvironmentId(environmentId)
-                  setSuitesDialogOpen(true)
-                }}
+                open={runDialogOpen}
+                onOpenChange={setRunDialogOpen}
+                environmentId={runEnvironmentId}
+                onEnvironmentChange={setRunEnvironmentId}
+                target={runTarget}
+                onTargetChange={setRunTarget}
+                onFullSuite={() => handleRunSuite(undefined, runEnvironmentId, undefined, runTarget)}
+                onOpenJourneysDialog={() => setJourneysDialogOpen(true)}
+                onOpenSuitesDialog={() => setSuitesDialogOpen(true)}
               />
               {running && (
                 <CancelRunButton
@@ -392,9 +397,13 @@ export function Workspace({
         <RunJourneysDialog
           applicationId={applicationId}
           onClose={() => setJourneysDialogOpen(false)}
+          onBack={() => {
+            setJourneysDialogOpen(false)
+            setRunDialogOpen(true)
+          }}
           onExecute={(suiteName, testCaseIds) => {
             setJourneysDialogOpen(false)
-            handleRunSuite({ suiteName, testCaseIds }, journeysEnvironmentId)
+            handleRunSuite({ suiteName, testCaseIds }, runEnvironmentId, undefined, runTarget)
           }}
         />
       )}
@@ -402,11 +411,14 @@ export function Workspace({
       {suitesDialogOpen && (
         <RunTestSuiteDialog
           applicationId={applicationId}
-          initialEnvironmentId={suitesEnvironmentId}
           onClose={() => setSuitesDialogOpen(false)}
-          onRun={(collectionId, environmentId) => {
+          onBack={() => {
             setSuitesDialogOpen(false)
-            handleRunSuite(undefined, environmentId, collectionId)
+            setRunDialogOpen(true)
+          }}
+          onRun={(collectionId) => {
+            setSuitesDialogOpen(false)
+            handleRunSuite(undefined, runEnvironmentId, collectionId, runTarget)
           }}
         />
       )}

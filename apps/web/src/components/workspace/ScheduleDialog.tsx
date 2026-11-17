@@ -4,7 +4,9 @@ import { ApiError, api, type ScheduleCadenceType, type ScheduleCreate, type Sche
 import { modalButton, modalCloseButton, modalFooter, modalHeader, modalOverlay, modalPanel, modalTitle } from '../modalStyles'
 import { LoadingDots } from '../LoadingDots'
 import { EnvironmentSelect } from '../environments/EnvironmentSelect'
+import { DEFAULT_TARGET, isDefaultTarget, sameTarget, targetFromSchedule, viewportError, type RunTarget } from '../../runTarget'
 import { SuiteSelect } from './suites/SuiteSelect'
+import { TargetSelect } from './TargetSelect'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { faIcon } from '../../faIcon'
 
@@ -56,6 +58,8 @@ type FormState = {
   environmentId: string | null
   // null = every test case.
   testCollectionId: string | null
+  // The browsers and window size every run of this schedule uses.
+  target: RunTarget
 }
 
 function blankForm(): FormState {
@@ -69,6 +73,7 @@ function blankForm(): FormState {
     cronExpression: '',
     environmentId: null,
     testCollectionId: null,
+    target: DEFAULT_TARGET,
   }
 }
 
@@ -83,6 +88,7 @@ function formFromSchedule(schedule: ScheduleRead): FormState {
     cronExpression: schedule.cron_expression ?? '',
     environmentId: schedule.environment_id ?? null,
     testCollectionId: schedule.test_collection_id ?? null,
+    target: targetFromSchedule(schedule),
   }
 }
 
@@ -103,14 +109,7 @@ function toPayload(form: FormState): ScheduleCreate {
   }
 }
 
-// Same limitation as item 4's design note, stated in-product: a worker
-// outage caps the schedule at one eventual late run for the whole outage
-// window (overlap=SKIP drops everything scheduled in between), it does not
-// queue or backfill missed occurrences.
-const WORKER_DOWN_CAPTION =
-  "Scheduled runs need the execution worker online at fire time. If it's offline, only the " +
-  'first missed run eventually starts once the worker returns — any other runs that would ' +
-  'have fired during the outage are skipped, not queued or backfilled.'
+const sectionHeading = { margin: 0, fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-3)' } as const
 
 export function ScheduleDialog({
   applicationId,
@@ -127,6 +126,7 @@ export function ScheduleDialog({
   const [form, setForm] = useState<FormState>(initial ? formFromSchedule(initial) : blankForm())
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const sizeError = viewportError(form.target.viewport)
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -145,6 +145,13 @@ export function ScheduleDialog({
       if (form.testCollectionId !== (initial?.test_collection_id ?? null)) {
         payload.test_collection_id = form.testCollectionId
       }
+      // And for the browsers and window size: only when changed, and back to the
+      // default (Chrome at 1280 × 720) is an explicit null.
+      if (!sameTarget(form.target, initial ? targetFromSchedule(initial) : DEFAULT_TARGET)) {
+        const isDefault = isDefaultTarget(form.target)
+        payload.browsers = isDefault ? null : form.target.browsers
+        payload.viewport = isDefault ? null : form.target.viewport
+      }
       if (initial) {
         await api.updateSchedule(initial.id, payload)
       } else {
@@ -159,12 +166,8 @@ export function ScheduleDialog({
   }
 
   return (
-    <div onClick={onClose} style={{ ...modalOverlay, zIndex: 90 }}>
-      <form
-        onClick={(e) => e.stopPropagation()}
-        onSubmit={handleSubmit}
-        style={{ ...modalPanel, maxWidth: 440 }}
-      >
+    <div style={{ ...modalOverlay, zIndex: 90 }}>
+      <form onSubmit={handleSubmit} style={{ ...modalPanel, maxWidth: 760 }}>
         <div style={modalHeader}>
           <div>
             <h2 style={modalTitle}>{initial ? 'Edit schedule' : 'New schedule'}</h2>
@@ -194,12 +197,6 @@ export function ScheduleDialog({
               applicationId={applicationId}
               value={form.testCollectionId}
               onChange={(testCollectionId) => setForm({ ...form, testCollectionId })}
-            />
-
-            <EnvironmentSelect
-              label="Environment"
-              value={form.environmentId}
-              onChange={(environmentId) => setForm({ ...form, environmentId })}
             />
 
             <label className="field">
@@ -303,19 +300,22 @@ export function ScheduleDialog({
               </div>
             )}
 
-            <p
-              className="caption"
-              style={{
-                background: 'var(--bg-2)',
-                borderRadius: 'var(--radius)',
-                padding: 'var(--space-3)',
-                margin: 0,
-                fontSize: 12,
-                lineHeight: 1.5,
-              }}
-            >
-              {WORKER_DOWN_CAPTION}
-            </p>
+            <h3 style={sectionHeading}>Run configuration</h3>
+            <div style={{ padding: 20, borderRadius: 12, border: '1px solid var(--border-2)', background: 'var(--bg-2)' }}>
+              <TargetSelect
+                rows
+                value={form.target}
+                onChange={(target) => setForm({ ...form, target })}
+                sideBySide={
+                  <EnvironmentSelect
+                    row
+                    label="Environment"
+                    value={form.environmentId}
+                    onChange={(environmentId) => setForm({ ...form, environmentId })}
+                  />
+                }
+              />
+            </div>
 
             {error && (
               <div role="alert" style={{ color: 'var(--danger)', fontSize: 13 }}>
@@ -331,8 +331,8 @@ export function ScheduleDialog({
             <button
               type="submit"
               className="button-primary"
-              disabled={submitting}
-              style={{ ...modalButton, cursor: submitting ? 'not-allowed' : 'pointer' }}
+              disabled={submitting || sizeError !== null}
+              style={{ ...modalButton, cursor: submitting || sizeError ? 'not-allowed' : 'pointer' }}
             >
               {submitting ? <LoadingDots label="Saving" /> : initial ? 'Save changes' : 'Create schedule'}
             </button>

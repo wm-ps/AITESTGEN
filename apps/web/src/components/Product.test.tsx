@@ -26,16 +26,16 @@ describe('Product', () => {
 
   it('opens the demo video and the contact form from the call to action', () => {
     render(<Product onNavigate={() => {}} onSignIn={() => {}} />)
-    fireEvent.click(screen.getByRole('button', { name: /Watch a Demo/ }))
+    fireEvent.click(screen.getAllByRole('button', { name: /Watch a demo/ })[0])
     expect(screen.getByRole('dialog', { name: 'Vantage demo' })).toBeTruthy()
     fireEvent.keyDown(window, { key: 'Escape' })
-    fireEvent.click(screen.getByRole('button', { name: 'Connect with Our Team' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Connect with our team' })[0])
     expect(screen.getByRole('dialog', { name: "Let's connect" })).toBeTruthy()
   })
 
   it('collects the full enquiry and thanks the user once sent', () => {
     render(<Product onNavigate={() => {}} onSignIn={() => {}} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Connect with Our Team' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Connect with our team' })[0])
     fireEvent.change(screen.getByLabelText(/Full Name/), { target: { value: 'Sam Lee' } })
     fireEvent.change(screen.getByLabelText(/Work Email/), { target: { value: 'sam@example.com' } })
     fireEvent.change(screen.getByLabelText(/Company/), { target: { value: 'Acme' } })

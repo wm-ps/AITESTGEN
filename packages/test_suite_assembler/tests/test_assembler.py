@@ -147,6 +147,32 @@ def test_playwright_config_switches_to_per_attempt_allure_results_with_and_witho
         ) in config
 
 
+def test_playwright_config_picks_browser_and_window_size_from_env_with_and_without_login() -> None:
+    """One browser per `npx playwright test` invocation, chosen by the worker's
+    env vars; unset keeps the old Desktop Chrome 1280x720. No project may
+    hardcode a device, or it would ignore the selection."""
+    for has_login in (False, True):
+        config = _build_playwright_config("https://acme.example.com", has_login=has_login)
+
+        assert "chromium: 'Desktop Chrome'," in config
+        assert "firefox: 'Desktop Firefox'," in config
+        assert "webkit: 'Desktop Safari'," in config
+        assert "process.env.AITESTGEN_BROWSER ?? 'chromium'" in config
+        assert "process.env.AITESTGEN_VIEWPORT ?? '1280x720'" in config
+        # `screen` follows `viewport`, so window.screen reports the chosen size.
+        assert "viewport: { width, height }," in config
+        assert "screen: { width, height }," in config
+        assert "devices['Desktop Chrome']" not in config
+        assert "...device" in config
+
+
+def test_playwright_config_uses_the_selected_device_in_every_login_project() -> None:
+    config = _build_playwright_config("https://acme.example.com", has_login=True)
+
+    assert "use: { ...device, storageState: '.auth/state.json' }," in config
+    assert "use: { ...device }," in config
+
+
 def test_project_writes_allurerc_with_escaped_app_name(tmp_path) -> None:
     args = _project_args()
     args["application"] = _application(name='Acme "Bank" App')

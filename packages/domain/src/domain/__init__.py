@@ -63,6 +63,17 @@ from domain.page_transition import PageTransition
 from domain.password_reset import PasswordReset
 from domain.platform_user import PlatformUser
 from domain.recording_session import RecordingAuthMode, RecordingSession, RecordingSessionStatus
+from domain.run_target import (
+    BROWSER_LABELS,
+    BROWSERS,
+    DEFAULT_BROWSER,
+    DEFAULT_VIEWPORT_HEIGHT,
+    DEFAULT_VIEWPORT_WIDTH,
+    HEAL_BROWSER,
+    Browser,
+    normalize_browsers,
+    validate_viewport,
+)
 from domain.scenario import Scenario, ScenarioSource, ScenarioType
 from domain.schedule import Schedule, ScheduleCadenceType
 from domain.synthetic_data_entry import SyntheticDataEntry
@@ -77,6 +88,7 @@ from domain.test_run_cancel import (
     CANCELLABLE_TEST_RUN_STATUSES,
     RUN_CANCELLED_MESSAGE,
     apply_test_run_cancel,
+    count_tests,
     lock_test_run,
     tally_result_counts,
 )
@@ -150,6 +162,7 @@ __all__ = [
     "CANCELLABLE_TEST_RUN_STATUSES",
     "RUN_CANCELLED_MESSAGE",
     "apply_test_run_cancel",
+    "count_tests",
     "lock_test_run",
     "tally_result_counts",
     "TestSuite",
@@ -157,4 +170,13 @@ __all__ = [
     "aggregation_key",
     "effective_application",
     "find_environment",
+    "BROWSERS",
+    "BROWSER_LABELS",
+    "DEFAULT_BROWSER",
+    "DEFAULT_VIEWPORT_HEIGHT",
+    "DEFAULT_VIEWPORT_WIDTH",
+    "HEAL_BROWSER",
+    "Browser",
+    "normalize_browsers",
+    "validate_viewport",
 ]

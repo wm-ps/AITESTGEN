@@ -12,6 +12,7 @@ always the TestRun row before any of its TestResult rows.
 """
 
 import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from sqlalchemy import update
@@ -35,11 +36,47 @@ def lock_test_run(session: Session, test_run_pk: uuid.UUID) -> TestRun | None:
     ).one_or_none()
 
 
-def tally_result_counts(results: list[TestResult]) -> dict[str, int]:
-    counts = {status: 0 for status in ("passed", "failed", "timed_out", "errored", "blocked")}
+def _group_by_test(results: Iterable[TestResult]) -> list[list[TestResult]]:
+    """A run on several browsers has one result per test per browser; the
+    results of one test (same scenario) are one group. A result whose scenario
+    is gone stands alone."""
+    groups: dict[object, list[TestResult]] = {}
     for result in results:
-        if result.status in counts:
-            counts[result.status] += 1
+        groups.setdefault(result.scenario_id or result.id, []).append(result)
+    return list(groups.values())
+
+
+def _test_status(group: list[TestResult]) -> str:
+    """The one outcome a test has across its browsers — the same rule the Runs
+    tab's test row uses: still running if any browser is, else failed if any
+    failed, else skipped/cancelled, else passed."""
+    statuses = {r.status for r in group}
+    if "pending" in statuses:
+        return "pending"
+    for failed in ("failed", "timed_out", "errored"):
+        if failed in statuses:
+            return failed
+    for other in ("blocked", "cancelled"):
+        if other in statuses:
+            return other
+    return "passed"
+
+
+def count_tests(results: Iterable[TestResult]) -> int:
+    """How many tests a run's results are for — fewer than the results when the
+    run used more than one browser."""
+    return len(_group_by_test(results))
+
+
+def tally_result_counts(results: Iterable[TestResult]) -> dict[str, int]:
+    """Run outcome counts, one per test: a test that ran on several browsers
+    counts once, as its worst outcome (see `_test_status`), so these agree with
+    the run's test rows and `total_count`. A one-browser run is unchanged."""
+    counts = {status: 0 for status in ("passed", "failed", "timed_out", "errored", "blocked")}
+    for group in _group_by_test(results):
+        status = _test_status(group)
+        if status in counts:
+            counts[status] += 1
     return counts
 
 

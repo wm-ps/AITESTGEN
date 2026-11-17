@@ -11,18 +11,26 @@ export function EnvironmentSelect({
   value,
   onChange,
   label = 'Environment',
+  row,
 }: {
   value: string | null
   onChange: (environmentId: string | null) => void
   label?: string
+  // Label on the left, picker on the right (Run tests dialog).
+  row?: boolean
 }) {
   const context = useEnvironments()
   if (!context || context.environments.length === 0) return null
   const { environments, canAdd, requestAdd } = context
 
   return (
-    <label className="field">
-      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-2)' }}>{label}</span>
+    <label
+      className="field"
+      style={row ? { display: 'grid', gridTemplateColumns: '120px 1fr', alignItems: 'center', gap: 12 } : undefined}
+    >
+      <span style={row ? { fontSize: 14, color: 'var(--fg-2)' } : { fontSize: 12, fontWeight: 600, color: 'var(--fg-2)' }}>
+        {label}
+      </span>
       <select
         value={value ?? DEFAULT}
         onChange={(e) => {

@@ -85,7 +85,6 @@ export function CodeModal({ specFile, code, onClose }: { specFile: string; code:
   // viewport — it rendered squeezed inside the row, not as a real dialog.
   return createPortal(
     <div
-      onClick={onClose}
       style={{
         position: 'fixed',
         inset: 0,

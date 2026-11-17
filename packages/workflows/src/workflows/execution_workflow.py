@@ -116,6 +116,14 @@ class ExecutionWorkflowInput:
     # in-flight workflows are unchanged. `suite_name` still carries the
     # suite's name at trigger time; Prepare re-reads the current name by id.
     test_collection_id: str | None = None
+    # Browsers and the one window size this run executes against. None = not
+    # chosen here: a scheduled run takes its schedule's (read fresh, like the
+    # environment), anything else the default (Chromium at 1280x720) — every
+    # existing caller and in-flight workflow keeps today's behavior by not
+    # passing them. Validated by the API before they get here.
+    browsers: list[str] | None = None
+    viewport_width: int | None = None
+    viewport_height: int | None = None
 
 
 @dataclass
@@ -128,12 +136,17 @@ class PrepareTestRunActivityInput:
     triggered_by_user_id: str | None = None
     environment_id: str | None = None
     test_collection_id: str | None = None
+    browsers: list[str] | None = None
+    viewport_width: int | None = None
+    viewport_height: int | None = None
 
 
 @dataclass
 class ExecutableTest:
     test_result_id: str
     test_asset_id: str
+    # The browser this result runs on; results of one browser form a wave.
+    browser: str = "chromium"
     # Logs in by itself with the shared account (see execution_worker's
     # `_signs_in_itself`) — run after every shared-session test, one at a time.
     signs_in_itself: bool = False
@@ -248,6 +261,9 @@ class ApplicationTestExecutionWorkflow:
                 triggered_by_user_id=input.triggered_by_user_id,
                 environment_id=input.environment_id,
                 test_collection_id=input.test_collection_id,
+                browsers=input.browsers,
+                viewport_width=input.viewport_width,
+                viewport_height=input.viewport_height,
             ),
             start_to_close_timeout=timedelta(minutes=5),
             retry_policy=RetryPolicy(maximum_attempts=3),
@@ -322,29 +338,46 @@ class ApplicationTestExecutionWorkflow:
                     )
                     return result_id
 
-            if workflow.patched("self-signin-tests-last"):
-                # A test that logs in by itself would log out every test using
-                # the shared session (one session per account on many apps) —
-                # those run first, in parallel; self-signing-in ones after,
-                # one at a time.
-                shared = [item for item in prep.executable if not item.signs_in_itself]
-                self_signin = [item for item in prep.executable if item.signs_in_itself]
-                await asyncio.gather(*[run_one(item) for item in shared], return_exceptions=True)
-                for item in self_signin:
-                    try:
-                        await run_one(item)
-                    except Exception as err:  # noqa: BLE001 — same tolerance as gather above
-                        if is_cancelled_exception(err):
-                            raise
-                        workflow.logger.warning(
-                            "self-signing-in test %s failed to run", item.test_result_id
-                        )
+            async def run_items(items: list[ExecutableTest]) -> None:
+                if workflow.patched("self-signin-tests-last"):
+                    # A test that logs in by itself would log out every test
+                    # using the shared session (one session per account on
+                    # many apps) — those run first, in parallel;
+                    # self-signing-in ones after, one at a time.
+                    shared = [item for item in items if not item.signs_in_itself]
+                    self_signin = [item for item in items if item.signs_in_itself]
+                    await asyncio.gather(
+                        *[run_one(item) for item in shared], return_exceptions=True
+                    )
+                    for item in self_signin:
+                        try:
+                            await run_one(item)
+                        except Exception as err:  # noqa: BLE001 — same tolerance as gather above
+                            if is_cancelled_exception(err):
+                                raise
+                            workflow.logger.warning(
+                                "self-signing-in test %s failed to run", item.test_result_id
+                            )
+                else:
+                    await asyncio.gather(*[run_one(item) for item in items], return_exceptions=True)
+                # gather(return_exceptions=True) collects a child's stop instead of raising it.
+                _stop_if_cancel_requested()
+
+            if workflow.patched("cross-browser-waves"):
+                # ponytail: one wave per browser, run one after another —
+                # Prepare lists the reference browser (Chromium) first, so its
+                # heals finish before the other browsers run the (possibly
+                # healed) test, and the load stays what one browser always
+                # was. Total time is the sum of the waves; running the
+                # browsers together would need the shared login and the heal
+                # ordering to be safe under concurrency.
+                waves: dict[str, list[ExecutableTest]] = {}
+                for item in prep.executable:
+                    waves.setdefault(item.browser, []).append(item)
+                for wave in waves.values():
+                    await run_items(wave)
             else:
-                await asyncio.gather(
-                    *[run_one(item) for item in prep.executable], return_exceptions=True
-                )
-            # gather(return_exceptions=True) collects a child's stop instead of raising it.
-            _stop_if_cancel_requested()
+                await run_items(prep.executable)
 
         # Before Finalize, which deletes the project dir the Allure results
         # live in. Best-effort: the activity itself never raises, and this

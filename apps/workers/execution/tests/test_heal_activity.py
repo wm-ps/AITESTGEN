@@ -108,7 +108,14 @@ def _seed_test_asset(application: Application) -> TestAsset:
         return test_asset
 
 
-def _seed_test_result(application: Application, test_asset: TestAsset, *, status: str) -> TestResult:
+def _seed_test_result(
+    application: Application,
+    test_asset: TestAsset,
+    *,
+    status: str,
+    browser: str = "chromium",
+    viewport: tuple[int, int] = (1280, 720),
+) -> TestResult:
     with Session(engine) as session:
         test_run = TestRun(
             application_id=application.id,
@@ -116,6 +123,8 @@ def _seed_test_result(application: Application, test_asset: TestAsset, *, status
             status="completed",
             environment_snapshot=application.environment,
             target_base_url_snapshot=application.url,
+            viewport_width=viewport[0],
+            viewport_height=viewport[1],
         )
         session.add(test_run)
         session.flush()
@@ -123,6 +132,7 @@ def _seed_test_result(application: Application, test_asset: TestAsset, *, status
             test_run_id=test_run.id,
             test_asset_id=test_asset.id,
             scenario_id=test_asset.scenario_id,
+            browser=browser,
             status=status,
             # A broken locator in an action — the only kind of failure
             # self-healing acts on (workflows.heal_policy).
@@ -357,6 +367,67 @@ def test_load_heal_context_populated_for_eligible_failed_result() -> None:
     assert ctx is not None
     assert ctx.attempt_cap == activities_module.AUTO_HEAL_ATTEMPT_CAP
     assert ctx.scenario.id == asset.scenario_id
+
+
+@pytest.mark.parametrize("browser", ["firefox", "webkit"])
+def test_load_heal_context_is_none_for_a_browser_that_is_not_healed(browser: str) -> None:
+    """A heal rewrites the one test every browser shares, so a failure on
+    Firefox or Safari is reported, not healed (automatic or manual)."""
+    init_db()
+    _set_max_heal_attempts(3)
+    application = _seed_application()
+    asset = _seed_test_asset(application)
+    result = _seed_test_result(application, asset, status="failed", browser=browser)
+
+    for triggered_manually in (False, True):
+        ctx = activities_module._load_heal_context_sync(
+            activities_module.HealTestActivityInput(
+                application_id=str(application.external_id),
+                test_run_id="irrelevant",
+                test_result_id=str(result.external_id),
+                triggered_manually=triggered_manually,
+            )
+        )
+        assert ctx is None
+
+
+def test_load_heal_context_carries_the_runs_window_size() -> None:
+    """The heal inspects and re-runs at the size the user selected."""
+    init_db()
+    _set_max_heal_attempts(3)
+    application = _seed_application()
+    asset = _seed_test_asset(application)
+    result = _seed_test_result(application, asset, status="failed", viewport=(1920, 1080))
+
+    ctx = activities_module._load_heal_context_sync(
+        activities_module.HealTestActivityInput(
+            application_id=str(application.external_id),
+            test_run_id="irrelevant",
+            test_result_id=str(result.external_id),
+        )
+    )
+
+    assert ctx is not None
+    assert (ctx.viewport_width, ctx.viewport_height) == (1920, 1080)
+
+
+def test_load_heal_context_defaults_to_the_old_window_size() -> None:
+    init_db()
+    _set_max_heal_attempts(3)
+    application = _seed_application()
+    asset = _seed_test_asset(application)
+    result = _seed_test_result(application, asset, status="failed")
+
+    ctx = activities_module._load_heal_context_sync(
+        activities_module.HealTestActivityInput(
+            application_id=str(application.external_id),
+            test_run_id="irrelevant",
+            test_result_id=str(result.external_id),
+        )
+    )
+
+    assert ctx is not None
+    assert (ctx.viewport_width, ctx.viewport_height) == (1280, 720)
 
 
 def test_load_heal_context_populated_for_eligible_manual_retry() -> None:

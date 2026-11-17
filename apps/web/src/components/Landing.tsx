@@ -1,42 +1,47 @@
-import { useEffect, useState } from 'react'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlay } from '@fortawesome/free-solid-svg-icons'
-import { faComments } from '@fortawesome/free-regular-svg-icons'
+import { useEffect, useState, useSyncExternalStore } from 'react'
 import {
+  ConnectTeamButton,
   ContactDialog,
   DemoDialog,
   MarketingFooter,
   MarketingHeader,
   TEAL,
   useMarketingDialogs,
+  WatchDemoButton,
   type PublicPage,
 } from './marketing/MarketingChrome'
+
+// Read once, like before. The server snapshot (false) keeps the prerendered
+// markup and the first hydrating render identical; React then re-renders with
+// the browser's real answer.
+const noSubscribe = () => () => {}
+const prefersReducedMotion = () => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
 
 // Signed-out home page (claude.ai/design "Vantage Landing modified"). Sign in
 // opens the existing SignIn screen; the hero animation is LandingVisual below.
 
-// The background art lives in public/ (not src/assets) so a missing file only
-// drops back to the #EEF5F5 base colour instead of breaking the build.
-const LANDING_BG = '/landing-bg-teal-waves.png'
-
 export function Landing({ onNavigate, onSignIn }: { onNavigate: (page: PublicPage) => void; onSignIn: () => void }) {
   const { demoOpen, contactOpen, openDemo, openContact, closeAll } = useMarketingDialogs()
+  const reduced = useSyncExternalStore(noSubscribe, prefersReducedMotion, () => false)
 
   return (
     <div
       className="landing"
       style={{
         minHeight: '100svh',
-        background: `linear-gradient(90deg,rgba(250,250,251,0.9) 0%,rgba(250,250,251,0.55) 45%,rgba(250,250,251,0) 75%),url(${LANDING_BG}) center bottom/cover no-repeat,#EEF5F5`,
         display: 'flex',
         flexDirection: 'column',
         overflowX: 'hidden',
         color: '#3E3E46',
       }}
     >
+      <a href="#landing-main" className="product-skip">
+        Skip to content
+      </a>
       <MarketingHeader current="landing" onNavigate={onNavigate} onSignIn={onSignIn} />
 
       <main
+        id="landing-main"
         style={{
           flex: 1,
           minHeight: 0,
@@ -90,51 +95,27 @@ export function Landing({ onNavigate, onSignIn }: { onNavigate: (page: PublicPag
                 animationDelay: '.38s',
               }}
             >
-              Experience a smarter approach to software testing with AI-driven test generation, seamless execution and centralized test
-              management.
+              Vantage explores your web application, writes its tests with AI, runs them and keeps every suite in one place.
             </p>
             <div className="landing-up" style={{ marginTop: 'clamp(28px,5vh,48px)', display: 'flex', flexWrap: 'wrap', gap: 14, animationDelay: '.42s' }}>
-              <button
-                type="button"
-                className="landing-btn landing-btn-teal landing-btn-lift"
-                onClick={openDemo}
-                style={{ height: 54, gap: 12, padding: '0 24px 0 9px', borderRadius: 12, fontSize: 15.5 }}
-              >
-                <span
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 9,
-                    background: 'rgba(255,255,255,0.16)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <FontAwesomeIcon icon={faPlay} style={{ fontSize: 12, marginLeft: 2 }} />
-                </span>
-                Watch a demo
-              </button>
-              <button
-                type="button"
-                className="landing-btn landing-btn-ink landing-btn-lift"
-                onClick={openContact}
-                style={{ height: 54, gap: 10, padding: '0 24px', borderRadius: 12, fontSize: 15.5 }}
-              >
-                <FontAwesomeIcon icon={faComments} style={{ fontSize: 14 }} />
-                Connect with team
-              </button>
+              <WatchDemoButton onClick={openDemo} />
+              <ConnectTeamButton onClick={openContact} />
             </div>
           </div>
           <figure
             role="img"
             aria-label="Abstract animation: an application being discovered, its journeys traced and its tests passing"
             className="landing-up"
-            style={{ margin: 0, justifySelf: 'center', width: 'min(100%,56vh,540px)', aspectRatio: '1/1', animationDuration: '1s', animationDelay: '.25s' }}
+            style={{
+              margin: 0,
+              justifySelf: 'center',
+              width: 'min(100%,56vh,540px)',
+              aspectRatio: '1/1',
+              animationDuration: '1s',
+              animationDelay: '.25s',
+            }}
           >
-            <div className="landing-float" style={{ width: '100%', height: '100%' }}>
-              <LandingVisual />
-            </div>
+            <LandingVisual still={reduced} />
           </figure>
         </div>
       </main>
@@ -142,18 +123,19 @@ export function Landing({ onNavigate, onSignIn }: { onNavigate: (page: PublicPag
       <MarketingFooter current="landing" />
 
       {demoOpen && <DemoDialog onClose={closeAll} />}
-      {contactOpen && (
-<ContactDialog onClose={closeAll} />
-      )}
+      {contactOpen && <ContactDialog onClose={closeAll} />}
     </div>
   )
 }
 
 // --- Hero animation ---------------------------------------------------------
-// A looping SVG story in a 100x100 viewBox: a cursor walks five app screens
-// (scan), test chips spring out of each (draw), the chips run and pass — one
-// briefly "heals" amber (run) — then fly into three suite trays (hold), fade.
-// Ticks every 40ms in its own component so the page around it never re-renders.
+// An SVG story in a 100x100 viewBox: a cursor walks five app screens (scan),
+// test chips spring out of each (draw), the chips run and pass — one briefly
+// "heals" amber (run), then file into the suite trays (hold). It plays once at
+// normal speed (TICK_MS a tick, about 13.6 s) and rests on the filed frame,
+// with no pause button. That runs past WCAG 2.2.2's 5 s; accepted for a single
+// play that ends still. The fade phase after it is never reached now. Ticks in its own
+// component so the page around it never re-renders.
 
 type Card = { x: number; y: number; w: number; h: number; kind: 0 | 1 | 2; chips: number }
 const CARDS: Card[] = [
@@ -178,24 +160,33 @@ const T_RUN = 70
 const T_HOLD = 70
 const T_FADE = 20
 const CYCLE = T_SCAN + T_DRAW + T_RUN + T_HOLD + T_FADE
-// Frame shown when motion is reduced: every test run and passed.
-const STILL_TICK = T_SCAN + T_DRAW + T_RUN + 10
+// The finished frame (every test passed and filed into its suite tray): where
+// the story stops, and all that shows when motion is reduced.
+const STILL_TICK = T_SCAN + T_DRAW + T_RUN + T_HOLD
+const TICK_MS = 40
+const PLAY_MS = STILL_TICK * TICK_MS
 
 const ease = (t: number) => (t < 0 ? 0 : t > 1 ? 1 : 1 - Math.pow(1 - t, 3))
 const cl = (t: number) => (t < 0 ? 0 : t > 1 ? 1 : t)
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t
 
-function LandingVisual() {
-  const [reduced] = useState(() => !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)
+function LandingVisual({ still }: { still: boolean }) {
   const [tick, setTick] = useState(0)
 
   useEffect(() => {
-    if (reduced) return
-    const iv = setInterval(() => setTick((t) => (t + 1) % CYCLE), 40)
-    return () => clearInterval(iv)
-  }, [reduced])
+    if (still) return
+    let raf = 0
+    const t0 = performance.now()
+    const step = (now: number) => {
+      const t = Math.min(STILL_TICK, ((now - t0) / PLAY_MS) * STILL_TICK)
+      setTick(t)
+      if (t < STILL_TICK) raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf)
+  }, [still])
 
-  return <VisualFrame tick={reduced ? STILL_TICK : tick} />
+  return <VisualFrame tick={still ? STILL_TICK : tick} />
 }
 
 function VisualFrame({ tick }: { tick: number }) {

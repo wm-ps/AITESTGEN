@@ -166,6 +166,112 @@ textarea::placeholder {
   background: var(--bg-2);
 }
 
+/* Selectable browser tile (TargetSelect): a visually hidden checkbox inside a label. */
+.browser-tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 14px 8px 12px;
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  background: var(--panel);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.browser-tile:hover {
+  background: var(--bg-2);
+}
+
+.browser-tile input {
+  position: absolute;
+  opacity: 0;
+  inset: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.browser-tile:has(input:checked) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.browser-tile:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.browser-tile-check {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent);
+  color: #fff;
+  font-size: 9px;
+}
+
+.browser-tile:has(input:checked) .browser-tile-check {
+  display: inline-flex;
+}
+
+/* Pill variant (Run tests dialog): logo, name, then a check that is a grey dot until picked. */
+.browser-tile.is-pill {
+  flex-direction: row;
+  gap: 10px;
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.browser-tile.is-pill .browser-tile-check {
+  position: static;
+  order: 1;
+  margin-left: auto;
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  background: var(--border-2);
+  color: transparent;
+  font-size: 10px;
+}
+
+.browser-tile.is-pill:has(input:checked) {
+  border-color: var(--accent-strong, var(--accent));
+  background: var(--panel);
+  box-shadow: 0 0 0 1px var(--accent-strong, var(--accent));
+}
+
+.browser-tile.is-pill:has(input:checked) .browser-tile-check {
+  background: var(--accent-strong, var(--accent));
+  color: #fff;
+}
+
+.run-mode-card:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--bg-2);
+}
+
+.run-mode-card[aria-pressed='true'] {
+  border-color: var(--accent);
+  background: var(--bg-2);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
 .pagination-page-btn {
   min-width: 28px;
   height: 28px;
@@ -656,13 +762,29 @@ textarea::placeholder {
   }
 }
 
-/* Signed-out landing page (components/Landing.tsx). */
-.landing-up {
-  animation: landing-up 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+/* Signed-out landing page (components/Landing.tsx). The background art lives
+   in public/ (not src/assets) so a missing file only drops back to the
+   #EEF5F5 base colour instead of breaking the build. */
+.landing {
+  background:
+    linear-gradient(90deg, rgba(250, 250, 251, 0.9) 0%, rgba(250, 250, 251, 0.55) 45%, rgba(250, 250, 251, 0) 75%),
+    url('/landing-bg-teal-waves.png') center bottom / cover no-repeat,
+    #eef5f5;
 }
 
-.landing-float {
-  animation: landing-float 9s ease-in-out infinite;
+/* Stacked on a phone the copy sits over the busy middle of the waves, so the
+   wash runs top-down instead. */
+@media (max-width: 760px) {
+  .landing {
+    background:
+      linear-gradient(180deg, rgba(250, 250, 251, 0.94) 0%, rgba(250, 250, 251, 0.82) 50%, rgba(250, 250, 251, 0.2) 100%),
+      url('/landing-bg-teal-waves.png') center bottom / cover no-repeat,
+      #eef5f5;
+  }
+}
+
+.landing-up {
+  animation: landing-up 0.8s cubic-bezier(0.2, 0.7, 0.2, 1) both;
 }
 
 .landing-btn {
@@ -758,16 +880,6 @@ textarea::placeholder {
   }
 }
 
-@keyframes landing-float {
-  0%,
-  100% {
-    transform: translateY(0) rotate(0deg);
-  }
-  50% {
-    transform: translateY(-8px) rotate(1.5deg);
-  }
-}
-
 @keyframes landing-modal {
   from {
     opacity: 0;
@@ -781,7 +893,6 @@ textarea::placeholder {
 
 @media (prefers-reduced-motion: reduce) {
   .landing-up,
-  .landing-float,
   .landing-modal {
     animation: none;
   }
@@ -811,6 +922,13 @@ textarea::placeholder {
 @media (max-width: 480px) {
   .marketing-wordmark {
     display: none;
+  }
+
+  /* 44px tap targets once the bar is a thumb's width. */
+  .marketing-nav {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
   }
 }
 
@@ -887,13 +1005,21 @@ textarea::placeholder {
   background: #f2f3f5;
 }
 
-.product-btn-outline {
-  background: transparent;
-  border: 1.5px solid rgba(255, 255, 255, 0.7);
+/* Four cards: 4 across, then 2x2, then one column — never 3 + 1. */
+.product-grid4 {
+  grid-template-columns: 1fr;
 }
 
-.product-btn-outline:hover {
-  border-color: #fff;
+@media (min-width: 600px) {
+  .product-grid4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1120px) {
+  .product-grid4 {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 /* Line joining the four lifecycle stages, through the circles' centres. */
@@ -913,15 +1039,6 @@ textarea::placeholder {
   transform-origin: left center;
 }
 
-.product-lifeline-fill.product-reveal-pending {
-  transform: scaleX(0);
-  transition: transform 1.8s 0.2s cubic-bezier(0.45, 0, 0.2, 1);
-}
-
-.product-lifeline-fill.product-reveal-pending.is-revealed {
-  transform: scaleX(1);
-}
-
 .product-lifeline-pulse {
   position: absolute;
   top: 0;
@@ -934,35 +1051,33 @@ textarea::placeholder {
   animation: product-travel 5s ease-in-out infinite;
 }
 
-/* Stages wrap below four-across, where a straight line no longer joins them. */
+/* The four stages go 4 across, then 2x2, then one column — never 3 + 1.
+   Below four-across a straight line no longer joins them. */
+.product-stages {
+  grid-template-columns: 1fr;
+}
+
+@media (min-width: 480px) {
+  .product-stages {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 821px) {
+  .product-stages {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 820px) {
   .product-lifeline {
     display: none;
   }
 }
 
-/* Scroll reveal: useScrollReveal adds -pending, then is-revealed in view. */
-[data-reveal].product-reveal-pending {
-  opacity: 0;
-  transform: translateY(22px);
-  transition:
-    opacity 0.9s cubic-bezier(0.2, 0.7, 0.2, 1),
-    transform 0.9s cubic-bezier(0.2, 0.7, 0.2, 1);
-}
-
-[data-reveal].product-reveal-pending.is-revealed {
-  opacity: 1;
-  transform: none;
-}
-
-/* Cards keep their quick hover lift once revealed. */
-.product-cap.is-revealed,
-.product-audience.is-revealed {
-  transition:
-    opacity 0.9s cubic-bezier(0.2, 0.7, 0.2, 1),
-    transform 0.3s,
-    border-color 0.3s,
-    box-shadow 0.3s;
+/* The teal ring of the global focus style vanishes on the dark and teal bands. */
+.product-on-dark button:focus-visible {
+  outline-color: #fff;
 }
 
 @keyframes product-spin {

@@ -28,6 +28,8 @@ import { Toast } from './components/Toast'
 import { Workspace, type WorkspaceTab, WORKSPACE_TABS } from './components/workspace/Workspace'
 import { TestSuitesPage } from './components/workspace/suites/TestSuitesPage'
 import { AppShell, type AppShellTab, type ShellRoute } from './components/shell/AppShell'
+import { hasSignedInHint, setSignedInHint } from './signedInHint'
+import { PAGE_META, SITE_NAME } from './site'
 import { PermissionsProvider } from './PermissionsContext'
 
 // Vantage V2 redesign: AppShell (left sidebar + topbar) wraps every
@@ -149,6 +151,8 @@ function App() {
   )
   const userRef = useRef(user)
   userRef.current = user
+  // Read once at mount: decides only what shows while me() is in flight.
+  const [signedInHint] = useState(hasSignedInHint)
   // One-shot: the run the Runs tab opens on after following that link.
   const [openRunId, setOpenRunId] = useState<string | null>(null)
   // Covers logout and resume-application — both involve an API round trip
@@ -223,6 +227,21 @@ function App() {
     return () => window.removeEventListener('auth:expired', handleExpired)
   }, [])
 
+  // The hint follows me() and sign-in/out, never the other way round.
+  useEffect(() => {
+    if (user) setSignedInHint(true)
+    else if (user === null) setSignedInHint(false)
+  }, [user])
+
+  // A visitor with no signed-in hint gets the (prerendered) public page at
+  // once, without waiting on me() — and keeps it if the API is down. A hinted
+  // visitor gets the boot loader, as before; me() still decides either way.
+  const publicFirst = user === undefined && !signedInHint && (signedOutPage === 'landing' || signedOutPage === 'product')
+  const publicTitle = (publicFirst || user === null) && (signedOutPage === 'landing' || signedOutPage === 'product') ? PAGE_META[signedOutPage].title : null
+  useEffect(() => {
+    document.title = publicTitle ?? SITE_NAME
+  }, [publicTitle])
+
   // Browser Back/Forward between the signed-out pages.
   useEffect(() => {
     function handlePopState() {
@@ -293,13 +312,13 @@ function App() {
     return <RecordingSessionWindow {...recordingPopupParams} />
   }
 
-  if (serviceDown) {
+  if (serviceDown && !publicFirst) {
     return <ServiceError code="API_UNAVAILABLE" onRetry={() => window.location.reload()} />
   }
 
-  if (user === undefined) return <AppBootLoader />
+  if (user === undefined && !publicFirst) return <AppBootLoader />
 
-  if (user === null) {
+  if (!user) {
     const goTo = (page: SignedOutPage) => {
       if (page === signedOutPage) return
       window.history.pushState({}, '', SIGNED_OUT_PATHS[page])

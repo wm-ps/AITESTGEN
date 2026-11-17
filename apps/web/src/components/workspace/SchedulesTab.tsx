@@ -8,6 +8,8 @@ import { SkeletonRows } from '../Skeleton'
 import { AnchoredMenu } from '../AnchoredMenu'
 import { Pill } from '../../explorer/ui'
 import { EmptyState, SchedulesIllustration } from '../EmptyState'
+import { BrowserIcon } from './BrowserIcon'
+import { targetFromSchedule, targetLabel } from '../../runTarget'
 
 function formatDateTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -27,7 +29,7 @@ const columnHeaderLabelStyle: React.CSSProperties = {
 }
 
 const SCHEDULE_ROW_GRID_TEMPLATE =
-  'minmax(200px,2.4fr) minmax(120px,1.3fr) minmax(110px,1fr) minmax(120px,1.2fr) 70px 32px'
+  'minmax(200px,2.4fr) minmax(120px,1.3fr) minmax(110px,1fr) minmax(90px,0.8fr) minmax(120px,1.2fr) 70px 32px'
 
 // Self-contained on/off control — doubles as the status indicator (no
 // separate "Enabled"/"Disabled" pill needed alongside it, the switch's own
@@ -340,6 +342,7 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
             <div style={columnHeaderLabelStyle}>Schedule</div>
             <div style={columnHeaderLabelStyle}>Cadence</div>
             <div style={columnHeaderLabelStyle}>Runs</div>
+            <div style={columnHeaderLabelStyle}>Browsers</div>
             <div style={columnHeaderLabelStyle}>Next run</div>
             <div style={columnHeaderLabelStyle}>Enabled</div>
             <div />
@@ -378,6 +381,20 @@ export function SchedulesTab({ applicationId }: { applicationId: string }) {
               </div>
               <div style={{ fontSize: 12.5, color: 'var(--fg-2)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={schedule.test_collection_name ?? 'All test cases'}>
                 {schedule.test_collection_name ?? 'All test cases'}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {(() => {
+                  const target = targetFromSchedule(schedule)
+                  return target.browsers.map((browser) => (
+                    <span
+                      key={browser}
+                      title={targetLabel(browser, target.viewport)}
+                      style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer' }}
+                    >
+                      <BrowserIcon browser={browser} size={18} />
+                    </span>
+                  ))
+                })()}
               </div>
               <div className="caption" style={{ fontSize: 12 }}>
                 {schedule.next_run_at ? formatDateTime(schedule.next_run_at) : '—'}

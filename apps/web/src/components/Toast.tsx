@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+
 // Shared bottom-right notice — was two copy-pasted solid-black pills (App.tsx's
 // errorToast, Workspace.tsx's runToast), the generic default look of an
 // unstyled toast library rather than this app's own card/border/token system.
@@ -38,8 +40,32 @@ export function Toast({
   onDismiss?: () => void
 }) {
   const colors = TOAST_COLORS[kind]
+  const ref = useRef<HTMLDivElement>(null)
+
+  // A click anywhere outside the toast dismisses it (dialogs are the opposite —
+  // they ignore outside clicks). Registered a tick late: a toast that appears
+  // from a click would otherwise catch that same click as it bubbles to
+  // `document` and vanish immediately.
+  // Callers pass a fresh inline `onDismiss` each render; the ref keeps the
+  // listener from being torn down and re-added every time.
+  const dismissRef = useRef(onDismiss)
+  dismissRef.current = onDismiss
+  const dismissible = Boolean(onDismiss)
+  useEffect(() => {
+    if (!dismissible) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) dismissRef.current?.()
+    }
+    const timer = setTimeout(() => document.addEventListener('pointerdown', onPointerDown), 0)
+    return () => {
+      clearTimeout(timer)
+      document.removeEventListener('pointerdown', onPointerDown)
+    }
+  }, [dismissible])
+
   return (
     <div
+      ref={ref}
       role="status"
       className="card-panel"
       style={{

@@ -1,20 +1,17 @@
-import { useEffect, useRef, type ComponentType, type CSSProperties } from 'react'
+import { useEffect, useRef, type CSSProperties } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import {
   faArrowTrendUp,
-  faChartLine,
-  faClipboardCheck,
-  faCode,
   faCompass,
   faDiagramProject,
   faLayerGroup,
   faScrewdriverWrench,
-  faSitemap,
   faWandMagicSparkles,
   type IconDefinition,
 } from '@fortawesome/free-solid-svg-icons'
 import { faCirclePlay, faEyeSlash, faHourglassHalf } from '@fortawesome/free-regular-svg-icons'
 import {
+  ConnectTeamButton,
   ContactDialog,
   DemoDialog,
   MAX_WIDTH,
@@ -22,9 +19,11 @@ import {
   MarketingHeader,
   TEAL,
   useMarketingDialogs,
+  WatchDemoButton,
   type PublicPage,
 } from './marketing/MarketingChrome'
-import { ArtExecute, ArtExplore, ArtGenerate, ArtManage, Dial, HeroSchematic } from './marketing/productArt'
+import { AUDIENCES, CAPABILITIES } from './marketing/productContent'
+import { Dial, HeroSchematic } from './marketing/productArt'
 
 // Signed-out product page at /product (claude.ai/design "Vantage Product").
 
@@ -46,75 +45,71 @@ const STAGES: { icon: IconDefinition; name: string }[] = [
   { icon: faLayerGroup, name: 'Manage' },
 ]
 
-const CAPABILITIES: { name: string; icon: IconDefinition; desc: string; value: string; valueDesc: string; Art: ComponentType }[] = [
-  {
-    name: 'Explore',
-    icon: faCompass,
-    desc: 'Understand your application, explore its pages and map user journeys to establish a foundation for comprehensive testing.',
-    value: 'Faster Test Preparation',
-    valueDesc: 'Accelerate the journey from application understanding to automated testing.',
-    Art: ArtExplore,
-  },
-  {
-    name: 'Generate',
-    icon: faWandMagicSparkles,
-    desc: 'Transform application insights into intelligent test scenarios and automated Playwright test cases.',
-    value: 'Reduced Manual Effort',
-    valueDesc: 'Minimize repetitive test creation and execution activities.',
-    Art: ArtGenerate,
-  },
-  {
-    name: 'Execute',
-    icon: faCirclePlay,
-    desc: 'Execute automated tests, monitor outcomes and gain visibility into test performance.',
-    value: 'Better Visibility',
-    valueDesc: 'Gain centralized insights into test execution and outcomes.',
-    Art: ArtExecute,
-  },
-  {
-    name: 'Manage',
-    icon: faLayerGroup,
-    desc: 'Centralize test suites, test cases, test data, reports and execution schedules.',
-    value: 'Operational Efficiency',
-    valueDesc: 'Manage testing activities through one platform.',
-    Art: ArtManage,
-  },
-]
+// The art plays once, at normal speed, and rests on its finished frame — no
+// pause button. The CSS loops in each `[data-play-once]` block wait, paused,
+// until the block scrolls into view, then:
+// - a story keyframe (FINISH) plays its first cycle and stops at the point it
+//   is finished: journey drawn, node lit, test passed. The hero map ends
+//   about 6-7 s in, past WCAG 2.2.2's 5 s; accepted for one normal-speed play.
+// - an ambient loop (spin, dash, float, pulse) has no end, so it stops after
+//   AMBIENT_MS, on its REST frame when it has one.
+const FINISH: Record<string, number> = {
+  'product-draw': 0.46,
+  'product-on': 0.06,
+  'product-grow': 0.31,
+  'product-fill': 0.71,
+  'product-pass': 0.73,
+  'product-heal': 0.85,
+}
+const REST: Record<string, number> = { 'product-twinkle': 0.5, 'product-travel': 0.5, 'product-ping': 0.3 }
+const AMBIENT_MS = 5000
 
-const AUDIENCES: { icon: IconDefinition; title: string; desc: string }[] = [
-  { icon: faClipboardCheck, title: 'QA Managers', desc: 'Better control over test coverage, execution and reporting.' },
-  { icon: faCode, title: 'QA Engineers', desc: 'Less repetitive work and easier test maintenance.' },
-  { icon: faSitemap, title: 'Engineering Leaders', desc: 'Improved visibility into automation and quality workflows.' },
-  { icon: faChartLine, title: 'Business Leaders', desc: 'A more efficient and structured approach to software quality.' },
-]
+const frameAt = (a: Animation, f: number) => {
+  const { delay, duration } = a.effect!.getTiming()
+  return (Number(delay) || 0) + (Number(duration) || 0) * f
+}
 
-// Fades `[data-reveal]` blocks up as they scroll into view (after their
-// optional data-delay ms) and sweeps the `[data-fill]` lifecycle line across.
-// Elements are only hidden once an IntersectionObserver is there to show
-// them again, so without one (or with reduced motion) everything is visible.
-function useScrollReveal(rootRef: React.RefObject<HTMLElement | null>) {
+// Plays `a` from its start, then freezes it as above.
+function playOnce(a: Animation, timers: number[]) {
+  const name = a instanceof CSSAnimation ? a.animationName : ''
+  const finish = FINISH[name]
+  const rest = REST[name]
+  a.currentTime = 0
+  a.play()
+  const stopAt = finish === undefined ? AMBIENT_MS : frameAt(a, finish)
+  timers.push(
+    window.setTimeout(() => {
+      a.pause()
+      if (finish !== undefined) a.currentTime = frameAt(a, finish)
+      else if (rest !== undefined) a.currentTime = frameAt(a, rest)
+    }, stopAt),
+  )
+}
+
+function usePlayOnceInView(rootRef: React.RefObject<HTMLElement | null>) {
   useEffect(() => {
     const root = rootRef.current
-    if (!root || !('IntersectionObserver' in window)) return
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
+    // No Web Animations API or observer (jsdom, old browsers): the loops just
+    // run, as before. Reduced motion already sets them to none in index.css.
+    if (!root || typeof root.getAnimations !== 'function' || !('IntersectionObserver' in window)) return
+    const loops = (el: Element) => el.getAnimations({ subtree: true }).filter((a) => a.effect?.getComputedTiming().iterations === Infinity)
+    const blocks = root.querySelectorAll('[data-play-once]')
+    blocks.forEach((b) => loops(b).forEach((a) => a.pause()))
+    const timers: number[] = []
     const io = new IntersectionObserver(
       (entries) =>
         entries.forEach((en) => {
           if (!en.isIntersecting) return
-          const el = en.target as HTMLElement
-          el.classList.add('is-revealed')
-          // The stagger delay is for the entrance only, not later hovers.
-          el.addEventListener('transitionend', () => (el.style.transitionDelay = ''), { once: true })
-          io.unobserve(el)
+          io.unobserve(en.target)
+          loops(en.target).forEach((a) => playOnce(a, timers))
         }),
-      { threshold: 0.12, rootMargin: '0px 0px -6% 0px' },
+      { threshold: 0.3 },
     )
-    root.querySelectorAll<HTMLElement>('[data-reveal], [data-fill]').forEach((el) => {
-      el.style.transitionDelay = `${Number(el.dataset.delay || 0)}ms`
-      el.classList.add('product-reveal-pending')
-      io.observe(el)
-    })
-    return () => io.disconnect()
+    blocks.forEach((b) => io.observe(b))
+    return () => {
+      io.disconnect()
+      timers.forEach(clearTimeout)
+    }
   }, [rootRef])
 }
 
@@ -137,20 +132,35 @@ const H2: CSSProperties = {
 export function Product({ onNavigate, onSignIn }: { onNavigate: (page: PublicPage) => void; onSignIn: () => void }) {
   const { demoOpen, contactOpen, openDemo, openContact, closeAll } = useMarketingDialogs()
   const rootRef = useRef<HTMLDivElement>(null)
-  useScrollReveal(rootRef)
+  usePlayOnceInView(rootRef)
 
   return (
-    <div ref={rootRef} className="product-page" style={{ background: '#FAFAFB', minHeight: '100svh', overflowX: 'clip', color: '#3E3E46' }}>
+    <div
+      ref={rootRef}
+      className="product-page"
+      style={{ background: '#FAFAFB', minHeight: '100svh', overflowX: 'clip', color: '#3E3E46' }}
+    >
       <a href="#product-main" className="product-skip">
         Skip to content
       </a>
       <MarketingHeader current="product" onNavigate={onNavigate} onSignIn={onSignIn} />
 
       <main id="product-main">
-        <section aria-labelledby="product-hero-title" style={{ padding: `clamp(48px,6vw,80px) ${GUTTER} clamp(48px,6vw,72px)` }}>
+        {/* Fills the first screen under the 64px header, so nothing of the
+            next section shows on load. */}
+        <section
+          aria-labelledby="product-hero-title"
+          style={{
+            minHeight: 'calc(100svh - 64px)',
+            display: 'flex',
+            alignItems: 'center',
+            padding: `clamp(48px,6vw,80px) ${GUTTER} clamp(48px,6vw,72px)`,
+          }}
+        >
           <div
             style={{
               ...INNER,
+              width: '100%',
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,480px),1fr))',
               gap: '40px clamp(32px,5vw,80px)',
@@ -194,9 +204,13 @@ export function Product({ onNavigate, onSignIn }: { onNavigate: (page: PublicPag
                 Vantage transforms the way organizations approach software testing, bringing intelligent test generation, automated execution
                 and centralized test management together in one platform.
               </p>
+              <div className="landing-up" style={{ marginTop: 36, display: 'flex', flexWrap: 'wrap', gap: 14, animationDuration: '.9s', animationDelay: '.36s' }}>
+                <WatchDemoButton onClick={openDemo} />
+                <ConnectTeamButton onClick={openContact} />
+              </div>
             </div>
             <figure
-              aria-hidden="true"
+              data-play-once=""
               className="landing-up"
               style={{
                 margin: 0,
@@ -212,7 +226,7 @@ export function Product({ onNavigate, onSignIn }: { onNavigate: (page: PublicPag
                 animationDelay: '.2s',
               }}
             >
-              <div style={{ position: 'absolute', inset: 0 }}>
+              <div aria-hidden="true" style={{ position: 'absolute', inset: 0 }}>
                 <HeroSchematic />
               </div>
             </figure>
@@ -224,17 +238,16 @@ export function Product({ onNavigate, onSignIn }: { onNavigate: (page: PublicPag
           style={{ padding: SECTION_PAD, background: '#fff', borderTop: '1px solid #E5E6E9', borderBottom: '1px solid #E5E6E9' }}
         >
           <div style={INNER}>
-            <div data-reveal="" style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 40 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 40 }}>
               <Eyebrow>The challenges we solve</Eyebrow>
               <h2 id="product-challenges-title" style={H2}>
                 Traditional Testing Shouldn't Slow Down Innovation.
               </h2>
             </div>
             <div
-              data-reveal=""
+              className="product-grid4"
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,260px),1fr))',
                 border: '1px solid #E5E6E9',
                 borderRadius: 20,
                 overflow: 'hidden',
@@ -270,9 +283,14 @@ export function Product({ onNavigate, onSignIn }: { onNavigate: (page: PublicPag
           </div>
         </section>
 
-        <section aria-labelledby="product-platform-title" style={{ background: '#0E2624', color: '#C9D8D5', padding: SECTION_PAD }}>
+        <section
+          aria-labelledby="product-platform-title"
+          className="product-on-dark"
+          data-play-once=""
+          style={{ background: '#0E2624', color: '#C9D8D5', padding: SECTION_PAD }}
+        >
           <div style={INNER}>
-            <div data-reveal="" style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 56 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 56 }}>
               <Eyebrow color="#7FCFC4">Meet the Vantage platform</Eyebrow>
               <h2 id="product-platform-title" style={{ ...H2, color: '#FFFFFF' }}>
                 One Platform. Every Stage of Testing.
@@ -282,25 +300,23 @@ export function Product({ onNavigate, onSignIn }: { onNavigate: (page: PublicPag
               {/* The connecting line only makes sense with all four stages on one row. */}
               <div className="product-lifeline" aria-hidden="true">
                 <div style={{ position: 'absolute', inset: '4px 0 auto', height: 1, background: 'rgba(127,207,196,0.22)' }} />
-                <div data-fill="" className="product-lifeline-fill" />
+                <div className="product-lifeline-fill" />
                 <span className="product-lifeline-pulse" />
               </div>
               <ol
+                className="product-stages"
                 style={{
                   position: 'relative',
                   listStyle: 'none',
                   margin: 0,
                   padding: 0,
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,170px),1fr))',
                   gap: '32px 16px',
                 }}
               >
-                {STAGES.map((s, i) => (
+                {STAGES.map((s) => (
                   <li
                     key={s.name}
-                    data-reveal=""
-                    data-delay={150 + i * 400}
                     style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 14 }}
                   >
                     <span
@@ -350,7 +366,7 @@ export function Product({ onNavigate, onSignIn }: { onNavigate: (page: PublicPag
             }}
           >
             {CAPABILITIES.map((c, i) => (
-              <article key={c.name} data-reveal="" data-delay={i * 90} className="product-cap">
+              <article key={c.name} data-play-once="" className="product-cap">
                 <div
                   style={{
                     position: 'relative',
@@ -383,7 +399,7 @@ export function Product({ onNavigate, onSignIn }: { onNavigate: (page: PublicPag
                     >
                       <FontAwesomeIcon icon={c.icon} />
                     </span>
-                    <h2 style={{ margin: 0, fontSize: 26, lineHeight: 1, fontWeight: 600, letterSpacing: '-0.035em', color: '#16161A' }}>{c.name}</h2>
+                    <h3 style={{ margin: 0, fontSize: 26, lineHeight: 1, fontWeight: 600, letterSpacing: '-0.035em', color: '#16161A' }}>{c.name}</h3>
                   </div>
                   <p style={{ margin: 0, fontSize: 15, lineHeight: 1.6, color: '#3E3E46', textWrap: 'pretty' }}>{c.desc}</p>
                   <div style={{ marginTop: 'auto', paddingTop: 14, borderTop: '1px solid #EBECEE', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
@@ -404,15 +420,15 @@ export function Product({ onNavigate, onSignIn }: { onNavigate: (page: PublicPag
           style={{ background: '#F1F5F4', borderTop: '1px solid #E1E8E6', borderBottom: '1px solid #E1E8E6', padding: SECTION_PAD }}
         >
           <div style={INNER}>
-            <div data-reveal="" style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 40 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 40 }}>
               <Eyebrow>Who benefits from Vantage?</Eyebrow>
               <h2 id="product-who-title" style={H2}>
                 Designed for Teams That Care About Quality.
               </h2>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,280px),1fr))', gap: 16 }}>
-              {AUDIENCES.map((a, i) => (
-                <div key={a.title} data-reveal="" data-delay={i * 80} className="product-audience">
+            <div className="product-grid4" style={{ display: 'grid', gap: 16 }}>
+              {AUDIENCES.map((a) => (
+                <div key={a.title} className="product-audience">
                   <span
                     style={{
                       width: 52,
@@ -438,6 +454,8 @@ export function Product({ onNavigate, onSignIn }: { onNavigate: (page: PublicPag
 
         <section
           aria-labelledby="product-cta-title"
+          className="product-on-dark"
+          data-play-once=""
           style={{ position: 'relative', overflow: 'hidden', background: TEAL, padding: `clamp(72px,8vw,112px) ${GUTTER}` }}
         >
           <div
@@ -455,43 +473,16 @@ export function Product({ onNavigate, onSignIn }: { onNavigate: (page: PublicPag
           >
             <Dial />
           </div>
-          <div data-reveal="" style={{ ...INNER, position: 'relative', display: 'flex', flexDirection: 'column', gap: 22 }}>
-            <h2
-              id="product-cta-title"
-              style={{
-                margin: 0,
-                maxWidth: 760,
-                fontSize: 'clamp(40px,5.2vw,76px)',
-                lineHeight: 1,
-                fontWeight: 600,
-                letterSpacing: '-0.05em',
-                color: '#fff',
-                textWrap: 'balance',
-              }}
-            >
+          <div style={{ ...INNER, position: 'relative', display: 'flex', flexDirection: 'column', gap: 22 }}>
+            <h2 id="product-cta-title" style={{ ...H2, maxWidth: 760, color: '#fff' }}>
               Ready to Rethink Testing?
             </h2>
-            <p style={{ margin: 0, maxWidth: 560, fontSize: 18, lineHeight: 1.6, color: '#E3F2EF', textWrap: 'pretty' }}>
+            <p style={{ margin: 0, maxWidth: 560, fontSize: 18, lineHeight: 1.6, color: '#FFFFFF', textWrap: 'pretty' }}>
               See how Vantage can help your team simplify testing, accelerate quality and deliver with confidence.
             </p>
             <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-              <button
-                type="button"
-                className="landing-btn landing-btn-lift product-btn-white"
-                onClick={openDemo}
-                style={{ height: 54, gap: 10, padding: '0 26px', borderRadius: 12, fontSize: 15.5 }}
-              >
-                <FontAwesomeIcon icon={faCirclePlay} style={{ fontSize: 14 }} />
-                Watch a Demo
-              </button>
-              <button
-                type="button"
-                className="landing-btn landing-btn-lift product-btn-outline"
-                onClick={openContact}
-                style={{ height: 54, padding: '0 26px', borderRadius: 12, fontSize: 15.5 }}
-              >
-                Connect with Our Team
-              </button>
+              <WatchDemoButton onClick={openDemo} onTeal />
+              <ConnectTeamButton onClick={openContact} />
             </div>
           </div>
         </section>
@@ -500,9 +491,7 @@ export function Product({ onNavigate, onSignIn }: { onNavigate: (page: PublicPag
       <MarketingFooter current="product" />
 
       {demoOpen && <DemoDialog onClose={closeAll} />}
-      {contactOpen && (
-<ContactDialog onClose={closeAll} />
-      )}
+      {contactOpen && <ContactDialog onClose={closeAll} />}
     </div>
   )
 }
