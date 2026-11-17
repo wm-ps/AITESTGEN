@@ -14,7 +14,7 @@ export const PUBLISHER = 'Omnewave'
 export const PAGE_META: Record<PublicPage, { path: string; title: string; description: string }> = {
   landing: {
     path: '/',
-    title: 'Vantage | Test smarter. Release with confidence.',
+    title: 'Vantage | AI test automation',
     description: 'Vantage explores your web application, writes its tests with AI, runs them and keeps every suite in one place.',
   },
   product: {
