@@ -1,28 +1,26 @@
 import { useEffect, useState } from 'react'
 import { ApiError, api, type CollectionSummary } from '../../../api'
-import { EnvironmentSelect } from '../../environments/EnvironmentSelect'
 import { SkeletonRows } from '../../Skeleton'
 import { SuiteModal, UnavailableBadge, plural } from './SuiteModal'
 
 // Third mode of the Run dialog: pick a saved suite and run exactly its
-// available test cases. The environment starts as whatever the user picked in
-// the first dialog and can still be changed here. A suite with nothing
-// runnable is shown but cannot be chosen.
+// available test cases. The environment, browsers and window size were already
+// chosen in the Run tests dialog; Back returns there to change them. A suite
+// with nothing runnable is shown but cannot be chosen.
 export function RunTestSuiteDialog({
   applicationId,
-  initialEnvironmentId,
   onClose,
+  onBack,
   onRun,
 }: {
   applicationId: string
-  initialEnvironmentId: string | null
   onClose: () => void
-  onRun: (collectionId: string, environmentId: string | null) => void
+  onBack: () => void
+  onRun: (collectionId: string) => void
 }) {
   const [suites, setSuites] = useState<CollectionSummary[] | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [environmentId, setEnvironmentId] = useState<string | null>(initialEnvironmentId)
 
   useEffect(() => {
     let cancelled = false
@@ -55,14 +53,14 @@ export function RunTestSuiteDialog({
         <>
           <span className="caption" style={{ fontSize: 12.5 }}>Unavailable test cases are skipped.</span>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button type="button" className="button-secondary" onClick={onClose} style={{ padding: '10px 22px', fontSize: 14 }}>
-              Cancel
+            <button type="button" className="button-secondary" onClick={onBack} style={{ padding: '10px 22px', fontSize: 14 }}>
+              Back
             </button>
             <button
               type="button"
               className="button-primary"
               aria-disabled={!canRun}
-              onClick={() => canRun && selected && onRun(selected.id, environmentId)}
+              onClick={() => canRun && selected && onRun(selected.id)}
               style={{
                 padding: '10px 22px',
                 fontSize: 14,
@@ -80,7 +78,6 @@ export function RunTestSuiteDialog({
       }
     >
       <div style={{ padding: '4px 28px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <EnvironmentSelect label="Run on environment" value={environmentId} onChange={setEnvironmentId} />
         {loadError && (
           <div role="alert" style={{ color: 'var(--danger)', fontSize: 13 }}>{loadError}</div>
         )}

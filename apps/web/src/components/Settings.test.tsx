@@ -17,6 +17,26 @@ const SETTINGS_BODY = {
   max_heal_attempts: 3,
 }
 
+const EXPLORER_LIMITS = {
+  question_wait_minutes: 30,
+  mission_time_limit_minutes: 75,
+  run_time_limit_minutes: null,
+  first_look_time_limit_minutes: 120,
+  hidden_screen_search_minutes: 25,
+  ai_budget_usd: null,
+  first_look_max_screens: 150,
+  max_screens: null,
+  max_missions: 15,
+  steps_per_mission: 20,
+  steps_per_scenario: 20,
+  steps_per_journey: 40,
+  max_scenarios: 150,
+  proof_replays: 1,
+  same_screen_repeats: 3,
+  screen_visits: 4,
+  press_retries: 2,
+}
+
 const CREDENTIAL_ENTRY = {
   application_id: 'app-1',
   application_name: 'Checkout App',
@@ -41,6 +61,7 @@ function stubFetch() {
     vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input)
       if (url.endsWith('/domains')) return { ok: true, status: 200, json: async () => [DOMAIN_IN_USE, DOMAIN_UNUSED] }
+      if (url.endsWith('/explorer/settings')) return { ok: true, status: 200, json: async () => EXPLORER_LIMITS }
       if (url.endsWith('/settings')) return { ok: true, status: 200, json: async () => SETTINGS_BODY }
       if (url.endsWith('/credentials')) return { ok: true, status: 200, json: async () => [CREDENTIAL_ENTRY] }
       if (url.endsWith('/credentials/app-1/reveal')) return { ok: true, status: 200, json: async () => ({ password: 'super-secret' }) }
@@ -157,11 +178,34 @@ describe('Settings', () => {
   it('opens on a hub with one card per section', async () => {
     stubFetch()
     render(<Settings user={ADMIN} onCancel={vi.fn()} />)
-    for (const title of ['Saved credentials', 'Data retention'])
+    for (const title of ['Saved credentials', 'Explorer limits', 'Data retention'])
       expect(await screen.findByRole('button', { name: `Configure ${title}` })).toBeTruthy()
     // An application's own settings live on its Settings tab, not here.
-    for (const title of ['Explorer limits', 'Test case generation'])
-      expect(screen.queryByRole('button', { name: `Configure ${title}` })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Configure Test case generation' })).toBeNull()
+  })
+
+  it('loads and saves the Explorer limits for every application', async () => {
+    stubFetch()
+    await openSection('Explorer limits')
+    for (const group of ['Time', 'AI cost', 'Coverage', 'Accuracy', 'When to give up'])
+      expect(await screen.findByText(group)).toBeTruthy()
+    expect((screen.getByLabelText('Question wait') as HTMLSelectElement).value).toBe('30')
+    // Waiting until you answer takes the mission time limit off.
+    fireEvent.change(screen.getByLabelText('Question wait'), { target: { value: 'none' } })
+    const mission = screen.getByLabelText('Mission time limit') as HTMLSelectElement
+    expect(mission.value).toBe('none')
+    expect(mission.disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('AI budget per run (USD)'), { target: { value: '25' } })
+    // A whole-run screen total, e.g. 4 to check a fix quickly.
+    fireEvent.change(screen.getByLabelText('Screens to explore'), { target: { value: '4' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Configuration' }))
+    const fetchMock = vi.mocked(fetch)
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(([url, init]) => String(url).endsWith('/explorer/settings') && init?.method === 'PUT')
+      const body = JSON.parse(String(put?.[1]?.body))
+      expect(body.ai_budget_usd).toBe(25)
+      expect(body.max_screens).toBe(4)
+    })
   })
 
   it('discards unsaved changes and goes back to the hub', async () => {

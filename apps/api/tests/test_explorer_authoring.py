@@ -120,3 +120,92 @@ def test_an_authoring_run_never_stands_in_for_the_apps_exploration() -> None:
         client.get(f"/explorer/applications/{app_external}/runs/latest").json()["prompt"]
         == "Check Sally"
     )
+
+
+def test_the_journey_choice_is_checked_before_starting() -> None:
+    from domain import Journey
+
+    client, app_external, app_id = _setup()
+    with Session(engine) as session:
+        run = DiscoveryRun(application_id=app_id, status="complete")
+        session.add(run)
+        session.flush()
+        session.add(
+            Journey(
+                application_id=app_id,
+                discovery_run_id=run.id,
+                name="Create territory",
+                identity_key=f"test:{uuid.uuid4()}",
+            )
+        )
+        session.commit()
+    url = f"/explorer/applications/{app_external}/author"
+    both = {"prompt": "x", "journey_id": str(uuid.uuid4()), "journey_name": "New"}
+    assert client.post(url, json=both).status_code == 422
+    unknown = {"prompt": "x", "journey_id": str(uuid.uuid4())}
+    assert client.post(url, json=unknown).status_code == 404
+    taken = client.post(url, json={"prompt": "x", "journey_name": " create TERRITORY "})
+    assert taken.status_code == 409
+    assert "already exists" in taken.json()["detail"]
+
+
+def test_on_an_authoring_run_either_answer_to_a_possible_bug_keeps_the_test(monkeypatch) -> None:
+    from api import explorer as api_explorer
+    from explorer_core import ExplorerTestCase
+
+    sent: list[list[str]] = []
+
+    class _Temporal:
+        async def start_workflow(self, _name, args, **_kw):
+            sent.append(args)
+
+    async def _client():
+        return _Temporal()
+
+    monkeypatch.setattr(api_explorer, "get_temporal_client", _client)
+    client, _, app_id = _setup()
+
+    def _bug(run: ExplorerRun) -> uuid.UUID:
+        with Session(engine) as session:
+            test = ExplorerTestCase(
+                run_id=run.id,
+                kind="validation",
+                title="Billing City max length",
+                purpose="",
+                steps=[],
+                expected="255 characters are accepted",
+                observed="Says 100 characters or fewer",
+                trust="confirmed",
+                script=[],
+                status="known_bug",
+                code="test.fixme(true, 'known bug');\nawait page.click('x')\n",
+            )
+            session.add(test)
+            session.commit()
+            return test.external_id
+
+    with Session(engine) as session:
+        authored = ExplorerRun(application_id=app_id, status="tested", prompt="New account")
+        explored = ExplorerRun(application_id=app_id, status="tested")
+        session.add_all([authored, explored])
+        session.commit()
+        session.refresh(authored)
+        session.refresh(explored)
+    for run, verdict, kept in (
+        (authored, "ignore", True),
+        (authored, "not_a_bug", True),
+        (explored, "ignore", False),
+    ):
+        test_id = _bug(run)
+        reply = client.post(f"/explorer/tests/{test_id}/verdict", json={"verdict": verdict})
+        assert reply.status_code == 200
+        with Session(engine) as session:
+            test = session.exec(
+                select(ExplorerTestCase).where(ExplorerTestCase.external_id == test_id)
+            ).one()
+            assert (test.status == "proven") is kept
+            if kept:
+                assert "fixme" not in (test.code or "")  # never blocked
+                assert sent[-1][1:] == ["send", str(test_id)]
+    # Explorer's own "Ignore" still leaves the test out.
+    assert sum(isinstance(a, list) and "send" in a for a in sent) == 2

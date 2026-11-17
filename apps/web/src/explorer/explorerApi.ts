@@ -227,6 +227,8 @@ export type ExplorerSettings = {
   hidden_screen_search_minutes: number
   ai_budget_usd: number | null
   first_look_max_screens: number
+  // The whole run's screen total; null = no limit.
+  max_screens: number | null
   max_missions: number
   steps_per_mission: number
   steps_per_scenario: number
@@ -247,18 +249,23 @@ export const explorerApi = {
       body: JSON.stringify({ notes: '' }),
     }),
   // Authoring: Explorer follows the user's request (its own path, same screen).
-  startAuthoring: (applicationId: string, prompt: string) =>
+  // `journey`: an existing journey to add the test cases to, or a new one by name.
+  startAuthoring: (
+    applicationId: string,
+    prompt: string,
+    journey: { journey_id: string } | { journey_name: string },
+  ) =>
     request<ExplorerRun>(`/explorer/applications/${applicationId}/author`, {
       method: 'POST',
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, ...journey }),
     }),
   getRun: (runId: string) => request<ExplorerRun>(`/explorer/runs/${runId}`),
   // Skip the exploring left and write scenarios from what was explored.
   wrapUp: (runId: string) => request<ExplorerRun>(`/explorer/runs/${runId}/wrap-up`, { method: 'POST' }),
-  // One application's own Explorer limits (Application settings).
-  getSettings: (applicationId: string) => request<ExplorerSettings>(`/explorer/applications/${applicationId}/settings`),
-  saveSettings: (applicationId: string, settings: ExplorerSettings) =>
-    request<ExplorerSettings>(`/explorer/applications/${applicationId}/settings`, {
+  // Settings → Explorer limits (organisation-wide; admins only).
+  getSettings: () => request<ExplorerSettings>('/explorer/settings'),
+  saveSettings: (settings: ExplorerSettings) =>
+    request<ExplorerSettings>('/explorer/settings', {
       method: 'PUT',
       body: JSON.stringify(settings),
     }),

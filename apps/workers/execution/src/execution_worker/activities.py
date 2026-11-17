@@ -858,8 +858,15 @@ def _install_project(dest_dir: Path, browsers: Sequence[str] = ("chromium",)) ->
     the pinned `@playwright/test` version in `package.json` ever drifts from
     the image's pre-installed browser revision. Only the run's own browsers
     are installed — plus Chromium, which the shared login (`setup` project)
-    always uses."""
-    run_process_sync([_resolve_bin("npm"), "install"], cwd=str(dest_dir), timeout=300)
+    always uses.
+
+    `--prefer-online`: npm's local cache once served a package list from
+    before a dependency's new release (fast-xml-builder 1.3.2, wanted by a
+    newer allure) and every test of a run errored (ETARGET); always ask the
+    registry for what is current."""
+    run_process_sync(
+        [_resolve_bin("npm"), "install", "--prefer-online"], cwd=str(dest_dir), timeout=300
+    )
     engines = ["chromium", *(b for b in browsers if b != "chromium")]
     run_process_sync(
         [_resolve_bin("npx"), "playwright", "install", *engines], cwd=str(dest_dir), timeout=300

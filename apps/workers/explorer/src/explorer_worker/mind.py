@@ -12,8 +12,9 @@ from urllib.parse import parse_qs, urlsplit
 from explorer_core import GOAL_FITS
 
 from explorer_worker import brain
-from explorer_worker.browser import Visit
+from explorer_worker.browser import Eyes, Visit
 from explorer_worker.field_checks import with_code_limits
+from explorer_worker.field_probe import PROBED_KINDS, probe_here
 from explorer_worker.journal import Journal
 from explorer_worker.memory import remember_record
 from explorer_worker.sense import screen_signature, url_pattern
@@ -48,6 +49,11 @@ class Mind:
         # Optional hook run after each screen is read (the first look uses it
         # to collect places worth visiting).
         self.on_screen: Callable[[Visit, str], None] | None = None
+        # The browser on the screen being read: given (first look, missions),
+        # each new form's own validation messages are read there (field_probe).
+        self.eyes: Eyes | None = None
+        # A test environment: the probe may also press the form's Save.
+        self.may_save = False
 
     async def take_in(self, visit: Visit, reached_by: str | None, action: str | None = None) -> str:
         self.heartbeat()
@@ -70,9 +76,14 @@ class Mind:
                 already_noted,
                 goal_rule=self.goal_rule,
             )
-            if key:
+            if key and not reading.get("is_loading"):  # a half-loaded read is never reused
                 _READINGS[(journal.run_id, key)] = reading
         name = str(reading.get("screen_name") or "Untitled screen")[:120]
+        self.last_reading = reading
+        if reading.get("is_loading"):
+            # Not a screen yet: never stored, probed or judged (the walk looks again).
+            journal.event("thought", f"Waiting for {name} to finish loading", None, shot_id)
+            return name
         if reading.get("is_blank") or reading.get("is_error_page"):
             # A blank or error page is a bug, not a screen: counting it would
             # only inflate the screen total (seen on Catalog BO's sign-in return).
@@ -136,6 +147,16 @@ class Mind:
                 journal.event("screen", f"Understood: {name}", thought, shot_id)
             for hint in reading["hidden_hints"][:3]:
                 journal.event("thought", "Something may be hidden here", str(hint))
+            if self.eyes is not None and reading.get("view_kind") in PROBED_KINDS:
+                await probe_here(
+                    self.eyes,
+                    journal,
+                    screen_id,
+                    name,
+                    with_code_limits(reading["fields"][:40], visit.inventory.get("fields")),
+                    self.heartbeat,
+                    may_save=self.may_save,
+                )
         else:
             journal.event("thought", f"On {name}", thought, shot_id)
         journal.update_run(headline=f"On: {name}")
@@ -171,9 +192,10 @@ def _is_sign_in_return(url: str) -> bool:
     """An OAuth/OIDC sign-in hand-back: `code` and `state` in the query
     (or in a hash route's query)."""
     parts = urlsplit(url)
-    keys = parse_qs(parts.query, keep_blank_values=True).keys() | parse_qs(
-        parts.fragment.partition("?")[2], keep_blank_values=True
-    ).keys()
+    keys = (
+        parse_qs(parts.query, keep_blank_values=True).keys()
+        | parse_qs(parts.fragment.partition("?")[2], keep_blank_values=True).keys()
+    )
     return {"code", "state"} <= keys
 
 
@@ -228,17 +250,35 @@ _READINGS: dict[tuple[uuid.UUID, str], dict[str, Any]] = {}
 _ALWAYS_READ = re.compile(r"thank|submitted|confirm|success|received|reference|result", re.I)
 
 
+def _words(text: Any) -> str:
+    return " ".join(re.findall(r"\w+", str(text or "").lower()))
+
+
 def _revisit_key(visit: Visit, home_pattern: str | None) -> str | None:
-    """Address + the screen's own headings. Apps that never change their
-    address (state-only routing) still get distinct keys from the headings;
-    those screens need two headings to count, since one generic title
-    ("Dashboard") can sit over many different states."""
+    """What stays the same each time a screen is shown, whatever records it
+    holds: its address, the page title, first heading, field labels, table
+    columns and buttons. Many apps (WaveMaker's) have no h1-h3 at all, so
+    keying on headings alone left every revisit unkeyed and read by the model
+    again. On the home address, where apps that never change their address
+    (state-only routing) show every screen, the second heading counts too."""
+    inv = visit.inventory
     pattern = url_pattern(visit.url)
-    headings = [" ".join(str(h).split()).lower() for h in (visit.inventory.get("headings") or [])]
-    if not headings or _ALWAYS_READ.search(headings[0]):
-        return None
+    title = _words(inv.get("title"))
+    headings = [_words(h) for h in (inv.get("headings") or [])]
+    if _ALWAYS_READ.search(" ".join([title, *headings[:1]])):
+        return None  # fresh values every time (a new claim reference)
+    fields = sorted(
+        {_words(f.get("label")) for f in inv.get("fields") or [] if isinstance(f, dict)}
+    )
+    columns = [",".join(map(_words, t.get("headers") or [])) for t in inv.get("tables") or []]
+    buttons = sorted(
+        {_words(b.get("text") if isinstance(b, dict) else b) for b in inv.get("buttons") or []}
+    )
+    # A false "same screen" (a wizard step reusing step 1's reading) is worse
+    # than one extra model call, so the first heading and buttons count too.
+    shape = "|".join([title, *headings[:1], ";".join(fields), ";".join(columns), ";".join(buttons)])
     if pattern == home_pattern:
-        if len(headings) < 2:
-            return None
-        return f"{pattern}|{headings[0]}|{headings[1]}"
-    return f"{pattern}|{headings[0]}"
+        if not (fields or columns or buttons) and len(headings) < 2:
+            return None  # nothing tells this state from the others here
+        return f"{pattern}|{'|'.join(headings[1:2])}|{shape}"
+    return f"{pattern}|{shape}"

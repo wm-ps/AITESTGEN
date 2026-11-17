@@ -8,6 +8,8 @@ PAGE = (
     '<input type="search" placeholder="Search">'
     '<div contenteditable="true" role="textbox" aria-label="Chat input" '
     'data-placeholder="Ask a question..." style="min-height:20px"></div>'
+    # WaveMaker's search: the wrapper <div> carries the placeholder too.
+    '<div placeholder="Find leads..."><input placeholder="Find leads..."></div>'
 )
 
 
@@ -23,6 +25,8 @@ async def test_types_into_a_box_whose_placeholder_is_drawn() -> None:
         # A field with a real placeholder is still found the way it always was.
         assert await eyes.fill_field("Search", "WebGenAI")
         assert eyes.last_locator == {"by": "placeholder", "text": "Search"}
+        assert await eyes.fill_field("Find leads...", "QA")
+        assert await eyes.page.locator("input[placeholder='Find leads...']").input_value() == "QA"
         assert not await eyes.fill_field("Nothing like this", "x")
     finally:
         await eyes.close()

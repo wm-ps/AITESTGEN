@@ -25,7 +25,9 @@ from explorer_worker.sense import (
     CONTINUE_LIKE,
     RESUME_LABEL,
     START_FRESH,
+    app_root,
     date_variants,
+    inside_app,
     looks_final,
     resolve_relative,
 )
@@ -77,6 +79,8 @@ async def _serve_static(route: Any) -> None:
             _STATIC[request.url] = (time.monotonic(), response.status, headers, body)
     await route.fulfill(status=response.status, headers=headers, body=body)
 SLOW_LOAD_MS = 6000
+# The accessibility snapshot kept per look (a long table is cut, not the form).
+ARIA_CHARS = 8000
 
 # Reads the screen in one round trip. Elements a user could navigate with
 # that aren't plain <a href> links (menu items, tabs, JS-driven links) are
@@ -187,6 +191,26 @@ _DOM_QUIET_JS = """
 })
 """
 
+# A loading indicator on screen: a busy/progress element, a spinner/loader/
+# skeleton by name, or a small element spinning forever (a CSS spinner never
+# changes the page, so the quiet-page wait alone reads it as "loaded").
+_LOADING_JS = r"""
+() => {
+  const shown = (e) => { const r = e.getBoundingClientRect(), s = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none' && +s.opacity > 0; };
+  const named = document.querySelectorAll('[aria-busy=true], [role=progressbar], .spinner, .loader, '
+    + '[class*=spinner], [class*=loading], [class*=loader], [class*=skeleton]');
+  if ([...named].some(shown)) return true;
+  return document.getAnimations().some((a) => {
+    const e = a.effect && a.effect.target;
+    if (!e || !(e instanceof Element) || a.effect.getComputedTiming().iterations !== Infinity) return false;
+    const r = e.getBoundingClientRect();
+    return r.width <= 150 && r.height <= 150 && shown(e)
+      && JSON.stringify(a.effect.getKeyframes()).includes('rotate');
+  });
+}
+"""
+
 _INVENTORY_JS = r"""
 () => {
   const visible = (el) => {
@@ -241,6 +265,20 @@ _INVENTORY_JS = r"""
     for (const a of ['min', 'max', 'minlength', 'maxlength', 'pattern', 'accept']) if (f.getAttribute(a)) item[a] = f.getAttribute(a);
     if (f.type === 'file') item.multiple = f.hasAttribute('multiple');
     fields.push(item); if (fields.length >= 60) break;
+  }
+  // Controls the app draws itself (a custom dropdown, a switch, a styled
+  // checkbox): fields too, named the way assistive tech names them.
+  const ariaName = (el) => {
+    const by = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+      .map((id) => document.getElementById(id)).filter(Boolean).map(text).join(' ');
+    return el.getAttribute('aria-label') || by || labelFor(el) || text(el);
+  };
+  for (const f of document.querySelectorAll('[role=combobox]:not(input):not(select), [role=listbox]:not(select), '
+      + '[role=switch], [role=checkbox]:not(input), [role=radio]:not(input), [role=spinbutton]:not(input)')) {
+    if (fields.length >= 60) break;
+    if (!visible(f) || (f.getAttribute('role') === 'listbox' && f.closest('[role=combobox]'))) continue;
+    const label = ariaName(f).slice(0, 80);
+    if (label) fields.push({ label, type: f.getAttribute('role'), required: f.getAttribute('aria-required') === 'true' });
   }
   const tables = [];
   for (const t of document.querySelectorAll('table, [role=grid]')) {
@@ -345,6 +383,21 @@ def _role(role: str, name: str, exact: bool = True) -> dict[str, Any]:
     return {"by": "role", "role": role, "name": name, "exact": exact}
 
 
+# A lookup box (Owner, Account, a city): it only takes a value picked from
+# the suggestions it shows while typing.
+LOOKUP_JS = """e => !!(e.getAttribute('aria-autocomplete') || e.getAttribute('list')
+  || e.getAttribute('role') === 'combobox' || e.type === 'search'
+  || /type|search|hint|start typing/i.test(e.getAttribute('placeholder') || ''))"""
+# Suggestion rows, ARIA or the usual widget classes (WaveMaker's typeahead
+# is a `.dropdown-menu` list with no roles).
+SUGGESTIONS = (
+    "[role=option], [role=listbox] li, .dropdown-menu li, .typeahead li, "
+    ".autocomplete li, .suggestions li, [class*=search-result] li"
+)
+# Not a suggestion: the list saying it is still looking or found nothing.
+SUGGESTIONS_BUSY = re.compile(r"^\s*(searching|loading)\b|no (results|matches)", re.IGNORECASE)
+
+
 def drawn_placeholder(text: str) -> str:
     """A typeable element whose placeholder text is drawn by the page from an
     attribute (`data-placeholder` / `aria-placeholder`), which Playwright's
@@ -366,9 +419,16 @@ def field_after_caption(caption: str) -> str:
 
 
 class Eyes:
-    def __init__(self, base_url: str, page: Page | None = None) -> None:
+    def __init__(
+        self, base_url: str, page: Page | None = None, also_inside: tuple[str, ...] = ()
+    ) -> None:
         parts = urlsplit(base_url)
         self.origin = f"{parts.scheme}://{parts.netloc}"
+        # The app's own part of the site, plus the sign-in page and places
+        # the user named in the goal: a click landing anywhere else is undone.
+        self.roots: tuple[str, ...] = (app_root(base_url), *map(app_root, also_inside))
+        self.left_app: str | None = None  # where the last refused click led
+        self._never_loads: set[str] = set()  # pages whose spinner never stops
         self._pw: Playwright | None = None
         self._browser: Browser | None = None
         self._context: BrowserContext | None = None
@@ -385,6 +445,12 @@ class Eyes:
         # Messages the app showed (see _MESSAGES_JS), oldest first.
         self.messages: list[str] = []
         self._messages_from = 0
+        # Files the page downloaded (their names), for an export's proof.
+        self.downloads: list[str] = []
+        self._downloads_from = 0
+        # This test run's `{{unique}}` (see sense.resolve_relative): new at
+        # every mark_calls, i.e. every try and replay of a test.
+        self.unique = format(int(time.time() * 1000), "x")[-7:]
         self._starts_fresh = False
         self._login: tuple[str, str, str] | None = None
         self._typed_name = ""  # last non-password value typed (lockout guard)
@@ -410,10 +476,20 @@ class Eyes:
         await self._context.expose_binding("__explorerSaw", self._on_message)
         await self._context.add_init_script(_MESSAGES_JS)
         self.page = await self._context.new_page()
+        self._context.on("page", self._on_new_tab)
         self.page.on("dialog", self._on_dialog)
         self.page.on("console", self._on_console)
         self.page.on("pageerror", self._on_page_error)
         self.page.on("response", self._on_response)
+        self.page.on("download", self._on_download)
+
+    def _on_download(self, download: Any) -> None:
+        name = str(download.suggested_filename)
+        self.downloads.append(name)
+        self._on_message(None, f"Downloaded a file: {name}")
+
+    def downloads_since_mark(self) -> list[str]:
+        return self.downloads[self._downloads_from :]
 
     async def close(self) -> str | None:
         """Returns the recording's file path when recording was on."""
@@ -516,6 +592,8 @@ class Eyes:
         """From here on, `calls_since_mark` only has the calls a test makes."""
         self._calls_from = len(self.calls)
         self._messages_from = len(self.messages)
+        self._downloads_from = len(self.downloads)
+        self.unique = format(int(time.time() * 1000), "x")[-7:]
 
     def calls_since_mark(self) -> list[tuple[str, str, int]]:
         return self.calls[self._calls_from :]
@@ -532,6 +610,27 @@ class Eyes:
             await self.page.evaluate(_DOM_QUIET_JS)
         except PlaywrightError:
             await self.page.wait_for_timeout(600)
+
+    async def wait_until_loaded(self, budget_ms: int = 20000) -> None:
+        """Never read a screen mid-load: wait while a loading indicator shows
+        (capped, so a spinner that never stops costs one wait, not the run)."""
+        assert self.page is not None
+        url = self.page.url
+        if url in self._never_loads:
+            return
+        waited = False
+        for _ in range(budget_ms // 400):
+            try:
+                if not await self.page.evaluate(_LOADING_JS):
+                    break
+            except PlaywrightError:
+                break
+            waited = True
+            await self.page.wait_for_timeout(400)
+        else:
+            self._never_loads.add(url)  # a decorative spinner: don't wait here again
+        if waited:
+            await self.settle(3000)
 
     async def wait_for_change(self, before: str, timeout_ms: int = 10000) -> bool:
         """After pressing something: wait until the screen actually changes
@@ -589,6 +688,7 @@ class Eyes:
         when nothing matching is on screen."""
         assert self.page is not None
         self.last_locator = None
+        self.left_app = None
         specs: list[dict[str, Any]] = []
         if spec:
             specs = [spec]
@@ -606,13 +706,37 @@ class Eyes:
             try:
                 target = locate(self.page, candidate).filter(visible=True).first
                 if await target.count():
+                    was = self.page.url
                     await target.click(timeout=5000)
                     await self.settle()
+                    if await self._left_app(was):
+                        return False
                     self.last_locator = candidate
                     return True
             except PlaywrightError:
                 continue
         return False
+
+    async def _on_new_tab(self, tab: Page) -> None:
+        """A tab the app opened (`target=_blank`) onto another app or site is
+        closed: Explorer never follows it, and it would only hold memory."""
+        try:
+            await tab.wait_for_load_state("domcontentloaded", timeout=15000)
+            if not inside_app(tab.url, *self.roots):
+                await tab.close()
+        except PlaywrightError:
+            pass  # closed already, or never loaded
+
+    async def _left_app(self, was: str) -> bool:
+        """A click that took the browser out of the app (another app on the
+        same host, another site) is undone: back to `was`. A sign-in page is
+        never "outside" (an expired session or single sign-on)."""
+        assert self.page is not None
+        if inside_app(self.page.url, *self.roots) or await self.on_sign_in_screen():
+            return False
+        self.left_app = self.page.url
+        await self.goto(was)
+        return True
 
     async def nav_items(self) -> list[dict[str, Any]]:
         """The menu items and links on screen now (no screenshot, no model)."""
@@ -626,6 +750,7 @@ class Eyes:
     async def look(self, url_hint: str, status: int | None, load_ms: int) -> Visit:
         """Read the current screen + collect health signals since last look."""
         assert self.page is not None
+        await self.wait_until_loaded()
         try:
             inventory: dict[str, Any] = await self.page.evaluate(_INVENTORY_JS)
         except PlaywrightError:
@@ -641,6 +766,15 @@ class Eyes:
                 "alerts": [],
                 "body_text": "",
             }
+        # Every element's role, name and state (value, checked, selected,
+        # options of a dropdown the browser draws outside the screenshot):
+        # what a proof of state is grounded in (testkit.ground_state).
+        try:
+            inventory["aria"] = (await self.page.locator("body").aria_snapshot(timeout=5000))[
+                :ARIA_CHARS
+            ]
+        except PlaywrightError:
+            inventory["aria"] = ""
         shot = await self.page.screenshot(type="jpeg", quality=70)
         signals, self._pending = self._pending, []
         if status is not None and status >= 400:
@@ -666,7 +800,7 @@ class Eyes:
         """Sign in, retrying when the server fails the attempt (5xx) — apps
         often do when several browsers sign in as one user at once. The
         login is kept so a mission that gets signed out can sign back in."""
-        self._login = (login_url, username, password)
+        self.remember_login(login_url, username, password)
         for attempt in range(3):
             if attempt:
                 await asyncio.sleep(2 * attempt)
@@ -678,6 +812,13 @@ class Eyes:
     def remember_login(self, login_url: str, username: str, password: str) -> None:
         """Know the saved login without signing in (sign-in tests type it)."""
         self._login = (login_url, username, password)
+        self.trust(login_url)
+
+    def trust(self, url: str) -> None:
+        """Count `url`'s part of the site as the app too (sign-in pages,
+        where a real sign-in landed)."""
+        if not inside_app(url, *self.roots):
+            self.roots = (*self.roots, app_root(url))
 
     def _login_value(self, value: str) -> str:
         """`{{username}}` / `{{password}}` -> the saved login. The recorded
@@ -825,6 +966,7 @@ class Eyes:
         """The page the browser is on now is an entry point (sign-in landed here)."""
         if self.page is not None:
             self.entry_urls.add(self.page.url)
+            self.trust(self.page.url)
 
     @property
     def starts_fresh(self) -> bool:
@@ -871,7 +1013,7 @@ class Eyes:
         """Type into a field found by what a person reads next to it — or,
         replaying, exactly by the locator that worked before (`spec`)."""
         assert self.page is not None
-        value = resolve_relative(self._login_value(value))
+        value = resolve_relative(self._login_value(value), unique=self.unique)
         self.last_locator = None
         specs = [spec] if spec else [
             _role("textbox", label),
@@ -879,6 +1021,9 @@ class Eyes:
             _role("combobox", label),
             _role("textbox", label, exact=False),
             {"by": "placeholder", "text": label},
+            # Some widgets (WaveMaker's search) copy the placeholder onto their
+            # wrapper <div>, which the one above finds first: the box inside.
+            *([{"by": "css", "selector": f'input[placeholder="{label}"], textarea[placeholder="{label}"]'}] if '"' not in label else []),
             {"by": "label", "text": label, "exact": True},
             *([{"by": "css", "selector": field_after_caption(label)}] if '"' not in label else []),
             # Last: a typeable <div> (chat and rich-text boxes) whose placeholder
@@ -889,8 +1034,10 @@ class Eyes:
         for candidate in specs:
             try:
                 target = locate(self.page, candidate).filter(visible=True).first
-                if not await target.count():
-                    continue
+                if not await target.count() or not await target.evaluate(
+                    "e => e.matches('input, textarea, select') || e.isContentEditable"
+                ):
+                    continue  # a wrapper that only carries the name: not typeable
                 self.last_locator = candidate
                 if not value.strip():
                     # Clearing only counts if the box really ends up empty —
@@ -915,35 +1062,40 @@ class Eyes:
                             return False
                 else:
                     self._typed_name = value
+                rows = await self.page.locator(SUGGESTIONS).filter(visible=True).count()
                 await target.fill(value, timeout=5000)
-                self.last_suggestion = await self._pick_suggestion(target, value)
+                self.last_suggestion = await self._pick_suggestion(target, value, rows)
                 return True
             except PlaywrightError:
                 continue
         return False
 
-    async def _pick_suggestion(self, box: Any, typed: str) -> str | None:
+    async def _pick_suggestion(self, box: Any, typed: str, rows_before: int = 0) -> str | None:
         """A type-ahead field ("Employee Name", a city) only takes a value
         picked from its suggestions: pick the one that contains what was
-        typed. None when the field offers no suggestions."""
+        typed, else (a lookup: "SR" for an Owner shown as "Sam Reed") the
+        first one. None when the field offers no suggestions."""
         assert self.page is not None
-        looks_typeahead = await box.evaluate(
-            """e => !!(e.getAttribute('aria-autocomplete') || e.getAttribute('list')
-              || e.getAttribute('role') === 'combobox'
-              || /type|search|hint|start typing/i.test(e.getAttribute('placeholder') || ''))"""
-        )
-        options = (
-            self.page.get_by_role("option")
-            .filter(visible=True)
-            .filter(has_text=re.compile(re.escape(typed.strip()[:40]), re.IGNORECASE))
-        )
+        lookup = await box.evaluate(LOOKUP_JS)
+        busy = self.page.get_by_text(SUGGESTIONS_BUSY).filter(visible=True)
+        shown = self.page.locator(SUGGESTIONS).filter(visible=True)
+        shown = shown.filter(has_not_text=SUGGESTIONS_BUSY)
+        matching = shown.filter(has_text=re.compile(re.escape(typed.strip()[:40]), re.IGNORECASE))
         # Suggestions often say "Searching..." first: wait a little for them.
-        for _ in range(10 if looks_typeahead else 1):
+        for _ in range(10):
             await self.page.wait_for_timeout(300)
-            if await options.count():
-                text = (await options.first.inner_text()).strip()
-                await options.first.click(timeout=3000)
-                return text[:200] or None
+            # Unmarked lookups give themselves away: "Searching..." or a
+            # list of rows that appeared with the typing.
+            lookup = lookup or bool(await busy.count()) or await shown.count() > rows_before
+            # Any row only for a lookup: on a plain box a stray open menu
+            # must not overwrite what was typed.
+            for options in (matching, shown) if lookup else (matching,):
+                if await options.count():
+                    text = (await options.first.inner_text()).strip()
+                    await options.first.click(timeout=3000)
+                    return text[:200] or None
+            if not lookup:
+                return None
         return None
 
     async def present(self, step: dict[str, Any]) -> bool:
@@ -1154,8 +1306,14 @@ class Eyes:
                 select = locate(self.page, candidate).filter(visible=True).first
                 if await select.count() and await select.evaluate("e => e.tagName") == "SELECT":
                     await select.select_option(label=option, timeout=5000)
-                    self.last_locator = candidate
-                    return True
+                    # Only if it took: a framework dropdown drawn over a
+                    # hidden <select> needs the click path below instead.
+                    picked = await select.evaluate(
+                        "e => e.selectedIndex < 0 ? '' : e.options[e.selectedIndex].text"
+                    )
+                    if option.strip().lower() in str(picked).lower():
+                        self.last_locator = candidate
+                        return True
             except PlaywrightError:
                 pass
         # Already selected (a saved draft)? Leave it: clicking its text would

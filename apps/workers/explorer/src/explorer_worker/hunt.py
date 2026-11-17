@@ -168,6 +168,8 @@ async def hunt(run_id: uuid.UUID, heartbeat: Callable[[], None]) -> int:
     journal = Journal(run_id)
     if journal.status() == "stopped":
         return 0
+    if limits.screen_limit_reached(run_id):
+        return 0
     if limits.of(run_id)["hidden_screen_search_minutes"] <= 0:
         journal.event("thought", "Skipped the search for hidden screens", "Turned off in Settings.")
         return 0
@@ -386,7 +388,7 @@ async def _shaped_visit(eyes: Eyes, journal: Journal, screen: ExplorerScreen, mo
         # A fresh tab whose clock is a year ahead (a clock can't be wound back).
         page = await page.context.new_page()
         await page.clock.install(time=datetime.now(UTC) + timedelta(days=400))
-        eyes = Eyes(eyes.origin, page=page)
+        eyes = Eyes(eyes.roots[0], page=page, also_inside=eyes.roots[1:])
     await page.route("**/*", handler)
     try:
         await eyes.goto(screen.url)

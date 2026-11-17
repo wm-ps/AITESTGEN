@@ -1,4 +1,6 @@
-"""The request's proven scenarios become test-case scenarios — ADDED next to
+"""Every scenario the request planned that got through its try in the app
+(proven, or a possible bug; dropped ones are left out) becomes a test-case
+scenario, carrying its proven code — ADDED next to
 everything already there. Authoring's counterpart of explorer_worker.promote,
 with three differences: one Journey per request (its own identity key, so it
 never replaces Explorer's journeys or another request's), scenarios marked
@@ -9,11 +11,12 @@ import asyncio
 import uuid
 from collections.abc import Sequence
 
-from domain import Application, DiscoveryRun, Journey, JourneyStep, Page, Scenario
+from domain import Application, DiscoveryRun, Journey, JourneyStep, Page, Scenario, TestAsset
 from explorer_core import ExplorerRun, ExplorerScreen, ExplorerShot, ExplorerTestCase
 from object_store import ObjectStore
 from sqlmodel import Session, col, select
 
+from explorer_worker.authoring.plan import ADDED
 from explorer_worker.db import engine
 from explorer_worker.journal import Journal
 from explorer_worker.missions import one_at_a_time
@@ -52,13 +55,11 @@ def _promote(run_id: uuid.UUID) -> list[str]:
             return []
         tests = session.exec(
             select(ExplorerTestCase)
-            .where(ExplorerTestCase.run_id == run_id, ExplorerTestCase.status == "proven")
+            .where(ExplorerTestCase.run_id == run_id, col(ExplorerTestCase.status).in_(ADDED))
             .order_by(col(ExplorerTestCase.created_at))
         ).all()
         if not tests:
-            journal.event(
-                "thought", "No test cases to add", "None of the scenarios held up in the app."
-            )
+            journal.event("thought", "No test cases to add", "No scenarios were written.")
             return []
         requires_auth = needs_sign_in(
             application.auth_method, application.secret_ref, application.requires_login
@@ -77,14 +78,35 @@ def _promote(run_id: uuid.UUID) -> list[str]:
             session.flush()
 
         request = (run.brief or {}).get("request") or {}
-        name = str(request.get("title") or run.prompt or "Your request")[:200]
-        journey = session.exec(
-            select(Journey).where(
-                Journey.application_id == application.id,
-                Journey.identity_key == identity_key(run.external_id),
-            )
-        ).first()
-        if journey is None:
+        # The journey the user picked when starting (an existing one, or a
+        # new one by name); none picked = the request's own journey.
+        choice = (run.insights or {}).get("journey") or {}
+        name = str(choice.get("name") or request.get("title") or run.prompt or "Your request")
+        name = name[:200]
+        picked = (
+            session.exec(
+                select(Journey).where(
+                    Journey.application_id == application.id,
+                    Journey.external_id == uuid.UUID(str(choice["id"])),
+                )
+            ).first()
+            if choice.get("id")
+            else None
+        )
+        journey = (
+            picked
+            or session.exec(
+                select(Journey).where(
+                    Journey.application_id == application.id,
+                    Journey.identity_key == identity_key(run.external_id),
+                )
+            ).first()
+        )
+        if picked is not None:
+            # Added to the user's journey: its own scenarios and steps stay;
+            # only this request's earlier copies (sent again) are retired.
+            _retire_own(session, picked.id, {str(t.external_id) for t in tests})
+        elif journey is None:
             journey = Journey(
                 application_id=application.id,
                 discovery_run_id=discovery_run.id,
@@ -99,13 +121,18 @@ def _promote(run_id: uuid.UUID) -> list[str]:
                 select(JourneyStep).where(JourneyStep.journey_id == journey.id)
             ).all():
                 session.delete(step)
-        journey.description = (run.prompt or name)[:2000]
+        if picked is None:
+            journey.description = (run.prompt or name)[:2000]
         journey.status = "candidate"
         journey.generation_error = None
         session.add(journey)
         session.flush()
 
-        _add_steps(session, application.id, discovery_run.id, journey.id, run_id, tests)
+        has_steps = session.exec(
+            select(JourneyStep).where(JourneyStep.journey_id == journey.id)
+        ).first()
+        if has_steps is None:
+            _add_steps(session, application.id, discovery_run.id, journey.id, run_id, tests)
 
         for test in tests:
             session.add(
@@ -123,7 +150,8 @@ def _promote(run_id: uuid.UUID) -> list[str]:
                     grounding={
                         "authored_test": str(test.external_id),
                         "kind": test.kind,
-                        "proven": True,
+                        # Not proven: written from its steps (no proven_code).
+                        "proven": test.status == "proven",
                         "requires_auth": requires_auth
                         and not (test.script and test.script[0].get("signed_out")),
                         "check": test.check,
@@ -141,6 +169,19 @@ def _promote(run_id: uuid.UUID) -> list[str]:
         "They appear under Test cases → Author test cases when ready.",
     )
     return [journey_id]
+
+
+def _retire_own(session: Session, journey_id: uuid.UUID, authored: set[str]) -> None:
+    """Retire only this request's scenarios (and their test code) on a
+    journey the user picked — never the journey's other scenarios."""
+    for older in session.exec(select(Scenario).where(Scenario.journey_id == journey_id)).all():
+        if str((older.grounding or {}).get("authored_test")) not in authored:
+            continue
+        older.current = False
+        session.add(older)
+        for asset in session.exec(select(TestAsset).where(TestAsset.scenario_id == older.id)):
+            asset.current = False
+            session.add(asset)
 
 
 def _add_steps(

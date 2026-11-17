@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from domain import DiscoveryRun
-from explorer_core import ExplorerEvent, ExplorerRun, explorer_workflow_id
+from explorer_core import ExplorerEvent, ExplorerRun, ExplorerScreen, explorer_workflow_id
 from sqlmodel import Session, col, select
 from temporalio import activity
 
@@ -25,6 +25,7 @@ BUILT_IN: dict[str, Any] = {
     "hidden_screen_search_minutes": 25,
     "ai_budget_usd": None,
     "first_look_max_screens": int(os.environ.get("EXPLORER_FIRST_LOOK_SCREENS", "150")),
+    "max_screens": None,
     "max_missions": 15,
     "steps_per_mission": int(os.environ.get("EXPLORER_MISSION_STEPS", "20")),
     "steps_per_scenario": 20,
@@ -46,6 +47,37 @@ def of(run_id: uuid.UUID) -> dict[str, Any]:
         run = session.get(ExplorerRun, run_id)
         own = dict(run.limits or {}) if run is not None else {}
     return {**BUILT_IN, **{k: v for k, v in own.items() if k in BUILT_IN}}
+
+
+def screen_limit_reached(run_id: uuid.UUID) -> bool:
+    """Settings → "Screens to explore": has the run found that many screens?
+    Then the exploring left (first look, missions, hidden-screen search,
+    breadth) is skipped and scenarios are written for the screens found.
+    Said once in the feed."""
+    most = of(run_id)["max_screens"]
+    if most is None:
+        return False
+    with Session(engine) as session:
+        found = len(
+            session.exec(select(ExplorerScreen.id).where(ExplorerScreen.run_id == run_id)).all()
+        )
+        if found < int(most):
+            return False
+        run = session.get(ExplorerRun, run_id)
+        if run is not None and not (run.limits or {}).get("screens_reached"):
+            run.limits = {**(run.limits or {}), "screens_reached": True}
+            session.add(run)
+            session.add(
+                ExplorerEvent(
+                    run_id=run_id,
+                    kind="phase",
+                    title=f"Reached the screen limit: {found} screens",
+                    detail="The exploring left is skipped; scenarios are written for the "
+                    "screens found. Change it in Settings → Explorer limits.",
+                )
+            )
+            session.commit()
+    return True
 
 
 def over_limit(run: ExplorerRun, now: datetime) -> str | None:

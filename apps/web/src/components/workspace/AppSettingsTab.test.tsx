@@ -24,6 +24,13 @@ const UAT: EnvironmentRead = {
   username: 'uat-account',
 }
 
+const GENERATION = {
+  max_scenarios_per_journey: null,
+  max_test_cases_per_application: null,
+  max_heal_attempts: 3,
+  screenshot_capture: 'failed',
+}
+
 function renderTab({
   role = 'member',
   environments = [DEFAULT_ENV, UAT],
@@ -62,31 +69,6 @@ function stubFetch(handler: (path: string, method: string) => { status?: number;
     }),
   )
   return calls
-}
-
-const EXPLORER_LIMITS = {
-  question_wait_minutes: 30,
-  mission_time_limit_minutes: 75,
-  run_time_limit_minutes: null,
-  first_look_time_limit_minutes: 120,
-  hidden_screen_search_minutes: 25,
-  ai_budget_usd: null,
-  first_look_max_screens: 150,
-  max_missions: 15,
-  steps_per_mission: 20,
-  steps_per_scenario: 20,
-  steps_per_journey: 40,
-  max_scenarios: 150,
-  proof_replays: 1,
-  same_screen_repeats: 3,
-  screen_visits: 4,
-  press_retries: 2,
-}
-const GENERATION = {
-  max_scenarios_per_journey: null,
-  max_test_cases_per_application: null,
-  max_heal_attempts: 3,
-  screenshot_capture: 'failed',
 }
 
 function openMenu(name: string) {
@@ -220,8 +202,10 @@ describe('AppSettingsTab', () => {
 
   it('opens on a hub of this application’s settings', () => {
     renderTab({ card: null })
-    for (const title of ['Environment Settings', 'Explorer limits', 'Test case generation'])
+    for (const title of ['Environment Settings', 'Sign-in credentials', 'Test case generation'])
       expect(screen.getByRole('button', { name: `Configure ${title}` })).toBeTruthy()
+    // Explorer limits are organisation-wide: on the Settings page, not here.
+    expect(screen.queryByRole('button', { name: 'Configure Explorer limits' })).toBeNull()
     expect(screen.queryByTestId(/^environment-row-/)).toBeNull()
   })
 
@@ -229,28 +213,7 @@ describe('AppSettingsTab', () => {
     renderTab()
     expect(screen.getByRole('heading', { name: 'Environment Settings' })).toBeTruthy()
     fireEvent.click(screen.getByText('Back to Settings'))
-    expect(screen.getByRole('button', { name: 'Configure Explorer limits' })).toBeTruthy()
-  })
-
-  it('loads and saves this application’s Explorer limits', async () => {
-    const calls = stubFetch((path) => ({ body: path.endsWith('/settings') ? EXPLORER_LIMITS : {} }))
-    renderTab({ role: 'admin', card: 'Explorer limits' })
-    for (const group of ['Time', 'AI cost', 'Coverage', 'Accuracy', 'When to give up'])
-      expect(await screen.findByText(group)).toBeTruthy()
-    expect((screen.getByLabelText('Question wait') as HTMLSelectElement).value).toBe('30')
-    // Waiting until you answer takes the mission time limit off.
-    fireEvent.change(screen.getByLabelText('Question wait'), { target: { value: 'none' } })
-    const mission = screen.getByLabelText('Mission time limit') as HTMLSelectElement
-    expect(mission.value).toBe('none')
-    expect(mission.disabled).toBe(true)
-    fireEvent.change(screen.getByLabelText('AI budget per run (USD)'), { target: { value: '25' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Save Configuration' }))
-    await waitFor(() =>
-      expect(calls).toContainEqual({ path: '/explorer/applications/app-1/settings', method: 'PUT' }),
-    )
-    const put = vi.mocked(fetch).mock.calls.find(([, init]) => (init as { method?: string })?.method === 'PUT')
-    expect(JSON.parse(String((put![1] as { body: string }).body)).ai_budget_usd).toBe(25)
-    expect(calls[0]).toEqual({ path: '/explorer/applications/app-1/settings', method: 'GET' })
+    expect(screen.getByRole('button', { name: 'Configure Test case generation' })).toBeTruthy()
   })
 
   it('saves this application’s test case generation settings', async () => {
@@ -263,11 +226,11 @@ describe('AppSettingsTab', () => {
     )
   })
 
-  it('shows the limits read-only to anyone but an admin', async () => {
-    const calls = stubFetch(() => ({ body: EXPLORER_LIMITS }))
-    renderTab({ role: 'member', card: 'Explorer limits' })
+  it('shows the generation settings read-only to anyone but an admin', async () => {
+    const calls = stubFetch(() => ({ body: GENERATION }))
+    renderTab({ role: 'member', card: 'Test case generation' })
     expect(await screen.findByText('Only organization admins can change these settings.')).toBeTruthy()
-    expect(screen.getByLabelText('Question wait').matches(':disabled')).toBe(true)  // the whole form
+    expect((await screen.findByLabelText('Maximum self-heal attempts')).matches(':disabled')).toBe(true)  // the whole form
     expect(screen.queryByRole('button', { name: 'Save Configuration' })).toBeNull()
     expect(calls.every((c) => c.method === 'GET')).toBe(true)
   })

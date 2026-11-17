@@ -29,9 +29,10 @@ CODE_LIMITS = ("min", "max", "minlength", "maxlength", "pattern")
 # Per form: the empty form, this many required fields left out one at a time
 # and this many broken rules. They are tried on top of the scenario cap
 # (tests_stage.balanced), so a form-heavy app keeps its behaviour tests.
-# ponytail: the first ones in form order; rotate when one form needs more.
-REQUIRED_PER_FORM = 2
-RULES_PER_FORM = 2
+# None = every one: all field validations are wanted. A number caps it
+# (the first ones in form order) when a form-heavy app runs too long.
+REQUIRED_PER_FORM: int | None = None
+RULES_PER_FORM: int | None = None
 # What counts as the app saying so: apps differ, and many name only the
 # first missing field. A red * by a name is the marker, not the message.
 _TOLD = (
@@ -84,15 +85,50 @@ def _past(value: str, by: int) -> str:
     return str(int(n)) if n.is_integer() else str(n)
 
 
-def broken_rules(field: dict[str, Any]) -> list[tuple[str, str, str]]:
-    """(what the test enters, short name, the rule) for each rule the field
-    has — from the page's code first, then from what the screen says. One per
-    kind of rule (a maxlength of 255 and "Maximum 255 characters" are one)."""
-    notes = str(field.get("notes") or "").strip()
-    found: dict[str, tuple[str, str, str]] = {}
+def message_for(field: dict[str, Any], probe: str) -> str | None:
+    """The message the form showed when this field got `probe` (field_probe)."""
+    for m in field.get("messages") or []:
+        if m.get("probe") == probe and m.get("message"):
+            return str(m["message"])
+    return None
 
-    def add(kind: str, value: str, short: str, rule: str) -> None:
-        found.setdefault(kind, (value, short, rule))
+
+
+
+def _length_kind(short: str) -> str | None:
+    """'long' / 'short' when broken_rules' short name is a length limit."""
+    if short == "too many characters" or short.startswith("more than"):
+        return "long"
+    if short == "a single character" or short.startswith("fewer than"):
+        return "short"
+    return None
+
+_PROBE_SHORT = {
+    "short": "a single character",
+    "long": "too many characters",
+    "format": "a value in the wrong format",
+    "email": "an invalid email",
+    "below": "a value below its range",
+    "above": "a value above its range",
+}
+
+
+def broken_rules(field: dict[str, Any]) -> list[tuple[str, str, str, str | None]]:
+    """(what the test enters, short name, the rule, the app's own message or
+    None) for each rule the field has — first the messages the form itself
+    showed for a wrong value (field_probe), then the page's code, then what
+    the screen says. One per kind of rule (a maxlength of 255 and "Maximum
+    255 characters" are one)."""
+    notes = str(field.get("notes") or "").strip()
+    found: dict[str, tuple[str, str, str, str | None]] = {}
+
+    def add(kind: str, value: str, short: str, rule: str, message: str | None = None) -> None:
+        found.setdefault(kind, (value, short, rule, message))
+
+    for m in field.get("messages") or []:
+        probe, message = str(m.get("probe") or ""), str(m.get("message") or "")
+        if probe in _PROBE_SHORT and message:
+            add(probe, str(m.get("entered") or ""), _PROBE_SHORT[probe], message, message)
 
     shortest = int(_number(field.get("minlength") or 0) or 0)
     longest = int(_number(field.get("maxlength") or 0) or 0)
@@ -175,8 +211,13 @@ def field_checks(screens: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ):
             continue
         name = str(screen["name"])
-        required = [str(f["label"]) for f in fields if f.get("required") is True]
+        # Required: marked so, or the form said so when the field was left empty.
+        said = {str(f["label"]): message_for(f, "required") for f in fields}
+        required = [
+            str(f["label"]) for f in fields if f.get("required") is True or said[str(f["label"])]
+        ]
         listed = ", ".join(required)
+        messages = [f"“{said[label]}”" for label in required if said[label]]
         if required:
             out.append(
                 _test(
@@ -185,7 +226,8 @@ def field_checks(screens: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "Leave every field empty (clear any value already filled in).",
                     "Nothing is saved, the form stays open and the app says a required field "
                     "is missing: " + _TOLD.format(what="the missing fields") + ". Naming only "
-                    f"the first missing one is fine. Required fields: {listed}.",
+                    f"the first missing one is fine. Required fields: {listed}."
+                    + (f" The form's own messages: {', '.join(messages)}." if messages else ""),
                     f"Required fields: {listed}",
                 )
             )
@@ -197,7 +239,9 @@ def field_checks(screens: list[dict[str, Any]]) -> list[dict[str, Any]]:
                         f"{label} is required on {name}",
                         f"Fill every required field ({listed}) with valid values, except "
                         f"{label}: leave it empty.",
-                        f"Nothing is saved and the app says {label} is required: "
+                        f"Nothing is saved and the app shows “{said[label]}” for {label}."
+                        if said[label]
+                        else f"Nothing is saved and the app says {label} is required: "
                         + _TOLD.format(what=label)
                         + ".",
                         f"{label} is required",
@@ -205,14 +249,29 @@ def field_checks(screens: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 )
         others = f" Fill the other required fields ({listed}) with valid values." if listed else ""
         rules = [(str(f["label"]), r) for f in fields for r in broken_rules(f)]
-        for label, (value, short, rule) in rules[:RULES_PER_FORM]:
+        # Length limits: one test per form (the first field with one), not one
+        # per field — 19 near-identical tests crowd out the form's behaviour.
+        seen_length: set[str] = set()
+        kept = []
+        for label, rule in rules:
+            length = _length_kind(rule[1])
+            if length in seen_length:
+                continue
+            if length:
+                seen_length.add(length)
+            kept.append((label, rule))
+        rules = kept
+        for label, (value, short, rule, message) in rules[:RULES_PER_FORM]:
             out.append(
                 _test(
                     screen,
                     f"{label} refuses {short} on {name}",
                     f"Enter {value} in {label}.{others}",
-                    f"Nothing is saved with it: {label} does not keep the value, or the app "
-                    f"explains its rule ({rule}) — " + _TOLD.format(what=label) + ".",
+                    # The form's own message is the proof, word for word.
+                    f"Nothing is saved with it and the app shows “{message}” for {label}."
+                    if message
+                    else f"Nothing is saved with it: {label} does not keep the value, or the "
+                    f"app explains its rule ({rule}) — " + _TOLD.format(what=label) + ".",
                     f"{label}: {rule}",
                 )
             )

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faPlay, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faLayerGroup, faListCheck, faPlay, faXmark, type IconDefinition } from '@fortawesome/free-solid-svg-icons'
 import { LoadingDots } from '../LoadingDots'
 import { EnvironmentSelect } from '../environments/EnvironmentSelect'
 import { DEFAULT_TARGET, viewportError, type RunTarget } from '../../runTarget'
@@ -8,11 +8,15 @@ import { TargetSelect } from './TargetSelect'
 import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { modalButton, modalCloseButton, modalFooter, modalHeader, modalOverlay, modalPanel, modalTitle } from '../modalStyles'
 
-const RUN_MODES: { key: 'full' | 'selective' | 'suites'; title: string; body: string }[] = [
-  { key: 'full', title: 'All test cases', body: 'Run every test case in this application.' },
-  { key: 'selective', title: 'Selective run', body: 'Choose specific journeys or test cases to run.' },
-  { key: 'suites', title: 'Test suites', body: 'Run a saved group of test cases, like Smoke or Regression.' },
+type RunMode = 'full' | 'selective' | 'suites'
+
+const RUN_MODES: { key: RunMode; title: string; body: string; action: string; icon: IconDefinition }[] = [
+  { key: 'full', title: 'All test cases', body: 'Run every test case in this application.', action: 'Run all test cases', icon: faPlay },
+  { key: 'selective', title: 'Selective run', body: 'Choose specific journeys or test cases.', action: 'Choose tests…', icon: faListCheck },
+  { key: 'suites', title: 'Test suites', body: 'Run a saved group such as Smoke or Regression.', action: 'Choose suite…', icon: faLayerGroup },
 ]
+
+const sectionHeading = { margin: 0, fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-3)' } as const
 
 // Run Suite Flow: clicking "Run" opens a modal dialog offering Full suite,
 // Selective run or a saved Test suite — same overlay + card-panel modal shape as
@@ -20,22 +24,34 @@ const RUN_MODES: { key: 'full' | 'selective' | 'suites'; title: string; body: st
 // button-anchored dropdown menu with an actual dialog per the prototype.
 export function RunSuiteButton({
   running,
+  open,
+  onOpenChange,
+  environmentId,
+  onEnvironmentChange,
+  target,
+  onTargetChange,
   onFullSuite,
   onOpenJourneysDialog,
   onOpenSuitesDialog,
 }: {
   running: boolean
-  // All get the environment picked in the dialog — null is the application's
-  // own (default) one — and the browsers and window size to run on.
-  onFullSuite: (environmentId: string | null, target: RunTarget) => void
-  onOpenJourneysDialog: (environmentId: string | null, target: RunTarget) => void
-  onOpenSuitesDialog: (environmentId: string | null, target: RunTarget) => void
+  // The dialog's state lives in the parent so the Selective run / Test suites
+  // dialogs can send the user Back here with their choices intact. `null`
+  // environment is the application's own (default) one.
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  environmentId: string | null
+  onEnvironmentChange: (environmentId: string | null) => void
+  target: RunTarget
+  onTargetChange: (target: RunTarget) => void
+  onFullSuite: () => void
+  onOpenJourneysDialog: () => void
+  onOpenSuitesDialog: () => void
 }) {
-  const [open, setOpen] = useState(false)
-  const [environmentId, setEnvironmentId] = useState<string | null>(null)
-  // Chrome at 1280 × 720 every time the dialog opens; the last choice isn't kept.
-  const [target, setTarget] = useState<RunTarget>(DEFAULT_TARGET)
+  const setOpen = onOpenChange
   const sizeError = viewportError(target.viewport)
+  const [mode, setMode] = useState<RunMode>('full')
+  const selected = RUN_MODES.find((m) => m.key === mode) ?? RUN_MODES[0]
   useEscapeToClose(() => setOpen(false), open)
 
   return (
@@ -47,7 +63,10 @@ export function RunSuiteButton({
         aria-expanded={open}
         onClick={() => {
           if (running) return
-          setTarget(DEFAULT_TARGET)
+          // Fresh every time the button opens it; Back from a sub-dialog doesn't come through here.
+          onTargetChange(DEFAULT_TARGET)
+          onEnvironmentChange(null)
+          setMode('full')
           setOpen(true)
         }}
         style={{
@@ -73,55 +92,74 @@ export function RunSuiteButton({
       </button>
 
       {open && (
-        <div role="dialog" aria-modal="true" aria-label="Run tests" onClick={() => setOpen(false)} style={modalOverlay}>
-          <div onClick={(e) => e.stopPropagation()} style={{ ...modalPanel, maxWidth: 440 }}>
+        <div role="dialog" aria-modal="true" aria-label="Run tests" style={modalOverlay}>
+          <div style={{ ...modalPanel, maxWidth: 760 }}>
             <div style={modalHeader}>
               <h2 style={modalTitle}>Run tests</h2>
               <button type="button" aria-label="Close" onClick={() => setOpen(false)} style={modalCloseButton}>
                 <FontAwesomeIcon icon={faXmark} />
               </button>
             </div>
-            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 14, padding: '4px 28px 22px' }}>
-              <EnvironmentSelect label="Run on environment" value={environmentId} onChange={setEnvironmentId} />
-              <TargetSelect value={target} onChange={setTarget} />
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {RUN_MODES.map((mode) => (
-                <button
-                  key={mode.key}
-                  type="button"
-                  disabled={sizeError !== null}
-                  onClick={() => {
-                    setOpen(false)
-                    if (mode.key === 'full') onFullSuite(environmentId, target)
-                    else if (mode.key === 'suites') onOpenSuitesDialog(environmentId, target)
-                    else onOpenJourneysDialog(environmentId, target)
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 12,
-                    width: '100%',
-                    padding: '12px 14px',
-                    borderRadius: 10,
-                    border: '1px solid var(--border-2)',
-                    background: 'var(--panel)',
-                    cursor: sizeError ? 'not-allowed' : 'pointer',
-                    opacity: sizeError ? 0.6 : 1,
-                    textAlign: 'left',
-                    fontFamily: 'inherit',
-                  }}
-                >
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ display: 'block', fontSize: 13.5, fontWeight: 600, color: 'var(--fg)' }}>{mode.title}</span>
-                    <span style={{ display: 'block', fontSize: 12.5, color: 'var(--fg-3)', marginTop: 2 }}>{mode.body}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 12, padding: '4px 28px 22px' }}>
+              <h3 style={sectionHeading}>Choose tests to run</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                {RUN_MODES.map((m) => (
+                  <button
+                    key={m.key}
+                    type="button"
+                    className="run-mode-card"
+                    aria-pressed={m.key === mode}
+                    onClick={() => setMode(m.key)}
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 10,
+                      padding: '18px 10px',
+                      borderRadius: 12,
+                      border: '1px solid var(--border-2)',
+                      background: 'var(--panel)',
+                      cursor: 'pointer',
+                      fontFamily: 'inherit',
+                      fontSize: 14,
+                      fontWeight: 600,
+                      color: 'var(--fg)',
+                    }}
+                  >
+                    <FontAwesomeIcon icon={m.icon} style={{ fontSize: 18, color: m.key === mode ? 'var(--accent)' : 'var(--fg-2)' }} />
+                    {m.title}
+                  </button>
+                ))}
+              </div>
+              <p style={{ margin: 0, fontSize: 13.5, color: 'var(--fg-3)' }}>{selected.body}</p>
+
+              <h3 style={{ ...sectionHeading, marginTop: 8 }}>Run configuration</h3>
+              <div style={{ padding: 20, borderRadius: 12, border: '1px solid var(--border-2)', background: 'var(--bg-2)' }}>
+                <TargetSelect
+                  rows
+                  value={target}
+                  onChange={onTargetChange}
+                  sideBySide={<EnvironmentSelect row label="Environment" value={environmentId} onChange={onEnvironmentChange} />}
+                />
+              </div>
             </div>
             <div style={modalFooter}>
               <button type="button" className="button-secondary" onClick={() => setOpen(false)} style={modalButton}>
                 Cancel
+              </button>
+              <button
+                type="button"
+                className="button-primary"
+                disabled={sizeError !== null}
+                onClick={() => {
+                  setOpen(false)
+                  if (mode === 'full') onFullSuite()
+                  else if (mode === 'suites') onOpenSuitesDialog()
+                  else onOpenJourneysDialog()
+                }}
+                style={modalButton}
+              >
+                {selected.action}
               </button>
             </div>
           </div>

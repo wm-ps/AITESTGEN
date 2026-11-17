@@ -268,10 +268,11 @@ async def reel_activity(run_id: str) -> bool:
 
 
 @activity.defn(name=PROMOTE_ACTIVITY)
-async def promote_activity(run_id: str) -> dict[str, int]:
-    """Stage 8: Explorer's proven tests become Journeys / Scenarios / Test cases."""
+async def promote_activity(run_id: str, test_id: str = "") -> dict[str, int]:
+    """Stage 8: Explorer's proven tests become Journeys / Scenarios / Test cases
+    (`test_id`: only that one, added to what is already there)."""
     try:
-        return await promote.promote(uuid.UUID(run_id))
+        return await promote.promote(uuid.UUID(run_id), uuid.UUID(test_id) if test_id else None)
     except Exception as exc:
         logger.exception("explorer hand-off to Vantage failed")
         Journal(uuid.UUID(run_id)).event(

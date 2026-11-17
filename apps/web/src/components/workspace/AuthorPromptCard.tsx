@@ -1,8 +1,27 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faWandMagicSparkles, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { explorerApi } from '../../explorer/explorerApi'
 import { LoadingDots } from '../LoadingDots'
+import { api } from '../../api'
+import type { JourneyRead } from '../../api'
+
+// The journey choice that means "create a new journey with this name".
+const NEW_JOURNEY = '__new__'
+
+const fieldStyle: React.CSSProperties = {
+  width: '100%',
+  boxSizing: 'border-box',
+  height: 36,
+  padding: '0 11px',
+  border: '1px solid var(--border-2)',
+  borderRadius: 9,
+  fontSize: 13,
+  color: 'var(--fg-1)',
+  background: 'var(--panel)',
+  fontFamily: 'inherit',
+  outline: 'none',
+}
 
 // "Author a test case": the user's request starts an authoring run on
 // Explorer (its own path, explorer_worker.authoring). Explorer follows the
@@ -22,7 +41,34 @@ export function AuthorPromptCard({
   const [prompt, setPrompt] = useState('')
   const [starting, setStarting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const canStart = prompt.trim().length > 0 && !starting
+  const [journeys, setJourneys] = useState<JourneyRead[] | null>(null)
+  // An existing journey's id, NEW_JOURNEY, or '' (nothing chosen yet).
+  const [journeyChoice, setJourneyChoice] = useState('')
+  const [newJourneyName, setNewJourneyName] = useState('')
+  const isNewJourney = journeyChoice === NEW_JOURNEY
+  const journeyReady = isNewJourney ? newJourneyName.trim() !== '' : journeyChoice !== ''
+  const canStart = prompt.trim().length > 0 && journeyReady && !starting
+
+  useEffect(() => {
+    let cancelled = false
+    api
+      .listJourneys(applicationId)
+      .then((rows) => {
+        if (cancelled) return
+        setJourneys(rows)
+        // Nothing to pick from: creating a new journey is the only option.
+        if (rows.length === 0) setJourneyChoice(NEW_JOURNEY)
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setJourneys([])
+          setJourneyChoice(NEW_JOURNEY)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [applicationId])
 
   async function start(event: React.FormEvent) {
     event.preventDefault()
@@ -30,7 +76,11 @@ export function AuthorPromptCard({
     setStarting(true)
     setError(null)
     try {
-      await explorerApi.startAuthoring(applicationId, prompt.trim())
+      await explorerApi.startAuthoring(
+        applicationId,
+        prompt.trim(),
+        isNewJourney ? { journey_name: newJourneyName.trim() } : { journey_id: journeyChoice },
+      )
       onStarted()
     } catch (err) {
       setError(err instanceof Error && err.message ? err.message : 'Could not start. Please try again.')
@@ -72,7 +122,7 @@ export function AuthorPromptCard({
           </div>
           <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 4 }}>
             Describe a flow, or list the exact scenarios you want. Explorer follows only what you write, asks if
-            anything is unclear, and adds the test cases here.
+            anything is unclear, and adds the test cases to the journey you choose.
           </div>
         </div>
         <button
@@ -97,6 +147,42 @@ export function AuthorPromptCard({
       </div>
 
       <form onSubmit={start} style={{ marginTop: 16 }}>
+        <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+          <label style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 220px', minWidth: 0 }}>
+            <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)' }}>
+              Add the test cases to this journey
+            </span>
+            <select
+              aria-label="Journey"
+              value={journeyChoice}
+              onChange={(event) => setJourneyChoice(event.target.value)}
+              disabled={journeys === null}
+              style={fieldStyle}
+            >
+              <option value="" disabled>
+                {journeys === null ? 'Loading journeys' : 'Select a journey'}
+              </option>
+              {journeys?.map((journey) => (
+                <option key={journey.id} value={journey.id}>
+                  {journey.name}
+                </option>
+              ))}
+              <option value={NEW_JOURNEY}>+ New journey</option>
+            </select>
+          </label>
+          {isNewJourney && (
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: '1 1 220px', minWidth: 0 }}>
+              <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--fg-2)' }}>New journey name</span>
+              <input
+                aria-label="New journey name"
+                value={newJourneyName}
+                onChange={(event) => setNewJourneyName(event.target.value)}
+                placeholder="Enter the new journey name"
+                style={fieldStyle}
+              />
+            </label>
+          )}
+        </div>
         <textarea
           aria-label="What to test"
           value={prompt}

@@ -68,9 +68,9 @@ class ExplorerRunWorkflow:
         self._confirmed = True
 
     @workflow.run
-    async def run(self, run_id: str, mode: str = "full") -> str:
+    async def run(self, run_id: str, mode: str = "full", test_id: str = "") -> str:
         try:
-            return await self._run(run_id, mode)
+            return await self._run(run_id, mode, test_id)
         except ActivityError as exc:
             if isinstance(exc.cause, CancelledError):
                 raise  # Stop/Pause: the API already set the run's status
@@ -83,10 +83,12 @@ class ExplorerRunWorkflow:
             )
             return "failed"
 
-    async def _run(self, run_id: str, mode: str) -> str:
+    async def _run(self, run_id: str, mode: str, test_id: str = "") -> str:
         if mode == "send":
-            # Only the hand-off: after you answer a possible bug.
-            await self._bonus(PROMOTE_ACTIVITY, run_id, timedelta(minutes=10), heartbeat=False)
+            # Only the hand-off of the one possible bug you said is "Not a bug".
+            await self._bonus(
+                PROMOTE_ACTIVITY, run_id, timedelta(minutes=10), heartbeat=False, extra=[test_id]
+            )
             return "sent"
         if mode == "resume":
             start: str = await workflow.execute_activity(
@@ -171,14 +173,19 @@ class ExplorerRunWorkflow:
         return "tested"
 
     async def _bonus(
-        self, activity: str, run_id: str, timeout: timedelta, heartbeat: bool = True
+        self,
+        activity: str,
+        run_id: str,
+        timeout: timedelta,
+        heartbeat: bool = True,
+        extra: list[str] | None = None,
     ) -> Any:
         """A step whose loss must not end the run (its worker restarted, it
         timed out): log it and carry on with the next step."""
         try:
             return await workflow.execute_activity(
                 activity,
-                run_id,
+                args=[run_id, *(extra or [])],
                 start_to_close_timeout=timeout,
                 heartbeat_timeout=timedelta(minutes=5) if heartbeat else None,
                 retry_policy=_ONCE,

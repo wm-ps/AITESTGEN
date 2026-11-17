@@ -19,7 +19,7 @@ from explorer_worker.browser import Eyes, storage_state_from
 from explorer_worker.db import engine
 from explorer_worker.journal import Journal
 from explorer_worker.memory import known_facts
-from explorer_worker.sense import same_place
+from explorer_worker.sense import named_addresses, same_place
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,9 @@ class Target:
     application_id: uuid.UUID | None = None
     # Off: the app has no login — it is opened directly, never signed in to.
     requires_login: bool = True
+    # Places outside the app the user named (goal, request, notes): the
+    # only ones a click may lead to (Eyes.roots).
+    also_inside: tuple[str, ...] = ()
 
 
 def needs_sign_in(auth_method: str, secret_ref: str, requires_login: bool = True) -> bool:
@@ -73,6 +76,9 @@ def load_target(run_id: uuid.UUID) -> Target:
             application_id=app.id,
             # "none" is the Add application form's "no sign-in" choice.
             requires_login=app.requires_login and app.auth_method != "none",
+            also_inside=named_addresses(
+                str((run.brief or {}).get("focus") or ""), run.prompt, run.notes
+            ),
         )
 
 
@@ -89,7 +95,7 @@ async def open_signed_out(target: Target, record_dir: str | None = None) -> Eyes
     """A browser that has not signed in, for sign-in tests. It knows the
     saved login so `{{username}}`/`{{password}}` can be typed. The caller
     closes it."""
-    eyes = Eyes(target.app_url)
+    eyes = Eyes(target.app_url, also_inside=target.also_inside)
     await eyes.open(record_dir=record_dir)
     if target.auth_method != "sso_session_reuse":
         secret = await asyncio.to_thread(
@@ -128,7 +134,7 @@ async def open_signed_in(
 ) -> Eyes | None:
     """A signed-in browser on the app, or None (with a visible error event)
     when sign-in fails. The caller closes it."""
-    eyes = Eyes(target.app_url)
+    eyes = Eyes(target.app_url, also_inside=target.also_inside)
     if not target.requires_login:
         # You said this app has no login: open it, never look for one.
         await eyes.open(record_dir=record_dir)
@@ -165,11 +171,12 @@ async def open_signed_in(
         await eyes.goto(target.app_url)
         if await _still_signed_in(eyes, target):
             eyes.entry_urls.add(saved[1])  # where the real sign-in landed
+            eyes.trust(saved[1])
             eyes.remember_entry()
             return eyes
         _SESSIONS.pop(key, None)  # expired or refused: sign in for real
         await eyes.close()
-        eyes = Eyes(target.app_url)
+        eyes = Eyes(target.app_url, also_inside=target.also_inside)
     await eyes.open(record_dir=record_dir)
     try:
         signed_in = await eyes.sign_in(login_url, username, password)

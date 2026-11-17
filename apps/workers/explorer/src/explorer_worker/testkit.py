@@ -7,7 +7,16 @@ import mimetypes
 import re
 from typing import Any
 
-from explorer_worker.browser import _CALENDAR_JS, _DOM_QUIET_JS, Eyes, field_after_caption
+from playwright.async_api import expect
+
+from explorer_worker.browser import (
+    _CALENDAR_JS,
+    _DOM_QUIET_JS,
+    SUGGESTIONS,
+    Eyes,
+    field_after_caption,
+    locate,
+)
 from explorer_worker.samples import sample_file
 from explorer_worker.sense import (
     CONTINUE_LIKE,
@@ -15,6 +24,7 @@ from explorer_worker.sense import (
     RESUME_LABEL,
     START_FRESH,
     looks_final,
+    resolve_relative,
     resumes_saved_progress,
 )
 
@@ -211,16 +221,182 @@ PROOF_WAIT_MS = 15000
 ABSENT_WAIT_MS = 3000
 
 
+def _state_target(page: Any, check: dict[str, Any]) -> Any:
+    """The element an element_state proof is about, as the exported test finds
+    it: by role and name; an unnamed one by the locator the test used on it,
+    else the first of its role (the list on the screen)."""
+    if check.get("locator"):
+        return locate(page, check["locator"]).first
+    if not str(check.get("name") or "").strip():
+        return page.get_by_role(str(check["role"])).first
+    return page.get_by_role(str(check["role"]), name=str(check["name"]), exact=True).first
+
+
+def _ts_state_target(check: dict[str, Any]) -> str:
+    """`_state_target` as the exported test writes it."""
+    if check.get("locator"):
+        return f"{ts_locator(check['locator'])}.first()"
+    if not str(check.get("name") or "").strip():
+        return f"page.getByRole({_q(check['role'])}).first()"
+    name = _q(check["name"])
+    return f"page.getByRole({_q(check['role'])}, {{ name: {name}, exact: true }}).first()"
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+def _norm(line: str) -> str:
+    return " ".join(line.strip().removeprefix("- ").split())
+
+
+def proving_lines(actual: str, wanted: str, whole_up_to: int = 1500) -> str:
+    """The lines of an element's real snapshot that prove the outcome, each
+    with the lines it sits under (a partial snapshot must stay a tree). A
+    small element is kept whole; none matched = the element as it is."""
+    lines = actual.splitlines()
+    if len(actual) <= whole_up_to or not lines:
+        return actual
+    want = [_norm(w) for w in wanted.splitlines() if _norm(w)]
+    keep: set[int] = {0}
+    for i, line in enumerate(lines):
+        if any(w and (w == _norm(line) or w in _norm(line)) for w in want):
+            keep.add(i)
+            depth = _indent(line)
+            for j in range(i - 1, -1, -1):
+                if _indent(lines[j]) < depth:
+                    keep.add(j)
+                    depth = _indent(lines[j])
+    if len(keep) <= 1:
+        return actual[:1500]
+    kept = [lines[i] for i in sorted(keep)]
+    # A line whose children were cut keeps no trailing ':' (an empty YAML
+    # value is not a valid snapshot).
+    return "\n".join(
+        line.rstrip(":") if i + 1 == len(kept) or _indent(kept[i + 1]) <= _indent(line) else line
+        for i, line in enumerate(kept)
+    )
+
+
+async def ground_state(eyes: Eyes, check: dict[str, Any]) -> dict[str, Any] | None:
+    """An element_state proof made of the element's REAL accessibility
+    snapshot (role, name, options, selected/checked state, value) — never the
+    model's wording, so it matches on replay. None: no such element."""
+    assert eyes.page is not None
+    if not str(check.get("role") or "").strip() or not str(check.get("name") or "").strip():
+        return None
+    try:
+        actual = await _state_target(eyes.page, check).aria_snapshot(timeout=5000)
+    except Exception:  # noqa: BLE001 — no such element (or the page broke)
+        return None
+    value = proving_lines(actual, str(check.get("value") or ""))
+    return {**check, "kind": "element_state", "value": value} if value.strip() else None
+
+
+_ROLE_LINE = re.compile(r'^\s*-\s+([a-z]+)\s+"((?:[^"\\]|\\.)+)"')
+_ROLE_ONLY = re.compile(r"^\s*-\s+([a-z]+)")
+# Elements that hold a list's rows: their changed rows prove a search, filter,
+# sort or page change.
+_LIST_ROLES = ("grid", "table", "treegrid", "list", "listbox")
+
+
+async def state_of_last_entry(
+    eyes: Eyes, actions: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """The last-resort proof: the state of the field the test last typed in
+    or chose from (its value, its selected option), found by the very locator
+    that worked. Never a button: pressing one leaves it as it was."""
+    assert eyes.page is not None
+    for action in reversed(actions):
+        if action.get("do") not in ("fill", "choose") or not action.get("locator"):
+            continue
+        try:
+            snap = await locate(eyes.page, action["locator"]).first.aria_snapshot(timeout=3000)
+        except Exception:  # noqa: BLE001 — the field is gone (the screen moved on)
+            continue
+        named = _ROLE_LINE.match(snap)
+        if named:
+            role, name = named[1], named[2].replace('\\"', '"')
+            state = await ground_state(
+                eyes, {"kind": "element_state", "role": role, "name": name, "value": snap}
+            )
+            if state is not None:
+                return state
+        # No accessible name (a custom dropdown, a bare search box): found by
+        # the very locator the test used on it.
+        role = _ROLE_ONLY.match(snap)
+        if role and snap.strip():
+            return {
+                "kind": "element_state",
+                "role": role[1],
+                "name": "",
+                "locator": action["locator"],
+                "value": snap[:1500],
+            }
+    return None
+
+
+def _block(aria: str, role: str) -> list[str]:
+    """The first element of `role` in a page snapshot, as normalised lines."""
+    lines = aria.splitlines()
+    for i, line in enumerate(lines):
+        if _norm(line).split(" ")[0].rstrip(":") == role:
+            out = [_norm(line)]
+            for after in lines[i + 1 :]:
+                if _indent(after) <= _indent(line):
+                    break
+                out.append(_norm(after))
+            return out
+    return []
+
+
+async def state_of_changed_list(eyes: Eyes, start_aria: str) -> dict[str, Any] | None:
+    """The other last resort, for a list's tests (search, filter, sort, next
+    page): when the screen's list is no longer what it was when the test
+    started, its first rows now, in order (a partial aria match keeps the
+    order, so a sort is proven too), under their parent lines."""
+    assert eyes.page is not None
+    for role in _LIST_ROLES:
+        try:
+            snap = await eyes.page.get_by_role(role).first.aria_snapshot(timeout=2000)
+        except Exception:  # noqa: BLE001 — no element of that role
+            continue
+        lines = [line for line in snap.splitlines() if _norm(line)]
+        if [_norm(line) for line in lines] == _block(start_aria, role):
+            return None  # the list didn't change: it proves nothing about the test
+        rows = [line for line in lines if _norm(line).startswith(("row", "listitem", "option"))]
+        value = proving_lines(snap, "\n".join((rows or lines)[:8]), whole_up_to=0)
+        return {"kind": "element_state", "role": role, "name": "", "value": value}
+    return None
+
+
 async def holds(eyes: Eyes, check: dict[str, Any], wait_ms: int = PROOF_WAIT_MS) -> bool:
     """Is the test's proof true on the current screen?"""
     assert eyes.page is not None
-    value = str(check.get("value") or "")
+    value = resolve_relative(str(check.get("value") or ""), unique=eyes.unique)
     if not value:
         return False
+    if check.get("kind") == "element_state":
+        # As the exported test checks it (toMatchAriaSnapshot): a partial
+        # match, so an option added later doesn't break it.
+        try:
+            await expect(_state_target(eyes.page, check)).to_match_aria_snapshot(
+                value, timeout=wait_ms
+            )
+            return True
+        except Exception:  # noqa: BLE001 — not (or no longer) in that state
+            return False
     if check.get("kind") == "url_contains":
         return value.lower() in eyes.page.url.lower()
     if check.get("kind") == "api_call":
         return api_call_made(eyes.calls_since_mark(), value)
+    if check.get("kind") == "download":
+        # A download may finish a moment after the click.
+        for _ in range(max(1, wait_ms // 250)):
+            if any(value.lower() in n.lower() for n in eyes.downloads_since_mark()):
+                return True
+            await eyes.page.wait_for_timeout(250)
+        return False
     if check.get("kind") == "field_invalid":
         field = eyes.page.get_by_label(value).first
         try:
@@ -446,10 +622,12 @@ def playwright_code(
                 uses_fill = True
                 body.append(f"  await fillField(page, await ensureVisible({field}), {value});")
             if step.get("suggest"):
-                # A type-ahead field: pick the suggestion Explorer picked.
+                # A type-ahead field: pick the suggestion Explorer picked
+                # (ARIA options or a widget's plain list rows).
                 body.append(
-                    f"  await page.getByRole('option', {{ name: {_q(step['suggest'])} }})"
-                    ".filter({ visible: true }).first().click({ timeout: ASSERTION_TIMEOUT_MS });"
+                    f"  await page.locator({_q(SUGGESTIONS)})"
+                    f".filter({{ hasText: {_q(step['suggest'])}, visible: true }})"
+                    ".first().click({ timeout: ASSERTION_TIMEOUT_MS });"
                 )
         elif action == "choose" and step.get("locator"):
             option = _q(step["option"])
@@ -568,10 +746,27 @@ def playwright_code(
             f"c.url.includes({_q(part.strip())}) && c.status < 400), "
             "{ timeout: ASSERTION_TIMEOUT_MS }).toBe(true);"
         )
+    elif check and check.get("kind") == "download":
+        body[1:1] = [
+            "  const downloads: string[] = [];",
+            "  page.on('download', (d) => downloads.push(d.suggestedFilename()));",
+        ]
+        body.append(
+            f"  await expect.poll(() => downloads.some((n) => n.toLowerCase().includes("
+            f"{_q(str(check['value']).lower())})), {{ timeout: ASSERTION_TIMEOUT_MS }}).toBe(true);"
+        )
     elif check and check.get("kind") == "url_contains":
         body.append(
             f"  await expect(page).toHaveURL(new RegExp({_q(re.escape(str(check['value'])))}), "
             "{ timeout: ASSERTION_TIMEOUT_MS });"
+        )
+    elif check and check.get("kind") == "element_state":
+        state = _q(check["value"])
+        if "{{" in str(check["value"]):  # a name this run created ({{unique}})
+            uses_rel, state = True, f"rel({state})"
+        body.append(
+            f"  await expect({_ts_state_target(check)}).toMatchAriaSnapshot("
+            f"{state}, {{ timeout: ASSERTION_TIMEOUT_MS }});"
         )
     elif check and check.get("kind") == "field_invalid":
         body.append(
@@ -579,9 +774,19 @@ def playwright_code(
             f".evaluate({FIELD_FLAGGED_JS}), {{ timeout: ASSERTION_TIMEOUT_MS }}).toBe(true);"
         )
     elif check:
+        text = _q(check["value"])
+        if "{{" in str(check["value"]):  # a name this run created ({{unique}})
+            uses_rel, text = True, f"rel({text})"
+        proof = f"page.getByText({text}).filter({{ visible: true }}).first()"
+        # Watched from the start: a message that shows for a few seconds (a
+        # toast, a pop-up) counts though it is gone by the time the steps end.
+        body[1:1] = [
+            f"  const shown = {proof}.waitFor({{ state: 'visible', timeout: 600000 }})"
+            ".then(() => true, () => false);",
+        ]
         body.append(
-            f"  await expect(page.getByText({_q(check['value'])}).filter({{ visible: true }}).first())"
-            ".toBeVisible({ timeout: ASSERTION_TIMEOUT_MS });"
+            "  if (!(await Promise.race([shown, page.waitForTimeout(0).then(() => false)]))) "
+            f"await expect({proof}).toBeVisible({{ timeout: ASSERTION_TIMEOUT_MS }});"
         )
     if known_bug_observed:
         # A plain `test(...)` (so the sign-in tag is applied like any test)
@@ -728,7 +933,10 @@ _FILL_TS = [
 ]
 
 _REL_TS = [
+    # This run's {{unique}}: the same all through the test, new every run.
+    "const UNIQUE = Date.now().toString(16).slice(-7);",
     "function rel(v: string): string {",
+    "  v = v.replace(/\\{\\{\\s*unique\\s*\\}\\}/gi, UNIQUE);",
     r"  return v.replace(/\{\{\s*(today|now)\s*(?:([+-])\s*(\d+)\s*([dhm]))?\s*\}\}/gi, (_m, base: string, sign?: string, n?: string, unit?: string) => {",
     "    const step = { d: 86400000, h: 3600000, m: 60000 }[(unit || 'd').toLowerCase() as 'd' | 'h' | 'm'];",
     "    const t = new Date(Date.now() + step * Number(n || 0) * (sign === '-' ? -1 : 1));",

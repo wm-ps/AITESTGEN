@@ -143,17 +143,15 @@ export function Workspace({
   // can sit next to this page's own "Test Runs" title instead of RunsTab
   // rendering a second, duplicate heading of its own.
   const [runsBack, setRunsBack] = useState<(() => void) | null>(null)
-  // Run Suite Flow: "Run Journey(s)…" wizard, opened from this page's
-  // toolbar RunSuiteButton.
+  // Run Suite Flow: the Run tests dialog (toolbar RunSuiteButton) and the two
+  // dialogs it leads to — "Run Journey(s)…" wizard and Run test suite. What was
+  // chosen in the first one (environment, browsers, window size) is kept here so
+  // Back from either of the others reopens it exactly as the user left it.
+  const [runDialogOpen, setRunDialogOpen] = useState(false)
+  const [runEnvironmentId, setRunEnvironmentId] = useState<string | null>(null)
+  const [runTarget, setRunTarget] = useState<RunTarget>(DEFAULT_TARGET)
   const [journeysDialogOpen, setJourneysDialogOpen] = useState(false)
-  // The environment chosen in the Run dialog, carried into the selective-run wizard.
-  const [journeysEnvironmentId, setJourneysEnvironmentId] = useState<string | null>(null)
-  // Run test suite dialog (a saved group of test cases), same environment hand-off.
   const [suitesDialogOpen, setSuitesDialogOpen] = useState(false)
-  const [suitesEnvironmentId, setSuitesEnvironmentId] = useState<string | null>(null)
-  // The browsers and window size chosen in the Run dialog, carried into both
-  // of those dialogs the same way as the environment.
-  const [pendingTarget, setPendingTarget] = useState<RunTarget>(DEFAULT_TARGET)
   // Snapshotted at mount — App.tsx only ever mounts this component fresh
   // right after a "Run All Tests" click, so the effect below should fire
   // (or not) based on that one moment, not re-run if the prop identity
@@ -321,19 +319,15 @@ export function Workspace({
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 'none' }}>
               <RunSuiteButton
                 running={running}
-                onFullSuite={(environmentId, target) =>
-                  handleRunSuite(undefined, environmentId, undefined, target)
-                }
-                onOpenJourneysDialog={(environmentId, target) => {
-                  setJourneysEnvironmentId(environmentId)
-                  setPendingTarget(target)
-                  setJourneysDialogOpen(true)
-                }}
-                onOpenSuitesDialog={(environmentId, target) => {
-                  setSuitesEnvironmentId(environmentId)
-                  setPendingTarget(target)
-                  setSuitesDialogOpen(true)
-                }}
+                open={runDialogOpen}
+                onOpenChange={setRunDialogOpen}
+                environmentId={runEnvironmentId}
+                onEnvironmentChange={setRunEnvironmentId}
+                target={runTarget}
+                onTargetChange={setRunTarget}
+                onFullSuite={() => handleRunSuite(undefined, runEnvironmentId, undefined, runTarget)}
+                onOpenJourneysDialog={() => setJourneysDialogOpen(true)}
+                onOpenSuitesDialog={() => setSuitesDialogOpen(true)}
               />
               {running && (
                 <CancelRunButton
@@ -403,9 +397,13 @@ export function Workspace({
         <RunJourneysDialog
           applicationId={applicationId}
           onClose={() => setJourneysDialogOpen(false)}
+          onBack={() => {
+            setJourneysDialogOpen(false)
+            setRunDialogOpen(true)
+          }}
           onExecute={(suiteName, testCaseIds) => {
             setJourneysDialogOpen(false)
-            handleRunSuite({ suiteName, testCaseIds }, journeysEnvironmentId, undefined, pendingTarget)
+            handleRunSuite({ suiteName, testCaseIds }, runEnvironmentId, undefined, runTarget)
           }}
         />
       )}
@@ -413,11 +411,14 @@ export function Workspace({
       {suitesDialogOpen && (
         <RunTestSuiteDialog
           applicationId={applicationId}
-          initialEnvironmentId={suitesEnvironmentId}
           onClose={() => setSuitesDialogOpen(false)}
-          onRun={(collectionId, environmentId) => {
+          onBack={() => {
             setSuitesDialogOpen(false)
-            handleRunSuite(undefined, environmentId, collectionId, pendingTarget)
+            setRunDialogOpen(true)
+          }}
+          onRun={(collectionId) => {
+            setSuitesDialogOpen(false)
+            handleRunSuite(undefined, runEnvironmentId, collectionId, runTarget)
           }}
         />
       )}

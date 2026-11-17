@@ -99,8 +99,10 @@ async def understand_app(run_id: uuid.UUID, heartbeat: Callable[[], None]) -> st
     try:
         journal.event("action", "Signed in", "Got past the login screen")
         journal.update_run(status="understanding", headline="Looking around the app")
-        seeded = seed_from_previous_run(run_id, journal)
         run_limits = limits.of(run_id)  # Settings → Explorer limits (first look)
+        # A run held to a screen total starts fresh: the previous run's map
+        # would already fill it, and scenarios would be written for all of it.
+        seeded = 0 if run_limits["max_screens"] else seed_from_previous_run(run_id, journal)
         branches = await _first_look(
             eyes,
             journal,
@@ -109,6 +111,7 @@ async def understand_app(run_id: uuid.UUID, heartbeat: Callable[[], None]) -> st
             target.app_url,
             budget=REVISIT_SCREENS if seeded else run_limits["first_look_max_screens"],
             minutes=run_limits["first_look_time_limit_minutes"],
+            may_save=target.non_production,
         )
         journal.update_run(branch_points=branches)
         return await _write_summary(journal, target.notes, target.app_name, branches)
@@ -132,6 +135,7 @@ async def _first_look(
     home_url: str | None = None,
     budget: int = FIRST_LOOK_SCREENS,
     minutes: float = FIRST_LOOK_MINUTES,
+    may_save: bool = False,
 ) -> list[dict[str, Any]]:
     assert eyes.page is not None
     deadline = time.monotonic() + minutes * 60
@@ -142,6 +146,8 @@ async def _first_look(
     branches: list[dict[str, Any]] = []
 
     mind = Mind(journal, notes, heartbeat, home_url=home_url)
+    mind.eyes = eyes  # each new form's validation messages are read on the spot
+    mind.may_save = may_save  # a test environment: Save's messages too
     understood = mind.understood
 
     def on_screen(visit: Visit, name: str) -> None:
@@ -165,7 +171,12 @@ async def _first_look(
         )
 
     already = len(understood)  # known from an earlier run: only new screens count
-    while leads and len(understood) - already < budget and time.monotonic() < deadline:
+    while (
+        leads
+        and len(understood) - already < budget
+        and time.monotonic() < deadline
+        and not limits.screen_limit_reached(journal.run_id)
+    ):
         if journal.status() == "stopped":
             raise UnderstandStopped()
         leads.sort(key=lambda lead: -lead.value)
@@ -313,8 +324,7 @@ async def _menu_leads(
             seen.add(plain_label(text))
             href = item.get("href") if _is_link(item, here) else None
             if href and (
-                url_pattern(href) in seen_patterns
-                or not is_explorable_link(href, eyes.origin, text)
+                url_pattern(href) in seen_patterns or not is_explorable_link(href, eyes.roots, text)
             ):
                 continue
             found.append(
@@ -396,7 +406,7 @@ def _collect_leads(
             return
         if href:
             if (
-                not is_explorable_link(href, eyes.origin, label)
+                not is_explorable_link(href, eyes.roots, label)
                 or url_pattern(href) in seen_patterns
             ):
                 return

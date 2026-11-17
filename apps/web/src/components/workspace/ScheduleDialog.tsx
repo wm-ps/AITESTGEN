@@ -109,14 +109,7 @@ function toPayload(form: FormState): ScheduleCreate {
   }
 }
 
-// Same limitation as item 4's design note, stated in-product: a worker
-// outage caps the schedule at one eventual late run for the whole outage
-// window (overlap=SKIP drops everything scheduled in between), it does not
-// queue or backfill missed occurrences.
-const WORKER_DOWN_CAPTION =
-  "Scheduled runs need the execution worker online at fire time. If it's offline, only the " +
-  'first missed run eventually starts once the worker returns — any other runs that would ' +
-  'have fired during the outage are skipped, not queued or backfilled.'
+const sectionHeading = { margin: 0, fontSize: 11, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-3)' } as const
 
 export function ScheduleDialog({
   applicationId,
@@ -173,12 +166,8 @@ export function ScheduleDialog({
   }
 
   return (
-    <div onClick={onClose} style={{ ...modalOverlay, zIndex: 90 }}>
-      <form
-        onClick={(e) => e.stopPropagation()}
-        onSubmit={handleSubmit}
-        style={{ ...modalPanel, maxWidth: 440 }}
-      >
+    <div style={{ ...modalOverlay, zIndex: 90 }}>
+      <form onSubmit={handleSubmit} style={{ ...modalPanel, maxWidth: 760 }}>
         <div style={modalHeader}>
           <div>
             <h2 style={modalTitle}>{initial ? 'Edit schedule' : 'New schedule'}</h2>
@@ -209,14 +198,6 @@ export function ScheduleDialog({
               value={form.testCollectionId}
               onChange={(testCollectionId) => setForm({ ...form, testCollectionId })}
             />
-
-            <EnvironmentSelect
-              label="Environment"
-              value={form.environmentId}
-              onChange={(environmentId) => setForm({ ...form, environmentId })}
-            />
-
-            <TargetSelect value={form.target} onChange={(target) => setForm({ ...form, target })} />
 
             <label className="field">
               <FieldLabel>Cadence</FieldLabel>
@@ -319,19 +300,22 @@ export function ScheduleDialog({
               </div>
             )}
 
-            <p
-              className="caption"
-              style={{
-                background: 'var(--bg-2)',
-                borderRadius: 'var(--radius)',
-                padding: 'var(--space-3)',
-                margin: 0,
-                fontSize: 12,
-                lineHeight: 1.5,
-              }}
-            >
-              {WORKER_DOWN_CAPTION}
-            </p>
+            <h3 style={sectionHeading}>Run configuration</h3>
+            <div style={{ padding: 20, borderRadius: 12, border: '1px solid var(--border-2)', background: 'var(--bg-2)' }}>
+              <TargetSelect
+                rows
+                value={form.target}
+                onChange={(target) => setForm({ ...form, target })}
+                sideBySide={
+                  <EnvironmentSelect
+                    row
+                    label="Environment"
+                    value={form.environmentId}
+                    onChange={(environmentId) => setForm({ ...form, environmentId })}
+                  />
+                }
+              />
+            </div>
 
             {error && (
               <div role="alert" style={{ color: 'var(--danger)', fontSize: 13 }}>

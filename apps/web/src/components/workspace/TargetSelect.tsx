@@ -1,4 +1,6 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faCheck } from '@fortawesome/free-solid-svg-icons'
 import {
   BROWSER_OPTIONS,
   DEFAULT_VIEWPORT,
@@ -15,7 +17,13 @@ import {
 import { BrowserIcon } from './BrowserIcon'
 
 const CUSTOM = 'custom'
-const labelStyle = { fontSize: 12, fontWeight: 600, color: 'var(--fg-2)' } as const
+// The engine each tile actually runs on (Playwright's chromium / firefox / webkit).
+const ENGINE_LABEL: Record<Browser, string> = {
+  chromium: 'Chromium engine',
+  firefox: 'Gecko engine',
+  webkit: 'WebKit engine',
+}
+const labelStyle ={ fontSize: 12, fontWeight: 600, color: 'var(--fg-2)' } as const
 
 const presetValue = (viewport: Viewport) => `${viewport.width}x${viewport.height}`
 const ALL_PRESETS = [...VIEWPORT_PRESETS, ...MORE_VIEWPORT_PRESETS]
@@ -26,9 +34,15 @@ const ALL_PRESETS = [...VIEWPORT_PRESETS, ...MORE_VIEWPORT_PRESETS]
 export function TargetSelect({
   value,
   onChange,
+  sideBySide,
+  rows,
 }: {
   value: RunTarget
   onChange: (target: RunTarget) => void
+  sideBySide?: ReactNode
+  // Run tests dialog layout: a label column on the left, browser pills, and the
+  // `sideBySide` field as its own row underneath the window size.
+  rows?: boolean
 }) {
   const [custom, setCustom] = useState(!ALL_PRESETS.some((preset) => sameViewport(preset, value.viewport)))
   const [draft, setDraft] = useState({ width: String(value.viewport.width), height: String(value.viewport.height) })
@@ -64,53 +78,77 @@ export function TargetSelect({
     onChange({ ...value, viewport: { width: Number(next.width) || 0, height: Number(next.height) || 0 } })
   }
 
+  const rowLabel = { fontSize: 14, color: 'var(--fg-2)' } as const
+  const rowGrid = { display: 'grid', gridTemplateColumns: '120px 1fr', alignItems: 'center', gap: 12 } as const
+
+  const pills = BROWSER_OPTIONS.map((option) => (
+    <label key={option.key} className={rows ? 'browser-tile is-pill' : 'browser-tile'}>
+      <input
+        type="checkbox"
+        checked={value.browsers.includes(option.key)}
+        onChange={() => toggleBrowser(option.key)}
+      />
+      <span className="browser-tile-check" aria-hidden="true">
+        <FontAwesomeIcon icon={faCheck} />
+      </span>
+      <BrowserIcon browser={option.key} size={rows ? 24 : 28} />
+      {option.label}
+      {!rows && <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--fg-3)' }}>{ENGINE_LABEL[option.key]}</span>}
+    </label>
+  ))
+
+  const sizeSelect = (
+    <select value={custom ? CUSTOM : presetValue(value.viewport)} onChange={(e) => changeSize(e.target.value)}>
+      {VIEWPORT_PRESETS.map((preset) => (
+        <option key={presetValue(preset)} value={presetValue(preset)}>
+          {formatViewport(preset)}
+          {sameViewport(preset, DEFAULT_VIEWPORT) ? ' (default)' : ''}
+        </option>
+      ))}
+      <optgroup label="More sizes">
+        {MORE_VIEWPORT_PRESETS.map((preset) => (
+          <option key={presetValue(preset)} value={presetValue(preset)}>
+            {formatViewport(preset)}
+          </option>
+        ))}
+      </optgroup>
+      <option value={CUSTOM}>Custom size…</option>
+    </select>
+  )
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
-        <legend style={{ ...labelStyle, padding: 0 }}>Browsers</legend>
-        <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 6 }}>
-          {BROWSER_OPTIONS.map((option) => (
-            <label
-              key={option.key}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}
-            >
-              <input
-                type="checkbox"
-                checked={value.browsers.includes(option.key)}
-                onChange={() => toggleBrowser(option.key)}
-              />
-              <BrowserIcon browser={option.key} size={18} />
-              {option.label}
-            </label>
-          ))}
-        </div>
-        <span className="caption" style={{ display: 'block', fontSize: 12, marginTop: 6 }}>
-          Safari runs the WebKit engine.
-        </span>
-      </fieldset>
+      {rows ? (
+        <>
+          <div role="group" aria-label="Browsers" style={rowGrid}>
+            <span style={rowLabel}>Browsers</span>
+            <div style={{ display: 'flex', flexWrap: 'nowrap', gap: 20 }}>{pills}</div>
+          </div>
+          <label className="field" style={rowGrid}>
+            <span style={rowLabel}>Window size</span>
+            {sizeSelect}
+          </label>
+          {sideBySide}
+        </>
+      ) : (
+        <>
+          <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
+            <legend style={{ ...labelStyle, padding: 0 }}>Browsers</legend>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 10, marginTop: 8 }}>
+              {pills}
+            </div>
+          </fieldset>
 
-      <label className="field">
-        <span style={labelStyle}>Window size</span>
-        <select
-          value={custom ? CUSTOM : presetValue(value.viewport)}
-          onChange={(e) => changeSize(e.target.value)}
-        >
-          {VIEWPORT_PRESETS.map((preset) => (
-            <option key={presetValue(preset)} value={presetValue(preset)}>
-              {formatViewport(preset)}
-              {sameViewport(preset, DEFAULT_VIEWPORT) ? ' (default)' : ''}
-            </option>
-          ))}
-          <optgroup label="More sizes">
-            {MORE_VIEWPORT_PRESETS.map((preset) => (
-              <option key={presetValue(preset)} value={presetValue(preset)}>
-                {formatViewport(preset)}
-              </option>
-            ))}
-          </optgroup>
-          <option value={CUSTOM}>Custom size…</option>
-        </select>
-      </label>
+          {/* `sideBySide` sits next to the window size (the Run dialog puts the environment here). */}
+          <div style={{ display: 'grid', gridTemplateColumns: sideBySide ? 'repeat(auto-fit, minmax(220px, 1fr))' : '1fr', gap: 14 }}>
+            {sideBySide}
+            <label className="field">
+              <span style={labelStyle}>Window size</span>
+              {sizeSelect}
+            </label>
+          </div>
+        </>
+      )}
 
       {custom && (
         <div>
@@ -147,12 +185,6 @@ export function TargetSelect({
             </div>
           )}
         </div>
-      )}
-
-      {value.browsers.length > 1 && (
-        <p className="caption" style={{ margin: 0, fontSize: 12.5 }}>
-          Each test runs on {value.browsers.length} browsers.
-        </p>
       )}
     </div>
   )

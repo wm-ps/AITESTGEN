@@ -80,11 +80,14 @@ def _claim_number(session: Session, application_id: uuid.UUID) -> int:
     ).scalar_one()
 
 
-async def promote(run_id: uuid.UUID) -> dict[str, int]:
-    return await asyncio.to_thread(_promote, run_id)
+async def promote(run_id: uuid.UUID, only: uuid.UUID | None = None) -> dict[str, int]:
+    return await asyncio.to_thread(_promote, run_id, only)
 
 
-def _promote(run_id: uuid.UUID) -> dict[str, int]:
+def _promote(run_id: uuid.UUID, only: uuid.UUID | None = None) -> dict[str, int]:
+    """`only`: one scenario you just said is "Not a bug". It is added to its
+    screen's Journey; nothing already there (scenarios, generated tests) is
+    retired, so test cases generated meanwhile stay."""
     journal = Journal(run_id)
     with Session(engine) as session:
         run = session.get(ExplorerRun, run_id)
@@ -100,6 +103,7 @@ def _promote(run_id: uuid.UUID) -> dict[str, int]:
                 # Only what works: a possible bug never becomes a test case.
                 # It turns into one when you say "Not a bug" (it is then proven).
                 ExplorerTestCase.status == "proven",
+                *([ExplorerTestCase.external_id == only] if only else []),
             )
             .order_by(col(ExplorerTestCase.created_at))
         ).all()
@@ -161,6 +165,8 @@ def _promote(run_id: uuid.UUID) -> dict[str, int]:
                     Journey.identity_key == identity_key(thing),
                 )
             ).first()
+            # One scenario into a Journey that exists: add to it as it is.
+            adding = journey is not None and only is not None
             if journey is None:
                 journey = Journey(
                     application_id=application.id,
@@ -169,7 +175,7 @@ def _promote(run_id: uuid.UUID) -> dict[str, int]:
                     identity_key=identity_key(thing),
                     attempt=1,
                 )
-            else:
+            elif not adding:
                 journey.attempt += 1
                 journey.discovery_run_id = discovery_run.id
                 _retire(session, journey.id)
@@ -187,6 +193,8 @@ def _promote(run_id: uuid.UUID) -> dict[str, int]:
 
             # Step: the screen itself, as a Page with its screenshot.
             area = [s for s in screens if s.name.lower() == thing.lower()][:1] or screens[:1]
+            if adding:
+                area = []  # its steps are already there
             for order, screen in enumerate(area[:MAX_STEPS], start=1):
                 page_id = page_for_screen.get(screen.id)
                 if page_id is None:
@@ -256,11 +264,12 @@ def _promote(run_id: uuid.UUID) -> dict[str, int]:
 
         # Areas an earlier run promoted but this run has nothing proven for
         # keep stale tests otherwise: retire them too.
+        # (Not when adding one: every other area is still this run's.)
         promoted = {identity_key(thing) for thing in groups}
         for journey in session.exec(
             select(Journey).where(Journey.application_id == application.id)
         ).all():
-            if journey.identity_key in promoted:
+            if only is not None or journey.identity_key in promoted:
                 continue
             if any(
                 (old.grounding or {}).get("explorer_test")
@@ -275,7 +284,15 @@ def _promote(run_id: uuid.UUID) -> dict[str, int]:
         discovery_run.status = "complete"
         discovery_run.stage = "analyzed"
         session.add(discovery_run)
+        added = tests[0].title
         session.commit()
+    if only is not None:
+        journal.event(
+            "summary",
+            f"Added to the scenarios: {added}",
+            "Press “Generate tests” to turn it into a test too.",
+        )
+        return {"journeys": len(groups), "scenarios": scenarios}
     journal.event(
         "summary",
         f"{scenarios} scenarios ready to become tests",
@@ -560,6 +577,11 @@ def _proof_sentence(check: dict[str, Any] | None) -> str:
         return f" Proof of success: the address contains “{check['value']}”."
     if check.get("kind") == "field_invalid":
         return f" Proof of success: the field “{check['value']}” is flagged as not valid."
+    if check.get("kind") == "download":
+        return f" Proof of success: a file named like “{check['value']}” downloads."
+    if check.get("kind") == "element_state":
+        state = "; ".join(" ".join(line.split()).removeprefix("- ") for line in str(check["value"]).splitlines())
+        return f" Proof of success: {check.get('role')} “{check.get('name')}” is in this state: {state[:400]}."
     return f" Proof of success: the screen shows “{check['value']}”."
 
 

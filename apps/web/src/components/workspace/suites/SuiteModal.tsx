@@ -29,14 +29,8 @@ export function SuiteModal({
 }) {
   useEscapeToClose(onClose)
   return (
-    <div onClick={onClose} style={modalOverlay}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={ariaLabel ?? title}
-        onClick={(e) => e.stopPropagation()}
-        style={{ ...modalPanel, maxWidth }}
-      >
+    <div style={modalOverlay}>
+      <div role="dialog" aria-modal="true" aria-label={ariaLabel ?? title} style={{ ...modalPanel, maxWidth }}>
         <div style={{ ...modalHeader, borderBottom: subtitle || !bodyScrolls ? '1px solid var(--line)' : undefined }}>
           <div>
             <h2 style={modalTitle}>{title}</h2>

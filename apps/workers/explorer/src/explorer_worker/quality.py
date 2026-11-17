@@ -1,5 +1,7 @@
 """Page-quality checks: broken images (23), console errors and failed
 requests (25, 39), phone-width layout (35/36) and labelled fields (37).
+New runs plan one combined `page_quality` check per screen; the single
+checks stay so older runs' tests still prove and export.
 
 These are measured by the browser itself, not judged by the model, so the
 same check runs the same way in Explorer and in the exported test. Each one
@@ -16,6 +18,12 @@ PHONE = {"width": 390, "height": 844}
 
 # name -> (title, expected)
 CHECKS: dict[str, tuple[str, str]] = {
+    "page_quality": (
+        "{screen} passes the page-quality checks",
+        "The screen opens with no script errors or failed requests; every image loads and "
+        "has alt text; every field, button and link has a name; no element id is used twice; "
+        "the page has a title.",
+    ),
     "loads_cleanly": (
         "{screen} loads without script errors or failed requests",
         "Opening the screen shows no script errors and every request to the app succeeds.",
@@ -36,7 +44,31 @@ CHECKS: dict[str, tuple[str, str]] = {
 
 # Browser-side measurements: each returns a list of problems (empty = fine),
 # or null when there is nothing on the screen to check.
+# ponytail: clipped text and overlapping elements are left out: on Denali they
+# flagged icon labels hidden on purpose on every screen. Add with a real
+# visual check (layout diff), not a scrollWidth rule.
 _JS = {
+    "page_quality": """() => {
+  const shown = (e) => !!(e.offsetParent || e.getClientRects().length);
+  const named = (e) => (e.innerText || '').trim() || e.getAttribute('aria-label') || e.getAttribute('aria-labelledby')
+    || e.getAttribute('title') || e.value || e.querySelector('img[alt]:not([alt=""]), svg title');
+  const what = (e) => (e.id ? '#' + e.id : e.getAttribute('name') || String(e.className).split(' ')[0] || e.tagName.toLowerCase()).slice(0, 60);
+  const problems = [];
+  const add = (label, items) => [...new Set(items)].slice(0, 5).forEach((i) => problems.push(`${label}: ${i}`));
+  const images = [...document.images].filter(shown);
+  add('Broken image', images.filter((i) => i.complete && i.naturalWidth === 0).map((i) => i.currentSrc || i.src));
+  add('Image without alt text', images.filter((i) => !i.hasAttribute('alt')).map((i) => i.currentSrc || i.src));
+  add('Field without a label', [...document.querySelectorAll('input, select, textarea')].filter((f) => shown(f)
+    && !['hidden', 'submit', 'button', 'reset', 'image'].includes((f.type || '').toLowerCase())
+    && !((f.labels && f.labels.length) || f.getAttribute('aria-label') || f.getAttribute('aria-labelledby') || f.getAttribute('title'))).map(what));
+  add('Button without a name', [...document.querySelectorAll('button, [role=button]')].filter((b) => shown(b) && !named(b)).map(what));
+  add('Link without a name', [...document.querySelectorAll('a[href]')].filter((a) => shown(a) && !named(a)).map((a) => a.getAttribute('href')));
+  const ids = {};
+  for (const e of document.querySelectorAll('[id]')) if (e.id) ids[e.id] = (ids[e.id] || 0) + 1;
+  add('Id used more than once', Object.keys(ids).filter((k) => ids[k] > 1));
+  if (!document.title.trim()) problems.push('The page has no title');
+  return problems;
+}""",
     "no_broken_images": """() => {
   const shown = [...document.images].filter((i) => i.offsetParent);
   if (!shown.length) return null;
@@ -56,9 +88,12 @@ _JS = {
 }
 
 
-# Kept so older runs' phone checks still prove and export, but no longer
-# planned: responsive scenarios aren't wanted for now.
-NOT_PLANNED = {"fits_phone"}
+# Kept so older runs' tests still prove and export, but no longer planned:
+# responsive scenarios aren't wanted for now, and the rest are all inside
+# the one combined `page_quality` check.
+NOT_PLANNED = {"fits_phone", "loads_cleanly", "no_broken_images", "fields_labelled"}
+# Checks that also listen for script errors and failed requests while loading.
+LISTENS = {"loads_cleanly", "page_quality"}
 
 
 def planned_checks(screen: dict[str, Any]) -> list[str]:
@@ -114,16 +149,17 @@ async def measure(eyes: Eyes, name: str, url: str) -> list[str] | None:
     }
     await page.set_viewport_size(PHONE if name == "fits_phone" else {"width": 1440, "height": 900})
     await page.goto("about:blank")
-    if name == "loads_cleanly":
+    if name in LISTENS:
         for event, handler in listeners.items():
             page.on(event, handler)
     try:
         await eyes.goto(url)
         if name == "loads_cleanly":
             return sorted(set(problems))
-        return await page.evaluate(_JS[name])
+        found = await page.evaluate(_JS[name])
+        return [*sorted(set(problems)), *found] if name in LISTENS else found
     finally:
-        if name == "loads_cleanly":
+        if name in LISTENS:
             for event, handler in listeners.items():
                 page.remove_listener(event, handler)
 
@@ -150,7 +186,7 @@ def playwright_code(title: str, name: str, url: str, tag: str | None, failing: s
         lines.append(f"  test.fixme(true, {q('Known bug — the app currently: ' + failing)});")
     if name == "fits_phone":
         lines.append(f"  await page.setViewportSize({q(PHONE)});")
-    if name == "loads_cleanly":
+    if name in LISTENS:
         origin = f"{urlsplit(url).scheme}://{urlsplit(url).netloc}"
         lines += [
             "  const problems: string[] = [];",
@@ -166,6 +202,8 @@ def playwright_code(title: str, name: str, url: str, tag: str | None, failing: s
     ]
     if name == "loads_cleanly":
         lines.append("  expect(problems).toEqual([]);")
+    elif name in LISTENS:
+        lines.append(f"  expect([...new Set(problems)].concat(await page.evaluate({q(_JS[name])}))).toEqual([]);")
     else:
         lines.append(f"  expect(await page.evaluate({q(_JS[name])}) ?? []).toEqual([]);")
     lines.append("});")

@@ -105,3 +105,14 @@ example value/domain (`"e.g. Apex Insurance Portal"`, `"you@company.com"`,
 exception is a field whose valid syntax genuinely isn't guessable from an
 instruction alone (e.g. a cron expression) — there, a real-format example
 is the actually-helpful placeholder.
+
+## Dialogs never close on a backdrop click
+
+A modal dialog's overlay has no `onClick` — clicking outside the panel must not
+dismiss it (it throws away whatever the user typed or picked). A dialog closes
+only from its own X, Cancel/Back, or Escape (`useEscapeToClose`). Applies to
+every dialog on `modalOverlay`/`SuiteModal`. Popovers/menus (`AnchoredMenu`),
+image lightboxes and the Activity/Explorer side drawers are not dialogs and may
+still close on an outside click.
+
+Toasts are the opposite: a click outside a toast dismisses it (`Toast` handles it).

@@ -1,13 +1,19 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_TARGET } from '../../runTarget'
-import { RunSuiteButton } from './RunSuiteButton'
+import { RunSuiteHarness } from './RunSuiteHarness'
 
 function setup() {
   const handlers = { onFullSuite: vi.fn(), onOpenJourneysDialog: vi.fn(), onOpenSuitesDialog: vi.fn() }
-  render(<RunSuiteButton running={false} {...handlers} />)
-  fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+  render(<RunSuiteHarness {...handlers} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Run' }))
   return handlers
+}
+
+// The cards only choose; the footer button starts the choice.
+function choose(card: string, action: string) {
+  fireEvent.click(screen.getByText(card))
+  fireEvent.click(screen.getByRole('button', { name: action }))
 }
 
 describe('RunSuiteButton', () => {
@@ -20,7 +26,7 @@ describe('RunSuiteButton', () => {
 
   it('Test suites opens the suites dialog and the other two are unchanged', () => {
     const handlers = setup()
-    fireEvent.click(screen.getByText('Test suites'))
+    choose('Test suites', 'Choose suite…')
     expect(handlers.onOpenSuitesDialog).toHaveBeenCalledWith(null, DEFAULT_TARGET)
     expect(handlers.onFullSuite).not.toHaveBeenCalled()
     expect(handlers.onOpenJourneysDialog).not.toHaveBeenCalled()
@@ -28,14 +34,14 @@ describe('RunSuiteButton', () => {
 
   it('All test cases and Selective run still call their own handlers', () => {
     const full = setup()
-    fireEvent.click(screen.getByText('All test cases'))
+    fireEvent.click(screen.getByRole('button', { name: 'Run all test cases' }))
     expect(full.onFullSuite).toHaveBeenCalledWith(null, DEFAULT_TARGET)
     expect(full.onOpenSuitesDialog).not.toHaveBeenCalled()
   })
 
   it('Selective run still opens the journeys dialog', () => {
     const handlers = setup()
-    fireEvent.click(screen.getByText('Selective run'))
+    choose('Selective run', 'Choose tests…')
     expect(handlers.onOpenJourneysDialog).toHaveBeenCalledWith(null, DEFAULT_TARGET)
     expect(handlers.onOpenSuitesDialog).not.toHaveBeenCalled()
   })
@@ -54,9 +60,9 @@ describe('RunSuiteButton browsers and window size', () => {
     const handlers = setup()
     fireEvent.click(screen.getByRole('checkbox', { name: /Firefox/ }))
     fireEvent.change(screen.getByRole('combobox', { name: /Window size/ }), { target: { value: '1920x1080' } })
-    expect(screen.getByText('Each test runs on 2 browsers.')).toBeInTheDocument()
+    expect(screen.queryByText(/Each test runs on/)).not.toBeInTheDocument()
 
-    fireEvent.click(screen.getByText('All test cases'))
+    fireEvent.click(screen.getByRole('button', { name: 'Run all test cases' }))
 
     expect(handlers.onFullSuite).toHaveBeenCalledWith(null, {
       browsers: ['chromium', 'firefox'],
@@ -77,12 +83,12 @@ describe('RunSuiteButton browsers and window size', () => {
 
     fireEvent.change(screen.getByLabelText('Width'), { target: { value: '700' } })
     expect(screen.getByRole('alert')).toHaveTextContent('Width must be between 800 and 3840.')
-    expect(screen.getByRole('button', { name: /All test cases/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Run all test cases' })).toBeDisabled()
 
     fireEvent.change(screen.getByLabelText('Width'), { target: { value: '1600' } })
     fireEvent.change(screen.getByLabelText('Height'), { target: { value: '900' } })
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByText('All test cases'))
+    fireEvent.click(screen.getByRole('button', { name: 'Run all test cases' }))
 
     expect(handlers.onFullSuite).toHaveBeenCalledWith(null, {
       browsers: ['chromium'],
@@ -95,8 +101,40 @@ describe('RunSuiteButton browsers and window size', () => {
     fireEvent.click(screen.getByRole('checkbox', { name: /Safari/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
 
-    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }))
 
     expect(screen.getByRole('checkbox', { name: /Safari/ })).not.toBeChecked()
+  })
+
+  it('does not close when the backdrop is clicked, only from Close, Cancel or Escape', () => {
+    setup()
+    fireEvent.click(screen.getByRole('dialog', { name: 'Run tests' }))
+    expect(screen.getByRole('dialog', { name: 'Run tests' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run' }))
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('has no footer summary of the browsers and size', () => {
+    setup()
+    fireEvent.click(screen.getByRole('checkbox', { name: /Firefox/ }))
+    expect(screen.queryByText(/2 browsers/)).not.toBeInTheDocument()
+  })
+
+  it('coming back keeps the earlier browsers, size and environment', () => {
+    setup()
+    fireEvent.click(screen.getByRole('checkbox', { name: /Firefox/ }))
+    fireEvent.change(screen.getByRole('combobox', { name: /Window size/ }), { target: { value: '1920x1080' } })
+    choose('Test suites', 'Choose suite…')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to Run tests' }))
+
+    expect(screen.getByRole('checkbox', { name: /Firefox/ })).toBeChecked()
+    expect(screen.getByRole('combobox', { name: /Window size/ })).toHaveValue('1920x1080')
   })
 })

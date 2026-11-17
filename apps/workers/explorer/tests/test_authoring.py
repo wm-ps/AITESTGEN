@@ -235,11 +235,223 @@ def test_a_flow_starts_where_the_walk_ended_and_says_so() -> None:
 
 
 def test_how_many_scenarios_follows_what_the_user_asked() -> None:
-    # Nothing said: the request plus the other scenarios worth testing on it.
-    assert plan.more_wanted({"scenarios": [], "count": None}) == 8
+    # Nothing said: the request plus every scenario the requirement calls for.
+    assert plan.more_wanted({"scenarios": [], "count": None}) == plan.CEILING
+    # "Write 10 test cases, including these 2": the 2 plus 8 more.
+    assert plan.more_wanted({"scenarios": ["a", "b"], "count": 10}) == 8
     # "Write a test case": just the request itself.
     assert plan.more_wanted({"scenarios": [], "count": 1}) == 0
     # "Write 3 test cases": the request plus 2 more.
     assert plan.more_wanted({"scenarios": [], "count": 3}) == 2
     # Scenarios written out: exactly those, nothing more.
     assert plan.more_wanted({"scenarios": ["a", "b"], "count": None}) == 0
+
+
+@pytest.mark.parametrize(
+    ("said", "count"),
+    [
+        ("5", 5),
+        (5, 5),
+        ("five", 5),
+        ("Twenty-one", 21),
+        ("a dozen", 12),
+        ("a", 1),
+        ("many", None),
+        (0, None),
+        ("99", None),
+        (None, None),
+    ],
+)
+def test_the_number_asked_for_is_read_in_digits_or_words(said: object, count: int | None) -> None:
+    assert request._count(said) == count
+
+
+def test_a_request_for_tests_becomes_its_understood_steps_not_the_sentence() -> None:
+    prompt = "write test cases for the lead creation in leeds page"
+    reading = {
+        "title": "Create a lead",
+        "steps": ["Open Leads", "Press New Lead", "Fill in the lead's details", "Press Save Lead"],
+        "checks": ["The new lead appears in the Leads list"],
+        "scenarios": [],
+    }
+    [main] = plan.request_scenarios(prompt, reading, "Home")
+    assert main["steps"] == reading["steps"]
+    assert main["how_to_run"].index("1. Open Leads") < main["how_to_run"].index("4. Press Save")
+    assert "The new lead appears in the Leads list" in main["expected"]
+    assert prompt not in main["steps"]
+    mission = plan.request_mission(prompt, reading)
+    assert "2. Press New Lead" in mission["instructions"]
+    assert prompt in mission["instructions"]  # the user's words stay as context
+
+
+def test_more_listed_than_asked_keeps_the_first_ones() -> None:
+    rows = plan.request_scenarios("x", {"scenarios": ["a", "b", "c"], "count": 2}, "Home")
+    assert [r["title"] for r in rows] == ["a", "b"]
+
+
+def test_a_short_reply_is_topped_up_to_the_number_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    replies = [
+        {"tests": [{"kind": "validation", "title": f"t{i}"} for i in range(3)]},
+        {"tests": [{"kind": "validation", "title": f"u{i}"} for i in range(4)]},
+    ]
+    asked: list[str] = []
+
+    async def ask_json(system: str, user: str, **_: Any) -> dict[str, Any]:
+        asked.append(user)
+        return replies.pop(0)
+
+    monkeypatch.setattr(plan, "ask_json", ask_json)
+    out = asyncio.run(plan._other_scenarios("ctx", "", 5, exact=True))
+    assert [t["title"] for t in out] == ["t0", "t1", "t2", "u0", "u1"]
+    assert "exactly 2 more" in asked[1] and '"t0"' in asked[1]  # no repeats
+
+
+def test_a_flow_alone_gets_the_full_scope_and_anything_specified_is_followed() -> None:
+    assert plan.wants_full_scope({"scenarios": [], "count": None, "only": None})
+    assert not plan.wants_full_scope({"scenarios": ["Save with no email"], "count": None})
+    assert not plan.wants_full_scope({"scenarios": [], "count": 5})
+    assert not plan.wants_full_scope({"scenarios": [], "count": None, "only": "positive only"})
+
+
+async def test_full_scope_writes_every_field_rule_plus_the_checklist(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    async def checklist(*_a, only, **_k):  # type: ignore[no-untyped-def]
+        return [{"kind": "data_load", "title": f"Search match on {only[0]}", "expected": "x"}]
+
+    async def no_review(*_a, **_k):  # type: ignore[no-untyped-def]
+        return []
+
+    monkeypatch.setattr(plan.brain, "plan_tests", checklist)
+    monkeypatch.setattr(plan.brain, "review_plan", no_review)
+    form = {
+        "name": "New Contact",
+        "kind": "form",
+        "fields": [
+            {"label": "First Name", "required": True},
+            {"label": "Last Name", "required": True},
+            {"label": "Email", "type": "email"},
+        ],
+    }
+    tests = await plan._scope_scenarios({}, [form], [], [], None, may_save=True, approved=[])
+    titles = [t["title"] for t in tests]
+    assert "Empty New Contact can't be saved" in titles
+    assert "First Name is required on New Contact" in titles
+    assert any(t.startswith("Email refuses") for t in titles)
+    assert "Search match on New Contact" in titles
+
+
+async def test_a_missing_scope_item_is_written_then_the_report_says_what_was_left_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scope(*_a: Any, **_k: Any) -> list[dict[str, Any]]:
+        return [{"kind": "validation", "title": "Email refuses a wrong format", "expected": "x"}]
+
+    checks = [
+        [
+            {"screen": "New Contact", "id": "F-06", "status": "covered", "tests": ["Email…"]},
+            {"screen": "New Contact", "id": "F-17", "status": "missing", "why": "has Cancel"},
+            {"screen": "New Contact", "id": "F-11", "status": "not_applicable", "why": "none"},
+        ],
+        [
+            {"screen": "New Contact", "id": "F-06", "status": "covered", "tests": ["Email…"]},
+            {"screen": "New Contact", "id": "F-17", "status": "covered", "tests": ["Cancel"]},
+            {"screen": "New Contact", "id": "F-11", "status": "not_applicable", "why": "none"},
+        ],
+    ]
+
+    async def check(*_a: Any) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        # The second check also spots a duplicate written in the gap round.
+        return checks.pop(0), ({} if checks else {"Cancel twice": "duplicate of Cancel"})
+
+    async def gaps(_user: str, missing: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        assert [m["id"] for m in missing] == ["F-17"]
+        return [
+            {"kind": "navigation", "title": "Cancel saves nothing", "expected": "x"},
+            {"kind": "navigation", "title": "Cancel twice", "expected": "x"},
+        ]
+
+    events: list[tuple[str, str]] = []
+    journal = type("J", (), {"event": lambda self, k, t, d=None: events.append((t, d or ""))})()
+    monkeypatch.setattr(plan, "_scope_scenarios", scope)
+    monkeypatch.setattr(plan.scope, "check_scope", check)
+    monkeypatch.setattr(plan, "_gap_scenarios", gaps)
+    tests = await plan.cover_scope(
+        journal,  # type: ignore[arg-type]
+        "",
+        {},
+        [],
+        [],
+        [],
+        None,
+        may_save=True,
+        approved=[],
+    )
+    assert [t["title"] for t in tests] == ["Email refuses a wrong format", "Cancel saves nothing"]
+    assert events[0][0].startswith("Scope not met yet: 1 item(s) missing")
+    assert events[1] == (
+        "Left out 1 scenario(s) before trying them",
+        "Cancel twice: duplicate of Cancel",
+    )
+    headline, detail = events[-1]
+    assert headline == "Scope check: 2 of 2 items covered (1 not on these pages)"
+    assert "F-11 Dependent field — left out: none" in detail
+
+
+def test_the_home_screen_is_in_scope_only_when_the_request_names_it() -> None:
+    brief = {"request": {"flow": "Create a territory from the Territories page"}}
+    prompt = "write test cases for the new territory flow in Territories Page."
+    assert not plan.names_screen("Sales dashboard", prompt, brief)
+    assert plan.names_screen("Territories", prompt, brief)
+    assert plan.names_screen("Sales dashboard", "check the sales dashboard figures", {})
+
+
+async def test_a_scenario_naming_something_the_app_lacks_is_asked_then_stops_unanswered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def ask_json(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {"unclear": [{"index": 2, "question": "There is no Discount field. Which?"}]}
+
+    answers = ["Price"]
+
+    async def wait_for_answer(*_a: Any) -> str | None:
+        return answers.pop(0) if answers else None
+
+    stopped: list[object] = []
+    monkeypatch.setattr(plan, "ask_json", ask_json)
+    monkeypatch.setattr(plan, "wait_for_answer", wait_for_answer)
+    monkeypatch.setattr(plan, "stop_unclear", stopped.append)
+    journal = type("J", (), {"run_id": "r"})()
+    request = {"scenarios": ["Save an order", "Discount refuses -1"]}
+    clarified = await plan.clarify_scenarios(journal, request, [])  # type: ignore[arg-type]
+    assert clarified is not None
+    assert clarified["scenarios"] == ["Save an order", "Discount refuses -1 (You answered: Price)"]
+    # No answer: no guessed tests, the run stops saying why.
+    assert await plan.clarify_scenarios(journal, request, []) is None  # type: ignore[arg-type]
+    assert stopped == ["r"]
+
+
+def test_a_flows_scope_is_its_own_screens_not_the_route_to_it() -> None:
+    from datetime import datetime
+
+    from explorer_core import ExplorerScreen
+
+    def screen(name: str, minute: int) -> ExplorerScreen:
+        return ExplorerScreen(
+            run_id=uuid.uuid4(), name=name, created_at=datetime(2026, 11, 17, 13, minute)
+        )
+
+    dashboard, accounts, form, saved = (
+        screen("Sales dashboard", 1),
+        screen("Account list", 2),
+        screen("New account form", 3),
+        screen("Account details", 4),
+    )
+    screens = [dashboard, accounts, form, saved]
+    prompt = "create test cases for the new account flow in accounts page"
+    assert plan.flow_screens(screens, "New account form", "Sales dashboard", prompt, {}) == [
+        form,
+        saved,
+    ]
+    # "Test the accounts page": the walk ends on the list, so the list is the scope.
+    assert plan.flow_screens(screens, "Account list", "Sales dashboard", prompt, {})[0] is accounts
+    # No walk end: everything but the home screen the request doesn't name.
+    assert dashboard not in plan.flow_screens(screens, None, "Sales dashboard", prompt, {})

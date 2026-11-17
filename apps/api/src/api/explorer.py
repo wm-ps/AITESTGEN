@@ -350,8 +350,8 @@ async def begin_run(
         application_id=application.id,
         notes=(notes or "").strip() or None,
         started_by_id=started_by,
-        # The app's Explorer limits (Application settings), as of now.
-        limits=limits_snapshot(session, application.explorer_limits),
+        # Settings → Explorer limits, as of now.
+        limits=limits_snapshot(session),
     )
     session.add(run)
     # Notes (test data like a policy number) are remembered for later runs —
@@ -732,7 +732,7 @@ async def resume_run(
     await _end_leftover_workflow(run, "Resumed by the user")
     # Today's limits from Settings: raising the one that paused it is how a
     # run reaching its budget or time carries on.
-    run.limits = limits_snapshot(session, application.explorer_limits)
+    run.limits = limits_snapshot(session)
     run.status, run.headline, run.updated_at = "queued", "Resuming", datetime.now(UTC)
     session.add(run)
     if not run.prompt:  # an authoring run is not the app's discovery
@@ -839,6 +839,7 @@ class ExplorerSettingsBody(BaseModel):
     hidden_screen_search_minutes: int = Field(default=25, ge=0, le=600)
     ai_budget_usd: float | None = Field(default=None, gt=0, le=100000)
     first_look_max_screens: int = Field(default=150, ge=5, le=1000)
+    max_screens: int | None = Field(default=None, ge=1, le=5000)
     max_missions: int = Field(default=15, ge=1, le=100)
     steps_per_mission: int = Field(default=20, ge=5, le=200)
     steps_per_scenario: int = Field(default=20, ge=5, le=200)
@@ -858,40 +859,6 @@ def _check_limits(payload: ExplorerSettingsBody) -> None:
             detail="Give missions more time than the question wait — a mission waiting for "
             "your answer counts toward its time limit",
         )
-
-
-@router.get("/applications/{application_id}/settings", response_model=ExplorerSettingsBody)
-def get_application_explorer_settings(
-    application_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep
-) -> ExplorerSettingsBody:
-    """The limits this application's runs use (Application settings): its own,
-    or the organisation's until it has its own. Readable by everyone on the
-    app; only admins change them."""
-    application = _owned_application(session, application_id, org_id)
-    limits = limits_snapshot(session, application.explorer_limits)
-    session.commit()  # the organisation row may have just been created
-    return ExplorerSettingsBody.model_validate(limits)
-
-
-@router.put("/applications/{application_id}/settings", response_model=ExplorerSettingsBody)
-def update_application_explorer_settings(
-    application_id: uuid.UUID,
-    payload: ExplorerSettingsBody,
-    session: SessionDep,
-    org_id: CurrentOrgIdDep,
-    admin: CurrentAdminDep,
-) -> ExplorerSettingsBody:
-    """This application's own limits; its next runs use them (a run going now
-    keeps the limits it started with, Resume picks up the new ones)."""
-    _check_limits(payload)
-    application = _owned_application(session, application_id, org_id)
-    application.explorer_limits = payload.model_dump()
-    session.add(application)
-    record_activity(
-        session, admin, "settings", "Changed the Explorer limits", application=application
-    )
-    session.commit()
-    return ExplorerSettingsBody.model_validate(application.explorer_limits)
 
 
 @router.get("/settings", response_model=ExplorerSettingsBody)
@@ -1267,7 +1234,9 @@ async def judge_possible_bug(
 ) -> RunRead:
     """Your answer to a possible bug. "Not a bug": the app is right, so the
     scenario becomes a normal test of what it does and goes to Test cases.
-    "Ignore": it is left out. Test cases never hold bugs."""
+    "Ignore": it is left out — except on an authoring run, where the user asked
+    for that test: either answer approves it as a normal test case, never
+    blocked. Test cases never hold bugs."""
     row = session.exec(
         select(ExplorerTestCase, ExplorerRun)
         .join(ExplorerRun, col(ExplorerRun.id) == col(ExplorerTestCase.run_id))
@@ -1279,13 +1248,17 @@ async def judge_possible_bug(
     test, run = row
     if test.status != "known_bug":
         raise HTTPException(status_code=409, detail="only a possible bug can be answered")
-    if payload.verdict == "ignore":
+    keep = payload.verdict == "not_a_bug" or (payload.verdict == "ignore" and bool(run.prompt))
+    if payload.verdict not in ("not_a_bug", "ignore"):
+        raise HTTPException(status_code=422, detail="verdict must be not_a_bug or ignore")
+    if not keep:
         test.status, test.drop_reason = "dropped", "Ignored by you"
-    elif payload.verdict == "not_a_bug":
+    else:
         test.status, test.trust = "proven", "confirmed"
         test.expected = (test.observed or test.expected)[:1000]
         test.observed = None
         test.code = _KNOWN_BUG_LINE.sub("", test.code or "") or None
+    if payload.verdict == "not_a_bug":
         session.add(
             ExplorerKnowledge(
                 application_id=run.application_id,
@@ -1294,18 +1267,16 @@ async def judge_possible_bug(
                 source="your answer",
             )
         )
-    else:
-        raise HTTPException(status_code=422, detail="verdict must be not_a_bug or ignore")
     session.add(test)
     session.commit()
     application = session.get(Application, run.application_id)
     assert application is not None
-    if payload.verdict == "not_a_bug":
+    if keep:
         # Send the now-proven scenario on to Journeys / Test cases.
         client = await get_temporal_client()
         await client.start_workflow(
             run_workflow_name(run),
-            args=[str(run.id), "send"],
+            args=[str(run.id), "send", str(test.external_id)],
             id=f"{explorer_workflow_id(run.external_id)}-send-{uuid.uuid4()}",
             task_queue=EXPLORER_TASK_QUEUE,
         )

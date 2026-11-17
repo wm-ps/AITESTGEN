@@ -85,6 +85,25 @@ def test_explorable_link_rules():
     assert not is_explorable_link("mailto:x@a.com", origin)
 
 
+def test_app_boundary():
+    from explorer_worker.sense import app_root, inside_app, named_addresses
+
+    root = app_root("http://host.ai/crm/Denali/")
+    assert root == "http://host.ai/crm/Denali/"
+    assert inside_app("https://host.ai/crm/Denali/#/Leads", root)  # http -> https
+    assert inside_app("https://host.ai:443/crm/Denali", root)
+    assert not inside_app("https://host.ai/crm/OtherApp/#/Home", root)
+    assert not inside_app("https://host.ai/crm/DenaliX/", root)
+    assert not inside_app("https://other.com/crm/Denali/", root)
+    assert inside_app("about:blank", root)
+    assert app_root("https://a.com/login") == "https://a.com/"
+    assert inside_app("https://a.com/anything/here", app_root("https://a.com"))
+    assert not is_explorable_link("https://host.ai/crm/OtherApp/", (root,))
+    assert named_addresses("Also check https://docs.a.com/help.", None) == (
+        "https://docs.a.com/help",
+    )
+
+
 def test_risky_labels():
     assert is_risky_label("Delete customer")
     assert is_risky_label("Submit quote")

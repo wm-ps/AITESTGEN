@@ -283,4 +283,8 @@ def test_page_quality_test_runs_the_same_measurement():
     bug = quality.playwright_code("t", "loads_cleanly", "https://a.com/Loans", None, "500 https://a.com/api")
     assert "test.fixme(true" in bug and "expect(problems).toEqual([])" in bug
     assert '!m.text().includes("Permissions policy violation: unload' in bug
-    assert quality.planned_checks({"fields": []}) == ["loads_cleanly", "no_broken_images"]
+    # New runs: one combined check per screen, listening and measuring.
+    assert quality.planned_checks({"fields": [{"label": "Name"}]}) == ["page_quality"]
+    combined = quality.playwright_code("t", "page_quality", "https://a.com/Loans", None, None)
+    assert "page.on('requestfailed'" in combined and "Id used more than once" in combined
+    assert "concat(await page.evaluate(" in combined

@@ -10,13 +10,13 @@ const SUITES = [
   summary({ id: 'empty', name: 'Payments', test_case_count: 0, unavailable_count: 2 }),
 ]
 
-async function renderDialog(onRun = vi.fn(), onClose = vi.fn()) {
+async function renderDialog(onRun = vi.fn(), onClose = vi.fn(), onBack = vi.fn()) {
   vi.spyOn(api, 'listCollections').mockResolvedValue(SUITES)
   render(
-    <RunTestSuiteDialog applicationId="app-1" initialEnvironmentId="env-1" onClose={onClose} onRun={onRun} />,
+    <RunTestSuiteDialog applicationId="app-1" onClose={onClose} onBack={onBack} onRun={onRun} />,
   )
   await screen.findByText('Smoke')
-  return { onRun, onClose }
+  return { onRun, onClose, onBack }
 }
 
 afterEach(() => vi.restoreAllMocks())
@@ -30,17 +30,17 @@ describe('RunTestSuiteDialog', () => {
     expect(screen.getByText('Unavailable test cases are skipped.')).toBeInTheDocument()
   })
 
-  it('preselects the first runnable suite and runs it with the environment', async () => {
+  it('preselects the first runnable suite and runs it', async () => {
     const { onRun } = await renderDialog()
     fireEvent.click(screen.getByRole('button', { name: /Run 4 test cases/ }))
-    expect(onRun).toHaveBeenCalledWith('smoke', 'env-1')
+    expect(onRun).toHaveBeenCalledWith('smoke')
   })
 
   it('switching suite changes the run button', async () => {
     const { onRun } = await renderDialog()
     fireEvent.click(screen.getByRole('radio', { name: /Regression/ }))
     fireEvent.click(screen.getByRole('button', { name: /Run 7 test cases/ }))
-    expect(onRun).toHaveBeenCalledWith('regression', 'env-1')
+    expect(onRun).toHaveBeenCalledWith('regression')
   })
 
   it('a suite with nothing runnable cannot be chosen or run', async () => {
@@ -51,13 +51,32 @@ describe('RunTestSuiteDialog', () => {
     fireEvent.click(empty)
     // still on the preselected suite
     fireEvent.click(screen.getByRole('button', { name: /Run 4 test cases/ }))
-    expect(onRun).toHaveBeenCalledWith('smoke', 'env-1')
+    expect(onRun).toHaveBeenCalledWith('smoke')
+  })
+
+  it('does not ask for the environment again', async () => {
+    await renderDialog()
+    expect(screen.queryByLabelText('Run on environment')).not.toBeInTheDocument()
+  })
+
+  it('Back goes to the previous dialog; Close and the backdrop behave separately', async () => {
+    const { onBack, onClose } = await renderDialog()
+    fireEvent.click(screen.getByRole('dialog'))
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect(onBack).toHaveBeenCalledTimes(1)
+    expect(onClose).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(onClose).toHaveBeenCalledTimes(1)
   })
 
   it('shows a helpful line when there are no suites, and cannot run', async () => {
     vi.spyOn(api, 'listCollections').mockResolvedValue([])
     const onRun = vi.fn()
-    render(<RunTestSuiteDialog applicationId="app-1" initialEnvironmentId={null} onClose={vi.fn()} onRun={onRun} />)
+    render(<RunTestSuiteDialog applicationId="app-1" onClose={vi.fn()} onBack={vi.fn()} onRun={onRun} />)
     await screen.findByText(/No test suites yet/)
     fireEvent.click(screen.getByRole('button', { name: /Run test cases/ }))
     expect(onRun).not.toHaveBeenCalled()

@@ -231,9 +231,6 @@ export function RecordingSessionWindow({ vncWsUrl, controlWsUrl, authMode, appli
             role="dialog"
             aria-modal="true"
             aria-label="Discard recording"
-            onClick={() => {
-              if (!cancelling) setConfirmingCancel(false)
-            }}
             style={{ ...modalOverlay, zIndex: 100 }}
           >
             <div onClick={(e) => e.stopPropagation()} style={{ ...modalPanel, maxWidth: 440 }}>

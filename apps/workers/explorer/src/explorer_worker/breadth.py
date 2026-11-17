@@ -13,18 +13,19 @@ import re
 import uuid
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
 import httpx
 from explorer_core import ExplorerAccess, ExplorerRole, ExplorerRun
 from playwright.async_api import Error as PlaywrightError
 from sqlmodel import Session, select
 
+from explorer_worker import limits
 from explorer_worker.browser import Eyes
 from explorer_worker.db import engine
 from explorer_worker.journal import Journal
 from explorer_worker.mind import Mind
-from explorer_worker.sense import url_pattern
+from explorer_worker.sense import inside_app, url_pattern
 from explorer_worker.goal import ensure_scope, screens_in_goal
 from explorer_worker.session import Target, load_target, open_signed_in
 
@@ -55,7 +56,7 @@ _SERVICE_PATH = re.compile(
 
 async def breadth(run_id: uuid.UUID, heartbeat: Callable[[], None]) -> None:
     journal = Journal(run_id)
-    if journal.status() == "stopped":
+    if journal.status() == "stopped" or limits.screen_limit_reached(run_id):
         return
     target = load_target(run_id)
     journal.update_run(
@@ -210,7 +211,7 @@ async def _unlinked_pages(
             if hash_routing or not route.startswith("/")
             else urljoin(origin, route)
         )
-        if urlsplit(url).netloc == urlsplit(origin).netloc and url_pattern(url) not in known:
+        if inside_app(url, *eyes.roots) and url_pattern(url) not in known:
             candidates.append(url)
     journal.event(
         "phase",

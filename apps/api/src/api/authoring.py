@@ -5,6 +5,7 @@ Explorer run; it never touches the app's discovery record."""
 
 import uuid
 
+from domain import Journey
 from explorer_core import (
     ACTIVE_RUN_STATUSES,
     AUTHORING_WORKFLOW_NAME,
@@ -15,7 +16,7 @@ from explorer_core import (
 from explorer_core.limits import snapshot as limits_snapshot
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlmodel import col, select
+from sqlmodel import col, func, select
 
 from api.auth import CurrentOrgIdDep, CurrentUserDep
 from api.explorer import RunRead, SessionDep, _owned_application, _to_read
@@ -26,6 +27,10 @@ router = APIRouter(prefix="/explorer", tags=["authoring"])
 
 class AuthorRequest(BaseModel):
     prompt: str
+    # Where the test cases go: an existing Journey, or a new Journey by this
+    # name. Neither (older clients): the request gets a Journey of its own.
+    journey_id: uuid.UUID | None = None
+    journey_name: str | None = None
 
 
 @router.post("/applications/{application_id}/author", response_model=RunRead, status_code=201)
@@ -40,6 +45,29 @@ async def start_authoring(
     prompt = payload.prompt.strip()
     if not prompt:
         raise HTTPException(status_code=422, detail="Describe the test cases you want")
+    journey_name = (payload.journey_name or "").strip()[:200] or None
+    if payload.journey_id is not None and journey_name is not None:
+        raise HTTPException(
+            status_code=422, detail="Select an existing journey or enter a new journey name."
+        )
+    journeys = select(Journey).where(Journey.application_id == application.id)
+    if (
+        payload.journey_id is not None
+        and session.exec(journeys.where(Journey.external_id == payload.journey_id)).first() is None
+    ):
+        raise HTTPException(status_code=404, detail="JOURNEY_NOT_FOUND")
+    if (
+        journey_name is not None
+        and session.exec(
+            journeys.where(
+                Journey.status == "candidate", func.lower(Journey.name) == journey_name.lower()
+            )
+        ).first()
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="A journey with this name already exists. Select it from the list instead.",
+        )
     active = session.exec(
         select(ExplorerRun).where(
             ExplorerRun.application_id == application.id,
@@ -58,7 +86,16 @@ async def start_authoring(
         application_id=application.id,
         prompt=prompt[:8000],
         started_by_id=user.id,
-        limits=limits_snapshot(session, application.explorer_limits),  # as of now
+        # As of now, but each scenario is tried once and never replayed:
+        # replays must not decide which test cases the user gets.
+        limits={**limits_snapshot(session), "proof_replays": 0},
+        insights=(
+            {"journey": {"id": str(payload.journey_id)}}
+            if payload.journey_id
+            else {"journey": {"name": journey_name}}
+            if journey_name
+            else {}
+        ),
     )
     session.add(run)
     session.commit()

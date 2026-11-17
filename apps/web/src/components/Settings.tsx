@@ -12,7 +12,7 @@ import {
 } from '../api'
 import { ApprovedDomainsPanel } from './ApprovedDomainsPanel'
 import { LoadingDots } from './LoadingDots'
-import { type ExplorerSettings } from '../explorer/explorerApi'
+import { explorerApi, type ExplorerSettings } from '../explorer/explorerApi'
 import { PasswordInput } from './PasswordInput'
 import { SkeletonRows } from './Skeleton'
 import { AccessDeniedIllustration } from './EmptyState'
@@ -297,7 +297,7 @@ export function CredentialsForm({
 }
 
 
-// Explorer limits (an application's Settings tab): what really bounds an Explorer (or authoring)
+// Explorer limits (Settings page, for every application): what really bounds an Explorer (or authoring)
 // run's time and AI cost. A run copies them when it starts; Resume picks up
 // changes. "No limit" is null.
 type LimitOption = { value: number | null; label: string }
@@ -348,7 +348,7 @@ function LimitGroup({ title, children }: { title: string; children: React.ReactN
   )
 }
 
-export function ExplorerLimitsSection({ limits, onChange }: { limits: ExplorerSettings; onChange: (limits: ExplorerSettings) => void }) {
+function ExplorerLimitsSection({ limits, onChange }: { limits: ExplorerSettings; onChange: (limits: ExplorerSettings) => void }) {
   const set = <K extends keyof ExplorerSettings>(key: K, value: ExplorerSettings[K]) => onChange({ ...limits, [key]: value })
   const waitsForever = limits.question_wait_minutes == null
   return (
@@ -418,6 +418,18 @@ export function ExplorerLimitsSection({ limits, onChange }: { limits: ExplorerSe
       </LimitGroup>
 
       <LimitGroup title="Coverage">
+        <Field label="Screens to explore" hint="Most screens one run finds. Once reached, exploring stops and scenarios are written for those screens. Leave empty for no limit.">
+          <input
+            type="number"
+            min={1}
+            step={1}
+            placeholder="Enter a number of screens"
+            aria-label="Screens to explore"
+            value={limits.max_screens ?? ''}
+            onChange={(e) => set('max_screens', e.target.value === '' ? null : Math.max(1, Math.round(Number(e.target.value))))}
+            style={fieldInputStyle}
+          />
+        </Field>
         <Field label="Screens in the first look" hint="Most screens Explorer visits before writing the App Summary.">
           <LimitSelect
             label="Screens in the first look"
@@ -733,9 +745,9 @@ export function SettingsDetail({
   )
 }
 
-// Platform-level settings only; an application's own (environments, Explorer
-// limits, test case generation) are on its Settings tab.
-type SectionKey = 'credentials' | 'retention'
+// Platform-level settings; an application's own (environments, sign-in, test
+// case generation) are on its Settings tab.
+type SectionKey = 'credentials' | 'explorer' | 'retention'
 
 // The hub's cards, in the order shown. `form`: has fields saved by the footer
 // (Saved credentials saves each row itself).
@@ -745,6 +757,12 @@ const SECTIONS: (SettingsCard<SectionKey> & { form: boolean })[] = [
     title: 'Saved credentials',
     description: 'See every application’s saved sign-in and turn sign-in on or off. Add credentials in an application’s settings.',
     form: false,
+  },
+  {
+    key: 'explorer',
+    title: 'Explorer limits',
+    description: 'Control run time, AI spend, and how much of each application Explorer maps and confirms.',
+    form: true,
   },
   {
     key: 'retention',
@@ -769,6 +787,8 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
   const [savedSettings, setSavedSettings] = useState<SettingsRead | null>(null)
   const [settings, setSettings] = useState<SettingsRead | null>(null)
   const [section, setSection] = useState<SectionKey | null>(null)
+  const [savedLimits, setSavedLimits] = useState<ExplorerSettings | null>(null)
+  const [limits, setLimits] = useState<ExplorerSettings | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -792,6 +812,19 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
       .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load settings.'))
       .finally(() => setLoading(false))
   }, [isAdmin])
+
+  // Explorer limits load when their card is opened.
+  const needsLimits = section === 'explorer' && !savedLimits
+  useEffect(() => {
+    if (!needsLimits) return
+    explorerApi
+      .getSettings()
+      .then((loaded) => {
+        setSavedLimits(loaded)
+        setLimits(loaded)
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load settings.'))
+  }, [needsLimits])
 
   if (!isAdmin) {
     return (
@@ -837,6 +870,7 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
 
   function discard() {
     setSettings(savedSettings)
+    setLimits(savedLimits)
     setError(null)
   }
 
@@ -850,9 +884,16 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
     setError(null)
     setSubmitting(true)
     try {
-      const updated = await api.updateSettings(settings)
-      setSavedSettings(updated)
-      setSettings(updated)
+      if (section === 'explorer') {
+        if (!limits) return
+        const saved = await explorerApi.saveSettings(limits)
+        setSavedLimits(saved)
+        setLimits(saved)
+      } else {
+        const updated = await api.updateSettings(settings)
+        setSavedSettings(updated)
+        setSettings(updated)
+      }
       setSection(null)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Saving settings failed.')
@@ -884,6 +925,8 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
           <ApprovedDomainsPanel />
         </>
       )}
+
+      {section === 'explorer' && (limits ? <ExplorerLimitsSection limits={limits} onChange={setLimits} /> : !error && <SkeletonRows count={5} height={38} gap={14} />)}
 
       {section === 'retention' && (
         <>
