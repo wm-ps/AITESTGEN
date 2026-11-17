@@ -93,6 +93,10 @@ async def plan_missions(run_id: uuid.UUID) -> int:
         if run is None or run.status in ("stopped", "paused"):
             return 0
         brief, branch_points, notes = run.brief or {}, run.branch_points, run.notes
+    if limits.screen_limit_reached(run_id):
+        # Not 0 (that ends the run): no missions get queued, so the run
+        # goes straight on to writing scenarios for the screens found.
+        return -1
     journal.update_run(status="planning", headline="Planning missions")
     journal.event(
         "phase", "Planning missions", "Turning the confirmed App Summary into goals to explore."
@@ -165,6 +169,16 @@ def queued_missions(run_id: uuid.UUID) -> list[str]:
     with Session(engine) as session:
         run = session.get(ExplorerRun, run_id)
         if run is None or run.status in ("stopped", "paused"):
+            return []
+        if limits.screen_limit_reached(run_id):
+            for mission in session.exec(
+                select(ExplorerMission).where(
+                    ExplorerMission.run_id == run_id, ExplorerMission.status == "queued"
+                )
+            ).all():
+                mission.status, mission.outcome = "skipped", "Screen limit reached"
+                session.add(mission)
+            session.commit()
             return []
         rows = [
             str(r)
@@ -248,6 +262,8 @@ async def run_mission(
                 home_url=target.app_url,
                 goal_rule=(await ensure_scope(run_id) or {}).get("rule"),
             )
+            mind.eyes = eyes  # each new form's validation messages are read on the spot
+            mind.may_save = target.non_production
 
             def stop_requested() -> bool:
                 return journal.status() == "stopped" or journal.mission_status() == "skipped"
@@ -504,8 +520,7 @@ def _queue_follow_ups(
         journal.event(
             "thought",
             f"Not explored: {len(new) - room} more way(s) forward",
-            f"The run has its {most} missions: "
-            + "; ".join(m["title"] for m in new[room:])[:800],
+            f"The run has its {most} missions: " + "; ".join(m["title"] for m in new[room:])[:800],
         )
 
 

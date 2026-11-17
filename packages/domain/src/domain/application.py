@@ -127,12 +127,9 @@ class Application(SQLModel, table=True):
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
     )
-    # This application's own settings (Application settings page), each a
-    # dict of the setting's name to its value. None: it uses the
-    # organisation-wide ExplorerSettings / DiscoverySettings values, as before.
-    explorer_limits: dict | None = Field(
-        default=None, sa_column=Column(JSONB(none_as_null=True), nullable=True)
-    )
+    # This application's own test-case generation settings (Application
+    # settings page), a dict of the setting's name to its value. None: it
+    # uses the organisation-wide DiscoverySettings values, as before.
     generation_settings: dict | None = Field(
         default=None, sa_column=Column(JSONB(none_as_null=True), nullable=True)
     )

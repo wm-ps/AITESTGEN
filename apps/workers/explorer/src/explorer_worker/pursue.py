@@ -67,10 +67,13 @@ IDLE_LOOKS = 3
 IDLE_WAIT_MS = 3000
 
 
-def waiting_for_screen(plan: dict[str, Any], idle_looks: int) -> bool:
-    """The model made no move and didn't say it's done: the screen isn't
-    ready yet, so look again (up to IDLE_LOOKS times) instead of ending."""
-    return not plan.get("done") and not plan.get("advance") and idle_looks < IDLE_LOOKS
+def waiting_for_screen(plan: dict[str, Any], idle_looks: int, loading: bool = False) -> bool:
+    """The model made no move and didn't say it's done, or the screen was read
+    as still loading (a walk once ended "done" on a loading Dashboard and
+    planned from nothing): look again (up to IDLE_LOOKS times) instead of ending."""
+    return (
+        (loading or not plan.get("done")) and not plan.get("advance") and idle_looks < IDLE_LOOKS
+    )
 
 
 def edge_reached(fit: str | None, obey_goal: bool) -> bool:
@@ -260,6 +263,12 @@ async def pursue(
                 "phase", "Stopped going in circles", circling[:600], journal.shot(visit.shot)
             )
             break
+        # Settings → "Screens to explore" reached: exploring ends here (a
+        # scenario's walk is never cut short by it).
+        if getattr(mind, "records_health", True) and limits.screen_limit_reached(journal.run_id):
+            result.ended = "limit"
+            result.outcome = f"Stopped on {step_name}: reached the screen limit"
+            break
         plan = await brain.decide_step(
             visit.shot,
             visit.inventory,
@@ -398,7 +407,7 @@ async def pursue(
             if not progressed:
                 landed.append(arrived(step_name))
             continue
-        if waiting_for_screen(plan, idle_looks):
+        if waiting_for_screen(plan, idle_looks, bool(mind.last_reading.get("is_loading"))):
             # "Still loading, I'll wait": no move and not done is not the end
             # of the task (a walk once stopped on a list still loading and
             # never reached the rest). Look again, a few times at most.
@@ -435,7 +444,7 @@ async def pursue(
         # A button you already said "Yes, press it" to while Explorer explored.
         approved = pre_approved(str(advance), approved_presses or set())
         if not approved and ask is not None and (
-            needs_ok or (is_final and not may_commit(f"{advance} ({goal})", non_production))
+            needs_ok or (is_final and not may_commit(str(advance), non_production))
         ):
             answer = await ask(
                 "risk",
@@ -446,7 +455,7 @@ async def pursue(
             )
             approved = bool(answer) and answer.lower().startswith("yes")
         if not approved and (
-            needs_ok or (is_final and not may_commit(f"{advance} ({goal})", non_production))
+            needs_ok or (is_final and not may_commit(str(advance), non_production))
         ):
             result.ended = "final"
             result.outcome = f"Ready to press “{advance}” on {step_name}"
@@ -468,6 +477,15 @@ async def pursue(
         before = await eyes.fingerprint()
         calls_before, messages_before = len(eyes.calls), len(eyes.messages)
         clicked = await eyes.click_text(str(advance), "button")
+        if eyes.left_app:
+            journal.event(
+                "thought",
+                f"“{advance}” leads out of the app",
+                f"It opened {eyes.left_app}. I stay inside the app, so I went back.",
+            )
+            result.history.append(
+                f"{step_name}: “{advance}” leads outside the app — never press it again"
+            )
         if clicked and is_final:
             sent.add(str(advance))
         moved = clicked and await eyes.wait_for_change(before)
@@ -524,7 +542,12 @@ async def pursue(
         stuck = 0
         result.history.append(f"{step_name}: {'; '.join(entered) or 'no input'} -> {advance}")
         step_name = await mind.take_in(visit, f"{step_name} → {advance}", action=str(advance))
-        landed.append(arrived(step_name))
+        here = arrived(step_name)
+        # A new press that changed this same screen (a search, a sort, the
+        # next page, a menu opening) is progress on it, like a new value
+        # entered: a list's tests stay on the list. Only a repeat counts.
+        if here != landed[-1] or not entered_something_new([f"press {here}: {advance}"], filled):
+            landed.append(here)
     if not result.outcome:
         result.outcome = f"Stopped after {result.steps} steps on {step_name}"
     return result

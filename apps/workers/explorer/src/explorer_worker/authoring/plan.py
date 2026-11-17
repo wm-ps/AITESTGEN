@@ -3,6 +3,7 @@ counterpart of missions.plan_missions and tests_stage.plan_tests. Explorer
 walks only the request's flow, and writes only the scenarios asked for (or,
 for a flow alone, the flow and its positive and negative edge cases)."""
 
+import asyncio
 import json
 import re
 import uuid
@@ -13,6 +14,7 @@ from typing import Any
 from explorer_core import (
     TEST_KINDS,
     ExplorerMission,
+    ExplorerQuestion,
     ExplorerRun,
     ExplorerScreen,
     ExplorerTestCase,
@@ -20,18 +22,29 @@ from explorer_core import (
 )
 from sqlmodel import Session, col, select
 
-from explorer_worker import brain, missions
+from explorer_worker import brain, missions, scope
 from explorer_worker.db import engine
+from explorer_worker.field_checks import CODE_LIMITS, field_checks
 from explorer_worker.goal import ensure_scope, screens_in_goal
 from explorer_worker.journal import Journal
 from explorer_worker.llm import THINKING_MODEL, ask_json
+from explorer_worker.memory import ask
 from explorer_worker.session import load_target
-from explorer_worker.tests_stage import SIGN_IN_RULES, approved_presses
+from explorer_worker.tests_stage import (
+    SCREENS_PER_PLAN,
+    SIGN_IN_RULES,
+    approved_presses,
+    left_out,
+)
 
 # Marks the missions planned for the request: the authoring pool runs these
 # (and any the user adds), never Explorer's automatic follow-ups.
 REQUEST_MISSION = "Your request"
 NOT_ASKED = "Not part of your request"
+# A scenario becomes a test case only when its try in the app got through:
+# proven, or it showed a possible bug. A dropped one (never carried out, or no
+# proof found) has no checked code and would only fail when run.
+ADDED = ("proven", "known_bug")
 
 
 def _request(brief: dict[str, Any], prompt: str) -> dict[str, Any]:
@@ -41,15 +54,30 @@ def _request(brief: dict[str, Any], prompt: str) -> dict[str, Any]:
 # --- Missions ----------------------------------------------------------------
 
 
+def understood(prompt: str, request: dict[str, Any]) -> str:
+    """The request as understood — its steps in order and what to check —
+    with the user's own words as context. Just the prompt when the reading
+    found no steps."""
+    steps = [str(s) for s in request.get("steps") or [] if str(s).strip()]
+    if not steps:
+        return prompt
+    checks = [str(c) for c in request.get("checks") or [] if str(c).strip()]
+    return (
+        "\n".join(f"{i}. {s}" for i, s in enumerate(steps, 1))
+        + ("\nCheck: " + "; ".join(checks) if checks else "")
+        + f"\n(The user's words, for context: {prompt})"
+    )
+
+
 def request_mission(prompt: str, request: dict[str, Any]) -> dict[str, Any]:
-    """The walk is the request itself, word for word: Explorer carries out the
-    user's steps from the app's home screen, once, and nothing else."""
+    """The walk is the request as understood: Explorer carries out its steps
+    from the app's home screen, once, and nothing else."""
     return {
         "title": str(request.get("title") or prompt)[:200],
         "goal": str(request.get("flow") or prompt)[:1000],
         "instructions": (
             "Follow the user's request exactly, step by step, in this order. Do not explore "
-            "anything else, and stop when the request ends:\n" + prompt
+            "anything else, and stop when the request ends:\n" + understood(prompt, request)
         )[:4000],
         # "custom" is walked once (a "task" is walked again to find other screens).
         "kind": "custom",
@@ -177,15 +205,18 @@ def say_done(run_id: uuid.UUID) -> None:
     """The last word of an authoring run: where its test cases are (Explorer's
     own closing line points at "Generate tests", already done here)."""
     with Session(engine) as session:
-        proven = session.exec(
-            select(ExplorerTestCase.id).where(
-                ExplorerTestCase.run_id == run_id, ExplorerTestCase.status == "proven"
+        statuses = session.exec(
+            select(ExplorerTestCase.status).where(
+                ExplorerTestCase.run_id == run_id,
+                col(ExplorerTestCase.status).in_(ADDED),
             )
         ).all()
-    if proven:
+    if statuses:
+        confirmed = statuses.count("proven")
         Journal(run_id).event(
             "summary",
-            f"{len(proven)} test case(s) ready",
+            f"{len(statuses)} test case(s) ready",
+            f"{confirmed} worked when tried in the app; the rest showed a possible bug. "
             "Find them under Test cases → Author test cases.",
         )
 
@@ -215,13 +246,13 @@ _TESTS_SYSTEM = (
     + """
 
 The user asked for test cases with their own request, and Explorer has walked it. The \
-main scenario — the request itself, word for word — is already written. Now write the \
+main scenario — the request as the user meant it — is already written. Now write the \
 OTHER scenarios worth testing on that flow, positive and negative, on the screens the \
 flow goes through: its fields (required, invalid format, boundaries, wrong or unknown \
 values), its choices, its lists and searches (a match, no match), its buttons \
-(cancel/back). One rule each.
-- Write exactly as many as you are told; when no number is given, the ones worth \
-testing, at most 8. Follow any limit the user gave (e.g. positive only).
+(cancel/back), and completing the whole form or task. One rule each.
+- Write exactly as many as you are told; when no number is given, every scenario the \
+requirement calls for. Follow any limit the user gave (e.g. positive only).
 - Only screens, fields and buttons the flow's screens actually have; nothing on screens \
 the flow does not reach. Never repeat the main scenario.
 Every scenario is one of these kinds:
@@ -271,14 +302,247 @@ def proof_hint(text: str) -> str:
     )
 
 
+# No number given: every scenario the requirement calls for, up to this many.
+# ponytail: a safety cap (each scenario is tried in the app, ~1 min each);
+# raise it if a flow's screens need more.
+CEILING = 60
+
+
+# --- Clarity -----------------------------------------------------------------
+
+UNCLEAR = "Stopped: your request isn't clear"
+# How long a question about the user's own scenarios waits for an answer.
+CLARIFY_MINUTES = 30
+
+_CLARITY_SYSTEM = (
+    brain.STANCE
+    + """
+
+The user listed the test scenarios they want. Explorer has walked the app. Check each \
+scenario against the screens Explorer saw. A scenario is UNCLEAR only when it names a \
+page, field, button, option or value that is on none of the screens (and nothing close \
+to it is), contradicts what the app has, or can't be understood. A scenario that can be \
+carried out on these screens is clear, even if worded loosely — never ask about those, \
+and never ask what the app will show.
+Reply with ONLY:
+{"unclear": [{"index": 1, "question": "one short question to the user naming what is \
+unclear and what Explorer did find, e.g. 'There is no Discount field on New Order; it \
+has Price and Quantity. Which field did you mean?'", "why": "one short line"}]}
+'index' is the scenario's number in the list (1 = first). [] when every scenario is clear."""
+)
+
+
+async def wait_for_answer(journal: Journal, question: str, why: str) -> str | None:
+    """Ask in the Questions tab and wait up to CLARIFY_MINUTES; None when
+    it goes unanswered, is dismissed or the run is stopped."""
+    earlier = await ask(journal, "data", question, why, [], None, lambda: None, wait=False)
+    if earlier:
+        return earlier
+    for _ in range(CLARIFY_MINUTES * 12):
+        await asyncio.sleep(5)
+        with Session(engine) as session:
+            row = session.exec(
+                select(ExplorerQuestion).where(
+                    ExplorerQuestion.run_id == journal.run_id,
+                    ExplorerQuestion.question == question[:600],
+                )
+            ).first()
+        if row is None or row.status == "dismissed" or journal.status() == "stopped":
+            return None
+        if row.status == "answered":
+            return row.answer
+    return None
+
+
+async def clarify_scenarios(
+    journal: Journal, request: dict[str, Any], screen_info: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """The user's own scenarios, checked against the screens seen: one that
+    names something the app doesn't have is asked about, and the answer goes
+    into that scenario. None = a question went unanswered (the run stops)."""
+    scenarios = [str(x) for x in request.get("scenarios") or []]
+    reply = await ask_json(
+        _CLARITY_SYSTEM,
+        f"The user's scenarios: {json.dumps(scenarios, ensure_ascii=False)}\n"
+        f"Known screens: {json.dumps(screen_info, ensure_ascii=False)[:40000]}",
+        model=THINKING_MODEL,
+    )
+    for item in (reply.get("unclear") or [])[:3]:
+        if not isinstance(item, dict) or not item.get("question"):
+            continue
+        index = item.get("index")
+        if not isinstance(index, int) or not 1 <= index <= len(scenarios):
+            continue
+        answer = await wait_for_answer(
+            journal, str(item["question"]), f"About your scenario: {scenarios[index - 1]}"
+        )
+        if not answer:
+            stop_unclear(journal.run_id)
+            return None
+        scenarios[index - 1] += f" (You answered: {answer})"
+    return {**request, "scenarios": scenarios}
+
+
+def stop_unclear(run_id: uuid.UUID) -> str:
+    """End the run plainly: a question about the request went unanswered,
+    so no test cases were guessed."""
+    journal = Journal(run_id)
+    status = journal.status()
+    if status in ("stopped", "failed", "expired"):
+        return status or "gone"
+    with Session(engine) as session:
+        run = session.get(ExplorerRun, run_id)
+        asked = [
+            str(q.get("question"))
+            for q in ((run.brief or {}).get("questions_for_you") or [] if run else [])
+            if isinstance(q, dict)
+        ] + [
+            q.question
+            for q in session.exec(
+                select(ExplorerQuestion).where(
+                    ExplorerQuestion.run_id == run_id, ExplorerQuestion.status == "open"
+                )
+            ).all()
+        ]
+    reason = (
+        "Explorer asked about your request and got no answer, so it wrote no test cases "
+        "rather than guess."
+        + (f" Unanswered: {' | '.join(asked)}." if asked else "")
+        + " Start a new run with the missing details in the request."
+    )
+    journal.event("error", UNCLEAR, reason)
+    journal.update_run(status="failed", headline=UNCLEAR, error=reason[:300])
+    return "failed"
+
+
+def names_screen(name: str, prompt: str, brief: dict[str, Any]) -> bool:
+    """Does the request name this screen? Every word of its name (4+
+    letters) appears in the request or how it was read.
+    ponytail: word match; a model call if pass-through pages still slip in."""
+    asked = f"{prompt} {json.dumps(brief.get('request') or {}, ensure_ascii=False)}".lower()
+    words = re.findall(r"[a-z]{4,}", name.lower())
+    return bool(words) and all(w in asked for w in words)
+
+
+def wants_full_scope(request: dict[str, Any]) -> bool:
+    """The user named a flow but no tests of their own, no number and no
+    limit: its screens get the whole scope Explorer covers (every field rule
+    plus the list/form/element checklist). Anything the user specified is
+    followed exactly instead."""
+    return not (
+        request.get("scenarios") or isinstance(request.get("count"), int) or request.get("only")
+    )
+
+
+async def _scope_scenarios(
+    brief: dict[str, Any],
+    screen_info: list[dict[str, Any]],
+    links: list[str],
+    walked: list[dict[str, Any]],
+    notes: str | None,
+    *,
+    may_save: bool,
+    approved: list[str],
+) -> list[dict[str, Any]]:
+    """Explorer's own scope for the flow's screens (tests_stage.plan_tests):
+    a test per field rule, the checklist a few screens per model call, and
+    one review that drops duplicates."""
+    names = [str(s["name"]) for s in screen_info]
+    chunks = [names[i : i + SCREENS_PER_PLAN] for i in range(0, len(names), SCREENS_PER_PLAN)]
+    parts = await asyncio.gather(
+        *(
+            brain.plan_tests(
+                brief,
+                screen_info,
+                links,
+                walked,
+                [],
+                notes,
+                may_save=may_save,
+                approved=approved,
+                only=chunk,
+                sign_in=False,
+            )
+            for chunk in chunks
+        ),
+        return_exceptions=True,
+    )
+    planned = field_checks(screen_info) + [
+        t for part in parts if isinstance(part, list) for t in part
+    ]
+    try:
+        verdicts = await brain.review_plan(planned, screen_info, links, walked)
+    except Exception:  # noqa: BLE001 — the review only saves time; never block planning
+        verdicts = []
+    skipped = left_out(planned, verdicts)
+    return [t for i, t in enumerate(planned) if i not in skipped]
+
+
+async def _gap_scenarios(user: str, missing: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One scenario per scope item the plan still misses."""
+    reply = await ask_json(
+        _TESTS_SYSTEM, scope.gaps_text(missing) + "\n" + user, model=THINKING_MODEL
+    )
+    return [
+        t for t in reply.get("tests") or [] if isinstance(t, dict) and t.get("kind") != "journey"
+    ]
+
+
+async def cover_scope(
+    journal: Journal,
+    user: str,
+    brief: dict[str, Any],
+    screen_info: list[dict[str, Any]],
+    links: list[str],
+    walked: list[dict[str, Any]],
+    notes: str | None,
+    *,
+    may_save: bool,
+    approved: list[str],
+    shots: dict[str, bytes] | None = None,
+) -> list[dict[str, Any]]:
+    """The flow's whole scope: write it, then the shared scope check
+    (scope.cover) — what is missing is written and checked again."""
+    tests = await _scope_scenarios(
+        brief, screen_info, links, walked, notes, may_save=may_save, approved=approved
+    )
+    return await scope.cover(
+        journal,
+        screen_info,
+        tests,
+        lambda missing: _gap_scenarios(user, missing),
+        shots,
+        CEILING,
+    )
+
+
 def more_wanted(request: dict[str, Any]) -> int:
-    """How many scenarios beyond the request itself: none when the user listed
-    them (exactly those), the number they asked for minus the request itself,
-    else up to 8 worth testing on the flow."""
-    if request.get("scenarios"):
-        return 0
+    """How many scenarios beyond the main ones (the listed scenarios, or the
+    flow itself): the number asked for minus those; none when the user listed
+    scenarios without a number; else as many as the requirement needs."""
     count = request.get("count")
-    return max(0, count - 1) if isinstance(count, int) else 8
+    main = len(request.get("scenarios") or []) or 1
+    if isinstance(count, int):
+        return max(0, count - main)
+    return 0 if request.get("scenarios") else CEILING
+
+
+def flow_screens(
+    screens: Sequence[ExplorerScreen],
+    end: str | None,
+    home: str | None,
+    prompt: str,
+    brief: dict[str, Any],
+) -> list[ExplorerScreen]:
+    """The screens a flow's scope covers: the walk's end screen and those
+    found after it. No end (the flow is on the home screen): all but the
+    home screen, unless the request names it."""
+    ended = next((s for s in screens if s.name == end), None)
+    if ended is not None:
+        return [s for s in screens if s.created_at >= ended.created_at]
+    return [
+        s for s in screens if s.name != home or names_screen(s.name, prompt, brief)
+    ] or list(screens)
 
 
 def walk_end(screens: Sequence[ExplorerScreen]) -> str | None:
@@ -299,15 +563,21 @@ def request_scenarios(
     kept a build on the home screen). The test still begins at the app's
     entry: the replayed clicks are its first steps."""
     asked = [str(x) for x in request.get("scenarios") or [] if str(x).strip()]
-    texts = asked or [prompt]
+    count = request.get("count")
+    if isinstance(count, int):
+        asked = asked[:count]  # more listed than asked for: the first ones
+    # Listed scenarios stay word for word; a flow alone is its understood steps.
+    texts = asked or [understood(prompt, request)]
+    steps = [str(s)[:500] for s in request.get("steps") or [] if str(s).strip()]
+    checks = "; ".join(str(c) for c in request.get("checks") or [] if str(c).strip())
     return [
         {
             "kind": "journey",
             "title": (str(request.get("title") or "") if not asked else text)[:200] or text[:200],
-            "purpose": "Your request, exactly as you wrote it.",
+            "purpose": "Your request." if not asked else "Your request, exactly as you wrote it.",
             "technique": "happy path",
             "start_screen": start,
-            "steps": [text[:500]],
+            "steps": steps if not asked and steps else [text[:500]],
             "how_to_run": (
                 (
                     f"Start from {start}, reached the way the request says, and carry on from "
@@ -320,11 +590,46 @@ def request_scenarios(
                 + text
                 + ("" if not asked else f"\n(The full request, for context: {prompt})")
             ),
-            "expected": "Everything this asks to check is true: " + text + proof_hint(text),
-            "rule": text[:500],
+            "expected": "Everything this asks to check is true: "
+            + (checks if not asked and checks else text)
+            + proof_hint(text),
+            "rule": (checks if not asked and checks else text)[:500],
         }
         for text in texts
     ]
+
+
+async def _other_scenarios(
+    user: str, limit: str, more: int, *, exact: bool
+) -> list[dict[str, Any]]:
+    """The scenarios beyond the main ones. With a number asked for, exactly
+    that many: a short reply is asked once more for the rest."""
+    found: list[dict[str, Any]] = []
+    for _ in range(2 if exact else 1):
+        wanted = more - len(found)
+        how_many = (
+            f"Write exactly {wanted} more scenario(s).\n"
+            if exact
+            else f"Write every other scenario the requirement calls for (at most {more}).\n"
+        )
+        written = (
+            "Already written, never repeat them: "
+            + json.dumps([t.get("title") for t in found], ensure_ascii=False)
+            + "\n"
+            if found
+            else ""
+        )
+        reply = await ask_json(
+            _TESTS_SYSTEM, how_many + limit + written + user, model=THINKING_MODEL
+        )
+        found += [
+            t
+            for t in reply.get("tests") or []
+            if isinstance(t, dict) and t.get("kind") != "journey"
+        ]
+        if len(found) >= more:
+            break
+    return found[:more]
 
 
 async def plan_tests(run_id: uuid.UUID) -> int:
@@ -368,20 +673,33 @@ async def plan_tests(run_id: uuid.UUID) -> int:
         screen_info = [
             {
                 "name": s.name,
+                "business_thing": s.entity,
                 "kind": s.view_kind,
                 "purpose": s.purpose,
                 "fields": [
                     {
                         "label": f.get("label"),
+                        "type": f.get("type"),
                         "required": f.get("required"),
                         "notes": f.get("notes"),
+                        # The page code's limits and the form's own messages
+                        # (field_probe): what the field-rule tests check.
+                        **{k: f[k] for k in CODE_LIMITS if f.get(k)},
+                        **({"messages": f["messages"]} if f.get("messages") else {}),
                     }
                     for f in s.fields
-                ][:25],
+                ][:40],
                 "buttons": [a.get("label") for a in s.actions][:20],
             }
             for s in screens
         ]
+        # The scope is the request's own screens: where the walk ended (the
+        # flow, e.g. the New account form) and what came after. The screens it
+        # only passed through to get there (a dashboard, the list holding the
+        # New button) are the route, not what was asked to be tested.
+        in_scope = flow_screens(screens, walk_end(all_screens), home, prompt, brief)
+        scope_info = [i for i, s in zip(screen_info, screens, strict=True) if s in in_scope]
+        scope_shots = scope.screen_shots(session, in_scope)
     journal.update_run(status="testing", headline="Writing your scenarios")
     journal.event("phase", "Writing your scenarios", "Turning your request into scenarios to try.")
     target = load_target(run_id)
@@ -412,19 +730,32 @@ async def plan_tests(run_id: uuid.UUID) -> int:
     )
     # A flow starts where the walk ended: the build replays the walk's
     # recorded clicks to get there (no model guessing a menu label again).
-    start = home if request.get("scenarios") else (walk_end(all_screens) or home)
-    planned = request_scenarios(prompt, request, start, home)
+    if request.get("scenarios"):  # the user's own scenarios: anything unclear is asked
+        clarified = await clarify_scenarios(journal, request, screen_info)
+        if clarified is None:
+            return 0
+        request = clarified
+    flow_start = home if request.get("scenarios") else (walk_end(all_screens) or home)
+    planned = request_scenarios(prompt, request, flow_start, home)
     more = more_wanted(request)
-    if more:  # a flow alone: plus the other scenarios worth testing on it
-        how_many = (
-            f"Write exactly {more} more scenario(s).\n"
-            if request.get("count")
-            else "Write the other scenarios worth testing (at most 8).\n"
+    if wants_full_scope(request):  # a flow alone: its whole scope
+        planned += await cover_scope(
+            journal,
+            user,
+            brief,
+            scope_info,
+            links,
+            walked,
+            target.notes,
+            may_save=target.non_production,
+            approved=approved,
+            shots=scope_shots,
         )
+    elif more:  # what the user specified: their number, list or limit
         limit = f"The user's limit: {request['only']}\n" if request.get("only") else ""
-        reply = await ask_json(_TESTS_SYSTEM, how_many + limit + user, model=THINKING_MODEL)
-        others = [t for t in reply.get("tests") or [] if isinstance(t, dict)]
-        planned += [t for t in others if t.get("kind") != "journey"][:more]
+        planned += await _other_scenarios(
+            user, limit, more, exact=isinstance(request.get("count"), int)
+        )
     known = {s["name"] for s in screen_info}
     kept = 0
     with Session(engine) as session:
@@ -433,9 +764,11 @@ async def plan_tests(run_id: uuid.UUID) -> int:
             if kind not in (*TEST_KINDS, "journey") or not t.get("title") or not t.get("expected"):
                 continue
             start = str(t.get("start_screen") or "")
-            if kind == "journey" and start not in known:
-                start = home or start
-            grounded = start in known or start == home or bool(t.get("signed_out"))
+            if start not in known and start != home and not t.get("signed_out"):
+                # A screen the walk never named: start where the flow does, so
+                # the scenario is still written (the count asked for holds).
+                start = (home if kind == "journey" else flow_start) or start
+            grounded = bool(start)
             session.add(
                 ExplorerTestCase(
                     run_id=run_id,
@@ -452,7 +785,7 @@ async def plan_tests(run_id: uuid.UUID) -> int:
                         {
                             "how_to_run": str(t.get("how_to_run") or "")[:4000],
                             "rule": str(t.get("rule") or "")[:500],
-                            "coverage": "X-Your request",
+                            "coverage": str(t.get("coverage") or "X-Your request")[:100],
                             "linked_to": "",
                             "signed_out": bool(t.get("signed_out")),
                         }

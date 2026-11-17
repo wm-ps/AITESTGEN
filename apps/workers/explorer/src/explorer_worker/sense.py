@@ -75,15 +75,51 @@ def same_place(landed: str, target: str) -> bool:
     return here == there or here.startswith(there.rstrip("/") + "/")
 
 
-def is_explorable_link(href: str, base_origin: str, text: str = "") -> bool:
+def app_root(url: str) -> str:
+    """The application's own part of its site: its address up to the last
+    '/' (`https://host/crm/Denali/` stays that; `https://host/login` is the
+    whole host). Other apps on the same host sit outside it."""
+    parts = urlsplit(url)
+    path = parts.path[: parts.path.rfind("/") + 1] or "/"
+    return f"{parts.scheme}://{parts.netloc}{path}"
+
+
+def inside_app(url: str, *roots: str) -> bool:
+    """Is `url` within one of the app roots (see `app_root`)? http/https and
+    default ports don't matter; anything that isn't a web address
+    (about:blank) never counts as leaving."""
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        return True
+    host = _DEFAULT_PORT.sub("", parts.netloc.lower())
+    path = (parts.path or "/").lower().rstrip("/") + "/"
+    for root in roots:
+        r = urlsplit(root)
+        if host == _DEFAULT_PORT.sub("", r.netloc.lower()) and path.startswith(
+            (r.path or "/").lower().rstrip("/") + "/"
+        ):
+            return True
+    return False
+
+
+_WEB_ADDRESS = re.compile(r"https?://[^\s\"'<>)]+", re.I)
+
+
+def named_addresses(*texts: str | None) -> tuple[str, ...]:
+    """Web addresses the user wrote into a goal, request or notes: the only
+    places outside the app Explorer may go."""
+    found = (m.rstrip(".,;:!?") for t in texts if t for m in _WEB_ADDRESS.findall(t))
+    return tuple(dict.fromkeys(found))
+
+
+def is_explorable_link(href: str, roots: str | tuple[str, ...], text: str = "") -> bool:
     if not href or href.startswith(_SKIP_SCHEMES) or href == "#":
         return False
     if _LOGOUT.search(text) or _LOGOUT.search(href.replace("-", " ").replace("_", " ")):
         return False
     if _FILE_EXT.search(urlsplit(href).path):
         return False
-    parts = urlsplit(href)
-    return f"{parts.scheme}://{parts.netloc}".lower() == base_origin.lower()
+    return inside_app(href, *((roots,) if isinstance(roots, str) else roots))
 
 
 def is_sign_out(label: str) -> bool:
@@ -326,11 +362,18 @@ def resumes_saved_progress(script: list[dict]) -> bool:
 _RELATIVE = re.compile(r"\{\{\s*(today|now)\s*(?:([+-])\s*(\d+)\s*([dhm]))?\s*\}\}", re.IGNORECASE)
 
 
-def resolve_relative(value: str, now: datetime | None = None) -> str:
+_UNIQUE = re.compile(r"\{\{\s*unique\s*\}\}", re.IGNORECASE)
+
+
+def resolve_relative(value: str, now: datetime | None = None, unique: str = "") -> str:
     """`{{today+1d}}` -> tomorrow as YYYY-MM-DD, `{{now-2h}}` -> YYYY-MM-DD
     HH:MM. Worked out each time the step runs, so a 'future date is
-    rejected' test is still about the future when it is replayed later."""
+    rejected' test is still about the future when it is replayed later.
+    `{{unique}}` -> this run's own stamp: a name saved by one run is never a
+    duplicate in the next (the same stamp all through one run, so the test
+    finds the record it just created)."""
     now = now or datetime.now()
+    value = _UNIQUE.sub(unique or format(int(now.timestamp() * 1000), "x")[-7:], value)
 
     def one(m: re.Match[str]) -> str:
         amount = int(m[3] or 0) * (-1 if m[2] == "-" else 1)

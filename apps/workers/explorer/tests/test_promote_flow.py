@@ -153,3 +153,35 @@ def test_saved_credential_fills_are_marked_login_test_data() -> None:
         ("Password", True),
         ("Search", None),
     ]
+
+
+async def test_not_a_bug_sends_only_that_scenario() -> None:
+    """Answering "Not a bug" hands off that one scenario, so test cases
+    generated meanwhile are not retired by a full re-send."""
+    from explorer_worker import activities as ex
+    from explorer_worker.workflow import ExplorerRunWorkflow
+    from temporalio import activity
+    from temporalio.testing import WorkflowEnvironment
+    from temporalio.worker import Worker
+
+    sent: list[tuple[str, str]] = []
+
+    @activity.defn(name=ex.PROMOTE_ACTIVITY)
+    async def fake_promote(run_id: str, test_id: str = "") -> dict[str, int]:
+        sent.append((run_id, test_id))
+        return {}
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue="test-send",
+            workflows=[ExplorerRunWorkflow],
+            activities=[fake_promote],
+        ):
+            result = await env.client.execute_workflow(
+                ExplorerRunWorkflow.run,
+                args=["run-1", "send", "test-7"],
+                id=f"wf-{uuid.uuid4()}",
+                task_queue="test-send",
+            )
+    assert result == "sent" and sent == [("run-1", "test-7")]

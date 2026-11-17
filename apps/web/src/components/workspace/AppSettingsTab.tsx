@@ -2,11 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faEllipsisVertical, faEye, faEyeSlash, faPlus, faStar } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type EnvironmentRead, type GenerationSettings } from '../../api'
-import { explorerApi, type ExplorerSettings } from '../../explorer/explorerApi'
 import { useCanEdit, useIsAdmin } from '../../PermissionsContext'
 import {
   CredentialsForm,
-  ExplorerLimitsSection,
   GenerationSection,
   SettingsDetail,
   SettingsHub,
@@ -152,7 +150,7 @@ function EnvironmentMenu({
   )
 }
 
-type SectionKey = 'environments' | 'credentials' | 'explorer' | 'generation'
+type SectionKey = 'environments' | 'credentials' | 'generation'
 
 const CARDS: SettingsCard<SectionKey>[] = [
   {
@@ -166,11 +164,6 @@ const CARDS: SettingsCard<SectionKey>[] = [
     description: 'Save the username and password exploring, generation and every test run use to sign in.',
   },
   {
-    key: 'explorer',
-    title: 'Explorer limits',
-    description: 'Control run time, AI spend, and how much of this application Explorer maps and confirms.',
-  },
-  {
     key: 'generation',
     title: 'Test case generation',
     description: 'Set how many scenarios and test cases are written and how failing steps are self-healed.',
@@ -180,40 +173,35 @@ const CARDS: SettingsCard<SectionKey>[] = [
 const READ_ONLY_NOTE = 'Only organization admins can change these settings.'
 
 // An application's Settings tab: the same card hub as the Settings page, for
-// what belongs to this application — its environments, its Explorer limits
-// and its test case generation settings (admins change the last two).
+// what belongs to this application — its environments, its sign-in and its
+// test case generation settings (admins change the last). Explorer limits are
+// organisation-wide, on the Settings page: a run starts as soon as an
+// application is added, before anything could be set here.
 export function AppSettingsTab({ applicationId }: { applicationId: string }) {
   const isAdmin = useIsAdmin()
   const canEdit = useCanEdit()
   const environments = useEnvironments()
   const defaultEnvironment = environments?.environments.find((environment) => environment.is_default)
   const [section, setSection] = useState<SectionKey | null>(null)
-  const [savedLimits, setSavedLimits] = useState<ExplorerSettings | null>(null)
-  const [limits, setLimits] = useState<ExplorerSettings | null>(null)
   const [savedGeneration, setSavedGeneration] = useState<GenerationSettings | null>(null)
   const [generation, setGeneration] = useState<GenerationSettings | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  // Loaded when their card is opened (the Environment Settings card needs neither).
-  const needsLimits = section === 'explorer' && !savedLimits
+  // Loaded when its card is opened.
   const needsGeneration = section === 'generation' && !savedGeneration
   useEffect(() => {
-    if (!needsLimits && !needsGeneration) return
-    const load = needsLimits
-      ? explorerApi.getSettings(applicationId).then((loaded) => {
-          setSavedLimits(loaded)
-          setLimits(loaded)
-        })
-      : api.getGenerationSettings(applicationId).then((loaded) => {
-          setSavedGeneration(loaded)
-          setGeneration(loaded)
-        })
-    load.catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load settings.'))
-  }, [applicationId, needsLimits, needsGeneration])
+    if (!needsGeneration) return
+    api
+      .getGenerationSettings(applicationId)
+      .then((loaded) => {
+        setSavedGeneration(loaded)
+        setGeneration(loaded)
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load settings.'))
+  }, [applicationId, needsGeneration])
 
   function discard() {
-    setLimits(savedLimits)
     setGeneration(savedGeneration)
     setError(null)
   }
@@ -227,11 +215,7 @@ export function AppSettingsTab({ applicationId }: { applicationId: string }) {
     setError(null)
     setSubmitting(true)
     try {
-      if (section === 'explorer' && limits) {
-        const saved = await explorerApi.saveSettings(applicationId, limits)
-        setSavedLimits(saved)
-        setLimits(saved)
-      } else if (section === 'generation' && generation) {
+      if (section === 'generation' && generation) {
         const saved = await api.updateGenerationSettings(applicationId, generation)
         setSavedGeneration(saved)
         setGeneration(saved)
@@ -247,13 +231,13 @@ export function AppSettingsTab({ applicationId }: { applicationId: string }) {
   if (section === null) return <SettingsHub cards={CARDS} onOpen={open} />
 
   const card = CARDS.find((c) => c.key === section)!
-  const loading = section === 'explorer' ? !limits : section === 'generation' ? !generation : false
+  const loading = section === 'generation' && !generation
   return (
     <SettingsDetail
       card={card}
       backLabel="Back to Settings"
       onBack={() => open(null)}
-      form={section === 'explorer' || section === 'generation'}
+      form={section === 'generation'}
       readOnly={!isAdmin}
       note={
         section === 'credentials'
@@ -279,7 +263,6 @@ export function AppSettingsTab({ applicationId }: { applicationId: string }) {
         />
       )}
       {loading && !error && <SkeletonRows count={5} height={38} gap={14} />}
-      {section === 'explorer' && limits && <ExplorerLimitsSection limits={limits} onChange={setLimits} />}
       {section === 'generation' && generation && <GenerationSection settings={generation} onChange={setGeneration} />}
     </SettingsDetail>
   )

@@ -23,6 +23,7 @@ DONE_ACTIVITY = "authoring_say_done"
 PLANNED_TESTS_ACTIVITY = "authoring_planned_tests"
 PLAN_TESTS_ACTIVITY = "authoring_plan_tests"
 PROMOTE_ACTIVITY = "authoring_add_test_cases"
+UNCLEAR_ACTIVITY = "authoring_stop_unclear"
 
 
 @activity.defn(name=READ_REQUEST_ACTIVITY)
@@ -106,7 +107,13 @@ async def promote_activity(run_id: str) -> list[str]:
         return []
 
 
+@activity.defn(name=UNCLEAR_ACTIVITY)
+async def stop_unclear_activity(run_id: str) -> str:
+    return plan.stop_unclear(uuid.UUID(run_id))
+
+
 ACTIVITIES = [
+    stop_unclear_activity,
     read_request_activity,
     start_activity,
     plan_missions_activity,

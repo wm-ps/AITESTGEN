@@ -88,7 +88,11 @@ export function ExplorerTab({
   // one that added nothing, stays here showing why).
   const wasWorking = useRef(false)
   useEffect(() => {
-    if (run?.prompt && wasWorking.current && run.status === 'tested' && run.counts.tests_proven > 0) onAuthoringDone?.()
+    // Possible bugs wait for your answer first: stay and show them.
+    if (run?.prompt && wasWorking.current && run.status === 'tested') {
+      if (run.counts.tests_known_bugs > 0) setView('scenarios')
+      else if (run.counts.tests_proven > 0) onAuthoringDone?.()
+    }
     wasWorking.current = working
   }, [run?.status]) // eslint-disable-line react-hooks/exhaustive-deps
 

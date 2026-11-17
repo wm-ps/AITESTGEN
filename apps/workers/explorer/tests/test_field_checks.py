@@ -28,7 +28,7 @@ def test_required_fields_and_recorded_rules_become_scenarios():
         "Email is required on New Lead form",
         "Email refuses an invalid email on New Lead form",
         "Password refuses fewer than 8 characters on New Lead form",
-        # Two rules per form (RULES_PER_FORM): Title's limit is not tried.
+        "Title refuses more than 255 characters on New Lead form",
     ]
     assert all(
         t["kind"] == "validation" and t["start_screen"] == "New Lead form"
@@ -65,11 +65,10 @@ def test_required_checks_accept_any_way_an_app_says_so_and_ignore_the_star():
     many = [{"label": f"Field {i} *", "required": True} for i in range(5)]
     tests = field_checks([_form("New Contact form", many)])
     titles = [t["title"] for t in tests]
-    # The empty form plus two fields left out one at a time (REQUIRED_PER_FORM).
+    # The empty form plus every field left out one at a time (REQUIRED_PER_FORM).
     assert titles == [
         "Empty New Contact form can't be saved",
-        "Field 0 is required on New Contact form",
-        "Field 1 is required on New Contact form",
+        *[f"Field {i} is required on New Contact form" for i in range(5)],
     ]
     expected = tests[1]["expected"]
     assert "pop-up that may disappear" in expected and "Please fill out this field" in expected
@@ -116,3 +115,13 @@ def test_a_flagged_field_is_a_proof_the_test_caused_and_is_exported():
     code = playwright_code("t", [], [{"do": "goto", "url": "https://a/#/New"}], check, "")
     assert 'page.getByLabel("Last Name").first().evaluate(' in code
     assert "aria-invalid" in code and "validity.valid" in code
+
+
+def test_a_length_limit_is_checked_once_per_form() -> None:
+    fields = [{"label": f"Field {i}", "maxlength": "100"} for i in range(5)]
+    fields.append({"label": "Email", "type": "email", "maxlength": "254"})
+    titles = [t["title"] for t in field_checks([{"name": "New account", "fields": fields}])]
+    assert titles == [
+        "Field 0 refuses more than 100 characters on New account",
+        "Email refuses an invalid email on New account",
+    ]

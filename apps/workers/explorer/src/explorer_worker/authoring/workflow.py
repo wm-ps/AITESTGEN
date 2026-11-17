@@ -27,7 +27,6 @@ with workflow.unsafe.imports_passed_through():
 
     from explorer_worker.activities import (
         BUILD_TEST_ACTIVITY,
-        EXPIRE_RUN_ACTIVITY,
         FAIL_RUN_ACTIVITY,
         FINISH_TESTING_ACTIVITY,
         REEL_ACTIVITY,
@@ -47,13 +46,17 @@ with workflow.unsafe.imports_passed_through():
         READ_REQUEST_ACTIVITY,
         RETRY_BLANK_ACTIVITY,
         START_ACTIVITY,
+        UNCLEAR_ACTIVITY,
     )
 
 MAX_PARALLEL = 3
 _ONCE = RetryPolicy(maximum_attempts=1)
 _QUICK = timedelta(minutes=2)
 STEPS = ("understand", "confirm", "plan_missions", "missions", "plan_tests", "build_tests")
-CONFIRM_WAIT_DAYS = 14
+# The request's questions wait this long for answers; then the run stops
+# saying the request isn't clear (never guessed tests).
+# ponytail: fixed; read the app's question-wait setting if it needs tuning.
+CLARIFY_WAIT_HOURS = 24
 SUITE_GENERATION_WORKFLOW = "SuiteGenerationWorkflow"
 
 
@@ -107,13 +110,11 @@ class AuthoringRunWorkflow:
         if doing("confirm") and not self._confirmed:
             try:
                 await workflow.wait_condition(
-                    lambda: self._confirmed, timeout=timedelta(days=CONFIRM_WAIT_DAYS)
+                    lambda: self._confirmed, timeout=timedelta(hours=CLARIFY_WAIT_HOURS)
                 )
             except TimeoutError:
                 return await workflow.execute_activity(
-                    EXPIRE_RUN_ACTIVITY,
-                    args=[run_id, CONFIRM_WAIT_DAYS],
-                    start_to_close_timeout=_QUICK,
+                    UNCLEAR_ACTIVITY, run_id, start_to_close_timeout=_QUICK
                 )
         if doing("plan_missions"):
             planned: int = await workflow.execute_activity(
@@ -146,7 +147,11 @@ class AuthoringRunWorkflow:
         tests = 0
         if doing("plan_tests"):
             tests = await self._bonus(
-                PLAN_TESTS_ACTIVITY, run_id, timedelta(minutes=20), heartbeat=False
+                # Room for a question about the request (plan.CLARIFY_MINUTES).
+                PLAN_TESTS_ACTIVITY,
+                run_id,
+                timedelta(minutes=60),
+                heartbeat=False,
             )
         if tests or start == "build_tests":
             await self._pool(

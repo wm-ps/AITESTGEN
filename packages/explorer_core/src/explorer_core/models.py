@@ -493,6 +493,9 @@ class ExplorerSettings(SQLModel, table=True):
     ai_budget_usd: float | None = Field(default=None)
     # Coverage
     first_look_max_screens: int = Field(default=150)
+    # The whole run's screen total (None = no limit): once reached, the
+    # exploring left is skipped and scenarios are written for what was found.
+    max_screens: int | None = Field(default=None)
     max_missions: int = Field(default=15)
     steps_per_mission: int = Field(default=20)
     steps_per_scenario: int = Field(default=20)

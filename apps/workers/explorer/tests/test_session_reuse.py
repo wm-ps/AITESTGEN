@@ -19,7 +19,7 @@ class FakeEyes:
     made: list[FakeEyes] = []
     session_works = True
 
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, also_inside: tuple[str, ...] = ()) -> None:
         self.entry_urls = {base_url}
         self.opened_with: Any = "not opened"
         self.signed_in = False
@@ -50,6 +50,9 @@ class FakeEyes:
 
     def remember_entry(self) -> None:
         self.entry_urls.add(self.page.url)
+
+    def trust(self, url: str) -> None:
+        pass
 
     async def close(self) -> None:
         self.closed = True

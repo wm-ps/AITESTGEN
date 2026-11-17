@@ -40,6 +40,7 @@ Understand it like a person would and reply with ONLY this JSON object:
   "hidden_hints": ["plain guess about a part of this screen that probably only appears under some condition, and why — e.g. 'An approval section may appear for large amounts (there is an Amount field and an empty Approvals panel)'"],
   "is_error_page": false,
   "is_blank": false,
+  "is_loading": false,
   "error_text": null,
   "wording_problems": [{"text": "exact text", "why": "spelling/grammar/unclear"}],
   "looks_wrong": [{"what": "...", "why": "which common-sense rule it breaks"}],
@@ -48,13 +49,16 @@ Understand it like a person would and reply with ONLY this JSON object:
   "created_records": [{"what": "e.g. 'Order number'", "value": "the exact identifier shown, character for character", "context": "plain words, e.g. 'given after placing an order'"}]
 }
 'is_blank' = the loaded screen shows no content of its own: an empty page, or only the app's frame/menu around an empty area (a loading indicator is NOT blank).
+'is_loading' = the screen has not finished loading: a spinner, progress bar or skeleton where the content or menu should be. Explorer then waits and looks again, so never judge or plan from a loading screen.
 'created_records' lists ONLY identifiers the app has just generated for a record (a reference, confirmation, order or ticket number shown after creating something, or the number of a record listed for this user) — never values the user typed in, and never placeholder or example text. They are reused later as test data.
 If this is a screen listed under 'Screens already understood' (same purpose — only the \
 data, filled-in values or messages differ), reuse its EXACT name, view_kind and mode. \
 'looks_wrong' is ONLY for problems with how the APP behaves or displays things (impossible or inconsistent dates/numbers, wrong totals, contradictory statuses, raw error text, broken layout, sensitive data shown where it should not be). Do NOT report odd records that other users simply typed in (test names, blank optional fields, gibberish values) — that is data, not an app problem. Rules: 'risky' = it would change or delete data, send something, pay, approve, or sign \
 out. 'worth_exploring' lists only navigation (menus, tabs, links to other screens) — \
 never buttons that save, submit or delete — ranked by business importance, value 1-5 \
-(5 = core business area). 'starts_flow' lists entry points into a business task \
+(5 = core business area). For a list, table, grid or set of cards, list only its FIRST \
+item (first row or card): the others are the same screen with other data. \
+'starts_flow' lists entry points into a business task \
 (usually a form or step-by-step wizard) — never final Save/Submit/Send buttons. Never \
 repeat a problem listed under 'already noted', even in different words. Keep arrays \
 short and meaningful; empty arrays are fine."""
@@ -237,6 +241,10 @@ For a date picker, put the value in 'fills' like any other field.
 age limit), write a token instead of a fixed date: {{today}}, {{today+1d}}, {{today-30d}}, \
 or {{now+2h}} for a date with time. Explorer works it out each time, so a replay months \
 later still tests the same thing. Prefer whole days (tomorrow) over minutes.
+- A value the app must not already have (the name, title, code or email of a record \
+you create) ends with {{unique}}, e.g. 'Summit Grove Components {{unique}}': each run \
+fills in its own stamp, so a replay never saves a duplicate. Later in the same test \
+(searching for it, opening it) use the very same text with {{unique}}.
 - Never ask the human for a value the app itself creates (e.g. an order number you get by placing an order): use one from the notes if there is one; otherwise say in 'thought' that it must be created first, and set done = true.
 - If the app offers to resume saved or unfinished progress, choose to start over / start \
 fresh (earlier runs may have left it behind), unless the goal or mission instructions are \
@@ -245,6 +253,10 @@ about resuming saved progress.
 something for real (e.g. 'Submit order', 'Send', 'Pay'). We never press those yet.
 - 'done' = true if this screen is a confirmation/end of the task or nothing moves forward.
 - If the screen shows an error message from your previous attempt, fix the values.
+- To check that a record appears in a list, when it isn't among the rows shown: type its \
+exact name or value into the list's own search box (the one above the table, not the \
+app-wide header search) and look again, or open the next page. Only call it missing \
+after searching for it.
 - If mission instructions are given, follow them exactly when you reach the point they \
 describe (e.g. choose the specific option they name) — that is the point of the mission.
 - 'browser': use Back or Refresh only when the goal or instructions are about them \
@@ -414,7 +426,9 @@ different person's name, answers from an earlier saved draft) are probably left 
 an earlier attempt: set matches to null and say so, rather than calling it a bug. How it ended: 'final' means Explorer deliberately \
 stopped before an action that needs the user's OK (e.g. delete, pay, approve, or any \
 save on a live system) — never count what did not happen after that point as a bug; \
-set matches to null if the expectation depends on it. 'done' means the goal was \
+set matches to null if the expectation depends on it. A record missing from the rows \
+on screen is NOT a mismatch unless the steps show it was searched for in that list (it \
+may be further down, sorted elsewhere or on another page): set matches to null. 'done' means the goal was \
 reached or could not be reached; 'stuck' means the app would not move on."""
 )
 
@@ -472,9 +486,9 @@ L-14 Sort descending: clicking it again sorts descending.
 L-15 Next / previous page: each loads the right page.
 L-16 Page size: changing it shows that many rows per page.
 L-17 No duplicates across pages: no row repeats or goes missing between pages.
-L-18 Open a record: clicking a row or View opens that same record.
-L-19 Edit from the list: Edit opens the form pre-filled with that row.
-L-20 Delete then cancel: the row stays.
+L-18 Open a record: clicking the first row or its View opens that same record.
+L-19 Edit from the list: the first row's Edit opens the form pre-filled with that row.
+L-20 Delete then cancel: the first row stays.
 L-21 Delete then confirm: the row is gone and the count drops by one (needs the user's OK).
 L-22 Add new: Add / New opens an empty form.
 L-23 Export: Export downloads the rows of the current view.
@@ -508,8 +522,21 @@ item with 'linked_to': the user's answers and confirmed rules, choices that lead
 hidden screens, and the possible bugs already noticed. Their 'coverage' is "X-" plus a \
 short name (e.g. "X-Urgent injury guidance").
 Other screens (dashboards, details, wizard steps): the page loads with its main content \
-(coverage "P-01 Page loads"), its links and tabs lead to the right screen, Back and \
-Refresh keep the user in place.
+(coverage "P-01 Page loads"), Back and Refresh keep the user in place.
+EVERY screen, whatever its kind — its elements (one test each, only for what the screen \
+really has; images, labels and script errors are checked separately, skip them):
+E-01 Button: a button that is not risky does what its label says (opens a screen, a \
+dialog or a panel, shows a message, or makes its data call).
+E-02 Link: a link inside the app leads to the screen it names.
+E-03 Tab: choosing a tab shows that tab's own content.
+E-04 Dialog: a dialog or pop-up opens, and closing it (its close or Cancel button) \
+leaves the screen as it was, with nothing saved.
+E-05 Menu or dropdown button: opening it shows its options.
+Lists, tables, grids and cards: test the FIRST item only (the first row, card or \
+entry) — open it, check its values, use its row actions. Never one test per row or per \
+card. Only when the goal or what the user told us asks for every item (e.g. "check \
+every account"), also write one test per item that opens it and checks the address \
+changed to that item's own record.
 Sign-in (only when you are asked to plan sign-in tests and the app has a sign-in \
 screen): signing in with the saved login works; a wrong username or password is refused \
 with a clear message; required sign-in fields; a protected screen opened while signed \
@@ -552,6 +579,12 @@ Reply with ONLY:
 Rules:
 - Every test must start on a screen from the known screens list and only use fields \
 and buttons that screen actually has. Do not invent screens, fields or messages.
+- Plan only what exploring saw: every screen, form, dialog, step and option a test \
+needs must be in the known screens, the ways between them or the missions. A button \
+whose next screen was never seen (New, Edit, Delete, Import, Export choices) gets one \
+test that it opens; never a test that fills in, saves, confirms or completes what \
+comes after it. Sign-in tests are the exception: they run signed out, from the \
+sign-in page.
 - 'trust': confirmed = backed by the user's answers/notes; standard = common sense or \
 industry norm; seen = only because the app did it (avoid these where possible).
 - One purpose per test: ONE action (or one short sequence to reach it) and ONE visible \
@@ -588,7 +621,8 @@ async def plan_tests(
     user = (
         (f"Write tests ONLY for these screens: {', '.join(only)}\n" if only else "")
         + (
-            "Plan the sign-in tests too.\n"
+            "Plan the sign-in tests too: the app has a sign-in page, even when it is not in "
+            "the known screens (Explorer may have used a saved login).\n"
             if sign_in
             else "Do not plan sign-in tests (they are planned elsewhere).\n"
         )
@@ -638,7 +672,9 @@ phone number are two scenarios).
 - never_seen: carrying it out needs a screen, step, button or option that the screens, the \
 ways between them and the missions never showed (e.g. it expects a form to open after a \
 step where the map shows a different screen). An expected RESULT that may differ from what \
-the app does is NOT a reason — finding that difference is the point of testing.
+the app does is NOT a reason — finding that difference is the point of testing. Sign-in \
+tests ("signed_out") run in a signed-out browser that starts on the sign-in page: a \
+sign-in form or Sign out button missing from the screens is NOT a reason either.
 When in doubt, keep it. Most plans have few or none to leave out."""
 )
 
@@ -658,6 +694,7 @@ async def review_plan(
             "title": t.get("title"),
             "how": t.get("how_to_run"),
             "expected": t.get("expected"),
+            "signed_out": bool(t.get("signed_out")),
         }
         for i, t in enumerate(tests)
     ]
@@ -682,7 +719,7 @@ proves the outcome. Reply with ONLY:
   "observed": "what the app actually did, in one plain sentence",
   "matches_expected": true,
   "set_up_ok": true,
-  "check": {"kind": "text_visible | url_contains | api_call | field_invalid", "value": "for api_call: the method and a stable part of the address of one listed data call that proves the outcome, e.g. 'POST /api/claims' (no record ids or dates); for text_visible: an EXACT short piece of text visible on the final screen or listed in 'Messages the app showed' (copy it character for character, e.g. the validation message or the heading of the screen reached); for url_contains: a distinctive part of the screen address; for field_invalid: the exact label of a field the app flagged as not valid (marked invalid in the reading, or refused by the browser's own check)"}
+  "check": {"kind": "text_visible | url_contains | api_call | field_invalid | element_state | download", "role": "element_state only: the element's role from 'Element states', e.g. combobox, checkbox, table, dialog, tab, textbox", "name": "element_state only: its exact name there", "value": "for element_state: the lines of that element in 'Element states' that prove the outcome, copied exactly (e.g. its options, its [selected] or [checked] state, its value, column headers); for api_call: the method and a stable part of the address of one listed data call that proves the outcome, e.g. 'POST /api/claims' (no record ids or dates); for text_visible: an EXACT short piece of text visible on the final screen or listed in 'Messages the app showed' (copy it character for character, e.g. the validation message or the heading of the screen reached); for url_contains: a distinctive part of the screen address; for field_invalid: the exact label of a field the app flagged as not valid (marked invalid in the reading, or refused by the browser's own check); for download: a stable part of the downloaded file's name from a 'Downloaded a file: …' message, e.g. '.csv' (no dates or ids)"}
 }
 Rules:
 - How apps say a field is required or wrong varies: a message next to the field, a \
@@ -694,7 +731,15 @@ first missing field. A red * next to a field's name is the 'required' marker sho
 before saving — it is NOT an error message and NOT the field flagged.
 - Prefer text_visible with the message's text; use field_invalid only when the app \
 flagged the field and showed no text you can copy.
+- Use element_state when the outcome is the STATE of an element rather than a message: \
+a dropdown's options (the browser draws an open dropdown outside the screenshot, but its \
+options are in 'Element states'), a default or selected value, a checked box or switch, \
+a field's value, a table's columns or rows, an open dialog, a selected tab. Pick the \
+element by its role and exact name from 'Element states' and copy its proving lines. \
+Never say there is no proof while 'Element states' shows the outcome.
 - Never use text that changes from run to run (a reference or order number the app just generated, today's date or time, a count that grows): replays would fail. Use the stable message or heading around it instead (e.g. 'Claim submitted', not the claim number).
+- Use download when the test's outcome is a file (an export or a download): a \
+'Downloaded a file: …' message is the proof — never text_visible for it.
 - Use api_call when the test is about the server (data matches, filter call, save / \
 update / delete succeeded) and a listed data call proves it; else prefer what the \
 screen shows.
@@ -705,7 +750,13 @@ on screen (like the app name or menu).
 different (that is a possible bug — the check then proves what it does today); null \
 if the test could not be carried out far enough to tell. Only false when the app \
 clearly got it wrong; wording or extras the expectation merely hoped for (a longer \
-message, more details) that no trusted source requires are NOT a difference: true.
+message, more details) that no trusted source requires are NOT a difference: true. \
+A record just saved but not among the list rows on screen is null, not false, unless \
+the steps searched that list for it (it may be further down or on another page). \
+A limit or rule the test ASSUMED (a common default like 255 characters, not shown by \
+the app) is not the app's rule: when the app enforces its own and says so clearly \
+(e.g. 'must be 100 characters or fewer'), it did what it should — true, with observed \
+stating the app's rule and the check its message.
 - set_up_ok: false when the TEST failed to do its own part, so the result says nothing \
 about the app — a value it meant to enter never showed in the field, a field it meant to \
 leave empty was already filled in by the app, a date it meant to be in the past is \
@@ -748,6 +799,8 @@ async def decide_check(
         f"Kind: {test.get('kind')}\n"
         f"Expected: {test.get('expected')}\n"
         f"Steps carried out: {' | '.join(history[-15:]) or 'none'}\n"
-        f"Machine reading of the final screen:\n{_compact_inventory(inventory)}"
+        f"Machine reading of the final screen:\n{_compact_inventory(inventory)}\n"
+        f"Element states (accessibility snapshot of the final screen):\n"
+        f"{inventory.get('aria') or 'none'}"
     )
     return await ask_json(_CHECK_SYSTEM, user, images=[shot], model=THINKING_MODEL)

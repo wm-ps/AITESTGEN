@@ -812,8 +812,15 @@ def _install_project(dest_dir: Path) -> None:
     Docker image layer (see this app's Dockerfile), but `playwright install`
     still runs per-project as a cheap cache-hit safety net in case the
     pinned `@playwright/test` version in `package.json` ever drifts from the
-    image's pre-installed browser revision."""
-    run_process_sync([_resolve_bin("npm"), "install"], cwd=str(dest_dir), timeout=300)
+    image's pre-installed browser revision.
+
+    `--prefer-online`: npm's local cache once served a package list from
+    before a dependency's new release (fast-xml-builder 1.3.2, wanted by a
+    newer allure) and every test of a run errored (ETARGET); always ask the
+    registry for what is current."""
+    run_process_sync(
+        [_resolve_bin("npm"), "install", "--prefer-online"], cwd=str(dest_dir), timeout=300
+    )
     run_process_sync(
         [_resolve_bin("npx"), "playwright", "install", "chromium"], cwd=str(dest_dir), timeout=300
     )

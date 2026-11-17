@@ -37,16 +37,23 @@ from explorer_core import (
 )
 from sqlmodel import Session, col, select
 
-from explorer_worker import brain, limits, quality
+from explorer_worker import brain, limits, quality, scope
 from explorer_worker.browser import Visit
 from explorer_worker.db import engine
 from explorer_worker.field_checks import CODE_LIMITS, FIELD_CHECK, field_checks
 from explorer_worker.goal import ensure_scope, screens_in_goal
 from explorer_worker.journal import Journal
+from explorer_worker.memory import ask
 from explorer_worker.mind import Mind
 from explorer_worker.missions import fast_forward, one_at_a_time
 from explorer_worker.pursue import Pursuit, path_to, pursue
-from explorer_worker.sense import about_resuming, route_starts_at_entry, same_place, url_pattern
+from explorer_worker.sense import (
+    about_resuming,
+    resolve_relative,
+    route_starts_at_entry,
+    same_place,
+    url_pattern,
+)
 from explorer_worker.session import (
     Target,
     load_target,
@@ -58,10 +65,13 @@ from explorer_worker.testkit import (
     ABSENT_WAIT_MS,
     api_call_count,
     broken_variants,
+    ground_state,
     holds,
     playwright_code,
     replay,
     seen_message,
+    state_of_changed_list,
+    state_of_last_entry,
 )
 
 logger = logging.getLogger(__name__)
@@ -112,6 +122,7 @@ def journeys_from(missions: list[ExplorerMission]) -> list[ExplorerMission]:
     picked.sort(key=lambda m: (-m.new_screens, -m.steps))
     return picked[:MAX_JOURNEYS]
 
+
 SIGN_IN_RULES = (
     "This browser is signed out. To sign in with the saved test login, type exactly "
     "{{username}} and {{password}} (Explorer fills in the real ones). For a wrong login, "
@@ -140,12 +151,14 @@ class QuietMind(Mind):
 
     async def take_in(self, visit: Visit, reached_by: str | None, action: str | None = None) -> str:
         self.heartbeat()
+        first_time = url_pattern(visit.url) not in self.visited
         self.visited.add(url_pattern(visit.url))
         self.last_goal_fit = self.goal_fits.get(url_pattern(visit.url))
         self.last_screen_id = self.screen_ids.get(url_pattern(visit.url))
         headings = visit.inventory.get("headings") or []
         name = str(headings[0] if headings else visit.inventory.get("title") or "screen")[:80]
-        self.journal.event("thought", f"On {name}", None, self.journal.shot(visit.shot))
+        if first_time:  # replays pass the same screens over and over: log each once
+            self.journal.event("thought", f"On {name}", None, self.journal.shot(visit.shot))
         return name
 
 
@@ -286,6 +299,8 @@ async def plan_tests(run_id: uuid.UUID) -> int:
                         "notes": f.get("notes"),
                         # The page code's own limits (field_checks.with_code_limits).
                         **{k: f[k] for k in CODE_LIMITS if f.get(k)},
+                        # The messages the form showed for wrong values (field_probe).
+                        **({"messages": f["messages"]} if f.get("messages") else {}),
                     }
                     for f in s.fields
                 ][:40],
@@ -350,6 +365,26 @@ async def plan_tests(run_id: uuid.UUID) -> int:
             "Duplicates of another scenario, or needing a screen or step exploring never saw.",
         )
     reviewed = [t for i, t in enumerate(planned) if i not in skipped]
+
+    # The scope check (shared with authoring): every screen's checklist items
+    # covered, the missing ones written and checked again, then said plainly.
+    async def write_gaps(missing: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return await brain.plan_tests(
+            brief,
+            screen_info,
+            links,
+            missions,
+            bugs,
+            f"{notes or ''}\n{scope.gaps_text(missing)}",
+            may_save=may_save,
+            approved=approved,
+            only=list(dict.fromkeys(str(r["screen"]) for r in missing)),
+            sign_in=False,
+        )
+
+    with Session(engine) as session:
+        shots = scope.screen_shots(session, list(screens))
+    reviewed = await scope.cover(journal, screen_info, reviewed, write_gaps, shots)
     known = {s["name"] for s in screen_info}
     kept = 0
     with Session(engine) as session:
@@ -689,7 +724,8 @@ async def build_and_prove(
     # ponytail: a screen that IS the sign-in landing page still can't be
     # proven this way; reloading it isn't an act.
     try:
-        entry_text, entry_url = "", ""
+        entry_text, entry_url, entry_aria = "", "", ""
+        screen_aria = ""  # the start screen before the test acts (a list's rows)
         if signed_out:
             await eyes.goto(start_url)
             lead_in = None
@@ -706,7 +742,13 @@ async def build_and_prove(
                 "() => document.body ? document.body.innerText : ''"
             )
             entry_url = eyes.page.url
+            entry_aria = (await eyes.look(entry_url, None, 0)).inventory.get("aria") or ""
             lead_in = await fast_forward(eyes, journal, run_id, start_screen)
+            if lead_in:
+                try:
+                    screen_aria = await eyes.page.locator("body").aria_snapshot(timeout=5000)
+                except Exception:  # noqa: BLE001 — no snapshot: no list proof
+                    screen_aria = ""
         # Unless the scenario is about resuming, a saved-progress prompt left
         # by an earlier run is answered with start over: the recorded route
         # then never depends on whichever draft the account happens to hold.
@@ -747,9 +789,9 @@ async def build_and_prove(
             if signed_out:
                 # Opening the address is this test's first act (a protected screen
                 # sending the visitor to sign in is the very thing it checks).
-                start_text, start_url_now = "", ""
+                start_text, start_url_now, start_aria = "", "", ""
             else:
-                start_text, start_url_now = entry_text, entry_url
+                start_text, start_url_now, start_aria = entry_text, entry_url, entry_aria
             eyes.mark_calls()  # an API proof counts only what the test itself caused
             mind = QuietMind(journal, target.notes, heartbeat)
             if await ensure_scope(run_id):
@@ -783,6 +825,11 @@ async def build_and_prove(
                 known_screens={},  # never jump to a screen by its address
                 stay_signed_out=signed_out,
                 approved_presses=approved_presses(run_id) if target.non_production else set(),
+                # A press that needs your OK (Delete, Pay, …) is asked, as in
+                # missions: the scenario waits for your answer, then goes on.
+                ask=lambda kind, question, why, options, shot: ask(
+                    journal, kind, question, why, options, shot, heartbeat
+                ),
             )
             assert eyes.page is not None
             final = await eyes.look(eyes.page.url, None, 0)
@@ -800,8 +847,15 @@ async def build_and_prove(
                     messages=eyes.messages_since_mark(),
                 )
                 check = verdict.get("check") if isinstance(verdict.get("check"), dict) else None
+                if check and check.get("kind") == "element_state":
+                    # The element's real snapshot, never the model's wording.
+                    check = await ground_state(eyes, check)
+                if check and eyes.unique in str(check.get("value") or ""):
+                    # A name this run created: every later run makes its own.
+                    value = str(check["value"]).replace(eyes.unique, "{{unique}}")
+                    check = {**check, "value": value}
                 if not check or not proof_was_there_before(
-                    check, start_text, start_url_now, eyes.calls_since_mark()
+                    check, start_text, start_url_now, eyes.calls_since_mark(), start_aria
                 ):
                     break
                 rejected.append(str(check.get("value")))
@@ -840,15 +894,42 @@ async def build_and_prove(
             if set_up_failed:
                 # Never report a bug the test caused itself (trust over coverage).
                 return drop(
-                    journal, test_id, title, f"Couldn't set up what the test needed: {observed}"[:400]
+                    journal,
+                    test_id,
+                    title,
+                    f"Couldn't set up what the test needed: {observed}"[:400],
                 )
             # A message the app showed during the test counts though it has
             # faded by now (a toast): the replays below check it right after
             # the action, while it is still on screen.
             if not check or not (
-                seen_message(check, eyes.messages_since_mark()) or await holds(eyes, check)
+                seen_message(
+                    {**check, "value": resolve_relative(str(check["value"]), unique=eyes.unique)},
+                    eyes.messages_since_mark(),
+                )
+                or await holds(eyes, check)
             ):
-                return drop(journal, test_id, title, "Couldn't find a reliable proof on the screen")
+                # Never drop a test that was carried out for want of a proof:
+                # the state of the field it last entered or chose is one.
+                fallback = await state_of_last_entry(eyes, result.actions)
+                if fallback is None or proof_was_there_before(
+                    fallback, start_text, start_url_now, None, start_aria
+                ) or not await holds(eyes, fallback):
+                    # A list's test (search, filter, sort, next page): the
+                    # rows that changed on the screen it started on.
+                    fallback = (
+                        await state_of_changed_list(eyes, screen_aria) if screen_aria else None
+                    )
+                if fallback is None or not await holds(eyes, fallback):
+                    return drop(
+                        journal, test_id, title, "Couldn't find a reliable proof on the screen"
+                    )
+                check = fallback
+                journal.event(
+                    "thought",
+                    f"Proved by the state of {fallback['name'] or 'the ' + fallback['role']}",
+                    "No message to check, so the test checks what that element holds.",
+                )
     finally:
         await eyes.close()
     # A fast-forwarded test still starts from home: the replayed path, then
@@ -987,7 +1068,14 @@ async def build_and_prove(
                 if proof_runs
                 else "Worked when tried (repeat runs are off). "
             )
-            + f"It passes when the screen shows “{check['value']}”."
+            + (
+                f"It passes when {check.get('role')} “{check.get('name')}” is in the state it "
+                "showed."
+                if check.get("kind") == "element_state"
+                else f"It passes when a file named like “{check['value']}” downloads."
+                if check.get("kind") == "download"
+                else f"It passes when the screen shows “{check['value']}”."
+            )
             if matches
             else f"Should: {expected} — the app instead: {observed}"
         )[:600],
@@ -1001,10 +1089,16 @@ def proof_was_there_before(
     start_text: str,
     start_url: str,
     calls: list[tuple[str, str, int]] | None = None,
+    start_aria: str = "",
 ) -> bool:
     value = str(check.get("value") or "").strip().lower()
     if not value:
         return True
+    if check.get("kind") == "element_state":
+        # The same element in the same state on the entry screen: every line
+        # of the proof was already in its accessibility snapshot.
+        before = {" ".join(line.split()) for line in start_aria.lower().splitlines()}
+        return all(" ".join(line.split()) in before for line in value.splitlines() if line.strip())
     if check.get("kind") == "api_call":
         # Only calls made after the test started are counted — and one the
         # app makes on many steps (saving progress on every Continue) can't
@@ -1012,9 +1106,10 @@ def proof_was_there_before(
         return api_call_count(calls or [], str(check.get("value"))) > 1
     if check.get("kind") == "url_contains":
         return value in start_url.lower()
-    if check.get("kind") == "field_invalid":
+    if check.get("kind") in ("field_invalid", "download"):
         # Its value is a field's name, on screen from the start; the flag
         # itself (aria-invalid, the browser refusing it) comes from acting.
+        # A download is only counted from the test's start.
         return False
     return " ".join(value.split()) in " ".join(start_text.lower().split())
 
