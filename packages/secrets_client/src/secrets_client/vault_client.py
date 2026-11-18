@@ -19,7 +19,13 @@ from dataclasses import dataclass
 import hvac
 
 VAULT_ADDR = os.environ.get("VAULT_ADDR", "http://localhost:8200")
-VAULT_TOKEN = os.environ.get("VAULT_TOKEN", "dev-only-root-token")
+# The fixed dev token is only a fallback for a Vault on this machine (docker-
+# compose, CI). Any other address with no VAULT_TOKEN set fails closed, like
+# auth.py does for the session key, instead of silently using a known root token.
+_LOCAL_VAULT_PREFIXES = ("http://localhost", "http://127.0.0.1")
+VAULT_TOKEN = os.environ.get("VAULT_TOKEN") or (
+    "dev-only-root-token" if VAULT_ADDR.startswith(_LOCAL_VAULT_PREFIXES) else ""
+)
 VAULT_MOUNT_POINT = "secret"
 
 
@@ -34,6 +40,8 @@ class VaultSecretsClient:
     """SecretsClient (Protocol) adapter backed by Vault's KV v2 engine."""
 
     def __init__(self, client: hvac.Client | None = None) -> None:
+        if client is None and not VAULT_TOKEN:
+            raise RuntimeError(f"VAULT_TOKEN is not set (VAULT_ADDR={VAULT_ADDR})")
         self._client = client or hvac.Client(url=VAULT_ADDR, token=VAULT_TOKEN)
 
     def store(self, organization_id: uuid.UUID, secret: bytes) -> SecretRef:

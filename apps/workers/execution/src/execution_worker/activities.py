@@ -864,12 +864,21 @@ def _install_project(dest_dir: Path, browsers: Sequence[str] = ("chromium",)) ->
     before a dependency's new release (fast-xml-builder 1.3.2, wanted by a
     newer allure) and every test of a run errored (ETARGET); always ask the
     registry for what is current."""
+    # Third-party install scripts run here, so no worker secrets in the env and
+    # no lifecycle scripts (browsers come from the explicit `playwright
+    # install` below, not from a package's postinstall).
     run_process_sync(
-        [_resolve_bin("npm"), "install", "--prefer-online"], cwd=str(dest_dir), timeout=300
+        [_resolve_bin("npm"), "install", "--prefer-online", "--ignore-scripts"],
+        cwd=str(dest_dir),
+        env=_scrubbed_env(),
+        timeout=300,
     )
     engines = ["chromium", *(b for b in browsers if b != "chromium")]
     run_process_sync(
-        [_resolve_bin("npx"), "playwright", "install", *engines], cwd=str(dest_dir), timeout=300
+        [_resolve_bin("npx"), "playwright", "install", *engines],
+        cwd=str(dest_dir),
+        env=_scrubbed_env(),
+        timeout=300,
     )
 
 
@@ -884,6 +893,8 @@ class _ExecutionContext:
     browser: str = "chromium"
     viewport_width: int = 1280
     viewport_height: int = 720
+    # The spec reads the shared login itself (see `_needs_login_credentials`).
+    needs_login: bool = False
 
 
 def _browser_env(env: dict, browser: str, viewport_width: int, viewport_height: int) -> dict:
@@ -932,7 +943,14 @@ async def _execute_test(input: ExecuteTestActivityInput) -> str:
     test_run_id = uuid.UUID(input.test_run_id)
     await _ensure_project_dir(test_run_id, uuid.UUID(input.application_id))
     env = _browser_env(
-        await asyncio.to_thread(_build_subprocess_env, context.application),
+        await asyncio.to_thread(
+            functools.partial(
+                _build_subprocess_env,
+                context.application,
+                include_storage_state=False,
+                include_login=context.needs_login,
+            )
+        ),
         context.browser,
         context.viewport_width,
         context.viewport_height,
@@ -1037,19 +1055,65 @@ def _load_execution_context_sync(input: ExecuteTestActivityInput) -> _ExecutionC
             browser=test_result.browser,
             viewport_width=test_run.viewport_width,
             viewport_height=test_run.viewport_height,
+            needs_login=_needs_login_credentials(test_asset.code),
         )
 
 
-def _build_subprocess_env(application: Application) -> dict:
-    vault_client = VaultSecretsClient()
-    credential = vault_client.resolve(SecretRef(path=application.secret_ref))
-    env = dict(os.environ)
+# Generated specs are AI-written and can be steered by untrusted page text, so
+# the Node/Playwright/npm child processes never inherit the worker's own
+# environment (Vault token, DB URL, cloud keys, LLM keys...) — only these.
+_SUBPROCESS_ENV_ALLOWED = frozenset(
+    {
+        "PATH", "HOME", "USERPROFILE", "TMPDIR", "TEMP", "TMP", "TZ", "LANG", "LANGUAGE", "CI",
+        # Windows (local dev) needs these for node/npm/Chromium to start.
+        "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "APPDATA", "LOCALAPPDATA",
+        "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMDATA",
+    }
+)  # fmt: skip
+_SUBPROCESS_ENV_ALLOWED_PREFIXES = ("LC_", "NODE_", "NPM_CONFIG_", "PLAYWRIGHT_")
+
+
+def _scrubbed_env() -> dict:
+    """The worker's environment filtered down to what node/npm/Playwright need
+    to run. Replaces `dict(os.environ)` for every child process."""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in _SUBPROCESS_ENV_ALLOWED
+        or key.upper().startswith(_SUBPROCESS_ENV_ALLOWED_PREFIXES)
+    }
+
+
+def _needs_login_credentials(code: str | None) -> bool:
+    """Whether a spec reads the shared login (`CREDENTIALS` from support/config,
+    via the `fillCredentials` helper or the env vars directly). Every other
+    spec runs on the saved session (`.auth/state.json`) and gets no login."""
+    text = code or ""
+    return any(token in text for token in ("CREDENTIALS", "fillCredentials(", "AITESTGEN_LOGIN_"))
+
+
+def _build_subprocess_env(
+    application: Application,
+    *,
+    include_storage_state: bool = True,
+    include_login: bool = True,
+) -> dict:
+    """Env for a Playwright/npm child process: the scrubbed base plus only the
+    target-app credential the caller asks for. Defaults give the `setup`
+    project everything it needs; spec runs pass `include_storage_state=False`
+    and `include_login=_needs_login_credentials(code)` so a spec never sees the
+    live session, and only sees the login when it signs in itself."""
+    env = _scrubbed_env()
     # Playwright has no "screenshot only on pass" mode — capture every test's
     # final screen when passed ones are wanted at all, and let
     # `_persist_test_result_sync` drop the ones the setting excludes.
     if _load_screenshot_capture_sync(application.id) != "failed":
         env["AITESTGEN_SCREENSHOT"] = "on"
-    if application.auth_method in ("sso_session_reuse", "none"):
+    session_app = application.auth_method in ("sso_session_reuse", "none")
+    if not (include_storage_state if session_app else include_login):
+        return env
+    credential = VaultSecretsClient().resolve(SecretRef(path=application.secret_ref))
+    if session_app:
         env["AITESTGEN_STORAGE_STATE"] = credential.decode()
     else:
         creds = json.loads(credential.decode())
@@ -1955,12 +2019,28 @@ async def _heal_test(input: HealTestActivityInput) -> None:
         project_dir = project_dir_for(uuid.UUID(input.test_run_id))
         # Every rerun below uses the run's window size (and the reference
         # browser — nothing else is ever healed, see `_load_heal_context_sync`).
-        env = _browser_env(
-            await asyncio.to_thread(_build_subprocess_env, ctx.application),
-            HEAL_BROWSER,
-            ctx.viewport_width,
-            ctx.viewport_height,
-        )
+        # Healed code is AI output nobody has reviewed yet, so each rerun gets
+        # the shared login only when the code being run actually reads it.
+        envs: dict[bool, dict] = {}
+
+        async def env_for(code: str | None) -> dict:
+            needs_login = _needs_login_credentials(code)
+            if needs_login not in envs:
+                envs[needs_login] = _browser_env(
+                    await asyncio.to_thread(
+                        functools.partial(
+                            _build_subprocess_env,
+                            ctx.application,
+                            include_storage_state=False,
+                            include_login=needs_login,
+                        )
+                    ),
+                    HEAL_BROWSER,
+                    ctx.viewport_width,
+                    ctx.viewport_height,
+                )
+            return envs[needs_login]
+
         exec_context = _ExecutionContext(
             application=ctx.application,
             test_result_pk=ctx.test_result_pk,
@@ -1980,7 +2060,11 @@ async def _heal_test(input: HealTestActivityInput) -> None:
         )
         if _is_infra_failure(initial_state.status, initial_state.error_message):
             outcome = await _run_playwright_with_infra_retry(
-                project_dir, ctx.spec_path, env, PLAYWRIGHT_RUN_TIMEOUT_SECONDS, input.test_result_id
+                project_dir,
+                ctx.spec_path,
+                await env_for(initial_state.test_asset.code),
+                PLAYWRIGHT_RUN_TIMEOUT_SECONDS,
+                input.test_result_id,
             )
             await asyncio.to_thread(_persist_test_result_sync, input.test_run_id, exec_context, outcome)
             if _is_infra_failure(outcome["status"], outcome.get("error_message")):
@@ -2182,7 +2266,11 @@ async def _heal_test(input: HealTestActivityInput) -> None:
             spec_file = project_dir / ctx.spec_path
             await asyncio.to_thread(spec_file.write_text, code_result.code, "utf-8")
             outcome = await _run_playwright_with_infra_retry(
-                project_dir, ctx.spec_path, env, PLAYWRIGHT_RUN_TIMEOUT_SECONDS, input.test_result_id
+                project_dir,
+                ctx.spec_path,
+                await env_for(code_result.code),
+                PLAYWRIGHT_RUN_TIMEOUT_SECONDS,
+                input.test_result_id,
             )
             await asyncio.to_thread(_persist_test_result_sync, input.test_run_id, exec_context, outcome)
 
@@ -2496,7 +2584,7 @@ def _generate_allure_report_sync(input: GenerateAllureReportActivityInput) -> st
             check=True,
             capture_output=True,
             timeout=ALLURE_GENERATE_TIMEOUT_SECONDS,
-            env={**os.environ, REPORT_TITLE_ENV: title},
+            env={**_scrubbed_env(), REPORT_TITLE_ENV: title},
         )
         report_path = project_dir / "allure-report" / "index.html"
         if not report_path.is_file():

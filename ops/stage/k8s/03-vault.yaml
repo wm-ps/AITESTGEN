@@ -43,13 +43,25 @@ data:
       tls_disable = 1
     }
     disable_mlock = true
+  # Read on onboarded apps' credentials, plus delete for the deleted-project
+  # purge (`VaultSecretsClient.delete` = delete_metadata_and_all_versions).
+  # No create/update — the execution worker runs AI-generated specs, so it
+  # must not hold the root token or be able to write credentials.
+  execution-read.hcl: |
+    path "secret/data/applications/*" {
+      capabilities = ["read"]
+    }
+    path "secret/metadata/applications/*" {
+      capabilities = ["delete"]
+    }
   entrypoint.sh: |
     #!/bin/sh
     set -e
     export VAULT_ADDR=http://127.0.0.1:8200
     INIT_FILE=/vault/file/init.txt
     FIXED_TOKEN="$VAULT_TOKEN"
-    unset VAULT_TOKEN
+    EXECUTION_TOKEN="$VAULT_EXECUTION_TOKEN"
+    unset VAULT_TOKEN VAULT_EXECUTION_TOKEN
 
     vault server -config=/vault/bootstrap/config.hcl &
     SERVER_PID=$!
@@ -75,6 +87,19 @@ data:
       vault token create -id="$FIXED_TOKEN" -policy=root -orphan >/dev/null
       vault secrets enable -path=secret kv-v2 >/dev/null
       echo "[vault-bootstrap] created fixed root token and secret/ (kv-v2)"
+    fi
+
+    # Every boot (idempotent): the read-only token the execution worker uses.
+    # ponytail: a fixed, non-expiring token from the Secret — same as the root
+    # token above. Short-TTL Kubernetes auth needs the SA token, which the
+    # execution pod deliberately no longer mounts; do it with the sandboxed
+    # runner split.
+    if [ -n "$EXECUTION_TOKEN" ]; then
+      export VAULT_TOKEN="$FIXED_TOKEN"
+      vault policy write execution-read /vault/bootstrap/execution-read.hcl >/dev/null
+      vault token lookup "$EXECUTION_TOKEN" >/dev/null 2>&1         || vault token create -id="$EXECUTION_TOKEN" -policy=execution-read              -no-default-policy -orphan >/dev/null
+      unset VAULT_TOKEN
+      echo "[vault-bootstrap] execution-read policy and token ready"
     fi
 
     wait "$SERVER_PID"
@@ -112,6 +137,12 @@ spec:
                 secretKeyRef:
                   name: aitestgen-secrets
                   key: VAULT_TOKEN
+            - name: VAULT_EXECUTION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: aitestgen-secrets
+                  key: VAULT_EXECUTION_TOKEN
+                  optional: true
           volumeMounts:
             - name: data
               mountPath: /vault/file

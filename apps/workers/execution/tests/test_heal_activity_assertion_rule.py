@@ -196,7 +196,7 @@ class _ScriptedAIProvider:
 def _mock_external_io(monkeypatch: pytest.MonkeyPatch, tmp_path):
     (tmp_path / "package.json").write_text("{}", encoding="utf-8")
     monkeypatch.setattr(activities_module, "project_dir_for", lambda test_run_id: tmp_path)
-    monkeypatch.setattr(activities_module, "_build_subprocess_env", lambda application: {})
+    monkeypatch.setattr(activities_module, "_build_subprocess_env", lambda application, **_: {})
     _ScriptedAIProvider.responses = []
     _ScriptedAIProvider.calls = []
     monkeypatch.setattr(activities_module, "HostedAIProvider", _ScriptedAIProvider)

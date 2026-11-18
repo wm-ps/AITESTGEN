@@ -1321,7 +1321,7 @@ def test_auth_setup_run_stays_out_of_the_allure_report(
     told otherwise — and that config now includes `allure-playwright`, which
     would list the login step in the run's report as if it were a test."""
     captured: list = []
-    monkeypatch.setattr(activities_module, "_build_subprocess_env", lambda _app: {})
+    monkeypatch.setattr(activities_module, "_build_subprocess_env", lambda _app, **_: {})
     monkeypatch.setattr(activities_module, "_resolve_bin", lambda name: name)
     monkeypatch.setattr(
         activities_module, "run_process_sync", lambda args, **kwargs: captured.append(args)
