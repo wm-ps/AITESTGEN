@@ -8,7 +8,7 @@ from api.db import engine, init_db
 from api.main import app
 from api.scripts.seed_dev_data import seed
 from domain import Application, DiscoveryRun
-from explorer_core import ExplorerRun, run_workflow_name
+from explorer_core import ExplorerRun, ExplorerTestCase, run_workflow_name
 from fastapi.testclient import TestClient
 from sqlmodel import Session, col, select
 
@@ -120,6 +120,33 @@ def test_an_authoring_run_never_stands_in_for_the_apps_exploration() -> None:
         client.get(f"/explorer/applications/{app_external}/runs/latest").json()["prompt"]
         == "Check Sally"
     )
+    # A finished one with a possible bug waiting for your answer shows too
+    # (its Scenarios tab is the only place to answer it)…
+    with Session(engine) as session:
+        waiting = ExplorerRun(application_id=app_id, status="tested", prompt="Check Tom")
+        session.add(waiting)
+        session.flush()
+        bug = ExplorerTestCase(
+            run_id=waiting.id,
+            kind="validation",
+            title="t",
+            purpose="p",
+            expected="e",
+            status="known_bug",
+        )
+        session.add(bug)
+        session.commit()
+        bug_id = bug.id
+    latest = f"/explorer/applications/{app_external}/runs/latest"
+    assert client.get(latest).json()["prompt"] == "Check Tom"
+    # …until it is answered.
+    with Session(engine) as session:
+        answered = session.get(ExplorerTestCase, bug_id)
+        assert answered is not None
+        answered.status = "dropped"
+        session.add(answered)
+        session.commit()
+    assert client.get(latest).json()["id"] == explored_id
 
 
 def test_the_journey_choice_is_checked_before_starting() -> None:
@@ -209,3 +236,35 @@ def test_on_an_authoring_run_either_answer_to_a_possible_bug_keeps_the_test(monk
                 assert sent[-1][1:] == ["send", str(test_id)]
     # Explorer's own "Ignore" still leaves the test out.
     assert sum(isinstance(a, list) and "send" in a for a in sent) == 2
+
+
+def test_an_authoring_run_tries_each_scenario_once(monkeypatch) -> None:
+    """Never replayed and never retried: one try each (Explore keeps both,
+    as Settings → Explorer limits say)."""
+    from api import authoring as api_authoring
+
+    class _Temporal:
+        async def start_workflow(self, *_a, **_kw):
+            return None
+
+    async def _client():
+        return _Temporal()
+
+    async def _pollers(*_a):
+        return True
+
+    monkeypatch.setattr(api_authoring, "get_temporal_client", _client)
+    monkeypatch.setattr(api_authoring, "has_pollers", _pollers)
+    client, app_external, app_id = _setup()
+    reply = client.post(
+        f"/explorer/applications/{app_external}/author",
+        json={"prompt": "Create an account", "journey_name": f"Accounts {uuid.uuid4()}"},
+    )
+    assert reply.status_code in (200, 201, 202), reply.text
+    with Session(engine) as session:
+        run = session.exec(
+            select(ExplorerRun)
+            .where(ExplorerRun.application_id == app_id, ExplorerRun.prompt == "Create an account")
+        ).one()
+        assert run.limits["proof_replays"] == 0
+        assert "test_retries" not in run.limits  # retried like Explore (worker default)

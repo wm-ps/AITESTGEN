@@ -99,7 +99,9 @@ class _FakeEyes:
     async def wait_for_change(self, before: str, timeout_ms: int = 0) -> bool:
         return True
 
-    async def click_text(self, label: str, role: str | None = None, spec=None) -> bool:
+    async def click_text(
+        self, label: str, role: str | None = None, spec=None, wait_ms: int = 0
+    ) -> bool:
         if label in self.screen and not self.resume_prompt:
             self.clicked.append(label)
             return True

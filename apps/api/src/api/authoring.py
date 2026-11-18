@@ -86,8 +86,10 @@ async def start_authoring(
         application_id=application.id,
         prompt=prompt[:8000],
         started_by_id=user.id,
-        # As of now, but each scenario is tried once and never replayed:
-        # replays must not decide which test cases the user gets.
+        # As of now, but never replayed (replays must not decide which test
+        # cases the user gets). A scenario that went wrong IS retried, as in
+        # Explore: once with what went wrong, then rewritten from the page it
+        # reached — dropping it at the first stumble lost planned test cases.
         limits={**limits_snapshot(session), "proof_replays": 0},
         insights=(
             {"journey": {"id": str(payload.journey_id)}}

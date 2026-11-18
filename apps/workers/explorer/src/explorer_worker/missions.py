@@ -49,6 +49,12 @@ def mission_cap(screen_count: int, most: int = MAX_MISSIONS) -> int:
     return max(min(6, most), min(most, screen_count // 3 + 4))
 
 
+# A saved route is forgotten after this many failed replays in a row.
+ROUTE_MISSES_TO_FORGET = 2
+# ponytail: per worker process (replays of a run share one worker today).
+_ROUTE_MISSES: dict[tuple[uuid.UUID, str], int] = {}
+
+
 async def fast_forward(
     eyes: Eyes, journal: Journal, run_id: uuid.UUID, screen: str | None
 ) -> list[dict[str, str]] | None:
@@ -65,15 +71,26 @@ async def fast_forward(
         f"Replaying the {max(0, len(path) - 1)} steps that reached it before, instead of walking in again.",
     )
     start = path[0].get("url") if path and path[0].get("do") == "goto" else None
-    replayed = await replay(eyes, path)
+    failed: list[str] = []
+    replayed = await replay(eyes, path, failed)
     await eyes.stop_starting_fresh()  # the mission itself decides about resume prompts
+    key = (run_id, str(screen))
     if replayed:
+        _ROUTE_MISSES.pop(key, None)
         return path
+    # A route that worked is proven: one miss (the app slow for a moment) is
+    # not enough to throw it away — only a second miss in a row.
+    _ROUTE_MISSES[key] = _ROUTE_MISSES.get(key, 0) + 1
     journal.event(
-        "thought", f"Couldn't fast-forward to {screen}", "Walking in from the start instead."
+        "thought",
+        f"Couldn't fast-forward to {screen}",
+        (f"It stopped while {failed[-1]}. " if failed else "")
+        + "Walking in from the start instead.",
     )
     assert screen is not None
-    forget_route(run_id, screen)  # the walk in records one that works today
+    if _ROUTE_MISSES[key] >= ROUTE_MISSES_TO_FORGET:
+        _ROUTE_MISSES.pop(key, None)
+        forget_route(run_id, screen)  # the walk in records one that works today
     if start:
         await eyes.goto(str(start))
     return None

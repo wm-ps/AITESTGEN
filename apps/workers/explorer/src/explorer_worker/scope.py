@@ -7,24 +7,183 @@ tests), left out (the page has nothing for it, and why), still missing."""
 import asyncio
 import json
 import re
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from explorer_core import ExplorerScreen, ExplorerShot
 from sqlmodel import Session
 
 from explorer_worker import brain
+from explorer_worker.field_checks import (
+    CHANGES_PASSWORD,
+    CODE_LIMITS,
+    FIELD_CHECK,
+    SKIP_KINDS,
+    message_for,
+    plain_label,
+)
 from explorer_worker.journal import Journal
 from explorer_worker.llm import THINKING_MODEL, ask_json
 
 # The scope every screen is checked against: Explorer's own checklist items,
 # read from its planning prompt so the two never drift apart.
 SCOPE_ITEMS: dict[str, str] = {
-    **dict(re.findall(r"\b([LFE]-\d\d) ([^:\n]+):", brain._PLAN_TESTS_SYSTEM)),
+    # At a line's start: "(F-06 to F-08: skip …" is a note, not item F-06's name.
+    **dict(re.findall(r"^([LFE]-\d\d) ([^:\n]+):", brain._PLAN_TESTS_SYSTEM, re.M)),
     "P-01": "Page loads (dashboards, details, wizard steps)",
 }
 # Check → write what is missing → check again, at most this many times.
-SCOPE_ROUNDS = 2
+SCOPE_ROUNDS = 3
+
+# Per-field scope, listed by code from the fields each form really has (never
+# by the model): an item per required field, per dropdown and per number,
+# date, email, phone or web-address field. "Covered" then means every field
+# has its own test, not "one test touched the checklist item".
+_FIELD_ITEM = {
+    "select": "F-03",
+    "combobox": "F-03",
+    "number": "F-09",
+    "date": "F-06",
+    "datetime-local": "F-06",
+    "email": "F-06",
+    "tel": "F-06",
+    "url": "F-06",
+}
+_WHAT = {
+    "F-03": "{label} offers its options",
+    "F-09": "{label} refuses a number outside its range (e.g. a negative one)",
+    "F-06": "{label} refuses a value in the wrong format",
+}
+# Which tests count for an item: their 'coverage' (or 'linked_to') starts so.
+_COUNTS_FOR = {
+    "F-05": ("F-05",),  # FIELD_CHECK is "F-05 Field rules"
+    "F-03": ("F-03",),
+    "F-06": ("F-06", "F-09", "F-05"),
+    "F-09": ("F-09", "F-06", "F-05"),
+}
+_SEARCH_BOX = re.compile(r"\bsearch\b", re.I)  # the header's global search, not the form's
+
+
+def field_units(screen_info: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Each form's per-field scope items: {screen, id, field, what}. Only what
+    the page has (its recorded fields): evidence, never assumptions."""
+    units: list[dict[str, Any]] = []
+    for screen in screen_info:
+        fields = [
+            {**f, "label": plain_label(f.get("label"))}
+            for f in screen.get("fields") or []
+            if plain_label(f.get("label")) and not _SEARCH_BOX.search(str(f.get("label")))
+        ]
+        if screen.get("kind") in SKIP_KINDS or any(
+            CHANGES_PASSWORD.search(f["label"]) for f in fields
+        ):
+            continue
+        name = str(screen["name"])
+        required = [
+            f["label"] for f in fields if f.get("required") is True or message_for(f, "required")
+        ]
+        if required:
+            empty = "the empty form can't be saved"
+            units.append({"screen": name, "id": "F-05", "field": None, "what": empty})
+        if len(required) > 1:  # one required field: the empty form is its test
+            units += [
+                {"screen": name, "id": "F-05", "field": f, "what": f"{f} left empty is refused"}
+                for f in required
+            ]
+        for f in fields:
+            item = _FIELD_ITEM.get(str(f.get("type") or "").lower())
+            if item:
+                units.append(
+                    {
+                        "screen": name,
+                        "id": item,
+                        "field": f["label"],
+                        "what": _WHAT[item].format(label=f["label"]),
+                    }
+                )
+    return units
+
+
+def _named(text: str, labels: list[str]) -> set[str]:
+    """The field labels `text` names as whole words — the longest one where
+    labels overlap ("Expected Reps" is not also "Reps")."""
+    found = {
+        label
+        for label in labels
+        if re.search(rf"(?<!\w){re.escape(label)}(?!\w)", text, re.I)
+    }
+    return {
+        label
+        for label in found
+        if not any(other != label and label.lower() in other.lower() for other in found)
+    }
+
+
+def _covers(test: dict[str, Any], unit: dict[str, Any], labels: list[str]) -> bool:
+    if str(test.get("start_screen") or "") != unit["screen"]:
+        return False
+    tags = f"{test.get('coverage') or ''} {test.get('linked_to') or ''}".upper()
+    if not any(re.search(rf"\b{p}\b", tags) for p in _COUNTS_FOR[unit["id"]]):
+        return False
+    title = str(test.get("title") or "")
+    if unit["field"] is None:  # the empty form
+        return "empty" in title.lower()
+    if "empty" in title.lower() and unit["id"] == "F-05":
+        return False  # the empty-form test lists every required field in its rule
+    # Field rules share one tag ("F-05 Field rules"): "Quota Target is required"
+    # and "Quota Target refuses a value below 0" are told apart by their title.
+    if ("required" in title.lower()) != (unit["id"] == "F-05"):
+        return False
+    return unit["field"] in _named(f"{title} {test.get('rule') or ''}", labels)
+
+
+def uncovered(
+    units: list[dict[str, Any]], tests: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The per-field items no test in `tests` covers."""
+    labels = [str(u["field"]) for u in units if u["field"]]
+    return [u for u in units if not any(_covers(t, u, labels) for t in tests)]
+
+
+def keep_needed(
+    tests: list[dict[str, Any]], leave_out: dict[str, str], units: list[dict[str, Any]]
+) -> dict[str, str]:
+    """`leave_out` minus what must stay: a recorded field rule (FIELD_CHECK,
+    one per field and rule by construction, never a duplicate) and the only
+    test left for a per-field item."""
+    out = {
+        title: why
+        for title, why in leave_out.items()
+        if not any(str(t.get("title")) == title and t.get("coverage") == FIELD_CHECK for t in tests)
+    }
+    labels = [str(u["field"]) for u in units if u["field"]]
+    kept = [t for t in tests if str(t.get("title")) not in out]
+    for unit in uncovered(units, kept):
+        saver = next((t for t in tests if _covers(t, unit, labels)), None)
+        if saver is not None:
+            out.pop(str(saver.get("title")), None)
+            kept.append(saver)
+    return out
+
+
+def unit_rows(units: list[dict[str, Any]], tests: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The per-field items as scope-report rows (covered by which tests, or
+    missing)."""
+    labels = [str(u["field"]) for u in units if u["field"]]
+    rows = []
+    for unit in units:
+        by = [str(t.get("title")) for t in tests if _covers(t, unit, labels)]
+        rows.append(
+            {
+                "screen": unit["screen"],
+                "id": unit["id"],
+                "field": unit["field"],
+                "status": "covered" if by else "missing",
+                "tests": by,
+                "why": unit["what"],
+            }
+        )
+    return rows
 
 _SCOPE_CHECK_SYSTEM = (
     brain.STANCE
@@ -50,7 +209,10 @@ The app-wide parts on every screen (the main menu, the header's global search, \
 notifications, the account menu) are not any screen's scope.
 Also list in 'leave_out' the planned tests not worth trying: a duplicate of another \
 planned test (same thing checked on the same screen — keep the first), or a test about \
-the app-wide parts or about a screen not given here.
+the app-wide parts or about a screen not given here. Tests of DIFFERENT fields are never \
+duplicates, nor are different rules on one field: "Type is required" and "Region is \
+required" are two tests, and neither duplicates the empty-form test; "Director offers its \
+options" does not duplicate "Type offers its options".
 Reply with ONLY:
 {"screens": [{"screen": "exact screen name", "items": [{"id": "F-06", "status": \
 "covered | missing | not_applicable", "tests": ["planned test title"], \
@@ -63,13 +225,20 @@ async def _check_part(
     screen_info: list[dict[str, Any]],
     planned: list[dict[str, Any]],
     shots: list[bytes],
+    cant: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
     tests = [{k: t.get(k) for k in ("title", "start_screen", "coverage", "rule")} for t in planned]
     reply = await ask_json(
         _SCOPE_CHECK_SYSTEM,
         f"Scope items: {json.dumps(SCOPE_ITEMS, ensure_ascii=False)}\n"
-        f"Screens: {json.dumps(screen_info, ensure_ascii=False)[:40000]}\n"
-        f"Planned tests: {json.dumps(tests, ensure_ascii=False)[:40000]}",
+        f"Screens: {json.dumps(screen_info, ensure_ascii=False)[:60000]}\n"
+        f"Planned tests: {json.dumps(tests, ensure_ascii=False)[:40000]}"
+        + (
+            "\nTried to plan but the page lacks what they need — count their items as "
+            f"not_applicable with this reason: {json.dumps(cant, ensure_ascii=False)[:6000]}"
+            if cant
+            else ""
+        ),
         images=shots or None,
         model=THINKING_MODEL,
     )
@@ -90,7 +259,8 @@ async def _check_part(
 
 
 def _item(row: dict[str, Any]) -> str:
-    return f"{row['id']} {SCOPE_ITEMS[row['id']]}"
+    field = f" — {row['field']}" if row.get("field") else ""
+    return f"{row['id']} {SCOPE_ITEMS[row['id']]}{field}"
 
 
 def scope_report(report: list[dict[str, Any]]) -> tuple[str, str]:
@@ -136,6 +306,7 @@ async def check_scope(
     screen_info: list[dict[str, Any]],
     planned: list[dict[str, Any]],
     shots: dict[str, bytes] | None = None,
+    cant: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
     """Each scope item on each screen: covered (by which tests), missing,
     or not applicable (and why) — judged from the screenshots too (by screen
@@ -152,6 +323,12 @@ async def check_scope(
                 chunk,
                 [t for t in planned if str(t.get("start_screen") or "") in names],
                 images if len(images) == len(chunk) else [],
+                [
+                    f"{t.get('start_screen')}: {t.get('coverage') or ''} {t.get('title')} — "
+                    f"{t.get('not_possible')}"
+                    for t in cant or []
+                    if str(t.get("start_screen") or "") in names
+                ],
             )
 
     chunks = [
@@ -170,7 +347,9 @@ def gaps_text(missing: list[dict[str, Any]]) -> str:
         "The plan does not yet cover these scope items. Write a scenario for each (one per "
         "field where the item names fields, except F-07 / F-08: ONE per form, on the field "
         "whose limit the form shows or states — never an assumed limit like 255), starting "
-        "on that screen, with 'coverage' set to the item's ID and name. Write nothing else.\n"
+        "on that screen, with 'coverage' set to the item's ID and name. When an item names a "
+        "field (after the —), write exactly one scenario for that field and put the field's "
+        "exact name in its title. Write nothing else.\n"
         + "\n".join(f"- On {r['screen']}: {_item(r)} ({r.get('why', '')})" for r in missing)
     )
 
@@ -179,21 +358,39 @@ async def cover(
     journal: Journal,
     screen_info: list[dict[str, Any]],
     tests: list[dict[str, Any]],
-    write_gaps: Callable[[list[dict[str, Any]]], Awaitable[list[dict[str, Any]]]],
+    write_gaps: Callable[[str, list[str]], Awaitable[list[dict[str, Any]]]],
     shots: dict[str, bytes] | None = None,
     ceiling: int | None = None,
 ) -> list[dict[str, Any]]:
-    """Check the plan against the scope, write what is missing and check
-    again (SCOPE_ROUNDS times), then say plainly what is covered, left out
-    and why. `ceiling`: at most this many scenarios."""
+    """Ground the plan in the pages (`ground`), check it against the scope,
+    write what is missing and check again (SCOPE_ROUNDS times), then say
+    plainly what is covered, left out and why. `write_gaps(instruction,
+    screens)` writes scenarios for those screens. `ceiling`: at most this
+    many scenarios. Returns the scenarios to try, then the ones the pages
+    can't support, each marked `not_possible` with the reason."""
+    cant: list[dict[str, Any]] = []
+
+    async def grounded(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        ok, off = await ground_or_rewrite(journal, screen_info, batch, write_gaps)
+        cant.extend(off)
+        return ok
+
+    tests = await grounded(tests)
+    units = field_units(screen_info)
     report: list[dict[str, Any]] = []
     for attempt in range(SCOPE_ROUNDS + 1):
         tests = tests[:ceiling] if ceiling else tests
         try:
-            report, leave_out = await check_scope(screen_info, tests, shots)
+            report, leave_out = await check_scope(screen_info, tests, shots, cant)
         except Exception:  # noqa: BLE001 — the check adds tests; never block planning
             journal.event("thought", "Couldn't check the scenarios against the scope")
-            return tests
+            return tests + cant
+        # Field rules and each field's only test are never left out, and the
+        # per-field items are counted by code, field by field: the model's
+        # rows for those items on those screens give way to them.
+        leave_out = keep_needed(tests, leave_out, units)
+        fielded = {(u["screen"], u["id"]) for u in units}
+        report = [r for r in report if (r["screen"], r["id"]) not in fielded]
         if leave_out:
             tests = [t for t in tests if str(t.get("title")) not in leave_out]
             journal.event(
@@ -201,6 +398,7 @@ async def cover(
                 f"Left out {len(leave_out)} scenario(s) before trying them",
                 "; ".join(f"{title}: {why}" for title, why in leave_out.items()),
             )
+        report += unit_rows(units, tests)
         missing = [r for r in report if r["status"] == "missing"]
         full = bool(ceiling) and len(tests) >= (ceiling or 0)
         if not missing or attempt == SCOPE_ROUNDS or full:
@@ -211,12 +409,18 @@ async def cover(
             "; ".join(f"{r['screen']}: {_item(r)}" for r in missing),
         )
         titles = {t.get("title") for t in tests}
-        tests += [t for t in await write_gaps(missing) if t.get("title") not in titles]
+        screens = list(dict.fromkeys(str(r["screen"]) for r in missing))
+        written = await write_gaps(gaps_text(missing), screens)
+        tests += await grounded([t for t in written if t.get("title") not in titles])
     headline, detail = scope_report(report)
     if ceiling and len(tests) >= ceiling and any(r["status"] == "missing" for r in report):
         detail += f"\n(Stopped at the limit of {ceiling} scenarios per run.)"
+    if cant:
+        detail += "\nCan't be tested on these pages:\n" + "\n".join(
+            f"  – {t.get('title')} ({t.get('start_screen')}): {t['not_possible']}" for t in cant
+        )
     journal.event("summary", headline, detail)
-    return tests
+    return tests + cant
 
 
 def screen_shots(session: Session, screens: list[ExplorerScreen]) -> dict[str, bytes]:
@@ -227,3 +431,204 @@ def screen_shots(session: Session, screens: list[ExplorerScreen]) -> dict[str, b
         if shot is not None:
             out.setdefault(screen.name, shot.data)
     return out
+
+
+# Per screen, the element structure the planner reads: enough for every
+# control and the first rows of a list, not a 500-row table.
+ELEMENT_CHARS = 6000
+ROWS_PER_LIST = 10
+
+
+def _norm(line: str) -> str:
+    return " ".join(line.strip().removeprefix("- ").split()).lower()
+
+
+def trim_rows(aria: str, keep: int = ROWS_PER_LIST) -> str:
+    """The snapshot with each list's rows cut to the first `keep` (their
+    contents included)."""
+    out: list[str] = []
+    rows: dict[int, int] = {}  # indent -> rows kept at that depth under the current parent
+    skip_deeper: int | None = None
+    for line in aria.splitlines():
+        depth = len(line) - len(line.lstrip())
+        if skip_deeper is not None and depth > skip_deeper:
+            continue
+        skip_deeper = None
+        rows = {d: n for d, n in rows.items() if d <= depth}
+        if _norm(line).startswith(("row ", "row:", "listitem", "option ")):
+            rows[depth] = rows.get(depth, 0) + 1
+            if rows[depth] > keep:
+                skip_deeper = depth
+                continue
+        else:
+            rows.pop(depth, None)
+        out.append(line)
+    return "\n".join(out)
+
+
+_LINK = re.compile(r"^(.*?) --(.*)--> (.*)$")
+
+
+def screen_facts(
+    screens: list[ExplorerScreen], links: Sequence[str] = ()
+) -> list[dict[str, Any]]:
+    """What scenarios are planned from, per screen: its fields (with the
+    page code's limits and the form's own messages), buttons, its element
+    structure — every control, option, column and the first rows of each
+    list, as the page really has them — and where its actions were seen to
+    lead (`links`: "A --action--> B")."""
+    ways: dict[str, list[dict[str, str]]] = {}
+    for link in links:
+        m = _LINK.match(link)
+        if m and m[1] != m[3]:
+            ways.setdefault(m[1], []).append({"action": m[2], "to": m[3]})
+    return [
+        {
+            "name": s.name,
+            "business_thing": s.entity,
+            "kind": s.view_kind,
+            "purpose": s.purpose,
+            "fields": [
+                {
+                    "label": f.get("label"),
+                    "type": f.get("type"),
+                    "required": f.get("required"),
+                    "notes": f.get("notes"),
+                    # The page code's own limits (field_checks.with_code_limits).
+                    **{k: f[k] for k in CODE_LIMITS if f.get(k)},
+                    # The messages the form showed for wrong values (field_probe).
+                    **({"messages": f["messages"]} if f.get("messages") else {}),
+                }
+                for f in s.fields
+            ][:40],
+            "buttons": [a.get("label") for a in s.actions][:20],
+            **({"elements": trim_rows(s.aria)[:ELEMENT_CHARS]} if s.aria else {}),
+            **({"leads_to": ways[s.name][:30]} if s.name in ways else {}),
+        }
+        for s in screens
+    ]
+
+
+def _on_page(entry: str, lines: list[str], text: str) -> bool:
+    want = _norm(entry)
+    return bool(want) and (any(want in line for line in lines) or want in text)
+
+
+def _flow_problem(
+    t: dict[str, Any],
+    by_screen: dict[str, str],
+    leads: dict[str, list[tuple[str, str]]],
+) -> str | None:
+    """Why `t`'s steps can't happen as planned, or None: every step on a
+    screen Explorer saw, using an element that screen has, and every move to
+    another screen made by the element of the step before it, the way
+    Explorer saw that screen do it."""
+    start = str(t.get("start_screen") or "")
+    path = [p for p in t.get("path") or [] if isinstance(p, dict)]
+    if not path:
+        return "doesn't say which page each step happens on and what it uses"
+    here, pressed = start, ""
+    seen: list[str] = []
+    for step in path:
+        screen = str(step.get("screen") or "")
+        element = str(step.get("element") or "").strip()
+        if screen not in by_screen:
+            return f"goes to a screen Explorer never saw: “{screen}”"
+        if screen != here:
+            ways = [action for action, to in leads.get(here, []) if to == screen]
+            if not ways:
+                return f"no way was seen from “{here}” to “{screen}”"
+            if pressed and not any(_norm(a) and _norm(a) in _norm(pressed) for a in ways):
+                return (
+                    f"{pressed} on “{here}” was never seen to lead to “{screen}” "
+                    f"(seen: {', '.join(ways)})"
+                )[:300]
+        lines = [_norm(line) for line in by_screen[screen].splitlines()]
+        if element and lines and not _on_page(element, lines, " ".join(lines)):
+            return f"“{screen}” has no {element}"
+        here, pressed = screen, element
+        seen.append(screen)
+    lines = [_norm(line) for s in dict.fromkeys(seen) for line in by_screen[s].splitlines()]
+    text = " ".join(lines)
+    for value in (t.get("data") or {}).get("finds") or []:
+        if str(value).strip() and lines and not _on_page(str(value), lines, text):
+            return f"the value “{value}” isn't on its pages"
+    return None
+
+
+def ground(
+    tests: list[dict[str, Any]], facts: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(usable, not usable) — no model. A planned scenario is usable when its
+    whole flow is there before it is ever tried: each step on a screen
+    Explorer saw, using an element that screen has, each move to another
+    screen one Explorer saw happen, and every value it finds on its pages.
+    Field rules (written from the fields), the user's own request and
+    sign-in tests pass as they are. Not usable ones carry `not_possible`."""
+    by_screen = {str(f["name"]): str(f.get("elements") or "") for f in facts}
+    leads = {
+        str(f["name"]): [(str(w["action"]), str(w["to"])) for w in f.get("leads_to") or []]
+        for f in facts
+    }
+    ok: list[dict[str, Any]] = []
+    off: list[dict[str, Any]] = []
+    for t in tests:
+        if (
+            str(t.get("start_screen") or "") not in by_screen
+            or t.get("coverage") == FIELD_CHECK
+            or t.get("kind") == "journey"
+            or t.get("signed_out")
+        ):
+            ok.append(t)
+            continue
+        problem = _flow_problem(t, by_screen, leads)
+        if problem:
+            off.append({**t, "not_possible": problem[:300]})
+        else:
+            ok.append(t)
+    return ok, off
+
+
+async def ground_or_rewrite(
+    journal: Journal,
+    screen_info: list[dict[str, Any]],
+    batch: list[dict[str, Any]],
+    write: Callable[[str, list[str]], Awaitable[list[dict[str, Any]]]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(usable, set aside): every scenario using only what its pages have;
+    those that don't are rewritten once (`write(instruction, screens)`),
+    then set aside with why (`not_possible`)."""
+    ok, off = ground(batch, screen_info)
+    if not off:
+        return ok, []
+    journal.event(
+        "thought",
+        f"{len(off)} scenario(s) use something the page doesn't have — rewriting them",
+        "; ".join(f"{t.get('title')}: {t['not_possible']}" for t in off),
+    )
+    screens = list(dict.fromkeys(str(t.get("start_screen") or "") for t in off))
+    try:
+        redone = await write(regrounding_text(off), screens)
+    except Exception:  # noqa: BLE001 — never block planning on a rewrite
+        redone = []
+    fixed, still = ground(redone, screen_info)
+    # Each set aside once, as last written (with why its rewrite failed too).
+    latest = {t.get("title"): t for t in off} | {t.get("title"): t for t in still}
+    done = {t.get("title") for t in fixed}
+    return ok + fixed, [t for title, t in latest.items() if title not in done]
+
+
+def regrounding_text(off: list[dict[str, Any]]) -> str:
+    """The rewrite instruction for scenarios that use what the page lacks."""
+    return (
+        "These planned scenarios can't happen as written. Rewrite each so every step in "
+        "'path' is on a screen given, uses an element copied exactly from THAT screen's "
+        "'elements', and moves to another screen only by a way in its 'leads_to'; values "
+        "in 'data.finds' must be on those screens — keep the same purpose and 'coverage'. "
+        "If the app truly has no way to do it, leave it out. Write nothing else.\n"
+        + "\n".join(
+            f"- On {t.get('start_screen')}: “{t.get('title')}” ({t.get('coverage') or ''}) — "
+            f"{t['not_possible']}"
+            for t in off
+        )
+    )

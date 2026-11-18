@@ -488,33 +488,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/explorer/applications/{application_id}/settings": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Application Explorer Settings
-         * @description The limits this application's runs use (Application settings): its own,
-         *     or the organisation's until it has its own. Readable by everyone on the
-         *     app; only admins change them.
-         */
-        get: operations["get_application_explorer_settings_explorer_applications__application_id__settings_get"];
-        /**
-         * Update Application Explorer Settings
-         * @description This application's own limits; its next runs use them (a run going now
-         *     keeps the limits it started with, Resume picks up the new ones).
-         */
-        put: operations["update_application_explorer_settings_explorer_applications__application_id__settings_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/explorer/settings": {
         parameters: {
             query?: never;
@@ -690,7 +663,9 @@ export interface paths {
          * Judge Possible Bug
          * @description Your answer to a possible bug. "Not a bug": the app is right, so the
          *     scenario becomes a normal test of what it does and goes to Test cases.
-         *     "Ignore": it is left out. Test cases never hold bugs.
+         *     "Ignore": it is left out — except on an authoring run, where the user asked
+         *     for that test: either answer approves it as a normal test case, never
+         *     blocked. Test cases never hold bugs.
          */
         post: operations["judge_possible_bug_explorer_tests__test_id__verdict_post"];
         delete?: never;
@@ -2552,6 +2527,10 @@ export interface components {
         AuthorRequest: {
             /** Prompt */
             prompt: string;
+            /** Journey Id */
+            journey_id?: string | null;
+            /** Journey Name */
+            journey_name?: string | null;
         };
         /** AutofillScenarioTestDataStatusRead */
         AutofillScenarioTestDataStatusRead: {
@@ -2938,6 +2917,8 @@ export interface components {
              * @default 150
              */
             first_look_max_screens: number;
+            /** Max Screens */
+            max_screens?: number | null;
             /**
              * Max Missions
              * @default 15
@@ -5508,76 +5489,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RunRead"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_application_explorer_settings_explorer_applications__application_id__settings_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                application_id: string;
-            };
-            cookie?: {
-                session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ExplorerSettingsBody"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    update_application_explorer_settings_explorer_applications__application_id__settings_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                application_id: string;
-            };
-            cookie?: {
-                session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ExplorerSettingsBody"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ExplorerSettingsBody"];
                 };
             };
             /** @description Validation Error */

@@ -1,22 +1,30 @@
-"""Every scenario the request planned that got through its try in the app
-(proven, or a possible bug; dropped ones are left out) becomes a test-case
-scenario, carrying its proven code — ADDED next to
+"""Every scenario the request planned that worked when tried in the app
+becomes a test-case scenario, carrying its proven code — ADDED next to
 everything already there. Authoring's counterpart of explorer_worker.promote,
 with three differences: one Journey per request (its own identity key, so it
 never replaces Explorer's journeys or another request's), scenarios marked
 `source="nl"` (Test cases → "Author test cases"), and a grounding key Explorer's
-own hand-off doesn't look for, so a later Explorer run never retires them."""
+own hand-off doesn't look for, so a later Explorer run never retires them.
+A possible bug waits on the run's Scenarios tab, as in Explorer: "Not a bug"
+adds it (promote with `only`), "Ignore" drops it."""
 
 import asyncio
 import uuid
 from collections.abc import Sequence
 
-from domain import Application, DiscoveryRun, Journey, JourneyStep, Page, Scenario, TestAsset
+from domain import (
+    Application,
+    DiscoveryRun,
+    Journey,
+    JourneyStep,
+    Page,
+    Scenario,
+    TestAsset,
+)
 from explorer_core import ExplorerRun, ExplorerScreen, ExplorerShot, ExplorerTestCase
 from object_store import ObjectStore
 from sqlmodel import Session, col, select
 
-from explorer_worker.authoring.plan import ADDED
 from explorer_worker.db import engine
 from explorer_worker.journal import Journal
 from explorer_worker.missions import one_at_a_time
@@ -38,13 +46,14 @@ def identity_key(run_external_id: object) -> str:
     return f"explorer-author:{run_external_id}"
 
 
-async def promote(run_id: uuid.UUID) -> list[str]:
+async def promote(run_id: uuid.UUID, only: uuid.UUID | None = None) -> list[str]:
     """The external id of the Journey the scenarios were added to ([] when
-    nothing was proven) — the workflow generates its test cases next."""
-    return await asyncio.to_thread(_promote, run_id)
+    nothing was proven) — the workflow generates its test cases next.
+    `only`: that one scenario, added next to what is already there."""
+    return await asyncio.to_thread(_promote, run_id, only)
 
 
-def _promote(run_id: uuid.UUID) -> list[str]:
+def _promote(run_id: uuid.UUID, only: uuid.UUID | None = None) -> list[str]:
     journal = Journal(run_id)
     with Session(engine) as session:
         run = session.get(ExplorerRun, run_id)
@@ -55,7 +64,12 @@ def _promote(run_id: uuid.UUID) -> list[str]:
             return []
         tests = session.exec(
             select(ExplorerTestCase)
-            .where(ExplorerTestCase.run_id == run_id, col(ExplorerTestCase.status).in_(ADDED))
+            .where(
+                ExplorerTestCase.run_id == run_id,
+                # Only what works: a possible bug waits for your answer.
+                ExplorerTestCase.status == "proven",
+                *([ExplorerTestCase.external_id == only] if only else []),
+            )
             .order_by(col(ExplorerTestCase.created_at))
         ).all()
         if not tests:
@@ -114,7 +128,9 @@ def _promote(run_id: uuid.UUID) -> list[str]:
                 identity_key=identity_key(run.external_id),
                 attempt=1,
             )
-        else:  # this same request again (after "Not a bug"): its own rows only
+        elif only is not None:
+            pass  # one more scenario: everything already there stays
+        else:  # this same request sent again: its own rows only
             journey.attempt += 1
             _retire(session, journey.id)
             for step in session.exec(
@@ -161,11 +177,14 @@ def _promote(run_id: uuid.UUID) -> list[str]:
                     },
                 )
             )
+        first, count = tests[0].title, len(tests)  # read before the commit expires them
         session.commit()
         journey_id = str(journey.external_id)
     journal.event(
         "summary",
-        f"{len(tests)} scenarios added — writing their test cases",
+        f"Added to the test cases: {first}"
+        if only
+        else f"{count} scenarios added — writing their test cases",
         "They appear under Test cases → Author test cases when ready.",
     )
     return [journey_id]

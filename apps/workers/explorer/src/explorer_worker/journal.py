@@ -195,6 +195,9 @@ class Journal:
                 if values.get("reached_by") == "Start page":
                     # a screen copied from an earlier run may be this run's start
                     existing.reached_by = "Start page"
+                # The fuller element structure (a list that has loaded its rows).
+                if len(values.get("aria") or "") > len(existing.aria or ""):
+                    existing.aria = values["aria"]
                 # Keep the richer reading: later visits often see more fields.
                 if len(values.get("fields", [])) > len(existing.fields):
                     existing.fields = values["fields"]

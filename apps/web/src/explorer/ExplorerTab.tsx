@@ -108,6 +108,9 @@ export function ExplorerTab({
         if (cancelled) return
         setRun(r)
         if (r?.status === 'awaiting_confirmation') setView('summary')
+        // A finished authoring run whose possible bugs wait for an answer:
+        // straight to them (they reach Test cases only through that answer).
+        else if (r?.prompt && r.status === 'tested' && r.counts.tests_known_bugs > 0) setView('scenarios')
       })
       .catch(() => !cancelled && setRun(null))
     return () => {
@@ -408,8 +411,12 @@ export function ExplorerTab({
             )}
             {view === 'screens' && <ScreensView map={appMap} issues={issues} onOpenShot={openShot} />}
             {view === 'scenarios' && <ScenariosView run={run} tests={tests} screens={appMap?.screens ?? []} onOpenShot={openShot} onGenerateTests={canEdit ? onGenerateTests : undefined} onVerdict={canEdit ? async (testId, verdict) => {
-              setRun(await explorerApi.verdict(testId, verdict))
+              const answered = await explorerApi.verdict(testId, verdict)
+              setRun(answered)
               setTests(await explorerApi.tests(run.id))
+              // Authoring: once every possible bug is answered, on to its test
+              // cases ("Not a bug" ones are being added there now).
+              if (answered.prompt && answered.counts.tests_known_bugs === 0 && answered.counts.tests_proven > 0) onAuthoringDone?.()
             } : undefined} />}
             {view === 'summary' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

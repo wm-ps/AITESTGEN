@@ -12,12 +12,13 @@ from playwright.async_api import expect
 from explorer_worker.browser import (
     _CALENDAR_JS,
     _DOM_QUIET_JS,
+    PRESS_WAIT_MS,
     SUGGESTIONS,
     Eyes,
     field_after_caption,
     locate,
 )
-from explorer_worker.samples import sample_file
+from explorer_worker.samples import file_names, padding, sample_file, sample_files, upload_shape
 from explorer_worker.sense import (
     CONTINUE_LIKE,
     DISMISS_LIKE,
@@ -141,20 +142,35 @@ async def _do(eyes: Eyes, step: dict[str, Any]) -> bool:
     # A recorded locator is used as-is: the replay proves the very locator
     # the exported test will use (ts_locator), not a fresh guess.
     spec = step.get("locator")
+    if action == "fill" and step.get("keys") and spec:
+        # A field that reacts to each key (a mask, a suggestion list): typed
+        # one character at a time, as the repair that made it work did.
+        typed = {"do": "keys", "target": "", "text": str(step["value"])}
+        return await eyes.do_repair(typed, spec) is not None
     if action == "fill":
         return await eyes.fill_field(str(step["field"]), str(step["value"]), spec=spec)
+    if action == "key":
+        pressed = {"do": "key", "key": str(step.get("key") or "")}
+        return await eyes.do_repair(pressed, spec) is not None
+    if action == "wait":
+        await eyes.page.wait_for_timeout(max(0, min(int(step.get("ms") or 0), 5000)))
+        return True
     if action == "choose":
         return await eyes.choose(str(step.get("field") or ""), str(step["option"]), spec=spec)
     if action == "click":
         before = await eyes.fingerprint()
-        ok = await eyes.click_text(str(step["label"]), "button", spec=spec)
+        ok = await eyes.click_text(str(step["label"]), "button", spec=spec, wait_ms=PRESS_WAIT_MS)
+        if ok and spec and eyes.last_locator and eyes.last_locator != spec:
+            # Found another way (the page changed its markup): the step and
+            # the exported test use the locator that works now.
+            step["locator"] = dict(eyes.last_locator)
         if ok:
             await eyes.wait_for_change(before, 8000)
         return ok
     if action == "upload":
-        path = sample_file(str(step.get("kind") or "image"))
-        return await eyes.upload_file(str(step.get("field") or ""), str(path))
-    if action in ("back", "reload"):
+        paths = sample_files(str(step.get("kind") or "image"), *upload_shape(step))
+        return await eyes.upload_file(str(step.get("field") or ""), [str(p) for p in paths])
+    if action in ("back", "reload", "fail_next_save"):
         return await eyes.browser(str(action))
     return False
 
@@ -172,9 +188,19 @@ def describe(step: dict[str, Any]) -> str:
     if action == "click":
         return f"pressing “{step.get('label')}”"
     if action == "upload":
-        return f"attaching a {step.get('kind') or 'image'} file"
+        count, size_mb = upload_shape(step)
+        what = f"{count} {step.get('kind') or 'image'} files" if count > 1 else (
+            f"a {step.get('kind') or 'image'} file"
+        )
+        return f"attaching {what}" + (f" of {size_mb:g} MB" if size_mb else "")
     if action in ("back", "reload"):
         return f"pressing the browser's {'Back' if action == 'back' else 'Refresh'}"
+    if action == "fail_next_save":
+        return "making the next save fail"
+    if action == "key":
+        return f"pressing the {step.get('key')} key"
+    if action == "wait":
+        return "waiting for the page"
     return "opening the screen"
 
 
@@ -194,12 +220,39 @@ def api_call_count(calls: list[tuple[str, str, int]], value: str) -> int:
 
 
 # A field the app flagged after the test acted: marked invalid for screen
-# readers (aria-invalid), or refused by the browser's own check, which focuses
-# the first field it refuses. Shared by `holds` and the exported test.
+# readers (aria-invalid), refused by the browser's own check (which focuses
+# the first field it refuses), or styled as an error the way UI kits do it —
+# on the field or its wrapper (Bootstrap is-invalid / has-error, MUI and Ant
+# "...-error", Angular ng-invalid once touched; a form's own class never
+# counts, it would flag every field). Shared by `holds` and the exported test.
 FIELD_FLAGGED_JS = (
-    "e => e.getAttribute('aria-invalid') === 'true' || "
-    "(!!e.validity && !e.validity.valid && document.activeElement === e)"
+    "e => { if (e.getAttribute('aria-invalid') === 'true') return true; "
+    "if (e.validity && !e.validity.valid && document.activeElement === e) return true; "
+    "for (let el = e, i = 0; el && i < 3 && el.tagName !== 'FORM'; el = el.parentElement, i++) { "
+    "const c = ' ' + (typeof el.className === 'string' ? el.className : '') + ' '; "
+    "if (/[\\s_-](is-invalid|has-error|invalid|error)\\s/i.test(c) "
+    "&& !/\\s(ng-untouched|ng-pristine)\\s/.test(c)) return true; } return false; }"
 )
+# Controls a person reads as names, not outcomes: a proof that only shows one
+# (a field's label, a button, a column header) is on screen whatever the app
+# does, so it proves nothing.
+_CONTROL_LINE = re.compile(
+    r'^\s*-\s*(?:textbox|combobox|button|checkbox|radio|spinbutton|searchbox|switch|'
+    r'slider|columnheader|listbox)\s+"([^"]*)"',
+    re.M,
+)
+
+
+def names_a_control(check: dict[str, Any], aria: str) -> bool:
+    """Is this text proof just the name of a control on the final screen?"""
+    if check.get("kind") not in (None, "", "text_visible"):
+        return False
+
+    def plain(text: str) -> str:
+        return " ".join(text.replace("*", "").replace(":", " ").split()).lower()
+
+    value = plain(str(check.get("value") or ""))
+    return bool(value) and any(plain(name) == value for name in _CONTROL_LINE.findall(aria))
 
 
 def seen_message(check: dict[str, Any], messages: list[str]) -> bool:
@@ -431,7 +484,7 @@ def without_decisive_step(script: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # A trailing Back/Refresh only re-shows a screen, so its test proves the
     # step that reached that screen: drop that one instead.
     for index in range(len(script) - 1, -1, -1):
-        if script[index].get("do") not in ("goto", "back", "reload"):
+        if script[index].get("do") not in ("goto", "back", "reload", "fail_next_save"):
             return script[:index] + script[index + 1 :]
     return script
 
@@ -616,11 +669,19 @@ def playwright_code(
                 )
                 + ".filter({ visible: true }).first()"
             )
-            if optional:
+            if step.get("keys"):
+                # A field that reacts to each key (a mask, suggestions): typed
+                # one character at a time, as Explorer's repair found it needs.
+                body.append(
+                    f"  {{ const box = await ensureVisible({field}); await box.fill(''); "
+                    f"await box.pressSequentially({value}, {{ delay: 60 }}); }}"
+                )
+            elif optional:
                 body.append(act(field, f"fill({value}, {{ timeout: ASSERTION_TIMEOUT_MS }})"))
             else:
                 uses_fill = True
-                body.append(f"  await fillField(page, await ensureVisible({field}), {value});")
+                fmt = f", {_q(step['date_format'])}" if step.get("date_format") else ""
+                body.append(f"  await fillField(page, await ensureVisible({field}), {value}{fmt});")
             if step.get("suggest"):
                 # A type-ahead field: pick the suggestion Explorer picked
                 # (ARIA options or a widget's plain list rows).
@@ -717,14 +778,44 @@ def playwright_code(
             if fresh:
                 body.append("  await startFreshIfAsked();")
         elif action == "upload":
-            # The sample file travels inside the test, so it runs anywhere.
+            # The sample file travels inside the test, so it runs anywhere; a
+            # big one is padded by the test itself (not megabytes of text),
+            # several get their own names — the same files Explorer attached.
             path = sample_file(str(step.get("kind") or "image"))
+            count, size_mb = upload_shape(step)
             data = base64.b64encode(path.read_bytes()).decode()
             mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            pad = padding(path, size_mb)
+            buffer = (
+                f"Buffer.concat([Buffer.from({_q(data)}, 'base64'), Buffer.alloc({pad})])"
+                if pad
+                else f"Buffer.from({_q(data)}, 'base64')"
+            )
+            files = ", ".join(
+                f"{{ name: {_q(name)}, mimeType: {_q(mime)}, buffer: {buffer} }}"
+                for name in file_names(path, count, size_mb)
+            )
             body.append(
-                "  await page.locator('input[type=file]').first().setInputFiles("
-                f"{{ name: {_q(path.name)}, mimeType: {_q(mime)}, "
-                f"buffer: Buffer.from({_q(data)}, 'base64') }});"
+                f"  await page.locator('input[type=file]').first().setInputFiles([{files}]);"
+            )
+        elif action == "key":
+            # A keystroke a repair found the field needs (Enter confirms it…).
+            if step.get("locator"):
+                body.append(f"  await {ts_locator(step['locator'])}.focus();")
+            body.append(f"  await page.keyboard.press({_q(str(step.get('key') or ''))});")
+        elif action == "wait":
+            ms = max(0, min(int(step.get("ms") or 0), 5000))
+            body.append(f"  await page.waitForTimeout({ms});")
+        elif action == "fail_next_save":
+            # The app's next save gets a server error, once (Eyes.browser).
+            body.append(
+                "  { let used = false; await page.route('**/*', async (route) => { "
+                "const r = route.request(); if (!used && ['POST', 'PUT', 'PATCH'].includes("
+                "r.method()) && ['xhr', 'fetch'].includes(r.resourceType())) { used = true; "
+                "await route.fulfill({ status: 500, contentType: 'application/json', "
+                "headers: { 'Access-Control-Allow-Origin': r.headers()['origin'] ?? '*' }, "
+                "body: '{\"error\": \"Simulated server error\"}' }); } "
+                "else { await route.fallback(); } }); }"
             )
         elif action in ("back", "reload"):
             call = "goBack" if action == "back" else "reload"
@@ -856,7 +947,18 @@ def playwright_code(
 # the app's value. Pick from the calendar like Explorer does (Eyes.
 # _pick_from_calendar, same CALENDAR script); otherwise fill as usual.
 _FILL_TS = [
-    "async function fillField(page: Page, box: Locator, value: string): Promise<void> {",
+    "async function fillField(page: Page, box: Locator, value: string, format?: string): Promise<void> {",
+    # A date typed into a text box in the field's own format (Explorer read
+    # it from the page: Eyes._date_hint), twin of sense.format_date.
+    "  if (format) {",
+    r"    const d = /^\s*(\d{4})-(\d{1,2})-(\d{1,2})\s*$/.exec(value);",
+    "    if (d) {",
+    "      const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];",
+    "      const [y, mo, dd] = [Number(d[1]), Number(d[2]), Number(d[3])];",
+    "      const parts: Record<string, string> = { yyyy: String(y).padStart(4, '0'), yy: String(y % 100).padStart(2, '0'), mmmm: months[mo - 1], mmm: months[mo - 1].slice(0, 3), mm: String(mo).padStart(2, '0'), m: String(mo), dd: String(dd).padStart(2, '0'), d: String(dd) };",
+    "      value = format.replace(/yyyy|yy|mmmm|mmm|mm|m|dd|d/gi, (t) => parts[t.toLowerCase()]);",
+    "    }",
+    "  }",
     "  const readOnly = await box.evaluate((e) => (e as HTMLInputElement).readOnly === true);",
     "  if (!value.trim()) {",
     "    if (readOnly) {",

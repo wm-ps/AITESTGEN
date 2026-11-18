@@ -24,6 +24,7 @@ PLANNED_TESTS_ACTIVITY = "authoring_planned_tests"
 PLAN_TESTS_ACTIVITY = "authoring_plan_tests"
 PROMOTE_ACTIVITY = "authoring_add_test_cases"
 UNCLEAR_ACTIVITY = "authoring_stop_unclear"
+REFILL_ACTIVITY = "authoring_refill"
 
 
 @activity.defn(name=READ_REQUEST_ACTIVITY)
@@ -94,9 +95,10 @@ async def plan_tests_activity(run_id: str) -> int:
 
 
 @activity.defn(name=PROMOTE_ACTIVITY)
-async def promote_activity(run_id: str) -> list[str]:
+async def promote_activity(run_id: str, test_id: str = "") -> list[str]:
+    """`test_id`: only that scenario (you said "Not a bug"), added to the rest."""
     try:
-        return await promote.promote(uuid.UUID(run_id))
+        return await promote.promote(uuid.UUID(run_id), uuid.UUID(test_id) if test_id else None)
     except Exception as exc:
         logger.exception("authoring hand-off failed")
         Journal(uuid.UUID(run_id)).event(
@@ -112,7 +114,19 @@ async def stop_unclear_activity(run_id: str) -> str:
     return plan.stop_unclear(uuid.UUID(run_id))
 
 
+@activity.defn(name=REFILL_ACTIVITY)
+async def refill_activity(run_id: str) -> int:
+    """Replacements for scenarios that couldn't be carried out, up to the
+    number the user asked for."""
+    try:
+        return await plan.refill(uuid.UUID(run_id))
+    except Exception:  # the delivered test cases still stand
+        logger.exception("authoring: replacing scenarios failed")
+        return 0
+
+
 ACTIVITIES = [
+    refill_activity,
     stop_unclear_activity,
     read_request_activity,
     start_activity,

@@ -40,7 +40,7 @@ from sqlmodel import Session, col, select
 from explorer_worker import brain, limits, quality, scope
 from explorer_worker.browser import Visit
 from explorer_worker.db import engine
-from explorer_worker.field_checks import CODE_LIMITS, FIELD_CHECK, field_checks
+from explorer_worker.field_checks import FIELD_CHECK, field_checks
 from explorer_worker.goal import ensure_scope, screens_in_goal
 from explorer_worker.journal import Journal
 from explorer_worker.memory import ask
@@ -67,6 +67,7 @@ from explorer_worker.testkit import (
     broken_variants,
     ground_state,
     holds,
+    names_a_control,
     playwright_code,
     replay,
     seen_message,
@@ -285,29 +286,10 @@ async def plan_tests(run_id: uuid.UUID) -> int:
                 )
             ).all()
         ]
-        screen_info = [
-            {
-                "name": s.name,
-                "business_thing": s.entity,
-                "kind": s.view_kind,
-                "purpose": s.purpose,
-                "fields": [
-                    {
-                        "label": f.get("label"),
-                        "type": f.get("type"),
-                        "required": f.get("required"),
-                        "notes": f.get("notes"),
-                        # The page code's own limits (field_checks.with_code_limits).
-                        **{k: f[k] for k in CODE_LIMITS if f.get(k)},
-                        # The messages the form showed for wrong values (field_probe).
-                        **({"messages": f["messages"]} if f.get("messages") else {}),
-                    }
-                    for f in s.fields
-                ][:40],
-                "buttons": [a.get("label") for a in s.actions][:20],
-            }
-            for s in screens
-        ]
+        # Each page as it really is: fields, buttons, its elements and (below)
+        # its screenshot — what scenarios are planned from.
+        screen_info = scope.screen_facts(list(screens), links)
+        shots = scope.screen_shots(session, list(screens))
     journal.update_run(status="testing", headline="Working out scenarios")
     journal.event(
         "phase",
@@ -326,6 +308,10 @@ async def plan_tests(run_id: uuid.UUID) -> int:
     # environment, scenarios may plan and press them too.
     approved = sorted(approved_presses(run_id)) if may_save else []
 
+    def shots_of(only: list[str]) -> list[bytes] | None:
+        images = [shots[n] for n in only if n in shots]
+        return images if only and len(images) == len(only) else None
+
     async def plan_part(index: int, only: list[str]) -> list[dict[str, Any]]:
         async with gate:
             return await brain.plan_tests(
@@ -340,6 +326,7 @@ async def plan_tests(run_id: uuid.UUID) -> int:
                 only=only,
                 # An app with no login gets no sign-in scenarios.
                 sign_in=index == 0 and target.requires_login,
+                shots=shots_of(only),
             )
 
     parts = await asyncio.gather(
@@ -368,23 +355,29 @@ async def plan_tests(run_id: uuid.UUID) -> int:
 
     # The scope check (shared with authoring): every screen's checklist items
     # covered, the missing ones written and checked again, then said plainly.
-    async def write_gaps(missing: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    async def write_gaps(instruction: str, only: list[str]) -> list[dict[str, Any]]:
         return await brain.plan_tests(
             brief,
             screen_info,
             links,
             missions,
             bugs,
-            f"{notes or ''}\n{scope.gaps_text(missing)}",
+            f"{notes or ''}\n{instruction}",
             may_save=may_save,
             approved=approved,
-            only=list(dict.fromkeys(str(r["screen"]) for r in missing)),
+            only=only,
             sign_in=False,
+            shots=shots_of(only),
         )
 
-    with Session(engine) as session:
-        shots = scope.screen_shots(session, list(screens))
     reviewed = await scope.cover(journal, screen_info, reviewed, write_gaps, shots)
+    # What the pages can't support is kept with its reason, never tried.
+    cant = [
+        (t, f"Can't be tested here — {t['not_possible']}")
+        for t in reviewed
+        if t.get("not_possible")
+    ]
+    reviewed = [t for t in reviewed if not t.get("not_possible")]
     known = {s["name"] for s in screen_info}
     kept = 0
     with Session(engine) as session:
@@ -421,7 +414,7 @@ async def plan_tests(run_id: uuid.UUID) -> int:
             kept += 1
         cap = test_cap(len(screen_info), limits.of(run_id)["max_scenarios"])
         tried = [(t, None) for t in balanced(reviewed, cap)]
-        for t, reason in tried + [(planned[i], why) for i, why in skipped.items()]:
+        for t, reason in tried + [(planned[i], why) for i, why in skipped.items()] + cant:
             kind = str(t.get("kind") or "")
             if kind not in TEST_KINDS or not t.get("title") or not t.get("expected"):
                 continue
@@ -579,18 +572,36 @@ def screen_by_screen(rows: Any) -> list[str]:
     return [str(rows[i][0]) for i in ordered]
 
 
+def try_order(planned: Any) -> list[str]:
+    """(id, kind, start screen, script) in plan order -> ids to try: screen
+    by screen, and one that couldn't reach its screen after all the others
+    (time for whatever stopped it — a slow app, a press that found nothing —
+    to pass)."""
+    planned = list(planned)
+    later = {
+        r[0] for r in planned if r[3] and isinstance(r[3][0], dict) and r[3][0].get("unreached")
+    }
+    return screen_by_screen([r[:3] for r in planned if r[0] not in later]) + [
+        str(r[0]) for r in planned if r[0] in later
+    ]
+
+
 def planned_tests(run_id: uuid.UUID) -> list[str]:
     with Session(engine) as session:
         run = session.get(ExplorerRun, run_id)
         if run is None or run.status in ("stopped", "paused"):
             return []
-        rows = screen_by_screen(
-            session.exec(
-                select(ExplorerTestCase.id, ExplorerTestCase.kind, ExplorerTestCase.start_screen)
-                .where(ExplorerTestCase.run_id == run_id, ExplorerTestCase.status == "planned")
-                .order_by(col(ExplorerTestCase.created_at))
-            ).all()
-        )
+        planned = session.exec(
+            select(
+                ExplorerTestCase.id,
+                ExplorerTestCase.kind,
+                ExplorerTestCase.start_screen,
+                ExplorerTestCase.script,
+            )
+            .where(ExplorerTestCase.run_id == run_id, ExplorerTestCase.status == "planned")
+            .order_by(col(ExplorerTestCase.created_at))
+        ).all()
+        rows = try_order(planned)
         if not one_at_a_time(session, run_id):
             return rows
         busy = session.exec(
@@ -607,9 +618,96 @@ def _update(test_id: uuid.UUID, **changes: Any) -> None:
         if test is None:
             return
         for key, value in changes.items():
+            if key == "steps" and value is None:
+                continue  # no new steps: the planned ones stand
             setattr(test, key, value)
         session.add(test)
         session.commit()
+
+
+async def repair(
+    journal: Journal,
+    test_id: uuid.UUID,
+    meta: dict[str, Any],
+    test_info: dict[str, Any],
+    final: Any,
+    failure: str,
+    history: list[str],
+    messages: list[str],
+    heartbeat: Callable[[], None],
+) -> tuple[bool, str]:
+    """A test that didn't reach its outcome is repaired, not dropped: why is
+    worked out from the screen it ended on (brain.repair_test) and the test
+    fixed — its setup, its route, how a control is used, what shows the
+    outcome — then tried again; only the user knows → asked; the app at
+    fault → tried once more and judged as a finding. Its title, purpose and
+    expected outcome never change, so the planned scenario and the test case
+    stay the same test. At most limits["test_retries"] repairs.
+    Returns (trying again, why not)."""
+    earlier = [str(r) for r in meta.get("repairs") or []]
+    if len(earlier) >= limits.of(journal.run_id)["test_retries"]:
+        return False, (f"{failure} — still after {len(earlier)} repair(s)")[:400]
+    title = str(test_info.get("title") or "")
+    try:
+        reply = await brain.repair_test(
+            {**test_info, "how_to_run": meta.get("how_to_run")},
+            failure,
+            history,
+            str(final.inventory.get("aria") or ""),
+            final.shot,
+            messages,
+            earlier,
+        )
+    except Exception:  # noqa: BLE001 — no diagnosis: said plainly
+        return False, failure[:400]
+    cause = str(reply.get("cause") or "").strip()
+    diagnosis = str(reply.get("diagnosis") or failure).strip()
+    how = str(reply.get("how_to_run") or "").strip() or str(meta.get("how_to_run") or "")
+    if cause == "impossible":
+        return False, f"This app has nothing that can carry it out: {diagnosis}"[:400]
+    if cause == "needs_user":
+        question = str(reply.get("question") or "").strip()
+        answer = (
+            await ask(
+                journal,
+                "data",
+                question,
+                f"Needed for the test “{title}”: {diagnosis}",
+                [],
+                journal.shot(final.shot),
+                heartbeat,
+            )
+            if question
+            else None
+        )
+        if not answer:
+            return False, f"Waiting for your answer: {question or diagnosis}"[:400]
+        how = f"{how} The user said: {answer}"
+    if cause == "app_bug":
+        # Not worked around: tried once more so it is judged as what the app does.
+        how = (
+            f"{how} Last time the app itself was at fault ({diagnosis}). If it does that "
+            "again, that is the outcome: stop there and judge it."
+        )
+    if not how:
+        return False, diagnosis[:400]
+    _update(
+        test_id,
+        status="planned",
+        steps=[str(x) for x in reply.get("steps") or []][:15] or None,
+        script=[
+            {
+                **meta,
+                "how_to_run": how[:2000],
+                "lesson": diagnosis[:400],
+                "repairs": [*earlier, f"{cause or 'other'}: {diagnosis}"[:300]],
+                # It never got to its screen: tried after the others (try_order).
+                **({"unreached": True} if cause == "route" else {}),
+            }
+        ],
+    )
+    journal.event("thought", f"Repairing: {title}", f"{cause or 'other'} — {diagnosis}"[:600])
+    return True, ""
 
 
 def drop(journal: Journal, test_id: uuid.UUID, title: str, reason: str) -> str:
@@ -854,18 +952,28 @@ async def build_and_prove(
                     # A name this run created: every later run makes its own.
                     value = str(check["value"]).replace(eyes.unique, "{{unique}}")
                     check = {**check, "value": value}
-                if not check or not proof_was_there_before(
-                    check, start_text, start_url_now, eyes.calls_since_mark(), start_aria
+                if not check or not (
+                    was_there(
+                        check,
+                        start_text,
+                        start_url_now,
+                        eyes.calls_since_mark(),
+                        start_aria,
+                        result.before_last,
+                    )
+                    # A field's label or a button's name shows whatever the
+                    # app does: never the proof (any app, any control).
+                    or names_a_control(check, str(final.inventory.get("aria") or ""))
                 ):
                     break
                 rejected.append(str(check.get("value")))
             else:
-                return drop(
-                    journal,
-                    test_id,
-                    title,
-                    "Every proof it found was already on screen before the test acted",
+                why = "Every proof it found was already on screen before the test acted"
+                again, reason = await repair(
+                    journal, test_id, meta, test_info, final, why, result.history,
+                    eyes.messages_since_mark(), heartbeat,
                 )
+                return "retry" if again else drop(journal, test_id, title, reason or why)
             matches = verdict.get("matches_expected")
             observed = str(verdict.get("observed") or "")
             half_done = matches is None or not isinstance(matches, bool)
@@ -876,29 +984,21 @@ async def build_and_prove(
             got_there = lead_in is not None or reached_screen(
                 journal.screen_rows(), start_screen, mind.visited
             )
-            if (half_done or set_up_failed) and not meta.get("lesson") and got_there:
-                # One more try with what went wrong; the lesson makes it the last.
-                _update(
-                    test_id,
-                    status="planned",
-                    script=[{**meta, "lesson": (observed or "it stopped early")[:400]}],
+            if half_done or set_up_failed:
+                why = (
+                    f"Couldn't set up what the test needed: {observed}"
+                    if set_up_failed and not half_done
+                    else f"Couldn't carry it out far enough: {observed}"
                 )
-                journal.event("thought", f"Trying again differently: {title}", observed or None)
-                return "retry"
-            if half_done:
-                outcome = drop(
-                    journal, test_id, title, f"Couldn't carry it out far enough: {observed}"[:400]
+                again, reason = await repair(
+                    journal, test_id, meta, test_info, final, why, result.history,
+                    eyes.messages_since_mark(), heartbeat,
                 )
-                give_up_on_screen(journal, start_screen)
-                return outcome
-            if set_up_failed:
-                # Never report a bug the test caused itself (trust over coverage).
-                return drop(
-                    journal,
-                    test_id,
-                    title,
-                    f"Couldn't set up what the test needed: {observed}"[:400],
-                )
+                if again:
+                    return "retry"
+                if half_done and not got_there:
+                    give_up_on_screen(journal, start_screen)
+                return drop(journal, test_id, title, reason or why)
             # A message the app showed during the test counts though it has
             # faded by now (a toast): the replays below check it right after
             # the action, while it is still on screen.
@@ -912,8 +1012,8 @@ async def build_and_prove(
                 # Never drop a test that was carried out for want of a proof:
                 # the state of the field it last entered or chose is one.
                 fallback = await state_of_last_entry(eyes, result.actions)
-                if fallback is None or proof_was_there_before(
-                    fallback, start_text, start_url_now, None, start_aria
+                if fallback is None or was_there(
+                    fallback, start_text, start_url_now, None, start_aria, result.before_last
                 ) or not await holds(eyes, fallback):
                     # A list's test (search, filter, sort, next page): the
                     # rows that changed on the screen it started on.
@@ -921,9 +1021,12 @@ async def build_and_prove(
                         await state_of_changed_list(eyes, screen_aria) if screen_aria else None
                     )
                 if fallback is None or not await holds(eyes, fallback):
-                    return drop(
-                        journal, test_id, title, "Couldn't find a reliable proof on the screen"
+                    why = f"Carried out, but nothing on the final screen proves: {expected}"
+                    again, reason = await repair(
+                        journal, test_id, meta, test_info, final, why, result.history,
+                        eyes.messages_since_mark(), heartbeat,
                     )
+                    return "retry" if again else drop(journal, test_id, title, reason or why)
                 check = fallback
                 journal.event(
                     "thought",
@@ -1082,6 +1185,26 @@ async def build_and_prove(
         shot_id,
     )
     return status
+
+
+def was_there(
+    check: dict[str, Any],
+    start_text: str,
+    start_url: str,
+    calls: list[tuple[str, str, int]] | None,
+    start_aria: str,
+    before_last: tuple[str, str] | None,
+) -> bool:
+    """Was this proof on screen before the test acted — at its start AND
+    just before its own last action? What the last action brought counts
+    even when the start screen looked the same (Account filled → Clear →
+    empty again), for any app: the proof changed because of the test."""
+    if not proof_was_there_before(check, start_text, start_url, calls, start_aria):
+        return False
+    if before_last and check.get("kind") in (None, "", "text_visible", "element_state"):
+        text, aria = before_last
+        return proof_was_there_before(check, text, "", None, aria)
+    return True
 
 
 def proof_was_there_before(
@@ -1252,6 +1375,11 @@ def left_out(planned: list[dict[str, Any]], verdicts: list[dict[str, Any]]) -> d
     for verdict in verdicts:
         index, of = verdict.get("index"), verdict.get("of")
         if not isinstance(index, int) or not 0 <= index < len(planned) or index in out:
+            continue
+        if planned[index].get("coverage") == FIELD_CHECK:
+            # Written from the recorded fields, one per field and rule: "Type is
+            # required" is never a duplicate of the empty form or of "Region is
+            # required" (a review once left out all six of a form's).
             continue
         if verdict.get("why") == "duplicate":
             if isinstance(of, int) and 0 <= of < index and of not in out:

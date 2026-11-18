@@ -123,6 +123,16 @@ async def test_full_run_follows_the_request_then_generates_test_cases(
     async def record_generated(journey_id: str) -> None:
         generated.append(journey_id)
 
+    refills = [1, 0]  # one replacement, then the number is met
+
+    @activity.defn(name=au.REFILL_ACTIVITY)
+    async def refill(run_id: str) -> int:
+        added = refills.pop(0)
+        if added:
+            tests.append("t3")
+        calls.append(f"refill:{added}")
+        return added
+
     steps = [
         fake(au.READ_REQUEST_ACTIVITY),
         fake(au.START_ACTIVITY, "awaiting_confirmation" if asks else "confirmed"),
@@ -147,7 +157,7 @@ async def test_full_run_follows_the_request_then_generates_test_cases(
                 env.client,
                 task_queue="test-authoring",
                 workflows=[AuthoringRunWorkflow],
-                activities=[*steps, queued, run_mission, planned, build],
+                activities=[*steps, queued, run_mission, planned, build, refill],
             ),
             Worker(
                 env.client,
@@ -187,6 +197,10 @@ async def test_full_run_follows_the_request_then_generates_test_cases(
     ):
         assert own not in calls
     assert generated == ["journey-1"]
+    # a scenario that couldn't be carried out is replaced and tried before adding
+    assert calls.index("build:t3") < calls.index(au.PROMOTE_ACTIVITY)
+    assert calls.count("refill:1") == 1 and calls.count("refill:0") == 1
+    # no test run is started: the test cases are run when the user chooses
     # test cases are written before the run is marked done
     assert calls.index(au.PROMOTE_ACTIVITY) < calls.index(ex.FINISH_TESTING_ACTIVITY)
 
@@ -289,21 +303,54 @@ def test_more_listed_than_asked_keeps_the_first_ones() -> None:
     assert [r["title"] for r in rows] == ["a", "b"]
 
 
-def test_a_short_reply_is_topped_up_to_the_number_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_the_number_asked_is_planned_from_what_the_page_has() -> None:
+    facts = [{"name": "Account list", "elements": '- button "Export"\n- textbox "Search"'}]
+    real = {
+        "kind": "data_load",
+        "start_screen": "Account list",
+        "path": [{"screen": "Account list", "element": 'button "Export"'}],
+    }
     replies = [
-        {"tests": [{"kind": "validation", "title": f"t{i}"} for i in range(3)]},
-        {"tests": [{"kind": "validation", "title": f"u{i}"} for i in range(4)]},
+        # 2 real, 1 using what the page lacks (rewritten, still lacking), 1 a repeat
+        [
+            {**real, "title": "a"},
+            {**real, "title": "b"},
+            {
+                **real,
+                "title": "x",
+                "path": [{"screen": "Account list", "element": 'button "Delete"'}],
+            },
+            {**real, "title": "a"},
+        ],
+        [
+            {
+                **real,
+                "title": "x",
+                "path": [{"screen": "Account list", "element": 'button "Delete"'}],
+            }
+        ],  # the one rewrite
+        [{**real, "title": f"c{i}"} for i in range(5)],  # the second round tops it up
     ]
     asked: list[str] = []
 
-    async def ask_json(system: str, user: str, **_: Any) -> dict[str, Any]:
-        asked.append(user)
+    async def write(instruction: str, only: list[str]) -> list[dict[str, Any]]:
+        asked.append(instruction)
+        assert only == ["Account list"]
         return replies.pop(0)
 
-    monkeypatch.setattr(plan, "ask_json", ask_json)
-    out = asyncio.run(plan._other_scenarios("ctx", "", 5, exact=True))
-    assert [t["title"] for t in out] == ["t0", "t1", "t2", "u0", "u1"]
-    assert "exactly 2 more" in asked[1] and '"t0"' in asked[1]  # no repeats
+    journal = type("J", (), {"event": lambda self, *a: None})()
+    found, cant = await plan.requested_scenarios(
+        journal,
+        write,
+        facts,
+        5,
+        {"only": "list tests"},
+        exact=True,  # type: ignore[arg-type]
+    )
+    assert [t["title"] for t in found] == ["a", "b", "c0", "c1", "c2"]
+    assert [t["title"] for t in cant] == ["x"]  # kept aside with why, never tried
+    assert "exactly 5" in asked[0] and "list tests" in asked[0]
+    assert "exactly 3" in asked[2] and '"x"' in asked[2]  # no repeats
 
 
 def test_a_flow_alone_gets_the_full_scope_and_anything_specified_is_followed() -> None:
@@ -362,8 +409,8 @@ async def test_a_missing_scope_item_is_written_then_the_report_says_what_was_lef
         # The second check also spots a duplicate written in the gap round.
         return checks.pop(0), ({} if checks else {"Cancel twice": "duplicate of Cancel"})
 
-    async def gaps(_user: str, missing: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        assert [m["id"] for m in missing] == ["F-17"]
+    async def gaps(*a: Any, **k: Any) -> list[dict[str, Any]]:
+        assert "F-17" in a[5] and k["only"] == ["New Contact"]  # the gap, on its screen
         return [
             {"kind": "navigation", "title": "Cancel saves nothing", "expected": "x"},
             {"kind": "navigation", "title": "Cancel twice", "expected": "x"},
@@ -373,7 +420,7 @@ async def test_a_missing_scope_item_is_written_then_the_report_says_what_was_lef
     journal = type("J", (), {"event": lambda self, k, t, d=None: events.append((t, d or ""))})()
     monkeypatch.setattr(plan, "_scope_scenarios", scope)
     monkeypatch.setattr(plan.scope, "check_scope", check)
-    monkeypatch.setattr(plan, "_gap_scenarios", gaps)
+    monkeypatch.setattr(plan.brain, "plan_tests", gaps)
     tests = await plan.cover_scope(
         journal,  # type: ignore[arg-type]
         "",
@@ -455,3 +502,29 @@ def test_a_flows_scope_is_its_own_screens_not_the_route_to_it() -> None:
     assert plan.flow_screens(screens, "Account list", "Sales dashboard", prompt, {})[0] is accounts
     # No walk end: everything but the home screen the request doesn't name.
     assert dashboard not in plan.flow_screens(screens, None, "Sales dashboard", prompt, {})
+
+
+async def test_not_a_bug_on_an_authoring_run_adds_only_that_scenario() -> None:
+    """Possible bugs wait for an answer; "Not a bug" hands off that one
+    scenario (its test case is written next), nothing else is re-sent."""
+    sent: list[tuple[str, str]] = []
+
+    @activity.defn(name=au.PROMOTE_ACTIVITY)
+    async def fake_promote(run_id: str, test_id: str = "") -> list[str]:
+        sent.append((run_id, test_id))
+        return []  # no journey: no test-case writing to start in this test
+
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        async with Worker(
+            env.client,
+            task_queue="test-authoring-send",
+            workflows=[AuthoringRunWorkflow],
+            activities=[fake_promote],
+        ):
+            result = await env.client.execute_workflow(
+                AuthoringRunWorkflow.run,
+                args=["run-1", "send", "test-7"],
+                id=f"wf-{uuid.uuid4()}",
+                task_queue="test-authoring-send",
+            )
+    assert result == "sent" and sent == [("run-1", "test-7")]

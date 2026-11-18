@@ -70,6 +70,9 @@ def _compact_inventory(inv: dict[str, Any]) -> str:
         "title": inv.get("title"),
         "headings": inv.get("headings"),
         "fields": inv.get("fields"),
+        **(
+            {"same_named_fields": inv["same_named_fields"]} if inv.get("same_named_fields") else {}
+        ),
         "buttons": inv.get("buttons"),
         "tables": inv.get("tables"),
         "messages_on_screen": inv.get("alerts"),
@@ -211,11 +214,11 @@ with ONLY:
   "thought": "one short first-person sentence for the live feed, e.g. 'This is a standard order with home delivery, so I will continue to payment details.'",
   "fills": [{"field": "exact field label (or placeholder)", "value": "realistic value"}],
   "choices": [{"field": "exact field/question label", "option": "exact visible option text to pick"}],
-  "uploads": [{"field": "label of the upload area or button", "kind": "image | png | pdf | text | csv"}],
+  "uploads": [{"field": "label of the upload area or button", "kind": "image | png | pdf | text | csv", "count": 1, "size_mb": null}],
   "advance": "exact visible text of the button, link, menu item or tab to press next, or null",
   "go_to_screen": "exact name from the known screens list to jump straight there (only when that is the quickest way toward the goal and nothing needs entering here), else null",
   "advance_is_final": false,
-  "browser": "back | reload | null (the browser's own Back or Refresh button)",
+  "browser": "back | reload | fail_next_save | null (the browser's own Back or Refresh button; fail_next_save: the app's next save gets a server error)",
   "branch_points": [{"question": "a choice on this screen that probably changes what comes next", "options_worth_trying_later": ["..."], "why": "plain reason"}],
   "needs_from_human": ["a question to the user for a value ONLY they can know, e.g. 'Which customer account number should I use to look up an account?'"],
   "done": false
@@ -228,11 +231,21 @@ past events, valid email/phone formats). Never use 'test' or 'asdf'.
 - Pick the most common, everyday option for choices (e.g. 'Standard delivery'), and list \
 the other options that may lead somewhere different under branch_points.
 - Fill every field that looks required.
+- Fields that share a name are listed in 'same_named_fields' as "Name (caption)", the \
+caption being the text just before each one (e.g. three "Search field" boxes under \
+Territory, Primary Contact and Parent Account). Name such a field exactly as listed \
+there, e.g. "Search field (Territory)", in 'fills' and 'choices'.
+- A lookup or search-as-you-type field (it suggests matches while you type): put it in \
+'fills' with the value to pick, Explorer types it and picks the matching suggestion. Use \
+a value that already exists in the app (one seen on its screens or given in the notes).
 - To attach a file, add it to 'uploads'. Explorer has realistic sample files of each \
 kind (a photo, a PNG, a one-page PDF, a text file, a CSV), so never ask the \
 human for a file. Use 'image' for photos; use another kind only when the goal is to \
-check that a wrong file type is refused. Upload once per screen, and not again when \
-the file already shows as attached.
+check that a wrong file type is refused. 'count' (default 1, at most 10) attaches that \
+many files at once and 'size_mb' (at most 50) makes each that big — use them ONLY to \
+check a limit the screen states, one past it (e.g. "up to 5 files (10 MB each)": count \
+6, or size_mb 11). Upload once per screen, and not again when the file already shows as \
+attached.
 - If the steps so far show you going back and forth between the same screens without \
 getting closer to the goal, stop: set done = true and say why in 'thought'.
 - Write every date value as YYYY-MM-DD (Explorer converts it to the app's own format). \
@@ -261,7 +274,9 @@ after searching for it.
 describe (e.g. choose the specific option they name) — that is the point of the mission.
 - 'browser': use Back or Refresh only when the goal or instructions are about them \
 (e.g. 'refresh and check the entry is still there', 'go back to the list'); then leave \
-'advance' null. Otherwise null.
+'advance' null. Use fail_next_save only when the instructions say to make the next save \
+fail — right before pressing the save button, with 'advance' null (press it next step). \
+Otherwise null.
 - 'done' = true also when the goal has been reached or clearly cannot be reached."""
 )
 
@@ -495,28 +510,32 @@ L-23 Export: Export downloads the rows of the current view.
 FORM screen checklist:
 F-01 Form loads: all fields are visible.
 F-02 Defaults: a new form shows its default values.
-F-03 Dropdown options: each dropdown offers the options the server provides.
+F-03 Dropdown options: each dropdown offers the options the server provides (one test \
+PER dropdown, its name in the title).
 F-04 Edit pre-fill: editing an existing record shows its saved values.
 F-05 Required fields: SKIP — written separately for every field marked required.
-F-06 Invalid format: a bad email / phone / number / date shows a field-level error.
+F-06 Invalid format: a bad email / phone / number / date shows a field-level error (one \
+test PER such field, its name in the title).
 F-07 Max length: text beyond the limit is blocked or refused.
 F-08 Min length: text below the minimum is refused.
 (F-06 to F-08: skip a field whose notes already state that rule, e.g. "Must be a valid \
 email address" or "at least 8 characters" — those are written separately too.)
-F-09 Range: a number or date outside the allowed range is refused.
+F-09 Range: a number or date outside the allowed range is refused (one test PER number \
+or date field, e.g. a negative count; its name in the title).
 F-10 Error clears: fixing an invalid field removes its error.
 F-11 Dependent field: changing a parent field updates its child (e.g. country -> states).
 F-12 Conditional field: an option that shows or hides a field does so.
 F-13 Create success: valid data saves with a success message (the save call succeeds).
-F-14 Saved data correct: reopening the saved record shows what was entered.
+F-14 Saved data correct: reopening the saved record shows what was entered (only when \
+'leads_to' shows a way to reopen it; check only values that screen shows).
 F-15 Appears in the list: the new record shows in its list with the right values.
 F-16 Update success: editing and saving shows the change on reopening.
 F-17 Cancel: filling in and pressing Cancel saves nothing.
 F-18 Reset: Reset returns the form to its defaults.
 F-19 Double submit: pressing Submit twice quickly creates only one record.
 F-20 Server error: when saving fails, a clear message shows and the entered data stays \
-(only when the screen itself offers a way to make the save fail; Explorer cannot break \
-the server).
+(only on a test environment: the test makes the save fail itself — its how_to_run says \
+"make the next save fail" right before pressing the save button).
 Beyond the checklist, add what only Explorer knows, each linked to the closest checklist \
 item with 'linked_to': the user's answers and confirmed rules, choices that lead to \
 hidden screens, and the possible bugs already noticed. Their 'coverage' is "X-" plus a \
@@ -572,11 +591,24 @@ Reply with ONLY:
       "how_to_run": "precise instructions for the browser agent, e.g. 'Leave Email empty and press Save lead'",
       "expected": "what SHOULD happen, from the confirmed summary, the user's answers or common sense",
       "trust": "confirmed | standard | seen",
-      "rule": "the rule being tested in plain words"
+      "rule": "the rule being tested in plain words",
+      "path": [{"screen": "EXACT screen name this step happens on", "element": "the element it uses or checks, copied EXACTLY from THAT screen's 'elements', e.g. 'button \\"Save Account\\"', 'combobox \\"Status\\"'"}],
+      "data": {"finds": ["every value the test relies on already being there, copied from 'elements': a record name from the rows, a dropdown option"], "types": ["values the test types itself; a record it creates ends with {{unique}}"]}
     }
   ]
 }
 Rules:
+- Plan from what each page really has: its 'elements' (every control, option, column \
+and the first rows of each list, exactly as the page exposes them), its screenshot \
+(given in the order the screens are listed) and 'leads_to' (where its actions were \
+seen to go). A test may only use what is there: a search or filter uses a value from \
+the rows or options shown, a sort uses a header shown, a row action uses a button the \
+rows have. If 'elements' has no Edit on the rows, there is no Edit test.
+- 'path' is the whole flow, step by step, before anything is tried: each step names the \
+screen it happens on and an element copied from THAT screen's 'elements'; the first \
+step is on 'start_screen'; a step on another screen is allowed only when the screen \
+before it 'leads_to' that screen. A flow through a screen, dialog or option that was \
+never seen is not written — it would fail when tried.
 - Every test must start on a screen from the known screens list and only use fields \
 and buttons that screen actually has. Do not invent screens, fields or messages.
 - Plan only what exploring saw: every screen, form, dialog, step and option a test \
@@ -585,6 +617,14 @@ whose next screen was never seen (New, Edit, Delete, Import, Export choices) get
 test that it opens; never a test that fills in, saves, confirms or completes what \
 comes after it. Sign-in tests are the exception: they run signed out, from the \
 sign-in page.
+- A validation test (a field rule) does what a user would: it enters the wrong value, \
+fills every other required field with a valid value, and presses the form's save or \
+submit button ONCE; its outcome is the app refusing it (a message, the field flagged, or \
+nothing saved). Typing the value and moving to another field is never enough.
+- Evidence only: every field, option, button, limit and message a test names is in that \
+screen's 'fields', 'elements', 'messages' or screenshot, or in the user's answers. An \
+'expected' quotes a message only when the page showed it; otherwise it states the rule \
+in plain words (e.g. "the app refuses it and says the value is not valid").
 - 'trust': confirmed = backed by the user's answers/notes; standard = common sense or \
 industry norm; seen = only because the app did it (avoid these where possible).
 - One purpose per test: ONE action (or one short sequence to reach it) and ONE visible \
@@ -600,6 +640,11 @@ test that would only repeat what another proves.
 makes (checklist items about the server). Leave out layout, speed, console and \
 accessibility checks (Explorer reports those separately).
 - Use the user's test data (e.g. account or reference numbers) where needed.
+- File uploads: the computer's own file picker is outside the page and can't be \
+seen, so never test that a picker opens; test what attaching does (the file shows as \
+attached, or is refused). A limit the screen states on how many files or how big is \
+tested by attaching one more file than allowed, or one just over the size, in ONE \
+upload (say "attach 6 files at once" or "attach a file of 11 MB").
 - Describe dates relative to today in 'how_to_run' ('tomorrow', '30 days ago'), never as \
 fixed dates or 'one minute from now': tests are replayed on later days."""
 )
@@ -617,7 +662,10 @@ async def plan_tests(
     approved: list[str] | None = None,
     only: list[str] | None = None,
     sign_in: bool = True,
+    shots: list[bytes] | None = None,
 ) -> list[dict[str, Any]]:
+    """`shots`: the screenshots of the screens planned for (`only`, else all),
+    in their listed order."""
     user = (
         (f"Write tests ONLY for these screens: {', '.join(only)}\n" if only else "")
         + (
@@ -647,12 +695,12 @@ async def plan_tests(
             else ""
         )
         + f"Confirmed App Summary: {json.dumps(brief, ensure_ascii=False)[:20000]}\n"
-        f"Known screens: {json.dumps(screens, ensure_ascii=False)[:40000]}\n"
+        f"Known screens: {json.dumps(screens, ensure_ascii=False)[:80000]}\n"
         f"Ways between screens: {json.dumps(links, ensure_ascii=False)[:8000]}\n"
         f"Missions and what happened: {json.dumps(missions, ensure_ascii=False)[:12000]}\n"
         f"Possible bugs already noticed: {json.dumps(possible_bugs, ensure_ascii=False)[:6000]}"
     )
-    reply = await ask_json(_PLAN_TESTS_SYSTEM, user, model=THINKING_MODEL)
+    reply = await ask_json(_PLAN_TESTS_SYSTEM, user, images=shots or None, model=THINKING_MODEL)
     tests = reply.get("tests")
     return [t for t in tests if isinstance(t, dict)] if isinstance(tests, list) else []
 
@@ -668,7 +716,9 @@ why is "duplicate" or "never_seen". Leave a scenario out ONLY when you are certa
 - duplicate: it checks the SAME thing on the same screen as an earlier scenario (`of` is \
 that earlier index) — the same rule with the same kind of input, only worded differently. \
 Different values, rules, fields or outcomes are NOT duplicates (a 9-digit and an 11-digit \
-phone number are two scenarios).
+phone number are two scenarios). Checks of DIFFERENT fields are never duplicates: "Type \
+is required" and "Region is required" are two scenarios, and neither duplicates the \
+empty-form check; "Director offers its options" does not duplicate "Type offers its options".
 - never_seen: carrying it out needs a screen, step, button or option that the screens, the \
 ways between them and the missions never showed (e.g. it expects a form to open after a \
 step where the map shows a different screen). An expected RESULT that may differ from what \
@@ -745,7 +795,10 @@ update / delete succeeded) and a listed data call proves it; else prefer what th
 screen shows.
 - The check must prove THIS test's outcome — e.g. the error message for a validation \
 test, the new screen's heading for a navigation test — not something that is always \
-on screen (like the app name or menu).
+on screen (like the app name or menu). Never a field's label, a button's name or a \
+column header as text: they show whatever the app does. When the app marks a field \
+(a red border, an error style) without a message you can copy, use field_invalid with \
+that field's label.
 - matches_expected: true if the app did what it should; false if it did something \
 different (that is a possible bug — the check then proves what it does today); null \
 if the test could not be carried out far enough to tell. Only false when the app \
@@ -757,12 +810,139 @@ A limit or rule the test ASSUMED (a common default like 255 characters, not show
 the app) is not the app's rule: when the app enforces its own and says so clearly \
 (e.g. 'must be 100 characters or fewer'), it did what it should — true, with observed \
 stating the app's rule and the check its message.
+- A validation test that entered the wrong value and pressed save or submit: if the \
+app ACCEPTED it (saved it, moved on, or kept the value with no message and no field \
+flagged), matches_expected is false — the rule is not enforced, that is the finding, \
+never null. If saving was stopped by a DIFFERENT problem (another field's error, a \
+server error), the rule could not be judged: null, and say so in observed. Null too when \
+the wrong value was never entered or save was never pressed.
 - set_up_ok: false when the TEST failed to do its own part, so the result says nothing \
 about the app — a value it meant to enter never showed in the field, a field it meant to \
 leave empty was already filled in by the app, a date it meant to be in the past is \
 actually after today, a failure or condition it needed (a server error, an empty list) \
 never happened, or it never reached the screen being tested. Otherwise true."""
 )
+
+
+_REPAIR_SYSTEM = (
+    STANCE
+    + """
+
+A step Explorer took in the app did not take effect. Work out WHY from the evidence, the \
+way a skilled tester would, and fix it with what this page really has — whatever the \
+app, framework or widget. Reply with ONLY:
+{"diagnosis": "what is really going on, one sentence",
+ "actions": [{"do": "click | type | keys | key | clear | wait", "target": "#N, the number drawn on the screenshot (listed under 'Numbered controls'), or an element line copied EXACTLY from 'Elements', e.g. textbox \\"Close Date\\" or option \\"Won\\" (not for wait; optional for key)", "text": "type/keys: the text", "key": "key: Enter | Tab | Escape | ArrowDown | ArrowUp | Space | Backspace", "ms": "wait: at most 5000"}],
+ "lesson": "one short line worth knowing for the rest of this app (e.g. 'Close Date takes dates as dd/mm/yyyy'), or null",
+ "give_up": "why it can't or shouldn't be fixed, or null"}
+How to work it out — read everything: the field's own hints (placeholder, a format or \
+example shown near it), messages the app showed, the element structure (roles, names, \
+states, values, options), the screenshot, and what was already tried (never repeat it). \
+Usual causes: the field wants its own format (a date, phone, amount); the value must be \
+picked from a list, calendar or suggestions the field opens; a keystroke confirms it \
+(Enter, Tab); the control has a different name, sits in a menu, a collapsed section or \
+behind a dialog or overlay that must be closed first; the page is still loading.
+Rules:
+- 'type' replaces the field's text at once; 'keys' types one character at a time (for \
+fields that react to each key: masks, suggestion lists); 'clear' empties it.
+- Every target is a number from 'Numbered controls' (drawn on the screenshot) or a line \
+copied from 'Elements' — never invent one. Use the number whenever several controls share \
+a name (three "Search field" boxes: pick the one under the caption you mean, as the \
+screenshot shows it), the one you mean has no clear name, or a named target did not work.
+- Keep the intent: the same value, written the way the field wants it, is fine; a \
+different value is not.
+- If the goal deliberately enters a wrong or missing value to see the app refuse it, and \
+the app refuses it, that IS the expected outcome: give_up "intended".
+- If the app itself is at fault (a server error, a control that is there but broken), \
+give_up saying so — never work around a real bug.
+- At most 6 actions."""
+)
+
+
+async def repair_step(
+    goal: str,
+    intent: str,
+    problem: str,
+    elements: str,
+    shot: bytes,
+    tried: list[dict[str, Any]],
+    messages: list[str],
+    lessons: list[str],
+    numbered: str = "",
+) -> dict[str, Any]:
+    """How to make a step that didn't take effect work (repair.fix)."""
+    user = (
+        f"Goal of this walk: {goal[:1500]}\n"
+        f"Step that did not take effect: {intent[:500]}\n"
+        f"What the page shows: {problem[:800]}\n"
+        f"Already tried (did not work): {json.dumps(tried, ensure_ascii=False)[:3000]}\n"
+        f"Messages the app showed: {json.dumps(messages[-6:], ensure_ascii=False)[:1500]}\n"
+        f"Learned on this app so far: {json.dumps(lessons[-12:], ensure_ascii=False)[:1500]}\n"
+        + (f"Numbered controls (the numbers drawn on the screenshot):\n{numbered[:6000]}\n" if numbered else "")
+        + f"Elements:\n{elements[:14000]}"
+    )
+    reply = await ask_json(_REPAIR_SYSTEM, user, images=[shot], model=THINKING_MODEL)
+    actions = reply.get("actions")
+    listed = actions if isinstance(actions, list) else []
+    reply["actions"] = [a for a in listed if isinstance(a, dict)][:6]
+    return reply
+
+_REPAIR_TEST_SYSTEM = (
+    STANCE
+    + """
+
+A planned test case was carried out in the app but did not reach its outcome. You see \
+the test, what was done step by step, what went wrong, the screen where it ended \
+(screenshot and 'Elements': every control, option and row the page exposes), the \
+messages the app showed, and the earlier repairs (never repeat one). Work out WHY, the \
+way a skilled tester would, and fix the TEST so the next try reaches its outcome — on \
+any app. Usual causes:
+- setup: the test's own part was incomplete (other required fields left empty so the \
+form refused for a different reason, a value not entered, a record it needs not created \
+first) — fill or create what is missing with valid values;
+- route: it never got to the screen it tests — say exactly how to get there with the \
+controls in 'Elements' (the menu entry, the button, the row), and to wait for it to load;
+- step: a control didn't respond to the way it was used — say the other way (open the \
+list then choose, type then press Enter, close the overlay first);
+- proof: it was carried out but nothing visible proves THIS outcome — say what to do so \
+the outcome shows (open the saved record, search the list for it, keep the form open);
+- app_bug: the app itself is at fault (a server error, a broken control, it accepts \
+what it must refuse) — that is a finding, not something to work around;
+- needs_user: only the user knows (a record, a code, an account that must exist);
+- impossible: this app has nothing that can carry out this test.
+Never change the test's purpose or its expected outcome. Every control you name is \
+copied from 'Elements'. Reply with ONLY:
+{"cause": "setup | route | step | proof | app_bug | needs_user | impossible",
+ "diagnosis": "what really went wrong, one sentence",
+ "how_to_run": "the complete corrected instructions for the browser agent (setup, route, steps, then what to look at), or null",
+ "steps": ["the corrected plain steps a person would follow"],
+ "question": "needs_user only: ONE short question for the user, or null"}"""
+)
+
+
+async def repair_test(
+    test: dict[str, Any],
+    failure: str,
+    history: list[str],
+    elements: str,
+    shot: bytes,
+    messages: list[str],
+    earlier: list[str],
+) -> dict[str, Any]:
+    """Why a carried-out test didn't reach its outcome, and the test fixed so
+    the next try does (tests_stage.repair). The expected outcome is never
+    rewritten: a repair must not explain a bug away."""
+    return await ask_json(
+        _REPAIR_TEST_SYSTEM,
+        f"Test: {json.dumps(test, ensure_ascii=False)[:3000]}\n"
+        f"What went wrong: {failure[:800]}\n"
+        f"What was done: {json.dumps(history[-25:], ensure_ascii=False)[:4000]}\n"
+        f"Messages the app showed: {json.dumps(messages[-10:], ensure_ascii=False)[:1500]}\n"
+        f"Earlier repairs (did not work): {json.dumps(earlier, ensure_ascii=False)[:1500]}\n"
+        f"Elements:\n{elements[:14000]}",
+        images=[shot],
+        model=THINKING_MODEL,
+    )
 
 
 async def decide_check(

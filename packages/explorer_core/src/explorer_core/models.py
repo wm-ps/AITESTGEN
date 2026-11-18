@@ -217,6 +217,9 @@ class ExplorerScreen(SQLModel, table=True):
     # Where this screen sits against the run's Goal (one of GOAL_FITS);
     # None = the run has no goal, or it isn't judged yet (counts as inside).
     goal_fit: str | None = Field(default=None)
+    # The page's element structure (accessibility snapshot): every control,
+    # option, column and row it shows — what scenarios are planned from.
+    aria: str | None = Field(default=None)
     created_at: datetime = _ts()
 
 

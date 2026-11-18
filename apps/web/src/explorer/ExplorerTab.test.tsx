@@ -137,6 +137,22 @@ describe('ExplorerTab authoring run', () => {
   })
 })
 
+describe('ExplorerTab authoring run with possible bugs waiting', () => {
+  it('opens on Scenarios, where they are answered, even when opened after it finished', async () => {
+    const { explorerApi } = await import('./explorerApi')
+    vi.mocked(explorerApi.latestRun).mockResolvedValueOnce({
+      ...run,
+      prompt: 'write test cases for the add opportunity flow',
+      counts: { ...run.counts, tests_proven: 19, tests_known_bugs: 9 },
+    })
+    const onAuthoringDone = vi.fn()
+    render(<ExplorerTab applicationId="a1" applicationName="Denali" applicationUrl="https://x" onAuthoringDone={onAuthoringDone} />)
+    const tab = await screen.findByRole('tab', { name: /Scenarios/ })
+    await waitFor(() => expect(tab.getAttribute('aria-selected')).toBe('true'))
+    expect(onAuthoringDone).not.toHaveBeenCalled() // never on to Test cases while they wait
+  })
+})
+
 describe('ExplorerTab authoring label', () => {
   it('labels an authoring run next to the title, with the request on hover', async () => {
     const { explorerApi } = await import('./explorerApi')

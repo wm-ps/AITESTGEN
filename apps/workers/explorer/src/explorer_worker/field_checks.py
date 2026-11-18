@@ -18,11 +18,11 @@ _MIN = re.compile(r"at least (\d+) characters", re.I)
 _MAX = re.compile(r"(?:maximum|max\.?|at most|no more than|up to) (\d+) characters", re.I)
 _MUST = re.compile(r"^\s*must\b", re.I)
 # A form that changes a password is never pressed by a test (the planner's rule too).
-_CHANGES_PASSWORD = re.compile(r"\b(new|current|old) password\b", re.I)
+CHANGES_PASSWORD = re.compile(r"\b(new|current|old) password\b", re.I)
 # Sign-in is planned elsewhere; on a settings screen (a layout builder, a field
 # setup) "required" describes the set-up, not a field to fill in; a detail
 # view shows a record (its fields are a side panel or composer, no Save).
-_SKIP_KINDS = {"login", "settings", "detail"}
+SKIP_KINDS = {"login", "settings", "detail"}
 # Limits the page's own code sets on a field (read by the browser, see
 # browser.py); kept with the field so tests can break them.
 CODE_LIMITS = ("min", "max", "minlength", "maxlength", "pattern")
@@ -43,9 +43,14 @@ _TOLD = (
 _LABEL_NOISE = re.compile(r"\s*(\*|\(required\))\s*$", re.I)
 
 
+def plain_label(label: Any) -> str:
+    """A label as people read it: "Last Name *" is "Last Name"."""
+    return _LABEL_NOISE.sub("", str(label or "")).strip()
+
+
 def _key(label: Any) -> str:
     """A label to match by: \"Last Name *\" and \"last name\" are one field."""
-    return _LABEL_NOISE.sub("", str(label or "")).strip().lower()
+    return plain_label(label).lower()
 
 
 def with_code_limits(
@@ -202,12 +207,12 @@ def field_checks(screens: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for screen in screens:
         # Labels as people read them: "Last Name *" is "Last Name".
         fields = [
-            {**f, "label": _LABEL_NOISE.sub("", str(f["label"])).strip()}
+            {**f, "label": plain_label(f["label"])}
             for f in screen.get("fields") or []
             if _key(f.get("label"))
         ]
-        if screen.get("kind") in _SKIP_KINDS or any(
-            _CHANGES_PASSWORD.search(str(f["label"])) for f in fields
+        if screen.get("kind") in SKIP_KINDS or any(
+            CHANGES_PASSWORD.search(str(f["label"])) for f in fields
         ):
             continue
         name = str(screen["name"])

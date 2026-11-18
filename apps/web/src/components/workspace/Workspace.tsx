@@ -372,6 +372,7 @@ export function Workspace({
             onHighlightConsumed={onHighlightConsumed}
             discoveryEnabled={discoveryEnabled}
             onAuthoringStarted={() => onActiveTabChange('explorer')}
+            onAnswerPossibleBugs={() => onActiveTabChange('explorer')}
             initialSourceFilter={showAuthored ? 'nl' : 'all'}
           />
         )}

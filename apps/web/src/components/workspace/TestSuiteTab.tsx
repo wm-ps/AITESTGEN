@@ -16,6 +16,7 @@ import { useEscapeToClose } from '../../hooks/useEscapeToClose'
 import { requestIdStorageKey, TERMINAL_STATUSES } from './LiveExplorationPanel'
 import { AuthorPromptCard } from './AuthorPromptCard'
 import { useCanEdit } from '../../PermissionsContext'
+import { explorerApi } from '../../explorer/explorerApi'
 
 const ASSETS_PER_PAGE = 10
 
@@ -573,9 +574,13 @@ export function TestSuiteTab({
   onHighlightConsumed,
   discoveryEnabled = true,
   onAuthoringStarted,
+  onAnswerPossibleBugs,
   initialSourceFilter = 'all',
 }: {
   applicationId: string
+  // Opens Explorer on the Scenarios where an authoring run's possible bugs
+  // wait for an answer (they reach Test cases only through it).
+  onAnswerPossibleBugs?: () => void
   // Which source filter it opens on ('nl' after an authoring run finishes).
   initialSourceFilter?: TestCaseSourceFilter
   // An authoring run started: App shows it on the Explorer screen.
@@ -650,6 +655,14 @@ export function TestSuiteTab({
   // to closed — hiding an in-progress generation even though the backend
   // workflow kept running regardless.
   const [authoringOpen, setAuthoringOpen] = useState(false)
+  // An authoring run's possible bugs still waiting for an answer.
+  const [bugsWaiting, setBugsWaiting] = useState(0)
+  useEffect(() => {
+    explorerApi
+      .latestRun(applicationId)
+      .then((r) => setBugsWaiting(r?.prompt && r.status === 'tested' ? r.counts.tests_known_bugs : 0))
+      .catch(() => setBugsWaiting(0))
+  }, [applicationId])
   // Authoring creates test cases — not for a viewer.
   const canAuthor = useCanEdit()
 
@@ -940,6 +953,34 @@ export function TestSuiteTab({
             onAuthoringStarted?.()
           }}
         />
+      )}
+      {bugsWaiting > 0 && canAuthor && onAnswerPossibleBugs && (
+        <div
+          role="status"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 14,
+            flexWrap: 'wrap',
+            padding: '12px 16px',
+            borderRadius: 12,
+            background: 'color-mix(in srgb, var(--warn-2) 8%, var(--panel))',
+            border: '1px solid color-mix(in srgb, var(--warn-2) 35%, transparent)',
+            animation: 'explorer-attention 1.8s ease-out infinite',
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--fg-1)' }}>
+              {bugsWaiting} possible {bugsWaiting === 1 ? 'bug' : 'bugs'} from your request {bugsWaiting === 1 ? 'waits' : 'wait'} for your answer
+            </div>
+            <div style={{ fontSize: 12.5, color: 'var(--fg-3)', marginTop: 2 }}>
+              They are not test cases yet. Not a bug adds one here; Ignore removes it.
+            </div>
+          </div>
+          <button type="button" className="button-primary" onClick={onAnswerPossibleBugs} style={{ padding: '6px 14px', fontSize: 12.5 }}>
+            Answer now
+          </button>
+        </div>
       )}
       {(() => {
         const assetList = (

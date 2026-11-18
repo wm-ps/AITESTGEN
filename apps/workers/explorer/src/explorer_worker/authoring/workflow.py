@@ -44,6 +44,7 @@ with workflow.unsafe.imports_passed_through():
         PROMOTE_ACTIVITY,
         QUEUED_MISSIONS_ACTIVITY,
         READ_REQUEST_ACTIVITY,
+        REFILL_ACTIVITY,
         RETRY_BLANK_ACTIVITY,
         START_ACTIVITY,
         UNCLEAR_ACTIVITY,
@@ -70,9 +71,9 @@ class AuthoringRunWorkflow:
         self._confirmed = True
 
     @workflow.run
-    async def run(self, run_id: str, mode: str = "full") -> str:
+    async def run(self, run_id: str, mode: str = "full", test_id: str = "") -> str:
         try:
-            return await self._run(run_id, mode)
+            return await self._run(run_id, mode, test_id)
         except ActivityError as exc:
             if isinstance(exc.cause, CancelledError):
                 raise
@@ -83,9 +84,11 @@ class AuthoringRunWorkflow:
             )
             return "failed"
 
-    async def _run(self, run_id: str, mode: str) -> str:
+    async def _run(self, run_id: str, mode: str, test_id: str = "") -> str:
         if mode == "send":
-            await self._add_test_cases(run_id)
+            # A possible bug you said is "Not a bug": that one is added and its
+            # test case written; the others stay as they are.
+            await self._add_test_cases(run_id, test_id)
             return "sent"
         if mode == "resume":
             start: str = await workflow.execute_activity(
@@ -157,6 +160,14 @@ class AuthoringRunWorkflow:
             await self._pool(
                 run_id, PLANNED_TESTS_ACTIVITY, BUILD_TEST_ACTIVITY, REQUEUE_TEST_ACTIVITY
             )
+            # Asked for N: each one that couldn't be carried out is replaced
+            # and tried, until N are delivered (plan.REFILL_ROUNDS at most).
+            while await self._bonus(
+                REFILL_ACTIVITY, run_id, timedelta(minutes=30), heartbeat=False
+            ):
+                await self._pool(
+                    run_id, PLANNED_TESTS_ACTIVITY, BUILD_TEST_ACTIVITY, REQUEUE_TEST_ACTIVITY
+                )
         else:  # nothing to try (planning said why): no test cases to write
             await workflow.execute_activity(
                 FINISH_TESTING_ACTIVITY, run_id, start_to_close_timeout=_QUICK
@@ -169,15 +180,22 @@ class AuthoringRunWorkflow:
             FINISH_TESTING_ACTIVITY, run_id, start_to_close_timeout=_QUICK
         )
         await workflow.execute_activity(DONE_ACTIVITY, run_id, start_to_close_timeout=_QUICK)
+        # No test run here: the test cases are run when you choose to (possible
+        # bugs you answer "Not a bug" are added after this point anyway).
         await self._bonus(REEL_ACTIVITY, run_id, timedelta(minutes=20), heartbeat=False)
         return "tested"
 
-    async def _add_test_cases(self, run_id: str) -> None:
-        """Add the proven scenarios, then write their test cases the way
-        "Generate tests" does (one SuiteGenerationWorkflow per journey), and
-        wait for them."""
+    async def _add_test_cases(self, run_id: str, test_id: str = "") -> None:
+        """Add the proven scenarios (or only `test_id`), then write their test
+        cases the way "Generate tests" does (one SuiteGenerationWorkflow per
+        journey; a scenario that already has its test case is skipped), and
+        wait for them. Possible bugs wait for your answer on Scenarios."""
         journeys = await self._bonus(
-            PROMOTE_ACTIVITY, run_id, timedelta(minutes=10), heartbeat=False
+            PROMOTE_ACTIVITY,
+            run_id,
+            timedelta(minutes=10),
+            heartbeat=False,
+            extra=[test_id] if test_id else None,
         )
         for journey_id in journeys or []:
             try:
@@ -195,12 +213,17 @@ class AuthoringRunWorkflow:
                 )
 
     async def _bonus(
-        self, activity: str, run_id: str, timeout: timedelta, heartbeat: bool = True
+        self,
+        activity: str,
+        run_id: str,
+        timeout: timedelta,
+        heartbeat: bool = True,
+        extra: list[str] | None = None,
     ) -> Any:
         try:
             return await workflow.execute_activity(
                 activity,
-                run_id,
+                args=[run_id, *(extra or [])],
                 start_to_close_timeout=timeout,
                 heartbeat_timeout=timedelta(minutes=5) if heartbeat else None,
                 retry_policy=_ONCE,

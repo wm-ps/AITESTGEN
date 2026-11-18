@@ -26,6 +26,7 @@ from explorer_worker.sense import (
     RESUME_LABEL,
     START_FRESH,
     app_root,
+    date_format_hint,
     date_variants,
     inside_app,
     looks_final,
@@ -383,6 +384,83 @@ def _role(role: str, name: str, exact: bool = True) -> dict[str, Any]:
     return {"by": "role", "role": role, "name": name, "exact": exact}
 
 
+_ELEMENT_LINE = re.compile(r'^\s*-?\s*([a-z]+)\s+"((?:[^"\\]|\\.)*)"')
+
+
+def element_spec(line: str) -> dict[str, Any] | None:
+    """A locator for an element line copied from the page's element structure
+    (`textbox "Close Date"`, `option "Won"`, `text: Saved`), or None."""
+    line = str(line or "").strip()
+    m = _ELEMENT_LINE.match(line)
+    if m:
+        return _role(m[1], m[2].replace('\\"', '"'))
+    text = re.match(r"^\s*-?\s*text:\s*(.+)$", line)
+    if text:
+        return {"by": "text", "text": text[1].strip(), "exact": True}
+    return None
+
+
+# What a date field says about its format: placeholder, format attributes,
+# title, aria-label, its label's text.
+_DATE_SAID_JS = """e => [e.getAttribute('placeholder'), e.getAttribute('aria-placeholder'),
+  e.getAttribute('data-date-format'), e.getAttribute('data-format'), e.getAttribute('title'),
+  e.getAttribute('aria-label'), e.labels && e.labels[0] ? e.labels[0].innerText : null
+].filter(Boolean)"""
+_ISO_DATE = re.compile(r"^\s*\d{4}-\d{1,2}-\d{1,2}\s*$")
+
+# A press waits this long for its target on a screen still drawing, looking
+# every PRESS_POLL_MS (a fully drawn screen answers on the first look).
+PRESS_WAIT_MS = 6000
+PRESS_POLL_MS = 500
+# The locator that pressed a name before, per app and name: a later press of
+# that name (a scenario walking in, a replay whose locator changed) tries it
+# first. ponytail: per worker process; persist with the run if workers scale out.
+_PRESSED: dict[str, dict[str, Any]] = {}
+_CLICKABLE = ("button", "link", "menuitem", "tab")
+# Icons, arrows and symbols around a name, and a role word the model added.
+_NAME_EDGES = re.compile(r"^[^\w(]+|[^\w)?!.]+$")
+_ROLE_WORD = re.compile(r"\s+(button|link|tab|menu item|icon)$", re.I)
+
+
+def plain_name(label: str) -> str:
+    """A control's name as the page most likely writes it: "+ New Lead",
+    "New Lead button", "“Save” ›" → "New Lead" / "Save"."""
+    name = " ".join(re.sub(r"[“”\"]", "", str(label or "")).split())
+    name = _ROLE_WORD.sub("", name)
+    return _NAME_EDGES.sub("", name).strip() or str(label or "").strip()
+
+
+def press_specs(
+    label: str, role: str | None, spec: dict[str, Any] | None, learned: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    """Every way to find what to press, most precise first: the recorded
+    locator, the one that pressed this name earlier, then by name — exact,
+    plain, and loose — in each clickable role, as text, and by aria-label or
+    tooltip. Each is a `locate` spec the exported test can use as is."""
+    specs: list[dict[str, Any]] = [s for s in (spec, learned) if s]
+    names = list(dict.fromkeys(n for n in (str(label or "").strip(), plain_name(label)) if n))
+    roles = [role] if role in _CLICKABLE else []
+    roles += [r for r in _CLICKABLE if r not in roles]
+    for name in names:
+        specs += [_role(r, name) for r in roles]
+        specs.append({"by": "text", "text": name, "exact": True})
+    for name in names:
+        specs += [_role(r, name, exact=False) for r in roles]
+    plain = names[-1] if names else ""
+    if plain and '"' not in plain and "\\" not in plain:
+        specs.append(
+            {
+                "by": "css",
+                "selector": f'[aria-label*="{plain}" i], [title*="{plain}" i]',
+            }
+        )
+    unique: list[dict[str, Any]] = []
+    for s in specs:
+        if s not in unique:
+            unique.append(s)
+    return unique
+
+
 # A lookup box (Owner, Account, a city): it only takes a value picked from
 # the suggestions it shows while typing.
 LOOKUP_JS = """e => !!(e.getAttribute('aria-autocomplete') || e.getAttribute('list')
@@ -396,6 +474,114 @@ SUGGESTIONS = (
 )
 # Not a suggestion: the list saying it is still looking or found nothing.
 SUGGESTIONS_BUSY = re.compile(r"^\s*(searching|loading)\b|no (results|matches)", re.IGNORECASE)
+
+
+# Every control on screen, numbered (`data-explorer-mark`), with the text a
+# person reads just before it (its caption): what tells apart fields that
+# share a name — three lookups all named "Search field" under Territory,
+# Primary Contact and Parent Account. Numbers are also drawn on a screenshot
+# (MARKS_OVERLAY_JS) so the model can point at one it can only see.
+FIELD_XPATH = (
+    "self::input[not(@type='hidden') and not(@type='submit') and not(@type='button')]"
+    " or self::select or self::textarea or @role='combobox' or @role='textbox'"
+    " or @role='searchbox' or @contenteditable='true'"
+)
+_MARKS_JS = r"""
+() => {
+  document.querySelectorAll('[data-explorer-mark]').forEach((e) => e.removeAttribute('data-explorer-mark'));
+  const visible = (el) => {
+    const r = el.getBoundingClientRect(); const s = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none';
+  };
+  const clean = (t) => (t || '').replace(/\s+/g, ' ').trim();
+  const FIELD = 'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]), '
+    + 'select, textarea, [role=combobox], [role=textbox], [role=searchbox], [contenteditable=true]';
+  const PRESS = 'button, a[href], [role=button], [role=link], [role=tab], [role=menuitem], input[type=submit], input[type=button]';
+  const OTHER = 'input[type=checkbox], input[type=radio], [role=checkbox], [role=radio], [role=switch], [role=option]';
+  const CONTROL = 'input, select, textarea, button, a, option, [role=option], [role=listbox], [role=button], [role=combobox]';
+  const labelOf = (el) => {
+    const by = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+      .map((id) => document.getElementById(id)).filter(Boolean).map((e) => e.innerText).join(' ');
+    let own = '';
+    if (el.id) { const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`); if (l) own = l.innerText; }
+    if (!own && el.closest('label')) own = el.closest('label').innerText;
+    return clean(el.getAttribute('aria-label') || by || own);
+  };
+  // The nearest text before it in reading order that isn't part of another control.
+  const captionOf = (el) => {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    walker.currentNode = el;
+    for (let i = 0; i < 40 && walker.previousNode(); i++) {
+      const node = walker.currentNode; const parent = node.parentElement;
+      const t = clean(node.textContent);
+      if (!t || !parent || el.contains(node) || parent.closest(CONTROL) || !visible(parent)) continue;
+      if (t.length > 60) return '';
+      return t;
+    }
+    return '';
+  };
+  const marks = []; let n = 0;
+  for (const [kind, sel] of [['field', FIELD], ['press', PRESS], ['other', OTHER]]) {
+    for (const el of document.querySelectorAll(sel)) {
+      if (el.hasAttribute('data-explorer-mark') || !visible(el)) continue;
+      // A widget wrapper whose real box is inside: the box is the field.
+      if (kind === 'field' && !el.matches('input, select, textarea') && el.querySelector('input, textarea')) continue;
+      if (marks.length >= 200) break;
+      el.setAttribute('data-explorer-mark', String(++n));
+      const r = el.getBoundingClientRect();
+      const raw = captionOf(el);
+      const text = kind === 'field' ? '' : clean(el.innerText || el.value || '').slice(0, 60);
+      const names = [labelOf(el), el.getAttribute('placeholder') || '', text, clean(el.getAttribute('title') || '')]
+        .map((t) => clean(t).slice(0, 60)).filter(Boolean);
+      marks.push({ n, kind, role: el.getAttribute('role') || el.tagName.toLowerCase(), name: names[0] || '',
+        names: [...new Set(names)], caption: raw.replace(/[\s*:]+$/, ''), caption_raw: raw,
+        x: r.left, y: r.top, w: r.width, h: r.height,
+        in_view: r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth });
+    }
+  }
+  return marks;
+}
+"""
+# Numbered tags drawn over the page for one screenshot, then removed.
+MARKS_OVERLAY_JS = r"""
+(marks) => {
+  const layer = document.createElement('div');
+  layer.id = '__explorer_marks';
+  layer.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647';
+  for (const m of marks) {
+    if (!m.in_view) continue;
+    const box = document.createElement('div');
+    box.style.cssText = `position:fixed;left:${m.x}px;top:${m.y}px;width:${m.w}px;height:${m.h}px;`
+      + 'outline:2px solid #e3008c;box-sizing:border-box';
+    const tag = document.createElement('div');
+    tag.textContent = String(m.n);
+    tag.style.cssText = `position:fixed;left:${Math.max(0, m.x - 2)}px;top:${Math.max(0, m.y - 16)}px;`
+      + 'background:#e3008c;color:#fff;font:bold 12px/14px sans-serif;padding:0 3px;border-radius:3px';
+    layer.append(box, tag);
+  }
+  document.body.append(layer);
+}
+"""
+_QUALIFIED = re.compile(r"^(.*?\S)\s*\(([^()]+)\)\s*$")
+
+
+def _norm_name(text: str) -> str:
+    return " ".join(str(text or "").lower().replace("*", " ").split()).rstrip(":")
+
+
+def same_named_fields(marks: list[dict[str, Any]]) -> list[str]:
+    """Fields that share a name, each as "Name (caption)": how the model
+    names the one it means (Eyes.pick_named reads it back)."""
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for m in marks:
+        if m.get("kind") == "field" and m.get("name"):
+            groups.setdefault(_norm_name(m["name"]), []).append(m)
+    out: list[str] = []
+    for group in groups.values():
+        captions = {_norm_name(m.get("caption") or "") for m in group}
+        if len(group) > 1 and len(captions) > 1:
+            out += [f"{m['name']} ({m.get('caption') or 'no caption'})" for m in group]
+    return out
 
 
 def drawn_placeholder(text: str) -> str:
@@ -457,6 +643,18 @@ class Eyes:
         self.last_suggestion: str | None = None  # picked by the last fill_field
         # The locator the last fill/choose/click actually used (see `locate`).
         self.last_locator: dict[str, Any] | None = None
+        # Why the last click_text pressed nothing (shown in the live feed).
+        self.last_press_problem: str | None = None
+        # The date format the last fill_field typed a date in (the field's
+        # own, read from the page), or None.
+        self.last_date_format: str | None = None
+        # Why the last fill/choose named no single field: several share its name.
+        self.last_ambiguity: str | None = None
+        # A choose done by typing into a lookup: (its locator, the suggestion
+        # picked). Recorded as a fill, so replays and the exported test type too.
+        self.last_lookup: tuple[dict[str, Any], str] | None = None
+        # The dropdown a choose opened before picking (recorded as a click).
+        self.last_opener: dict[str, Any] | None = None
 
     async def open(
         self, storage_state: dict[str, Any] | None = None, record_dir: str | None = None
@@ -668,8 +866,37 @@ class Eyes:
         return status, int((time.monotonic() - started) * 1000)
 
     async def browser(self, action: str) -> bool:
-        """The browser's own Back ("back") or Refresh ("reload") button."""
+        """The browser's own Back ("back") or Refresh ("reload") button — or
+        "fail_next_save": the app's next save (a POST/PUT/PATCH data call)
+        gets a server error, once, so a test can check how a failed save is
+        handled (testkit exports the same `page.route`)."""
         assert self.page is not None
+        if action == "fail_next_save":
+            used = False
+
+            async def fail_once(route: Any) -> None:
+                nonlocal used
+                request = route.request
+                if (
+                    not used
+                    and request.method in ("POST", "PUT", "PATCH")
+                    and request.resource_type in ("xhr", "fetch")
+                ):
+                    # ponytail: the first save-like call; an app that also posts
+                    # analytics first would fail that one instead.
+                    used = True
+                    await route.fulfill(
+                        status=500,
+                        content_type="application/json",
+                        # An API on another address still lets the app read it.
+                        headers={"Access-Control-Allow-Origin": request.headers.get("origin", "*")},
+                        body='{"error": "Simulated server error"}',
+                    )
+                else:
+                    await route.fallback()
+
+            await self.page.route("**/*", fail_once)
+            return True
         try:
             if action == "back":
                 await self.page.go_back(wait_until="domcontentloaded", timeout=30000)
@@ -681,41 +908,285 @@ class Eyes:
         return True
 
     async def click_text(
-        self, label: str, role: str | None = None, spec: dict[str, Any] | None = None
+        self,
+        label: str,
+        role: str | None = None,
+        spec: dict[str, Any] | None = None,
+        wait_ms: int = 0,
     ) -> bool:
-        """Click something by what a person reads on it — or, replaying,
-        exactly by the locator that worked before (`spec`). Returns False
-        when nothing matching is on screen."""
+        """Press something by what a person reads on it — or, replaying, by
+        the locator that worked before (`spec`). Generic for any app: waits
+        for a screen still drawing (PRESS_WAIT_MS) before saying it isn't
+        there; tries the name as written and plainly ("+ New Lead",
+        "New Lead button" → "New Lead"), every clickable role, then
+        aria-label / tooltip text; reuses the locator that pressed this name
+        earlier in this run; and gets past a covered or moving element.
+        False when nothing could be pressed — `last_press_problem` says why.
+        `wait_ms`: how long to wait for the target — PRESS_WAIT_MS for a
+        press that should happen (a walk's step, a recorded replay); 0 (one
+        look) for probing whether something optional is there."""
         assert self.page is not None
         self.last_locator = None
         self.left_app = None
-        specs: list[dict[str, Any]] = []
-        if spec:
-            specs = [spec]
-        else:
-            if role in ("link", "button", "menuitem", "tab", "treeitem"):
-                specs.append(_role(role, label))
-            specs += [
-                _role("link", label),
-                {"by": "text", "text": label, "exact": True},
-                # Icons and arrows around the words ("🔒 Generate Card PIN ›").
-                _role("link", label, exact=False),
-                _role("button", label, exact=False),
-            ]
-        for candidate in specs:
+        self.last_press_problem = None
+        specs = press_specs(label, role, spec, _PRESSED.get(self._press_key(label)))
+        tried_problem = ""
+        deadline = time.monotonic() + wait_ms / 1000
+        waited = False
+        while True:
+            for candidate in specs:
+                try:
+                    target = locate(self.page, candidate).filter(visible=True).first
+                    if not await target.count():
+                        continue
+                except PlaywrightError:
+                    continue
+                was = self.page.url
+                pressed, problem = await self._press(target)
+                if not pressed:
+                    tried_problem = problem
+                    continue
+                await self.settle()
+                if await self._left_app(was):
+                    return False
+                self.last_locator = candidate
+                if label:
+                    _PRESSED[self._press_key(label)] = candidate
+                return True
+            if time.monotonic() >= deadline:
+                break
+            if not waited:  # a screen still loading: wait for it once, then poll
+                waited = True
+                await self.wait_until_loaded()
+            await self.page.wait_for_timeout(PRESS_POLL_MS)
+        self.last_press_problem = (
+            f"“{label}” was on screen but couldn't be pressed: {tried_problem}"
+            if tried_problem
+            else f"nothing named “{label}” to press on this screen"
+        )[:300]
+        return False
+
+    async def marks(self) -> list[dict[str, Any]]:
+        """Every control on screen, numbered, with its name(s) and caption."""
+        assert self.page is not None
+        try:
+            return list(await self.page.evaluate(_MARKS_JS))
+        except PlaywrightError:
+            return []
+
+    async def marked_shot(self) -> tuple[bytes, list[dict[str, Any]]]:
+        """A screenshot with every control's number drawn on it, and the
+        controls: lets the model point at the one it means (#7) when names
+        don't tell them apart."""
+        assert self.page is not None
+        marks = await self.marks()
+        try:
+            await self.page.evaluate(MARKS_OVERLAY_JS, marks)
+            shot = await self.page.screenshot(type="jpeg", quality=70)
+        finally:
+            await self.page.evaluate(
+                "() => document.getElementById('__explorer_marks')?.remove()"
+            )
+        return shot, marks
+
+    async def stable_spec(self, mark: dict[str, Any]) -> dict[str, Any] | None:
+        """A locator for a numbered control that finds that very control
+        again (on a replay, in the exported test) without the number: its
+        own name if no other control has it, else the control after its
+        caption, else its position among controls of its kind."""
+        assert self.page is not None
+        n = str(mark.get("n"))
+        field = mark.get("kind") == "field"
+        tag = str(mark.get("role") or "")
+        role = "textbox" if field else ("link" if tag in ("a", "link") else "button")
+        candidates: list[dict[str, Any]] = []
+        for name in mark.get("names") or []:
+            candidates.append(_role(role, name))
+            if field:
+                candidates.append({"by": "label", "text": name, "exact": True})
+                candidates.append({"by": "placeholder", "text": name})
+            else:
+                candidates.append({"by": "text", "text": name, "exact": True})
+        kinds = FIELD_XPATH if field else (
+            "self::button or self::a or @role='button' or @role='link' or @role='tab' or @role='menuitem'"
+        )
+        caption = str(mark.get("caption_raw") or "")
+        if caption and '"' not in caption:
+            candidates.append(
+                {
+                    "by": "css",
+                    "selector": f'xpath=//*[normalize-space(text())="{caption}"]/following::*[{kinds}][1]',
+                }
+            )
+        for spec in candidates:
             try:
-                target = locate(self.page, candidate).filter(visible=True).first
-                if await target.count():
-                    was = self.page.url
-                    await target.click(timeout=5000)
-                    await self.settle()
-                    if await self._left_app(was):
-                        return False
-                    self.last_locator = candidate
-                    return True
+                target = locate(self.page, spec).filter(visible=True).first
+                if await target.count() and await target.get_attribute("data-explorer-mark") == n:
+                    return spec
             except PlaywrightError:
                 continue
-        return False
+        # ponytail: its position among controls of its kind breaks when the
+        # page adds one above it; only used when neither name nor caption is unique.
+        tags = "self::input or self::select or self::textarea" if field else "self::button or self::a"
+        try:
+            position = await self.page.evaluate(
+                """([n, xpath]) => {
+                  const found = document.evaluate(xpath, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+                  for (let i = 0; i < found.snapshotLength; i++)
+                    if (found.snapshotItem(i).getAttribute('data-explorer-mark') === n) return i + 1;
+                  return 0;
+                }""",
+                [n, f"//*[{tags}]"],
+            )
+        except PlaywrightError:
+            return None
+        return {"by": "css", "selector": f"xpath=(//*[{tags}])[{position}]"} if position else None
+
+    async def pick_named(self, label: str, kind: str) -> tuple[dict[str, Any] | None, str | None]:
+        """(a locator for the one control `label` means, why `label` is
+        ambiguous). "Search field (Territory)" is the "Search field" after
+        the caption Territory. A bare name several fields share, under
+        different captions, is ambiguous (never silently the first one).
+        (None, None): nothing special, find it the usual way."""
+        marks = [m for m in await self.marks() if m.get("kind") == kind]
+        qualified = _QUALIFIED.match(str(label or ""))
+        if qualified:
+            base, caption = _norm_name(qualified[1]), _norm_name(qualified[2])
+            hits = [
+                m
+                for m in marks
+                if base in {_norm_name(x) for x in m.get("names") or []}
+                and caption == _norm_name(m.get("caption") or "")
+            ]
+            if len(hits) == 1:
+                return await self.stable_spec(hits[0]), None
+        if kind != "field":
+            return None, None
+        want = _norm_name(label)
+        same = [m for m in marks if want in {_norm_name(x) for x in m.get("names") or []}]
+        if len(same) > 1 and len({_norm_name(m.get("caption") or "") for m in same}) > 1:
+            which = ", ".join(f"{m['name']} ({m.get('caption') or 'no caption'})" for m in same)
+            return None, f"{len(same)} fields are called “{label}”: {which}. Name the one you mean."[:400]
+        return None, None
+
+    async def _press(self, target: Any) -> tuple[bool, str]:
+        """Click; when something covers it or it is still moving, scroll it
+        into view and click again, then press Enter on it (what a keyboard
+        user does). (pressed, the browser's reason when it couldn't)."""
+        problem = ""
+        for attempt in range(3):
+            try:
+                if attempt == 0:
+                    await target.click(timeout=5000)
+                elif attempt == 1:
+                    await target.scroll_into_view_if_needed(timeout=3000)
+                    await target.page.wait_for_timeout(400)
+                    await target.click(timeout=5000)
+                else:
+                    await target.focus(timeout=3000)
+                    await target.press("Enter", timeout=3000)
+                return True, ""
+            except PlaywrightError as exc:
+                problem = (str(exc).splitlines() or ["?"])[0][:200]
+        return False, problem
+
+    async def snapshot(self) -> tuple[str, str]:
+        """(the page's text, its element structure) as they are now."""
+        assert self.page is not None
+        try:
+            text = await self.page.evaluate("() => document.body ? document.body.innerText : ''")
+            aria = await self.page.locator("body").aria_snapshot(timeout=5000)
+        except PlaywrightError:
+            return "", ""
+        return str(text or ""), str(aria or "")
+
+    async def field_state(self, spec: dict[str, Any] | None) -> tuple[str, bool] | None:
+        """(the value the field holds, flagged by the app) — read back from
+        the page after typing — or None when the field can't be found."""
+        if not spec or self.page is None:
+            return None
+        from explorer_worker.testkit import FIELD_FLAGGED_JS  # testkit imports this module
+
+        try:
+            target = locate(self.page, spec).filter(visible=True).first
+            if not await target.count():
+                return None
+            # Its value as the app holds it (or text, for an editable <div>)
+            # and whether the app flagged it — one plain function, so a
+            # strict Content-Security-Policy can't block it.
+            state = await target.evaluate(
+                "e => ({ value: (e.value !== undefined ? e.value : e.innerText) || '', "
+                f"flagged: ({FIELD_FLAGGED_JS})(e) }})"
+            )
+        except PlaywrightError:
+            return None
+        return str(state.get("value") or ""), bool(state.get("flagged"))
+
+    async def do_repair(
+        self, action: dict[str, Any], spec: dict[str, Any] | None = None
+    ) -> dict[str, Any] | None:
+        """Carry out one repair action (brain.repair_step) on what the page
+        really has. Returns the step to record (replayed and exported like
+        any other), {} for one that needs no recording, or None when it
+        couldn't be done. `spec`: a recorded locator (a replay) instead of
+        the element line."""
+        assert self.page is not None
+        do = str(action.get("do") or "")
+        spec = spec or element_spec(str(action.get("target") or ""))
+        target = locate(self.page, spec).filter(visible=True).first if spec else None
+        name = str(
+            (spec or {}).get("name") or (spec or {}).get("text") or action.get("label") or ""
+        )
+        try:
+            if target is not None and not await target.count():
+                return None
+            if do == "wait":
+                ms = max(0, min(int(action.get("ms") or 1000), 5000))
+                await self.page.wait_for_timeout(ms)
+                return {"do": "wait", "ms": ms}
+            if do == "key":
+                key = str(action.get("key") or "")
+                if not re.fullmatch(r"Enter|Tab|Escape|ArrowDown|ArrowUp|Space|Backspace", key):
+                    return None
+                if target is not None:
+                    await target.focus(timeout=3000)
+                await self.page.keyboard.press(key)
+                await self.settle()
+                step: dict[str, Any] = {"do": "key", "key": key}
+                if spec:
+                    step["locator"] = spec
+                return step
+            if target is None or spec is None:
+                return None
+            if do == "click":
+                pressed, _ = await self._press(target)
+                if not pressed:
+                    return None
+                await self.settle()
+                return {"do": "click", "label": name, "locator": spec}
+            if do in ("type", "keys", "clear"):
+                text = "" if do == "clear" else str(action.get("text") or "")
+                await target.fill("", timeout=5000)
+                if do == "keys":
+                    await target.press_sequentially(text, delay=60, timeout=15000)
+                elif text:
+                    await target.fill(text, timeout=5000)
+                await self.page.wait_for_timeout(300)
+                step = {"do": "fill", "field": name, "value": text, "locator": spec}
+                if do == "keys":
+                    step["keys"] = True
+                if text:
+                    # A lookup: pick the suggestion that matches, as fill_field does.
+                    picked = await self._pick_suggestion(target, text)
+                    if picked:
+                        step["suggest"] = picked
+                return step
+        except (PlaywrightError, ValueError):
+            return None
+        return None
+
+    def _press_key(self, label: str) -> str:
+        return f"{self.origin}|{plain_name(label).lower()}"
 
     async def _on_new_tab(self, tab: Page) -> None:
         """A tab the app opened (`target=_blank`) onto another app or site is
@@ -775,6 +1246,8 @@ class Eyes:
             ]
         except PlaywrightError:
             inventory["aria"] = ""
+        # Fields that share a name, told apart by their caption.
+        inventory["same_named_fields"] = same_named_fields(await self.marks())
         shot = await self.page.screenshot(type="jpeg", quality=70)
         signals, self._pending = self._pending, []
         if status is not None and status >= 400:
@@ -1015,7 +1488,16 @@ class Eyes:
         assert self.page is not None
         value = resolve_relative(self._login_value(value), unique=self.unique)
         self.last_locator = None
+        self.last_date_format = None
+        self.last_ambiguity = None
+        picked_spec = None
+        if not spec:
+            picked_spec, self.last_ambiguity = await self.pick_named(label, "field")
+            if self.last_ambiguity:
+                return False  # never type into whichever comes first
         specs = [spec] if spec else [
+            # "Search field (Territory)": that very field, found once, first.
+            *([picked_spec] if picked_spec else []),
             _role("textbox", label),
             _role("spinbutton", label),
             _role("combobox", label),
@@ -1063,7 +1545,17 @@ class Eyes:
                 else:
                     self._typed_name = value
                 rows = await self.page.locator(SUGGESTIONS).filter(visible=True).count()
-                await target.fill(value, timeout=5000)
+                typed = value
+                if _ISO_DATE.match(value) and await target.evaluate(
+                    "e => !['date', 'datetime-local', 'month', 'week'].includes(e.type)"
+                ):
+                    # A date typed into a text box: in the format the field
+                    # states ("dd/mm/yyyy"), never one the app can't read.
+                    hint, _ = await self._date_hint(target)
+                    if hint:
+                        typed = date_variants(value, hint)[0]
+                        self.last_date_format = hint
+                await target.fill(typed, timeout=5000)
                 self.last_suggestion = await self._pick_suggestion(target, value, rows)
                 return True
             except PlaywrightError:
@@ -1104,6 +1596,14 @@ class Eyes:
         "this step is broken".)"""
         assert self.page is not None
         page, do = self.page, step.get("do")
+        if step.get("locator") and do in ("click", "fill", "choose"):
+            # The very control it used (e.g. "Search field (Territory)", which
+            # no name lookup below would find).
+            try:
+                if await locate(page, step["locator"]).filter(visible=True).count():
+                    return True
+            except (PlaywrightError, ValueError):
+                pass
         if do == "click":
             label = str(step.get("label") or "")
             locators = [
@@ -1187,7 +1687,7 @@ class Eyes:
         except PlaywrightError:
             return False
 
-    async def upload_file(self, label: str, path: str) -> bool:
+    async def upload_file(self, label: str, path: str | list[str]) -> bool:
         """Attach a file the way the page expects it. Upload areas usually
         hide the real <input type=file> behind a drop zone, so set it
         directly; with several, prefer the one labelled `label`. Without any
@@ -1224,7 +1724,9 @@ class Eyes:
         assert self.page is not None
         if await self._pick_from_calendar(target, value):
             return True
-        for candidate in date_variants(value):
+        hint, day_first = await self._date_hint(target)
+        self.last_date_format = hint
+        for candidate in date_variants(value, hint, day_first):
             await target.evaluate("e => e.removeAttribute('readonly')")
             await target.click(timeout=3000)
             await self.page.keyboard.press("ControlOrMeta+A")
@@ -1237,6 +1739,21 @@ class Eyes:
             ) != "true":
                 return True
         return False
+
+    async def _date_hint(self, target: Any) -> tuple[str | None, bool | None]:
+        """(the date format the field states, does the page write the day
+        first) — from what the page shows: the field's placeholder, its
+        format attributes, title, label; then the page's language (en-US
+        writes the month first, most others the day). Never assumed."""
+        try:
+            said = await target.evaluate(_DATE_SAID_JS)
+            lang = str(await target.evaluate("e => document.documentElement.lang || navigator.language || ''"))
+        except PlaywrightError:
+            return None, None
+        hint = next((h for h in map(date_format_hint, said or []) if h), None)
+        lang = lang.lower()
+        day_first = None if not lang else not (lang in ("en", "en-us") or lang.startswith("en-us"))
+        return hint, day_first
 
     async def _pick_from_calendar(self, target: Any, value: str) -> bool:
         """Open the field's calendar and click the date, whatever the
@@ -1294,6 +1811,9 @@ class Eyes:
         replaying, exactly by the locator that worked before (`spec`)."""
         assert self.page is not None
         self.last_locator = None
+        self.last_ambiguity = None
+        self.last_lookup = None
+        self.last_opener = None
         if spec:
             return await self._choose_by(spec, option)
         selects: list[dict[str, Any]] = []
@@ -1344,26 +1864,45 @@ class Eyes:
                 return True
         # Custom dropdowns: open the field, then click the option text. The
         # field is found by its label, or as the first dropdown-like box
-        # after its caption (many apps put the caption beside it unlinked).
+        # after its caption (many apps put the caption beside it unlinked);
+        # "Search field (Territory)" is the one after that caption.
         if not field_label:
             return False
-        openers = [self.page.get_by_label(field_label).first]
+        picked, self.last_ambiguity = await self.pick_named(field_label, "field")
+        if self.last_ambiguity:
+            return False  # never open whichever comes first
+        openers: list[dict[str, Any]] = [picked] if picked else []
+        openers.append({"by": "label", "text": field_label, "exact": False})
         if '"' not in field_label:
             openers.append(
-                self.page.locator(
-                    f'xpath=//*[normalize-space(text())="{field_label}"]/following::*['
-                    "@role='combobox' or @aria-haspopup or contains(@class,'select')][1]"
-                ).first
+                {
+                    "by": "css",
+                    "selector": f'xpath=//*[normalize-space(text())="{field_label}"]/following::*['
+                    "@role='combobox' or @aria-haspopup or contains(@class,'select')][1]",
+                }
             )
-        for opener in openers:
+        option_shown = self.page.get_by_role("option", name=option, exact=True).or_(
+            self.page.get_by_text(option, exact=True)
+        ).filter(visible=True)
+        for opener_spec in openers:
             try:
+                opener = locate(self.page, opener_spec).filter(visible=True).first
                 if not await opener.count():
                     continue
                 await opener.click(timeout=3000)
-                await self.page.get_by_role("option", name=option, exact=True).or_(
-                    self.page.get_by_text(option, exact=True)
-                ).filter(visible=True).first.click(timeout=3000)
-                return True
+                if await self._appears(option_shown.first, 3000):
+                    await option_shown.first.click(timeout=3000)
+                    self.last_opener = opener_spec
+                    return True
+                # A lookup shows nothing (or "Loading") until you type: type
+                # the option into it and pick the matching suggestion.
+                if await opener.evaluate("e => e.matches('input, textarea')"):
+                    await opener.fill(option, timeout=5000)
+                    suggestion = await self._pick_suggestion(opener, option)
+                    if suggestion:
+                        self.last_lookup = (opener_spec, suggestion)
+                        return True
+                await self.page.keyboard.press("Escape")
             except PlaywrightError:
                 continue
         return False

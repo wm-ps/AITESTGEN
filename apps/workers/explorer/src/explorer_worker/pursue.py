@@ -15,12 +15,13 @@ from explorer_core import ExplorerScreen
 from sqlmodel import Session, col, select
 
 from explorer_worker import brain, limits
-from explorer_worker.browser import Eyes
+from explorer_worker.browser import PRESS_WAIT_MS, Eyes
 from explorer_worker.db import engine
 from explorer_worker.goal import stops_walk
 from explorer_worker.journal import Journal
 from explorer_worker.mind import Mind
-from explorer_worker.samples import sample_file
+from explorer_worker import repair
+from explorer_worker.samples import sample_files, upload_shape
 from explorer_worker.sense import (
     entered_something_new,
     going_in_circles,
@@ -127,6 +128,10 @@ class Pursuit:
     # {"do": "upload", "field", "kind"} (a sample file, see samples.py) |
     # {"do": "back"} | {"do": "reload"} (the browser's own buttons)
     actions: list[dict[str, str]] = field(default_factory=list)
+    # The page (its text, its element structure) just before the walk's last
+    # step that did something: what a test's own last action changed is its
+    # proof even when the start screen looked the same (Clear, Reset, Undo).
+    before_last: tuple[str, str] | None = None
 
 
 async def pursue(
@@ -185,6 +190,7 @@ async def pursue(
         return name
 
     landed: list[str] = [arrived(step_name)]
+    repairs_left = repair.PER_WALK  # self-repairs this walk may make (repair.fix)
     filled: set[str] = set()  # "field = value" entered so far (see entered_something_new)
     # When to give up: Settings → Explorer limits, as copied onto this run.
     run_limits = limits.of(journal.run_id)
@@ -273,7 +279,10 @@ async def pursue(
             visit.shot,
             visit.inventory,
             goal,
-            "\n".join([notes or "", *learned, *mind.noted]).strip() or None,
+            "\n".join(
+                [notes or "", *learned, *mind.noted, *repair.lessons(eyes.origin)]
+            ).strip()
+            or None,
             result.history,
             instructions=instructions,
             known_screens=list(known_screens),
@@ -341,39 +350,125 @@ async def pursue(
             landed.append(arrived(step_name))
             continue
 
+        acts = plan["fills"] or plan["choices"] or plan["uploads"] or plan.get("advance")
+        if acts or plan.get("browser"):
+            result.before_last = await eyes.snapshot()
         entered: list[str] = []
         for fill in plan["fills"][:25]:
             if isinstance(fill, dict) and fill.get("field") and fill.get("value") is not None:
-                if await eyes.fill_field(str(fill["field"]), str(fill["value"])):
-                    picked = eyes.last_suggestion
-                    entered.append(
-                        f"{fill['field']} = {fill['value']}" + (f" (picked “{picked}”)" if picked else "")
+                field, value = str(fill["field"]), str(fill["value"])
+                if not await eyes.fill_field(field, value):
+                    # No such field to type into, as named: work out which one
+                    # (any app — a caption elsewhere, a field inside a widget).
+                    if repairs_left > 0:
+                        repairs_left -= 1
+                        fixed, steps = await repair.fix(
+                            eyes,
+                            journal,
+                            goal,
+                            f"enter “{value}” in “{field}”",
+                            eyes.last_ambiguity
+                            or f"no field named “{field}” could be typed into",
+                            repair.typed_check(),
+                        )
+                        result.actions.extend(steps)
+                        if fixed:
+                            entered.append(f"{field} = {value}")
+                    continue
+                picked = eyes.last_suggestion
+                entered.append(
+                    f"{fill['field']} = {fill['value']}" + (f" (picked “{picked}”)" if picked else "")
+                )
+                action = {"do": "fill", "field": str(fill["field"]), "value": str(fill["value"])}
+                if eyes.last_locator:
+                    action["locator"] = dict(eyes.last_locator)  # exactly what worked
+                if picked:
+                    action["suggest"] = picked  # the exported test picks it too
+                if eyes.last_date_format:
+                    # Typed in the field's own date format: the exported
+                    # test writes it the same way (dates stay relative).
+                    action["date_format"] = eyes.last_date_format
+                result.actions.append(action)
+                # Did the app keep it? Read the field back. A value the
+                # goal enters on purpose to be refused is left as it is.
+                check = repair.fill_check(eyes, eyes.last_locator, value)
+                kept, shows = await check([])
+                on_purpose = "flags it" in shows and field.lower() in goal.lower()
+                # A pick from suggestions (tags, chips) may clear the box itself.
+                if not kept and not on_purpose and not picked and repairs_left > 0:
+                    repairs_left -= 1
+                    _fixed, steps = await repair.fix(
+                        eyes, journal, goal, f"enter “{value}” in “{field}”", shows, check
                     )
-                    action = {"do": "fill", "field": str(fill["field"]), "value": str(fill["value"])}
-                    if eyes.last_locator:
-                        action["locator"] = dict(eyes.last_locator)  # exactly what worked
-                    if picked:
-                        action["suggest"] = picked  # the exported test picks it too
-                    result.actions.append(action)
+                    result.actions.extend(steps)
         for choice in plan["choices"][:25]:
             if isinstance(choice, dict) and choice.get("option"):
-                if await eyes.choose(str(choice.get("field") or ""), str(choice["option"])):
-                    entered.append(f"{choice.get('field') or 'Choice'}: {choice['option']}")
-                    chose = {
-                        "do": "choose",
-                        "field": str(choice.get("field") or ""),
-                        "option": str(choice["option"]),
-                    }
-                    if eyes.last_locator:
-                        chose["locator"] = dict(eyes.last_locator)
-                    result.actions.append(chose)
+                if not await eyes.choose(str(choice.get("field") or ""), str(choice["option"])):
+                    if repairs_left > 0:
+                        repairs_left -= 1
+                        what = f"choose “{choice['option']}” for “{choice.get('field') or 'it'}”"
+                        fixed, steps = await repair.fix(
+                            eyes,
+                            journal,
+                            goal,
+                            what,
+                            eyes.last_ambiguity
+                            or f"couldn't {what}: no such option or dropdown was found",
+                            repair.press_check(eyes, await eyes.fingerprint()),
+                        )
+                        result.actions.extend(steps)
+                        if fixed:
+                            entered.append(f"{choice.get('field') or 'Choice'}: {choice['option']}")
+                    continue
+                entered.append(f"{choice.get('field') or 'Choice'}: {choice['option']}")
+                if eyes.last_lookup:
+                    # Picked by typing into a lookup: recorded as that typing,
+                    # so the replay and the exported test search for it too.
+                    spec, suggestion = eyes.last_lookup
+                    result.actions.append(
+                        {
+                            "do": "fill",
+                            "field": str(choice.get("field") or ""),
+                            "value": str(choice["option"]),
+                            "locator": dict(spec),
+                            "suggest": suggestion,
+                        }
+                    )
+                    continue
+                if eyes.last_opener:
+                    # The dropdown it opened first: the exported test opens it too.
+                    result.actions.append(
+                        {
+                            "do": "click",
+                            "label": str(choice.get("field") or ""),
+                            "locator": dict(eyes.last_opener),
+                        }
+                    )
+                chose = {
+                    "do": "choose",
+                    "field": str(choice.get("field") or ""),
+                    "option": str(choice["option"]),
+                }
+                if eyes.last_locator:
+                    chose["locator"] = dict(eyes.last_locator)
+                result.actions.append(chose)
         for upload in plan["uploads"][:3]:
             if isinstance(upload, dict):
                 field, kind = str(upload.get("field") or ""), str(upload.get("kind") or "image")
-                path = sample_file(kind)
-                if await eyes.upload_file(field, str(path)):
-                    entered.append(f"Attached {path.name}" + (f" to “{field}”" if field else ""))
-                    result.actions.append({"do": "upload", "field": field, "kind": kind})
+                count, size_mb = upload_shape(upload)
+                paths = sample_files(kind, count, size_mb)
+                if await eyes.upload_file(field, [str(p) for p in paths]):
+                    shown = paths[0].name if count == 1 else f"{count} files"
+                    size = f" ({size_mb:g} MB each)" if size_mb else ""
+                    entered.append(
+                        f"Attached {shown}{size}" + (f" to “{field}”" if field else "")
+                    )
+                    attached: dict[str, Any] = {"do": "upload", "field": field, "kind": kind}
+                    if count > 1:
+                        attached["count"] = count
+                    if size_mb:
+                        attached["size_mb"] = size_mb
+                    result.actions.append(attached)
                 else:
                     result.history.append(f"{step_name}: could not attach a file to “{field}”")
         if entered:
@@ -386,6 +481,12 @@ async def pursue(
             )
 
         browser = str(plan.get("browser") or "").lower()
+        if browser == "fail_next_save" and not plan.get("done"):
+            # Nothing changes on screen: the next save the test presses fails.
+            await eyes.browser(browser)
+            result.actions.append({"do": browser})
+            result.history.append(f"{step_name}: made the app's next save fail")
+            continue
         if browser in ("back", "reload") and not plan.get("done"):
             await eyes.browser(browser)
             result.actions.append({"do": browser})
@@ -476,7 +577,22 @@ async def pursue(
 
         before = await eyes.fingerprint()
         calls_before, messages_before = len(eyes.calls), len(eyes.messages)
-        clicked = await eyes.click_text(str(advance), "button")
+        clicked = await eyes.click_text(str(advance), "button", wait_ms=PRESS_WAIT_MS)
+        repaired: list[dict[str, Any]] | None = None
+        if not clicked and not eyes.left_app and repairs_left > 0:
+            # Nothing pressed: work out from the page what the step meant
+            # (another name, inside a menu, behind an overlay, still loading).
+            repairs_left -= 1
+            fixed, repaired = await repair.fix(
+                eyes,
+                journal,
+                goal,
+                f"press “{advance}”",
+                eyes.last_press_problem or f"nothing named “{advance}” could be pressed",
+                repair.press_check(eyes, before),
+            )
+            result.actions.extend(repaired)
+            clicked = fixed
         if eyes.left_app:
             journal.event(
                 "thought",
@@ -489,7 +605,7 @@ async def pursue(
         if clicked and is_final:
             sent.add(str(advance))
         moved = clicked and await eyes.wait_for_change(before)
-        if clicked:
+        if clicked and repaired is None:  # a repair recorded its own steps
             pressed = {"do": "click", "label": str(advance)}
             if eyes.last_locator:
                 pressed["locator"] = dict(eyes.last_locator)
@@ -510,6 +626,8 @@ async def pursue(
                     (
                         f"It said: {said}"
                         if said
+                        else f"Nothing was pressed: {eyes.last_press_problem}."
+                        if not clicked and eyes.last_press_problem
                         else "No message shown — I'll adjust my answers and try again."
                     )
                     + (f" The server refused: {refused}" if refused else "")
@@ -533,6 +651,16 @@ async def pursue(
                 result.ended = "stuck"
                 result.outcome = f"Couldn't get past {step_name}" + (f": {said}" if said else "")
                 break
+            if not clicked:
+                # Nothing was pressed: the app never saw it. Tell the next
+                # step so, with why — never "rejected" (that reads as the app
+                # refusing, and the same press gets repeated).
+                result.history.append(
+                    f"{step_name}: could not press “{advance}” ("
+                    f"{eyes.last_press_problem or 'not found'}) — the app did nothing; press "
+                    "what this screen really shows, by its exact visible name"
+                )
+                continue
             result.history.append(
                 f"{step_name}: attempt rejected ({said or 'no message'}"
                 + (f"; the server refused {refused}" if refused else "")

@@ -24,7 +24,7 @@ from sqlmodel import Session, col, select
 
 from explorer_worker import brain, missions, scope
 from explorer_worker.db import engine
-from explorer_worker.field_checks import CODE_LIMITS, field_checks
+from explorer_worker.field_checks import field_checks
 from explorer_worker.goal import ensure_scope, screens_in_goal
 from explorer_worker.journal import Journal
 from explorer_worker.llm import THINKING_MODEL, ask_json
@@ -32,7 +32,6 @@ from explorer_worker.memory import ask
 from explorer_worker.session import load_target
 from explorer_worker.tests_stage import (
     SCREENS_PER_PLAN,
-    SIGN_IN_RULES,
     approved_presses,
     left_out,
 )
@@ -212,12 +211,23 @@ def say_done(run_id: uuid.UUID) -> None:
             )
         ).all()
     if statuses:
-        confirmed = statuses.count("proven")
+        ready, bugs = statuses.count("proven"), statuses.count("known_bug")
         Journal(run_id).event(
             "summary",
-            f"{len(statuses)} test case(s) ready",
-            f"{confirmed} worked when tried in the app; the rest showed a possible bug. "
-            "Find them under Test cases → Author test cases.",
+            f"{ready} test case(s) ready"
+            + (f", {bugs} possible bug(s) waiting for your answer" if bugs else ""),
+            (
+                f"{ready} worked when tried in the app: find them under Test cases → Author "
+                "test cases. "
+                if ready
+                else ""
+            )
+            + (
+                f"{bugs} showed a possible bug: answer each on Scenarios — “Not a bug” adds it "
+                "to the test cases, “Ignore” removes it."
+                if bugs
+                else ""
+            ),
         )
 
 
@@ -240,54 +250,6 @@ def finish_exploring(run_id: uuid.UUID) -> None:
 
 
 # --- Scenarios ---------------------------------------------------------------
-
-_TESTS_SYSTEM = (
-    brain.STANCE
-    + """
-
-The user asked for test cases with their own request, and Explorer has walked it. The \
-main scenario — the request as the user meant it — is already written. Now write the \
-OTHER scenarios worth testing on that flow, positive and negative, on the screens the \
-flow goes through: its fields (required, invalid format, boundaries, wrong or unknown \
-values), its choices, its lists and searches (a match, no match), its buttons \
-(cancel/back), and completing the whole form or task. One rule each.
-- Write exactly as many as you are told; when no number is given, every scenario the \
-requirement calls for. Follow any limit the user gave (e.g. positive only).
-- Only screens, fields and buttons the flow's screens actually have; nothing on screens \
-the flow does not reach. Never repeat the main scenario.
-Every scenario is one of these kinds:
-- navigation: links, tabs, Back and Refresh take the user to the right screen.
-- validation: a field rule (required, format, range, length) is enforced with a clear message.
-- error_state: what the user sees when something goes wrong or there is nothing to show.
-- data_load: lists, searches and details show the right information.
-- form_submission: completing a form or task works and the result is kept/confirmed.
-Reply with ONLY:
-{
-  "tests": [
-    {
-      "kind": "navigation | validation | error_state | data_load | form_submission",
-      "title": "short and specific",
-      "purpose": "one plain line: which part of the request this covers",
-      "technique": "e.g. happy path, boundary value, equivalence class, error guessing",
-      "business_thing": "e.g. Claim",
-      "start_screen": "EXACT name from the known screens list where the scenario begins",
-      "signed_out": false,
-      "steps": ["plain steps a person would follow"],
-      "how_to_run": "precise instructions for the browser agent, with the exact test data",
-      "expected": "what SHOULD happen, from the request, the user's answers or common sense",
-      "rule": "the rule being tested in plain words"
-    }
-  ]
-}
-Rules:
-- Only screens, fields and buttons from the known screens; never invent them.
-- Use the test data from the request and the user's answers.
-- Every scenario is "signed_out": false and never signs in or out, unless the request \
-itself asks about signing in. """
-    + SIGN_IN_RULES
-    + """
-- Describe dates relative to today ('tomorrow', '30 days ago'), never fixed dates."""
-)
 
 
 def proof_hint(text: str) -> str:
@@ -443,10 +405,11 @@ async def _scope_scenarios(
     *,
     may_save: bool,
     approved: list[str],
+    shots: dict[str, bytes] | None = None,
 ) -> list[dict[str, Any]]:
     """Explorer's own scope for the flow's screens (tests_stage.plan_tests):
-    a test per field rule, the checklist a few screens per model call, and
-    one review that drops duplicates."""
+    a test per field rule, the checklist a few screens per model call (each
+    with its screenshots), and one review that drops duplicates."""
     names = [str(s["name"]) for s in screen_info]
     chunks = [names[i : i + SCREENS_PER_PLAN] for i in range(0, len(names), SCREENS_PER_PLAN)]
     parts = await asyncio.gather(
@@ -462,6 +425,7 @@ async def _scope_scenarios(
                 approved=approved,
                 only=chunk,
                 sign_in=False,
+                shots=shots_of(shots, chunk),
             )
             for chunk in chunks
         ),
@@ -478,19 +442,15 @@ async def _scope_scenarios(
     return [t for i, t in enumerate(planned) if i not in skipped]
 
 
-async def _gap_scenarios(user: str, missing: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """One scenario per scope item the plan still misses."""
-    reply = await ask_json(
-        _TESTS_SYSTEM, scope.gaps_text(missing) + "\n" + user, model=THINKING_MODEL
-    )
-    return [
-        t for t in reply.get("tests") or [] if isinstance(t, dict) and t.get("kind") != "journey"
-    ]
+def shots_of(shots: dict[str, bytes] | None, only: list[str]) -> list[bytes] | None:
+    """The screenshots of `only`, in order — all of them or none."""
+    images = [shots[n] for n in only if shots and n in shots]
+    return images if only and len(images) == len(only) else None
 
 
 async def cover_scope(
     journal: Journal,
-    user: str,
+    asked: str,
     brief: dict[str, Any],
     screen_info: list[dict[str, Any]],
     links: list[str],
@@ -502,18 +462,36 @@ async def cover_scope(
     shots: dict[str, bytes] | None = None,
 ) -> list[dict[str, Any]]:
     """The flow's whole scope: write it, then the shared scope check
-    (scope.cover) — what is missing is written and checked again."""
+    (scope.cover) — what is missing or not on the page is written again (by
+    the same planner, from the same page facts) and checked again. `asked`:
+    the user's request, as context for everything written."""
     tests = await _scope_scenarios(
-        brief, screen_info, links, walked, notes, may_save=may_save, approved=approved
-    )
-    return await scope.cover(
-        journal,
+        brief,
         screen_info,
-        tests,
-        lambda missing: _gap_scenarios(user, missing),
-        shots,
-        CEILING,
+        links,
+        walked,
+        notes,
+        may_save=may_save,
+        approved=approved,
+        shots=shots,
     )
+
+    async def write(instruction: str, only: list[str]) -> list[dict[str, Any]]:
+        return await brain.plan_tests(
+            brief,
+            screen_info,
+            links,
+            walked,
+            [],
+            f"{notes or ''}\n{asked}\n{instruction}",
+            may_save=may_save,
+            approved=approved,
+            only=only,
+            sign_in=False,
+            shots=shots_of(shots, only),
+        )
+
+    return await scope.cover(journal, screen_info, tests, write, shots, CEILING)
 
 
 def more_wanted(request: dict[str, Any]) -> int:
@@ -540,9 +518,9 @@ def flow_screens(
     ended = next((s for s in screens if s.name == end), None)
     if ended is not None:
         return [s for s in screens if s.created_at >= ended.created_at]
-    return [
-        s for s in screens if s.name != home or names_screen(s.name, prompt, brief)
-    ] or list(screens)
+    return [s for s in screens if s.name != home or names_screen(s.name, prompt, brief)] or list(
+        screens
+    )
 
 
 def walk_end(screens: Sequence[ExplorerScreen]) -> str | None:
@@ -599,46 +577,162 @@ def request_scenarios(
     ]
 
 
-async def _other_scenarios(
-    user: str, limit: str, more: int, *, exact: bool
-) -> list[dict[str, Any]]:
-    """The scenarios beyond the main ones. With a number asked for, exactly
-    that many: a short reply is asked once more for the rest."""
+def _writer(ctx: dict[str, Any], target: Any, approved: list[str], request: dict[str, Any]) -> Any:
+    """The same planner Explore's scope uses, from the same page facts and
+    screenshots, with the user's request as context: `write(instruction,
+    screens)`."""
+
+    async def write(instruction: str, only: list[str]) -> list[dict[str, Any]]:
+        return await brain.plan_tests(
+            ctx["brief"],
+            ctx["scope_info"],
+            ctx["links"],
+            ctx["walked"],
+            [],
+            f"{target.notes or ''}\nThe user's request: {ctx['prompt']}\n"
+            f"The request read as: {json.dumps(request, ensure_ascii=False)}\n{instruction}",
+            may_save=target.non_production,
+            approved=approved,
+            only=only,
+            sign_in=False,
+            shots=shots_of(ctx["scope_shots"], only),
+        )
+
+    return write
+
+
+async def requested_scenarios(
+    journal: Journal,
+    write: Any,
+    scope_info: list[dict[str, Any]],
+    wanted: int,
+    request: dict[str, Any],
+    *,
+    exact: bool,
+    avoid: Sequence[str] = (),
+    why: str = "",
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(to try, set aside): with a number asked for, exactly that many
+    scenarios the pages can support — written from the page facts, grounded
+    (scope.ground_or_rewrite), and asked again for the rest (3 rounds) until
+    the number is met. Without a number (only a limit): what the requirement
+    calls for, at most `wanted`."""
+    names = [str(i["name"]) for i in scope_info]
     found: list[dict[str, Any]] = []
-    for _ in range(2 if exact else 1):
-        wanted = more - len(found)
-        how_many = (
-            f"Write exactly {wanted} more scenario(s).\n"
-            if exact
-            else f"Write every other scenario the requirement calls for (at most {more}).\n"
-        )
-        written = (
-            "Already written, never repeat them: "
-            + json.dumps([t.get("title") for t in found], ensure_ascii=False)
-            + "\n"
-            if found
-            else ""
-        )
-        reply = await ask_json(
-            _TESTS_SYSTEM, how_many + limit + written + user, model=THINKING_MODEL
-        )
-        found += [
-            t
-            for t in reply.get("tests") or []
-            if isinstance(t, dict) and t.get("kind") != "journey"
-        ]
-        if len(found) >= more:
+    cant: list[dict[str, Any]] = []
+    for _ in range(3 if exact else 1):
+        need = wanted - len(found)
+        if need <= 0:
             break
-    return found[:more]
+        seen = [*avoid, *(str(t.get("title")) for t in found + cant)]
+        instruction = (
+            why
+            + (
+                f"Write exactly {need} scenario(s) for the user's request — no more, no fewer"
+                if exact
+                else f"Write every scenario the user's request calls for (at most {need})"
+            )
+            + (f", within the user's limit: {request['only']}" if request.get("only") else "")
+            + ". Each must be doable with what its page really has. Write nothing else."
+            + (f"\nNever repeat: {json.dumps(seen, ensure_ascii=False)}" if seen else "")
+        )
+        try:
+            written = await write(instruction, names)
+        except Exception:  # noqa: BLE001 — another round, or fewer said plainly
+            continue
+        taken = set(seen)
+        fresh = []
+        for t in written:  # no repeat of earlier ones, nor within this reply
+            title = str(t.get("title"))
+            if t.get("kind") != "journey" and title not in taken:
+                taken.add(title)
+                fresh.append(t)
+        written = fresh[:need]
+        ok, off = await scope.ground_or_rewrite(journal, scope_info, written, write)
+        found += ok
+        cant += off
+    return found[:wanted], cant
 
 
-async def plan_tests(run_id: uuid.UUID) -> int:
+# Rounds of replacements for scenarios that couldn't be carried out, when the
+# user asked for a number: enough to meet it, never a run that loops forever.
+REFILL_ROUNDS = 2
+
+
+async def refill(run_id: uuid.UUID) -> int:
+    """The user asked for N test cases: each one that couldn't be carried out
+    is replaced — written from the page facts, grounded, then tried — until N
+    are delivered (REFILL_ROUNDS at most). Returns how many were added to
+    try; 0 when the number is met, none was asked for, or rounds ran out (and
+    then says plainly how many of N were delivered and why)."""
     journal = Journal(run_id)
-    await ensure_scope(run_id)
+    ctx = _load(run_id)
+    if not ctx or not ctx["screens"]:
+        return 0
+    request = _request(ctx["brief"], ctx["prompt"])
+    count = request.get("count")
+    if not isinstance(count, int) or request.get("scenarios"):
+        return 0  # no number asked for; listed scenarios stay word for word
+    with Session(engine) as session:
+        run = session.get(ExplorerRun, run_id)
+        tests = session.exec(
+            select(ExplorerTestCase).where(ExplorerTestCase.run_id == run_id)
+        ).all()
+        if run is None or any(t.status in ("planned", "building") for t in tests):
+            return 0
+        rounds = int((run.insights or {}).get("refills") or 0)
+        delivered = sum(t.status in ADDED for t in tests)
+        short = count - delivered
+        if short > 0 and rounds < REFILL_ROUNDS:
+            run.insights = {**(run.insights or {}), "refills": rounds + 1}
+            session.add(run)
+            session.commit()
+        dropped = [(t.title, t.drop_reason or "") for t in tests if t.status == "dropped"]
+        titles = [t.title for t in tests]
+    if short <= 0:
+        return 0
+    if rounds >= REFILL_ROUNDS:
+        journal.event(
+            "summary",
+            f"{delivered} of the {count} test cases you asked for",
+            "The pages had nothing more that could be tested: "
+            + "; ".join(f"{title} — {why}" for title, why in dropped)[:2500],
+        )
+        return 0
+    journal.event(
+        "thought",
+        f"Replacing {short} scenario(s) that couldn't be carried out",
+        "; ".join(f"{title} — {why}" for title, why in dropped)[:2000],
+    )
+    target = load_target(run_id)
+    approved = sorted(approved_presses(run_id)) if target.non_production else []
+    found, cant = await requested_scenarios(
+        journal,
+        _writer(ctx, target, approved, request),
+        ctx["scope_info"],
+        short,
+        request,
+        exact=True,
+        avoid=titles,
+        why=(
+            "These planned scenarios couldn't be carried out in the app: "
+            + json.dumps([f"{t} — {w}" for t, w in dropped], ensure_ascii=False)[:3000]
+            + ". Replace them: the same purpose where the page supports it, otherwise "
+            "another useful check for the request.\n"
+        ),
+    )
+    known = {str(i["name"]) for i in ctx["screen_info"]}
+    return _save(run_id, found + cant, known, ctx["home"], ctx["flow_start"])
+
+
+def _load(run_id: uuid.UUID) -> dict[str, Any] | None:
+    """What a request's scenarios are planned from: the pages as they really
+    are (facts and screenshots), the ways between them and what the walk
+    found. None: the run is stopped or gone."""
     with Session(engine) as session:
         run = session.get(ExplorerRun, run_id)
         if run is None or run.status in ("stopped", "paused"):
-            return 0
+            return None
         brief, prompt = run.brief or {}, run.prompt or ""
         all_screens = session.exec(
             select(ExplorerScreen).where(ExplorerScreen.run_id == run_id)
@@ -664,35 +758,11 @@ async def plan_tests(run_id: uuid.UUID) -> int:
             ).all()
             if m.outcome and m.outcome != NOT_ASKED
         ]
-        if not screens:  # nothing to write scenarios about: say why, never "0 ready"
-            journal.event("error", "Couldn't follow your request", NOTHING_SEEN)
-            journal.update_run(
-                status="failed", headline="Couldn't follow your request", error=NOTHING_SEEN
-            )
-            return 0
-        screen_info = [
-            {
-                "name": s.name,
-                "business_thing": s.entity,
-                "kind": s.view_kind,
-                "purpose": s.purpose,
-                "fields": [
-                    {
-                        "label": f.get("label"),
-                        "type": f.get("type"),
-                        "required": f.get("required"),
-                        "notes": f.get("notes"),
-                        # The page code's limits and the form's own messages
-                        # (field_probe): what the field-rule tests check.
-                        **{k: f[k] for k in CODE_LIMITS if f.get(k)},
-                        **({"messages": f["messages"]} if f.get("messages") else {}),
-                    }
-                    for f in s.fields
-                ][:40],
-                "buttons": [a.get("label") for a in s.actions][:20],
-            }
-            for s in screens
-        ]
+        if not screens:
+            return {"screens": []}
+        # Each page as it really is (fields, buttons, its elements; the
+        # screenshots below): what the scenarios are planned from.
+        screen_info = scope.screen_facts(list(screens), links)
         # The scope is the request's own screens: where the walk ended (the
         # flow, e.g. the New account form) and what came after. The screens it
         # only passed through to get there (a dashboard, the list holding the
@@ -700,34 +770,43 @@ async def plan_tests(run_id: uuid.UUID) -> int:
         in_scope = flow_screens(screens, walk_end(all_screens), home, prompt, brief)
         scope_info = [i for i, s in zip(screen_info, screens, strict=True) if s in in_scope]
         scope_shots = scope.screen_shots(session, in_scope)
+        request = _request(brief, prompt)
+        return {
+            "brief": brief,
+            "prompt": prompt,
+            "all_screens": all_screens,
+            "home": home,
+            "screens": screens,
+            "links": links,
+            "walked": walked,
+            "screen_info": screen_info,
+            "scope_info": scope_info,
+            "scope_shots": scope_shots,
+            # A flow starts where the walk ended (the build replays its clicks).
+            "flow_start": home if request.get("scenarios") else (walk_end(all_screens) or home),
+        }
+
+
+async def plan_tests(run_id: uuid.UUID) -> int:
+    journal = Journal(run_id)
+    await ensure_scope(run_id)
+    ctx = _load(run_id)
+    if ctx is None:
+        return 0
+    if not ctx["screens"]:  # nothing to write scenarios about: say why, never "0 ready"
+        journal.event("error", "Couldn't follow your request", NOTHING_SEEN)
+        journal.update_run(
+            status="failed", headline="Couldn't follow your request", error=NOTHING_SEEN
+        )
+        return 0
+    brief, prompt, home = ctx["brief"], ctx["prompt"], ctx["home"]
+    links, walked = ctx["links"], ctx["walked"]
+    screen_info, scope_info, scope_shots = ctx["screen_info"], ctx["scope_info"], ctx["scope_shots"]
     journal.update_run(status="testing", headline="Writing your scenarios")
     journal.event("phase", "Writing your scenarios", "Turning your request into scenarios to try.")
     target = load_target(run_id)
     approved = sorted(approved_presses(run_id)) if target.non_production else []
     request = _request(brief, prompt)
-    user = (
-        brain.scope(brief)
-        + f"The user's request: {prompt}\n"
-        + f"The request read as: {json.dumps(request, ensure_ascii=False)}\n"
-        + f"Home screen: {home}\n"
-        + (
-            "This is a test environment: scenarios may press final Save/Submit buttons, "
-            if target.non_production
-            else "This is NOT a test environment: scenarios can never press a final Save or "
-            "Submit button, "
-        )
-        + "and never anything that moves money, pays, cancels, deletes or changes a password, "
-        "unless listed as approved below.\n"
-        + (
-            f"The user approved pressing: {json.dumps(approved, ensure_ascii=False)}\n"
-            if approved
-            else ""
-        )
-        + f"Confirmed App Summary: {json.dumps(brief, ensure_ascii=False)[:15000]}\n"
-        + f"Known screens: {json.dumps(screen_info, ensure_ascii=False)[:40000]}\n"
-        + f"Ways between screens: {json.dumps(links, ensure_ascii=False)[:8000]}\n"
-        + f"What the walk through the flow found: {json.dumps(walked, ensure_ascii=False)[:8000]}"
-    )
     # A flow starts where the walk ended: the build replays the walk's
     # recorded clicks to get there (no model guessing a menu label again).
     if request.get("scenarios"):  # the user's own scenarios: anything unclear is asked
@@ -735,13 +814,14 @@ async def plan_tests(run_id: uuid.UUID) -> int:
         if clarified is None:
             return 0
         request = clarified
-    flow_start = home if request.get("scenarios") else (walk_end(all_screens) or home)
+    flow_start = home if request.get("scenarios") else ctx["flow_start"]
     planned = request_scenarios(prompt, request, flow_start, home)
     more = more_wanted(request)
     if wants_full_scope(request):  # a flow alone: its whole scope
         planned += await cover_scope(
             journal,
-            user,
+            f"The user's request: {prompt}\n"
+            f"The request read as: {json.dumps(request, ensure_ascii=False)}",
             brief,
             scope_info,
             links,
@@ -752,11 +832,29 @@ async def plan_tests(run_id: uuid.UUID) -> int:
             shots=scope_shots,
         )
     elif more:  # what the user specified: their number, list or limit
-        limit = f"The user's limit: {request['only']}\n" if request.get("only") else ""
-        planned += await _other_scenarios(
-            user, limit, more, exact=isinstance(request.get("count"), int)
+        write = _writer(ctx, target, approved, request)
+        found, cant = await requested_scenarios(
+            journal, write, scope_info, more, request, exact=isinstance(request.get("count"), int)
         )
-    known = {s["name"] for s in screen_info}
+        planned += found + cant
+    kept = _save(run_id, planned, {s["name"] for s in screen_info}, home, flow_start)
+    journal.event(
+        "phase",
+        f"{kept} scenarios to try",
+        "Trying each one in the app now, and proving it works the same way every time.",
+    )
+    return kept
+
+
+def _save(
+    run_id: uuid.UUID,
+    planned: list[dict[str, Any]],
+    known: set[str],
+    home: str | None,
+    flow_start: str | None,
+) -> int:
+    """The planned scenarios as test cases to try (the ones the pages can't
+    support kept with why, never tried). Returns how many will be tried."""
     kept = 0
     with Session(engine) as session:
         for t in planned:
@@ -790,15 +888,17 @@ async def plan_tests(run_id: uuid.UUID) -> int:
                             "signed_out": bool(t.get("signed_out")),
                         }
                     ],
-                    status="planned" if grounded else "dropped",
-                    drop_reason=None if grounded else "Refers to a screen Explorer never saw",
+                    # What the pages can't support is kept with its reason, never tried.
+                    status="planned" if grounded and not t.get("not_possible") else "dropped",
+                    drop_reason=(
+                        f"Can't be tested here — {t['not_possible']}"[:400]
+                        if t.get("not_possible")
+                        else None
+                        if grounded
+                        else "Refers to a screen Explorer never saw"
+                    ),
                 )
             )
-            kept += grounded
+            kept += grounded and not t.get("not_possible")
         session.commit()
-    journal.event(
-        "phase",
-        f"{kept} scenarios to try",
-        "Trying each one in the app now, and proving it works the same way every time.",
-    )
     return kept

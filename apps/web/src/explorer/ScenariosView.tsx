@@ -112,7 +112,8 @@ export function ScenariosView({
           {trying > 0 && <Stat value={trying} label="still being tried" tone="info" />}
           {asked > 0 && <Stat value={asked} label="from what you told Explorer" tone="accent" icon={faUserCheck} />}
           <span style={{ flex: 1 }} />
-          {run.status === 'tested' && onGenerateTests && works > 0 && (
+          {/* Authoring writes its test cases itself: no Generate tests. */}
+          {run.status === 'tested' && onGenerateTests && works > 0 && !run.prompt && (
             <button
               type="button"
               className="button-primary"
@@ -132,9 +133,13 @@ export function ScenariosView({
           )}
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--fg-4)' }}>
-          Each scenario was tried in the app and replayed until it gave the same result every time.
-          {run.status === 'tested' && ' Generate tests turns the working ones into Playwright tests you can run.'}
-          {bugs > 0 && ' A possible bug never becomes a test case: open it and choose Not a bug (keep it as a test) or Ignore.'}
+          {run.prompt
+            ? 'Each scenario was tried in the app. The working ones are already your test cases.'
+            : 'Each scenario was tried in the app and replayed until it gave the same result every time.'}
+          {run.status === 'tested' && !run.prompt && ' Generate tests turns the working ones into Playwright tests you can run.'}
+          {bugs > 0 && (run.prompt
+            ? ' A possible bug waits for your answer: Not a bug adds it to your test cases, Ignore removes it.'
+            : ' A possible bug never becomes a test case: open it and choose Not a bug (keep it as a test) or Ignore.')}
         </div>
         {kinds.length > 1 && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

@@ -296,10 +296,18 @@ def latest_run(
     ).all()
     # The newest run, unless it is an authoring run that is over (its results
     # live in Test cases): then the latest exploration, if there is one. A
-    # paused or failed authoring run still shows, so it can be resumed.
+    # paused or failed authoring run still shows, so it can be resumed, and so
+    # does a finished one while possible bugs wait for your answer on its
+    # Scenarios tab (they reach Test cases only through that answer).
     run = runs[0] if runs else None
     if run is not None and run.prompt and run.status in ("tested", "stopped", "expired"):
-        run = next((r for r in runs if not r.prompt), run)
+        waiting = session.exec(
+            select(func.count())
+            .select_from(ExplorerTestCase)
+            .where(ExplorerTestCase.run_id == run.id, ExplorerTestCase.status == "known_bug")
+        ).one()
+        if not waiting:
+            run = next((r for r in runs if not r.prompt), run)
     return _to_read(session, run, application) if run else None
 
 

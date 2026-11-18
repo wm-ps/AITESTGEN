@@ -60,3 +60,53 @@ def sample_file(kind: str) -> Path:
     if not path.exists():
         path.write_bytes(data())
     return path
+
+
+# An upload test may ask for several files (a "no more than N" limit) or a
+# big one (a size limit): at most this many, and this many MB each.
+MAX_FILES = 10
+MAX_SIZE_MB = 50
+
+
+def upload_shape(upload: dict) -> tuple[int, float | None]:
+    """(how many files, size in MB or None) asked for by an upload step,
+    within MAX_FILES / MAX_SIZE_MB."""
+    try:
+        count = int(upload.get("count") or 1)
+    except TypeError, ValueError:
+        count = 1
+    try:
+        size = float(upload.get("size_mb") or 0)
+    except TypeError, ValueError:
+        size = 0.0
+    return max(1, min(count, MAX_FILES)), (min(size, MAX_SIZE_MB) if size > 0 else None)
+
+
+def padding(path: Path, size_mb: float | None) -> int:
+    """Bytes to add after `path`'s own content to make it `size_mb` big."""
+    return max(0, int(size_mb * 1024 * 1024) - path.stat().st_size) if size_mb else 0
+
+
+def file_names(path: Path, count: int, size_mb: float | None) -> list[str]:
+    """Distinct names for `count` copies (apps often refuse a repeated name)."""
+    stem = path.stem + (f"-{size_mb:g}mb" if size_mb else "")
+    if count == 1:
+        return [stem + path.suffix]
+    return [f"{stem}-{i}{path.suffix}" for i in range(1, count + 1)]
+
+
+def sample_files(kind: str, count: int = 1, size_mb: float | None = None) -> list[Path]:
+    """`count` sample files of this kind, each `size_mb` big when given (the
+    sample, padded at the end: still opens as that kind of file)."""
+    base = sample_file(kind)
+    if count == 1 and not size_mb:
+        return [base]
+    pad = padding(base, size_mb)
+    out = []
+    for name in file_names(base, count, size_mb):
+        path = _MADE / name
+        if not path.exists() or path.stat().st_size != base.stat().st_size + pad:
+            _MADE.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(base.read_bytes() + b"\0" * pad)
+        out.append(path)
+    return out

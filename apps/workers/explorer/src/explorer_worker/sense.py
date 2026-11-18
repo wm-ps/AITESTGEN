@@ -255,21 +255,62 @@ _MONTHS = ["January", "February", "March", "April", "May", "June", "July", "Augu
            "September", "October", "November", "December"]  # fmt: skip
 
 
-def date_variants(value: str) -> list[str]:
-    """Ways a person might type a date into a picker that only accepts its
-    own display format. The raw value is always tried first."""
+# A date format a field states (its placeholder, title, data-format…):
+# "dd/mm/yyyy", "MM-DD-YYYY", "DD MMM YYYY", "yyyy.mm.dd", "MMM d, yyyy".
+_FORMAT_TOKEN = re.compile(r"(yyyy|yy|mmmm|mmm|mm|m|dd|d)", re.I)
+_FORMAT_HINT = re.compile(r"^\s*(?:(?:yyyy|yy|mmmm|mmm|mm|m|dd|d)[\s./,-]*){3}\s*$", re.I)
+
+
+def date_format_hint(text: str) -> str | None:
+    """The date format a field states, or None ("Enter a date" states
+    none). Read from what the page shows — never assumed."""
+    for part in re.split(r"[()\[\]]|\be\.g\.|\bformat:?", str(text or ""), flags=re.I):
+        part = part.strip()
+        if _FORMAT_HINT.match(part):
+            tokens = {t.lower()[0] for t in _FORMAT_TOKEN.findall(part)}
+            if tokens == {"y", "m", "d"}:
+                return part
+    return None
+
+
+def format_date(year: int, month: int, day: int, fmt: str) -> str:
+    """The date written the way `fmt` (a date_format_hint) shows it."""
+    mon = _MONTHS[month - 1]
+    parts = {
+        "yyyy": f"{year:04d}",
+        "yy": f"{year % 100:02d}",
+        "mmmm": mon,
+        "mmm": mon[:3],
+        "mm": f"{month:02d}",
+        "m": str(month),
+        "dd": f"{day:02d}",
+        "d": str(day),
+    }
+    return _FORMAT_TOKEN.sub(lambda m: parts[m.group(0).lower()], fmt)
+
+
+def date_variants(value: str, hint: str | None = None, day_first: bool | None = None) -> list[str]:
+    """Ways to type a date into a field that only accepts its own display
+    format. A format the field states (`hint`) is the only one tried besides
+    the raw value: guessing others can slip in a different date the box
+    shows but the app never takes (mm/dd typed into a dd/mm field). With none
+    stated, day-first and month-first are both tried, the page's locale
+    (`day_first`) deciding which comes first."""
     match = re.match(r"^\s*(\d{4})-(\d{1,2})-(\d{1,2})", value)
     if not match:
         return [value]
     year, month, day = int(match[1]), int(match[2]), int(match[3])
     if not 1 <= month <= 12:
         return [value]
+    if hint:
+        return list(dict.fromkeys([format_date(year, month, day, hint), value]))
     mon = _MONTHS[month - 1]
+    by_month = f"{month:02d}/{day:02d}/{year}"
+    by_day = f"{day:02d}/{month:02d}/{year}"
     candidates = [
         value,
         f"{mon[:3]} {day}, {year}",
-        f"{month:02d}/{day:02d}/{year}",
-        f"{day:02d}/{month:02d}/{year}",
+        *([by_day, by_month] if day_first else [by_month, by_day]),
         f"{year}-{month:02d}-{day:02d}",
         f"{day:02d}-{month:02d}-{year}",
         f"{mon} {day}, {year}",

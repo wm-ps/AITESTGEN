@@ -118,6 +118,7 @@ class Mind:
                 "hidden_hints": [str(h) for h in reading["hidden_hints"]][:8],
                 "reached_by": reached_by,
                 "shot_id": shot_id,
+                "aria": visit.inventory.get("aria") or None,
                 "condition": self.condition,
                 "goal_fit": (
                     reading.get("goal_fit")
