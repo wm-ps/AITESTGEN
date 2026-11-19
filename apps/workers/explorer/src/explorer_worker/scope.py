@@ -10,10 +10,11 @@ import re
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
-from explorer_core import ExplorerScreen, ExplorerShot
+from explorer_core import ExplorerRun, ExplorerScreen, ExplorerShot
 from sqlmodel import Session
 
-from explorer_worker import brain
+from explorer_worker import brain, memory, samples
+from explorer_worker.db import engine
 from explorer_worker.field_checks import (
     CHANGES_PASSWORD,
     CODE_LIMITS,
@@ -366,9 +367,11 @@ async def cover(
     write what is missing and check again (SCOPE_ROUNDS times), then say
     plainly what is covered, left out and why. `write_gaps(instruction,
     screens)` writes scenarios for those screens. `ceiling`: at most this
-    many scenarios. Returns the scenarios to try, then the ones the pages
-    can't support, each marked `not_possible` with the reason."""
+    many scenarios. Returns the scenarios to try, then the ones not tried,
+    each with why (`set_aside_reason`): the pages can't support it, the scope
+    check left it out, or it was over the limit."""
     cant: list[dict[str, Any]] = []
+    over: dict[str, dict[str, Any]] = {}
 
     async def grounded(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
         ok, off = await ground_or_rewrite(journal, screen_info, batch, write_gaps)
@@ -379,12 +382,18 @@ async def cover(
     units = field_units(screen_info)
     report: list[dict[str, Any]] = []
     for attempt in range(SCOPE_ROUNDS + 1):
-        tests = tests[:ceiling] if ceiling else tests
+        if ceiling and len(tests) > ceiling:
+            for t in tests[ceiling:]:
+                over.setdefault(
+                    str(t.get("title")),
+                    left(t, f"Not tried: over the limit of {ceiling} scenarios per run"),
+                )
+            tests = tests[:ceiling]
         try:
             report, leave_out = await check_scope(screen_info, tests, shots, cant)
         except Exception:  # noqa: BLE001 — the check adds tests; never block planning
             journal.event("thought", "Couldn't check the scenarios against the scope")
-            return tests + cant
+            return tests + cant + _still_over(over, tests)
         # Field rules and each field's only test are never left out, and the
         # per-field items are counted by code, field by field: the model's
         # rows for those items on those screens give way to them.
@@ -392,6 +401,11 @@ async def cover(
         fielded = {(u["screen"], u["id"]) for u in units}
         report = [r for r in report if (r["screen"], r["id"]) not in fielded]
         if leave_out:
+            cant += [
+                left(t, f"Left out before trying: {leave_out[str(t.get('title'))]}"[:400])
+                for t in tests
+                if str(t.get("title")) in leave_out
+            ]
             tests = [t for t in tests if str(t.get("title")) not in leave_out]
             journal.event(
                 "thought",
@@ -416,11 +430,19 @@ async def cover(
     if ceiling and len(tests) >= ceiling and any(r["status"] == "missing" for r in report):
         detail += f"\n(Stopped at the limit of {ceiling} scenarios per run.)"
     if cant:
-        detail += "\nCan't be tested on these pages:\n" + "\n".join(
-            f"  – {t.get('title')} ({t.get('start_screen')}): {t['not_possible']}" for t in cant
+        detail += "\nNot tried:\n" + "\n".join(
+            f"  – {t.get('title')} ({t.get('start_screen')}): {set_aside_reason(t)}" for t in cant
         )
     journal.event("summary", headline, detail)
-    return tests + cant
+    return tests + cant + _still_over(over, tests)
+
+
+def _still_over(
+    over: dict[str, dict[str, Any]], tests: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """The scenarios cut by the limit that didn't make it back in."""
+    kept = {str(t.get("title")) for t in tests}
+    return [t for title, t in over.items() if title not in kept]
 
 
 def screen_shots(session: Session, screens: list[ExplorerScreen]) -> dict[str, bytes]:
@@ -475,8 +497,10 @@ def screen_facts(
     """What scenarios are planned from, per screen: its fields (with the
     page code's limits and the form's own messages), buttons, its element
     structure — every control, option, column and the first rows of each
-    list, as the page really has them — and where its actions were seen to
-    lead (`links`: "A --action--> B")."""
+    list, as the page really has them — where its actions were seen to
+    lead (`links`: "A --action--> B"), and which of its controls are the
+    app's shared menu, header and footer (`app_wide`: not its scope)."""
+    shared = app_wide_controls(screens)
     ways: dict[str, list[dict[str, str]]] = {}
     for link in links:
         m = _LINK.match(link)
@@ -504,9 +528,30 @@ def screen_facts(
             "buttons": [a.get("label") for a in s.actions][:20],
             **({"elements": trim_rows(s.aria)[:ELEMENT_CHARS]} if s.aria else {}),
             **({"leads_to": ways[s.name][:30]} if s.name in ways else {}),
+            **({"app_wide": sorted(shared)[:60]} if shared and s.aria else {}),
         }
         for s in screens
     ]
+
+
+_CONTROL = ("link ", "button ", "menuitem ", "searchbox", "combobox ", "textbox ", "tab ")
+
+
+def app_wide_controls(screens: Sequence[ExplorerScreen]) -> set[str]:
+    """The app's shared menu, header and footer: controls on (nearly) every
+    screen, each once and alike (the main menu's links, the account menu,
+    Terms). Needs 3 screens at least — on fewer, nothing is shared by
+    chance alone."""
+    pages = [s.aria for s in screens if s.aria]
+    if len(pages) < 3:
+        return set()
+    counts: dict[str, int] = {}
+    for aria in pages:
+        lines = [_norm(line).rstrip(":") for line in aria.splitlines()]
+        once = {line for line in lines if line.startswith(_CONTROL) and lines.count(line) == 1}
+        for line in once:
+            counts[line] = counts.get(line, 0) + 1
+    return {line for line, n in counts.items() if n * 4 >= len(pages) * 3}
 
 
 def _on_page(entry: str, lines: list[str], text: str) -> bool:
@@ -514,57 +559,282 @@ def _on_page(entry: str, lines: list[str], text: str) -> bool:
     return bool(want) and (any(want in line for line in lines) or want in text)
 
 
+def _depth(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+_SECTION_LABEL = ("heading", "paragraph", "group", "region")
+
+
+def _in_section(element: str, near: str, aria: str) -> bool:
+    """Is `element` inside the part of the page labelled `near`? Judged only
+    when the element's name repeats on the page (several `button "Icon"`) and
+    the label is found; otherwise True — the page-wide check stands. A
+    section is a container's children, or the lines after a label up to the
+    next label beside it."""
+    raw = aria.splitlines()
+    lines = [_norm(line) for line in raw]
+    want, label = _norm(element), _norm(near)
+    if not want or not label or sum(want in line for line in lines) < 2:
+        return True
+    starts = [i for i, line in enumerate(lines) if label in line]
+    if not starts:
+        return True
+    for i in starts:
+        top = _depth(raw[i])
+        container = i + 1 < len(raw) and _depth(raw[i + 1]) > top
+        for j in range(i + 1, len(raw)):
+            d = _depth(raw[j])
+            if d < top or (container and d == top):
+                break
+            if not container and d == top and lines[j].startswith(_SECTION_LABEL):
+                break
+            if want in lines[j]:
+                return True
+    return False
+
+
+# A file a test names: Explorer can only attach its own samples (samples.FILES).
+_FILE = re.compile(
+    r"[\w{}\-]+(?:\.[\w{}\-]+)*\.(?:pdf|docx?|xlsx?|pptx?|png|jpe?g|gif|webp|csv|txt)\b", re.I
+)
+
+
+def _unknown_file(t: dict[str, Any], page_text: str) -> str | None:
+    """A file `t` names that Explorer can't attach (not one of its samples,
+    nor a file the pages already show), or None."""
+    text = " ".join(
+        str(x)
+        for x in (
+            t.get("title"),
+            t.get("how_to_run"),
+            t.get("expected"),
+            *(t.get("steps") or []),
+            *((t.get("data") or {}).get("types") or []),
+        )
+    )
+    stems = tuple(name.rsplit(".", 1)[0] for name in samples.FILES)
+    for name in _FILE.findall(text):
+        if not name.lower().startswith(stems) and name.lower() not in page_text:
+            return (
+                f"it needs a file Explorer can't attach: “{name}” — it attaches its own "
+                f"sample files ({', '.join(samples.FILES)}); name the kind of file, not a file"
+            )
+    return None
+
+
+def _value_seen(
+    value: str, path_text: str, by_screen: dict[str, str], records: Sequence[str]
+) -> dict[str, str] | None:
+    """Where `value` was seen: on the test's own pages, on another page
+    Explorer saw, or in the test data the app showed while exploring (a
+    record it created, a search result — memory.remember_record). None: not
+    seen anywhere."""
+    want = _norm(value)
+    if want in path_text:
+        return {"value": value, "source": "page"}
+    for name, elements in by_screen.items():
+        if want in _norm(elements):
+            return {"value": value, "source": f"page: {name}"}
+    for record in records:
+        if want in _norm(record):
+            return {"value": value, "source": f"record: {record[:200]}"}
+    return None
+
+
 def _flow_problem(
     t: dict[str, Any],
     by_screen: dict[str, str],
     leads: dict[str, list[tuple[str, str]]],
-) -> str | None:
-    """Why `t`'s steps can't happen as planned, or None: every step on a
-    screen Explorer saw, using an element that screen has, and every move to
-    another screen made by the element of the step before it, the way
-    Explorer saw that screen do it."""
+    records: Sequence[str] = (),
+) -> tuple[str | None, list[dict[str, str]]]:
+    """(why `t`'s steps can't happen as planned or None, where each value it
+    finds was seen): every step on a screen Explorer saw, using an element
+    that screen has (inside the section it names, when its name repeats), and
+    every move to another screen made by the element of the step before it,
+    the way Explorer saw that screen do it. Each value it finds is looked up
+    on the pages and in the test data the app showed (`records`); one seen
+    nowhere doesn't stop it — it is marked UNSEEN and checked in the app when
+    the scenario is tried (a search can find what no saved page showed)."""
     start = str(t.get("start_screen") or "")
     path = [p for p in t.get("path") or [] if isinstance(p, dict)]
     if not path:
-        return "doesn't say which page each step happens on and what it uses"
+        return "doesn't say which page each step happens on and what it uses", []
     here, pressed = start, ""
     seen: list[str] = []
     for step in path:
         screen = str(step.get("screen") or "")
         element = str(step.get("element") or "").strip()
         if screen not in by_screen:
-            return f"goes to a screen Explorer never saw: “{screen}”"
+            return f"goes to a screen Explorer never saw: “{screen}”", []
         if screen != here:
             ways = [action for action, to in leads.get(here, []) if to == screen]
             if not ways:
-                return f"no way was seen from “{here}” to “{screen}”"
+                return f"no way was seen from “{here}” to “{screen}”", []
             if pressed and not any(_norm(a) and _norm(a) in _norm(pressed) for a in ways):
                 return (
                     f"{pressed} on “{here}” was never seen to lead to “{screen}” "
                     f"(seen: {', '.join(ways)})"
-                )[:300]
+                )[:300], []
         lines = [_norm(line) for line in by_screen[screen].splitlines()]
         if element and lines and not _on_page(element, lines, " ".join(lines)):
-            return f"“{screen}” has no {element}"
+            return f"“{screen}” has no {element}", []
+        near = str(step.get("near") or "").strip()
+        if element and near and not _in_section(element, near, by_screen[screen]):
+            return f"“{near}” on “{screen}” has no {element}", []
         here, pressed = screen, element
         seen.append(screen)
     lines = [_norm(line) for s in dict.fromkeys(seen) for line in by_screen[s].splitlines()]
     text = " ".join(lines)
+    evidence: list[dict[str, str]] = []
     for value in (t.get("data") or {}).get("finds") or []:
-        if str(value).strip() and lines and not _on_page(str(value), lines, text):
-            return f"the value “{value}” isn't on its pages"
+        value = str(value).strip()
+        if not value or not lines:
+            continue
+        evidence.append(
+            _value_seen(value, text, by_screen, records) or {"value": value, "source": UNSEEN}
+        )
+    return None, evidence
+
+
+# A value no saved page or test data showed: checked on the live page when
+# the scenario is tried (tests_stage.repair is told which).
+UNSEEN = "not seen while exploring — checked in the app"
+# Why a planned scenario isn't tried (kept with it, `outcome`).
+REJECTED = "rejected"
+
+
+def set_aside_reason(t: dict[str, Any]) -> str | None:
+    """Why a planned scenario is kept but not tried (shown with it), or None."""
+    if t.get("left_out"):
+        return str(t["left_out"])[:400]
+    if t.get("not_possible"):
+        return f"Can't be tested here — {t['not_possible']}"[:400]
     return None
 
 
+def left(t: dict[str, Any], why: str) -> dict[str, Any]:
+    """`t`, kept but not tried, with why."""
+    return {**t, "left_out": why, "outcome": REJECTED}
+
+
+def trace(t: dict[str, Any]) -> dict[str, Any]:
+    """What a planned scenario was planned from, kept with it (script[0]): its
+    flow, the values it needs and where each was seen, its category, and —
+    when it isn't tried — its outcome."""
+    return {k: t[k] for k in ("path", "data", "evidence", "category", "outcome") if t.get(k)}
+
+
+def evidenced(
+    items: Sequence[dict[str, Any]], facts: Sequence[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(kept, not kept with why): coverage-map items (brain.coverage_map)
+    whose evidence is on their own screen — never a shared menu control, never
+    F-05 (field rules are written per field)."""
+    by_screen = {str(f["name"]): f for f in facts}
+    kept: list[dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
+    for item in items:
+        fact = by_screen.get(str(item.get("screen") or ""))
+        evidence = str(item.get("evidence") or "").strip()
+        lines = [_norm(line) for line in str((fact or {}).get("elements") or "").splitlines()]
+        shared = {str(c) for c in (fact or {}).get("app_wide") or []}
+        why = (
+            "a screen not in the flow"
+            if fact is None
+            else "required fields are written per field"
+            if str(item.get("id") or "").startswith("F-05")
+            else "no evidence named"
+            if not evidence
+            else f"“{evidence}” isn't on that screen"
+            if lines and not _on_page(evidence, lines, " ".join(lines))
+            else "the app's shared menu, header or footer"
+            if _norm(evidence).rstrip(":") in shared
+            else None
+        )
+        if why:
+            out.append({**item, "why": why})
+        else:
+            kept.append(item)
+    return kept, out
+
+
+def not_needed(
+    tests: Sequence[dict[str, Any]], facts: Sequence[dict[str, Any]]
+) -> dict[int, str]:
+    """{index: why} for planned ideas that aren't scenarios to try — said
+    with them, never counted as planned: a copy of an earlier one
+    (`duplicates`), a test that only uses the app's shared menu, header or
+    footer (not any screen's scope — the scope check's own rule), or a
+    required-field test, which the field rules already write per field."""
+    shared = {str(c) for f in facts for c in f.get("app_wide") or []}
+    out = duplicates(tests)
+    for i, t in enumerate(tests):
+        if i in out or t.get("kind") == "journey":
+            continue
+        coverage = str(t.get("coverage") or "")
+        if coverage.startswith("F-05") and coverage != FIELD_CHECK:
+            out[i] = (
+                "Left out before trying: required fields are checked once per field, from "
+                "the form's own fields"
+            )
+            continue
+        used = [
+            _norm(str(p.get("element") or "")).rstrip(":")
+            for p in t.get("path") or []
+            if isinstance(p, dict)
+        ]
+        if shared and used and all(u in shared for u in used):
+            out[i] = (
+                "Left out before trying: about the app's shared menu, header or footer — "
+                "not part of this screen's scope"
+            )
+    return out
+
+
+def duplicates(tests: Sequence[dict[str, Any]]) -> dict[int, str]:
+    """{index: why} for a scenario doing exactly what an earlier one does —
+    same kind, start, scope item, steps (screen and element, in order) and
+    values. No model; only scenarios with a path and a scope item are
+    compared (without one, what it checks can't be told); field rules and the
+    user's own scenarios never."""
+    first: dict[tuple[Any, ...], str] = {}
+    out: dict[int, str] = {}
+    for i, t in enumerate(tests):
+        path = [p for p in t.get("path") or [] if isinstance(p, dict)]
+        coverage = _norm(str(t.get("coverage") or ""))
+        if not path or not coverage or coverage == _norm(FIELD_CHECK) or t.get("kind") == "journey":
+            continue
+        data = t.get("data") or {}
+        values = [*(data.get("finds") or []), *(data.get("types") or [])]
+        key = (
+            str(t.get("kind") or ""),
+            str(t.get("start_screen") or ""),
+            coverage,
+            tuple((str(p.get("screen") or ""), _norm(str(p.get("element") or ""))) for p in path),
+            tuple(sorted(_norm(str(v)) for v in values)),
+        )
+        if key in first:
+            out[i] = f"Left out before trying: the same check as “{first[key]}”"
+        else:
+            first[key] = str(t.get("title") or "")
+    return out
+
+
 def ground(
-    tests: list[dict[str, Any]], facts: list[dict[str, Any]]
+    tests: list[dict[str, Any]],
+    facts: list[dict[str, Any]],
+    records: Sequence[str] = (),
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """(usable, not usable) — no model. A planned scenario is usable when its
     whole flow is there before it is ever tried: each step on a screen
     Explorer saw, using an element that screen has, each move to another
-    screen one Explorer saw happen, and every value it finds on its pages.
-    Field rules (written from the fields), the user's own request and
-    sign-in tests pass as they are. Not usable ones carry `not_possible`."""
+    screen one Explorer saw happen, and every file it names one Explorer can
+    attach. Its values are looked up on the pages and in `records` (the test
+    data the app showed while exploring). Field rules (written from the
+    fields), the user's own request and sign-in tests pass as they are.
+    Usable ones carry `evidence` (where each value was seen, or UNSEEN: to
+    check in the app); not usable ones `not_possible` and `outcome`."""
     by_screen = {str(f["name"]): str(f.get("elements") or "") for f in facts}
     leads = {
         str(f["name"]): [(str(w["action"]), str(w["to"])) for w in f.get("leads_to") or []]
@@ -572,6 +842,7 @@ def ground(
     }
     ok: list[dict[str, Any]] = []
     off: list[dict[str, Any]] = []
+    every_page = _norm(" ".join(by_screen.values()))
     for t in tests:
         if (
             str(t.get("start_screen") or "") not in by_screen
@@ -581,11 +852,12 @@ def ground(
         ):
             ok.append(t)
             continue
-        problem = _flow_problem(t, by_screen, leads)
+        problem, evidence = _flow_problem(t, by_screen, leads, records)
+        problem = problem or _unknown_file(t, every_page)
         if problem:
-            off.append({**t, "not_possible": problem[:300]})
+            off.append({**t, "not_possible": problem[:300], "outcome": REJECTED})
         else:
-            ok.append(t)
+            ok.append({**t, **({"evidence": evidence} if evidence else {})})
     return ok, off
 
 
@@ -598,7 +870,8 @@ async def ground_or_rewrite(
     """(usable, set aside): every scenario using only what its pages have;
     those that don't are rewritten once (`write(instruction, screens)`),
     then set aside with why (`not_possible`)."""
-    ok, off = ground(batch, screen_info)
+    records = memory.records(journal.run_id)
+    ok, off = ground(batch, screen_info, records)
     if not off:
         return ok, []
     journal.event(
@@ -608,27 +881,132 @@ async def ground_or_rewrite(
     )
     screens = list(dict.fromkeys(str(t.get("start_screen") or "") for t in off))
     try:
-        redone = await write(regrounding_text(off), screens)
+        redone = await write(regrounding_text(off, records), screens)
     except Exception:  # noqa: BLE001 — never block planning on a rewrite
         redone = []
-    fixed, still = ground(redone, screen_info)
+    fixed, still = ground(redone, screen_info, records)
     # Each set aside once, as last written (with why its rewrite failed too).
     latest = {t.get("title"): t for t in off} | {t.get("title"): t for t in still}
     done = {t.get("title") for t in fixed}
     return ok + fixed, [t for title, t in latest.items() if title not in done]
 
 
-def regrounding_text(off: list[dict[str, Any]]) -> str:
-    """The rewrite instruction for scenarios that use what the page lacks."""
+def regrounding_text(off: list[dict[str, Any]], records: Sequence[str] = ()) -> str:
+    """The rewrite instruction for scenarios that use what the page lacks,
+    with the test data the app showed (values a rewrite may use)."""
     return (
         "These planned scenarios can't happen as written. Rewrite each so every step in "
         "'path' is on a screen given, uses an element copied exactly from THAT screen's "
-        "'elements', and moves to another screen only by a way in its 'leads_to'; values "
-        "in 'data.finds' must be on those screens — keep the same purpose and 'coverage'. "
-        "If the app truly has no way to do it, leave it out. Write nothing else.\n"
+        "'elements' (with 'near' when its name repeats on the page), and moves to another "
+        "screen only by a way in its 'leads_to'; values in 'data.finds' must be on those "
+        "screens or in the test data the app showed below — keep the same purpose and "
+        "'coverage'. If the app truly has no way to do it, leave it out. Write nothing else.\n"
+        + (
+            "Test data the app showed while exploring: "
+            + json.dumps(list(records)[:20], ensure_ascii=False)
+            + "\n"
+            if records
+            else ""
+        )
         + "\n".join(
             f"- On {t.get('start_screen')}: “{t.get('title')}” ({t.get('coverage') or ''}) — "
             f"{t['not_possible']}"
             for t in off
         )
     )
+
+
+def follow_map(coverage: list[dict[str, Any]], screens: list[str]) -> str:
+    """The instruction that makes a test-writing call follow the coverage map
+    for `screens`: one test per item, nothing else."""
+    items = [i for i in coverage if i.get("screen") in screens]
+    return (
+        "Coverage map — decided from all the evidence; follow it exactly. Write exactly one "
+        "test for each item below, in this order: its 'id' in 'coverage', its 'evidence' as "
+        "the element of the step that uses it in 'path', what it checks as the test's "
+        "purpose. Write nothing else.\n" + json.dumps(items, ensure_ascii=False)[:20000]
+    )
+
+
+def shots_of(shots: dict[str, bytes] | None, only: list[str]) -> list[bytes] | None:
+    """The screenshots of `only`, in order — all of them or none."""
+    images = [shots[n] for n in only if shots and n in shots]
+    return images if only and len(images) == len(only) else None
+
+
+async def coverage_map(
+    journal: Journal,
+    asked: str,
+    brief: dict[str, Any],
+    screen_info: list[dict[str, Any]],
+    links: list[str],
+    walked: list[dict[str, Any]],
+    *,
+    may_save: bool,
+    shots: dict[str, bytes] | None = None,
+    groups: list[list[str]] | None = None,
+) -> list[dict[str, Any]]:
+    """What to test, decided before any test is written (brain.coverage_map),
+    from all the evidence, keeping only the items whose evidence is on their
+    own screen (evidenced). One decision per group of screens (Explore's many
+    screens; authoring's flow is one group), several at once. Kept on the run
+    and said in the feed. [] when no map could be made: the checklist is
+    planned from as before."""
+    groups = groups or [[str(s["name"]) for s in screen_info]]
+    gate = asyncio.Semaphore(4)
+
+    async def decide(names: list[str]) -> dict[str, Any]:
+        async with gate:
+            return await brain.coverage_map(
+                asked,
+                brief,
+                [s for s in screen_info if s["name"] in names],
+                links,
+                walked,
+                SCOPE_ITEMS,
+                may_save=may_save,
+                shots=shots_of(shots, names),
+            )
+
+    replies = [
+        r
+        for r in await asyncio.gather(*(decide(g) for g in groups), return_exceptions=True)
+        if isinstance(r, dict)
+    ]
+    if not replies:
+        journal.event("thought", "Couldn't make the coverage map — planning from the checklist")
+        return []
+    items, unproven = evidenced([i for r in replies for i in r["items"]], screen_info)
+    if not items:
+        journal.event("thought", "No coverage map came back — planning from the checklist")
+        return []
+    aim = " ".join(dict.fromkeys(r["aim"] for r in replies if r["aim"]))
+    not_applicable = [i for r in replies for i in r["not_applicable"]]
+    with Session(engine) as session:
+        run = session.get(ExplorerRun, journal.run_id)
+        if run is not None:
+            run.insights = {
+                **(run.insights or {}),
+                "coverage_map": {
+                    "aim": aim,
+                    "items": items,
+                    "not_applicable": not_applicable,
+                    "no_evidence": unproven,
+                },
+            }
+            session.add(run)
+            session.commit()
+    screens = len({i.get("screen") for i in items})
+    journal.event(
+        "summary",
+        f"Coverage map: {len(items)} check(s) to test on {screens} screen(s)",
+        "\n".join(
+            [f"Aim: {aim}"]
+            + [f"  ✓ {i.get('screen')}: {i.get('id')} {i.get('what')}" for i in items]
+            + [
+                f"  – {i.get('screen')}: {i.get('id')} doesn't apply — {i.get('why')}"
+                for i in not_applicable + unproven
+            ]
+        )[:6000],
+    )
+    return items

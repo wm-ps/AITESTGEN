@@ -344,3 +344,35 @@ def test_get_home_exposes_journeys_with_generation_error() -> None:
     assert body["scenario_journeys_covered"] == 1
     assert body["journeys_with_generation_error"] == 1
     assert body["failed_journey_names"] == ["Broken Journey"]
+
+
+def test_get_home_shows_an_authoring_run_in_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An "Author test cases" request runs as Explorer's AuthoringRunWorkflow:
+    while it runs, its application shows as authoring on the Overview's
+    Active pipelines (`live_exploration_generating`), like the old flow."""
+    from api import main
+    from explorer_core import ExplorerRun
+
+    init_db()
+    client = _signed_in_client("Org Home Authoring")
+    authoring = _create_application(client, "Authoring App")
+    _create_application(client, "Idle App")
+    with Session(engine) as session:
+        app_row = session.exec(
+            select(Application).where(Application.external_id == uuid.UUID(authoring["id"]))
+        ).one()
+        run = ExplorerRun(application_id=app_row.id, prompt="write test cases", status="testing")
+        session.add(run)
+        session.commit()
+        running = {run.external_id}
+
+    async def runs(_client: object) -> set[uuid.UUID]:
+        return running
+
+    monkeypatch.setattr(main, "running_authoring_run_ids", runs)
+    body = {row["name"]: row for row in client.get("/home").json()}
+    assert body["Authoring App"]["live_exploration_generating"] is True
+    assert body["Idle App"]["live_exploration_generating"] is False
+    running.clear()  # finished: no longer shown
+    body = {row["name"]: row for row in client.get("/home").json()}
+    assert body["Authoring App"]["live_exploration_generating"] is False

@@ -64,6 +64,14 @@ _SCENARIO_TYPE = {
 }
 
 
+def scenario_type(test: ExplorerTestCase) -> str:
+    """happy / negative / edge: the planner's own category, else by kind."""
+    said = (test.script[0] if test.script and isinstance(test.script[0], dict) else {}).get(
+        "category"
+    )
+    return said if said in ("happy", "negative", "edge") else _SCENARIO_TYPE.get(test.kind, "happy")
+
+
 def identity_key(business_thing: str) -> str:
     """Explorer's journeys are recognisable (and replaceable) by this key."""
     return "explorer:" + (
@@ -233,7 +241,7 @@ def _promote(run_id: uuid.UUID, only: uuid.UUID | None = None) -> dict[str, int]
             for test in group:
                 scenario = Scenario(
                     journey_id=journey.id,
-                    type=_SCENARIO_TYPE.get(test.kind, "happy"),
+                    type=scenario_type(test),
                     name=test.title,
                     steps=route_steps(test.script) or list(test.steps),
                     expected_result=test.expected + _proof_sentence(test.check),

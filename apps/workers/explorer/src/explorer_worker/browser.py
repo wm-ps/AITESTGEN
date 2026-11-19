@@ -809,6 +809,17 @@ class Eyes:
         except PlaywrightError:
             await self.page.wait_for_timeout(600)
 
+    async def loading_now(self) -> bool:
+        """A loading indicator is showing right now (a busy or progress
+        element, a spinner). A spinner that never stopped on this page is
+        decoration (wait_until_loaded), not loading."""
+        if self.page is None or self.page.url in self._never_loads:
+            return False
+        try:
+            return bool(await self.page.evaluate(_LOADING_JS))
+        except PlaywrightError:
+            return False
+
     async def wait_until_loaded(self, budget_ms: int = 20000) -> None:
         """Never read a screen mid-load: wait while a loading indicator shows
         (capped, so a spinner that never stops costs one wait, not the run)."""
@@ -1246,6 +1257,9 @@ class Eyes:
             ]
         except PlaywrightError:
             inventory["aria"] = ""
+        # Is anything loading right now? Measured, so a repair never blames a
+        # "Loading" text that is only part of the page.
+        inventory["loading"] = await self.loading_now()
         # Fields that share a name, told apart by their caption.
         inventory["same_named_fields"] = same_named_fields(await self.marks())
         shot = await self.page.screenshot(type="jpeg", quality=70)

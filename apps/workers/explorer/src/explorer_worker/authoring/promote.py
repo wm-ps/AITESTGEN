@@ -29,7 +29,6 @@ from explorer_worker.db import engine
 from explorer_worker.journal import Journal
 from explorer_worker.missions import one_at_a_time
 from explorer_worker.promote import (
-    _SCENARIO_TYPE,
     MAX_STEPS,
     _claim_number,
     _persist_screen_model,
@@ -38,6 +37,7 @@ from explorer_worker.promote import (
     _test_data,
     captured_flow,
     route_steps,
+    scenario_type,
 )
 from explorer_worker.session import needs_sign_in
 
@@ -154,7 +154,7 @@ def _promote(run_id: uuid.UUID, only: uuid.UUID | None = None) -> list[str]:
             session.add(
                 Scenario(
                     journey_id=journey.id,
-                    type=_SCENARIO_TYPE.get(test.kind, "happy"),
+                    type=scenario_type(test),
                     name=test.title,
                     steps=route_steps(test.script) or list(test.steps),
                     expected_result=test.expected + _proof_sentence(test.check),

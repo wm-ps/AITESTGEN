@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from domain import Scenario, TestAsset
 from explorer_core import (
     TEST_KINDS,
     ExplorerMission,
@@ -29,6 +30,7 @@ from explorer_worker.goal import ensure_scope, screens_in_goal
 from explorer_worker.journal import Journal
 from explorer_worker.llm import THINKING_MODEL, ask_json
 from explorer_worker.memory import ask
+from explorer_worker.scope import coverage_map, follow_map, shots_of
 from explorer_worker.session import load_target
 from explorer_worker.tests_stage import (
     SCREENS_PER_PLAN,
@@ -210,6 +212,7 @@ def say_done(run_id: uuid.UUID) -> None:
                 col(ExplorerTestCase.status).in_(ADDED),
             )
         ).all()
+    reconcile(run_id)
     if statuses:
         ready, bugs = statuses.count("proven"), statuses.count("known_bug")
         Journal(run_id).event(
@@ -229,6 +232,109 @@ def say_done(run_id: uuid.UUID) -> None:
                 else ""
             ),
         )
+
+
+def reconcile(run_id: uuid.UUID) -> dict[str, int]:
+    """Every planned scenario's outcome, said once at the end: planned =
+    test cases + not tried (with why) + waiting for your answer + couldn't be
+    carried out. Ideas set aside before trying (a copy of another, the app's
+    shared menu: scope.not_needed and the reviews) are listed with why but
+    never counted as planned. A scenario that worked but has no test case is
+    a generation failure, said by name. Returns the counts (also kept on the
+    run)."""
+    with Session(engine) as session:
+        tests = session.exec(
+            select(ExplorerTestCase).where(
+                ExplorerTestCase.run_id == run_id, ExplorerTestCase.kind != "page_quality"
+            )
+        ).all()
+        proven = {str(t.external_id): t.title for t in tests if t.status == "proven"}
+        scenarios = (
+            session.exec(
+                select(Scenario.id, Scenario.grounding).where(
+                    col(Scenario.current),
+                    col(Scenario.grounding)["authored_test"].astext.in_(list(proven)),
+                )
+            ).all()
+            if proven
+            else []
+        )
+        with_code = (
+            set(
+                session.exec(
+                    select(TestAsset.scenario_id).where(
+                        col(TestAsset.current),
+                        col(TestAsset.scenario_id).in_([sid for sid, _ in scenarios]),
+                    )
+                ).all()
+            )
+            if scenarios
+            else set()
+        )
+        generated = {
+            str((g or {}).get("authored_test")) for sid, g in scenarios if sid in with_code
+        }
+        run = session.get(ExplorerRun, run_id)
+        ideas = [t for t in tests if t.status == "dropped" and _set_aside(t)]
+        rejected = [
+            t for t in tests if t.status == "dropped" and _never_tried(t) and not _set_aside(t)
+        ]
+        failed = [t for t in tests if t.status == "dropped" and not _never_tried(t)]
+        not_written = [title for key, title in proven.items() if key not in generated]
+        waiting = [t for t in tests if t.status in ("known_bug", "planned", "building")]
+        counts = {
+            "planned": len(tests) - len(ideas),
+            "set_aside": len(ideas),
+            "generated": len(generated),
+            "rejected": len(rejected),
+            # Couldn't be carried out with a value never seen while exploring.
+            "needs_evidence": sum(_unseen(t) for t in failed),
+            "pending": len(waiting),
+            "failed": len(failed) + len(not_written),
+        }
+        lines = (
+            [f"Not tried — {t.title}: {t.drop_reason}" for t in rejected]
+            + [f"Waiting for your answer — {t.title}" for t in waiting]
+            + [f"Couldn't be carried out — {t.title}: {t.drop_reason}" for t in failed]
+            + [f"Worked, but its test case wasn't written — {title}" for title in not_written]
+            + [f"Idea set aside — {t.title}: {t.drop_reason}" for t in ideas]
+        )
+        if run is not None:
+            run.insights = {**(run.insights or {}), "reconciliation": counts}
+            session.add(run)
+            session.commit()
+    Journal(run_id).event(
+        "summary",
+        f"Planned {counts['planned']}: {counts['generated']} test case(s), "
+        f"{counts['rejected']} not tried, {counts['pending']} waiting for your answer, "
+        f"{counts['failed']} couldn't be carried out"
+        + (f" ({len(ideas)} more idea(s) set aside before trying)" if ideas else ""),
+        "\n".join(lines)[:6000] or "Every planned scenario became a test case.",
+    )
+    return counts
+
+
+def _outcome(t: ExplorerTestCase) -> str:
+    return str((t.script[0] if t.script else {}).get("outcome") or "")
+
+
+def _unseen(t: ExplorerTestCase) -> bool:
+    evidence = (t.script[0] if t.script else {}).get("evidence") or []
+    return any(isinstance(e, dict) and e.get("source") == scope.UNSEEN for e in evidence)
+
+
+def _set_aside(t: ExplorerTestCase) -> bool:
+    """An idea left out before trying (a copy, the app's shared menu, not
+    needed): not a planned scenario."""
+    return (t.drop_reason or "").startswith("Left out before trying")
+
+
+def _never_tried(t: ExplorerTestCase) -> bool:
+    """Set aside before trying (rejected / needs evidence), not failed when tried.
+    Rows from before outcomes were kept: by their reason's wording."""
+    return bool(_outcome(t)) or (t.drop_reason or "").startswith(
+        ("Can't be tested here", "Left out", "Not tried", "Refers to a screen")
+    )
 
 
 def finish_exploring(run_id: uuid.UUID) -> None:
@@ -406,11 +512,17 @@ async def _scope_scenarios(
     may_save: bool,
     approved: list[str],
     shots: dict[str, bytes] | None = None,
-) -> list[dict[str, Any]]:
+    coverage: list[dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Explorer's own scope for the flow's screens (tests_stage.plan_tests):
-    a test per field rule, the checklist a few screens per model call (each
-    with its screenshots), and one review that drops duplicates."""
+    a test per field rule, then — a few screens per model call, each with its
+    screenshots — one test per item of the coverage map (`coverage`, decided
+    first from all the evidence; without one, the checklist), and duplicates
+    and flows never seen left out (by code, then one review). Returns (to
+    check, left out with why)."""
     names = [str(s["name"]) for s in screen_info]
+    if coverage:  # only the screens the map has checks for
+        names = [n for n in names if any(i.get("screen") == n for i in coverage)]
     chunks = [names[i : i + SCREENS_PER_PLAN] for i in range(0, len(names), SCREENS_PER_PLAN)]
     parts = await asyncio.gather(
         *(
@@ -420,7 +532,7 @@ async def _scope_scenarios(
                 links,
                 walked,
                 [],
-                notes,
+                f"{notes or ''}\n{follow_map(coverage, chunk)}" if coverage else notes,
                 may_save=may_save,
                 approved=approved,
                 only=chunk,
@@ -438,14 +550,11 @@ async def _scope_scenarios(
         verdicts = await brain.review_plan(planned, screen_info, links, walked)
     except Exception:  # noqa: BLE001 — the review only saves time; never block planning
         verdicts = []
-    skipped = left_out(planned, verdicts)
-    return [t for i, t in enumerate(planned) if i not in skipped]
-
-
-def shots_of(shots: dict[str, bytes] | None, only: list[str]) -> list[bytes] | None:
-    """The screenshots of `only`, in order — all of them or none."""
-    images = [shots[n] for n in only if shots and n in shots]
-    return images if only and len(images) == len(only) else None
+    skipped = {**left_out(planned, verdicts), **scope.not_needed(planned, screen_info)}
+    return (
+        [t for i, t in enumerate(planned) if i not in skipped],
+        [scope.left(planned[i], why) for i, why in sorted(skipped.items())],
+    )
 
 
 async def cover_scope(
@@ -465,15 +574,20 @@ async def cover_scope(
     (scope.cover) — what is missing or not on the page is written again (by
     the same planner, from the same page facts) and checked again. `asked`:
     the user's request, as context for everything written."""
-    tests = await _scope_scenarios(
+    # What to test is decided first, once, from all the evidence.
+    coverage = await coverage_map(
+        journal, asked, brief, screen_info, links, walked, may_save=may_save, shots=shots
+    )
+    tests, set_aside = await _scope_scenarios(
         brief,
         screen_info,
         links,
         walked,
-        notes,
+        f"{notes or ''}\n{asked}",  # the request, from the first scenario written
         may_save=may_save,
         approved=approved,
         shots=shots,
+        coverage=coverage,
     )
 
     async def write(instruction: str, only: list[str]) -> list[dict[str, Any]]:
@@ -491,7 +605,7 @@ async def cover_scope(
             shots=shots_of(shots, only),
         )
 
-    return await scope.cover(journal, screen_info, tests, write, shots, CEILING)
+    return await scope.cover(journal, screen_info, tests, write, shots, CEILING) + set_aside
 
 
 def more_wanted(request: dict[str, Any]) -> int:
@@ -649,8 +763,9 @@ async def requested_scenarios(
                 fresh.append(t)
         written = fresh[:need]
         ok, off = await scope.ground_or_rewrite(journal, scope_info, written, write)
-        found += ok
-        cant += off
+        same = scope.not_needed(found + ok, scope_info)
+        cant += off + [scope.left(t, same[i]) for i, t in enumerate(found + ok) if i in same]
+        found += [t for i, t in enumerate(ok, len(found)) if i not in same]
     return found[:wanted], cant
 
 
@@ -853,20 +968,31 @@ def _save(
     home: str | None,
     flow_start: str | None,
 ) -> int:
-    """The planned scenarios as test cases to try (the ones the pages can't
-    support kept with why, never tried). Returns how many will be tried."""
+    """The planned scenarios as test cases to try; every other one kept with
+    why it isn't tried (set_aside_reason, or an incomplete plan), so none
+    disappears. Returns how many will be tried."""
     kept = 0
     with Session(engine) as session:
         for t in planned:
             kind = str(t.get("kind") or "")
-            if kind not in (*TEST_KINDS, "journey") or not t.get("title") or not t.get("expected"):
-                continue
+            if not t.get("title"):
+                continue  # nothing to show or trace it by
+            incomplete = (
+                "Left out: the plan for it had no expected result"
+                if not t.get("expected")
+                else None
+                if kind in (*TEST_KINDS, "journey")
+                else f"Left out: the plan for it had no known kind (“{kind}”)"
+            )
+            if incomplete:
+                t, kind = scope.left(t, incomplete), TEST_KINDS[0]  # any kind: never tried
             start = str(t.get("start_screen") or "")
             if start not in known and start != home and not t.get("signed_out"):
                 # A screen the walk never named: start where the flow does, so
                 # the scenario is still written (the count asked for holds).
                 start = (home if kind == "journey" else flow_start) or start
             grounded = bool(start)
+            why = scope.set_aside_reason(t)
             session.add(
                 ExplorerTestCase(
                     run_id=run_id,
@@ -877,7 +1003,7 @@ def _save(
                     business_thing=_text(t.get("business_thing")),
                     start_screen=start or None,
                     steps=[str(s) for s in (t.get("steps") or [])][:15],
-                    expected=str(t["expected"])[:1000],
+                    expected=str(t.get("expected") or "")[:1000],
                     trust="confirmed",
                     script=[
                         {
@@ -886,19 +1012,15 @@ def _save(
                             "coverage": str(t.get("coverage") or "X-Your request")[:100],
                             "linked_to": "",
                             "signed_out": bool(t.get("signed_out")),
+                            **scope.trace(t),
                         }
                     ],
-                    # What the pages can't support is kept with its reason, never tried.
-                    status="planned" if grounded and not t.get("not_possible") else "dropped",
-                    drop_reason=(
-                        f"Can't be tested here — {t['not_possible']}"[:400]
-                        if t.get("not_possible")
-                        else None
-                        if grounded
-                        else "Refers to a screen Explorer never saw"
-                    ),
+                    # What isn't tried is kept with its reason.
+                    status="planned" if grounded and not why else "dropped",
+                    drop_reason=why
+                    or (None if grounded else "Refers to a screen Explorer never saw"),
                 )
             )
-            kept += grounded and not t.get("not_possible")
+            kept += grounded and not why
         session.commit()
     return kept

@@ -47,6 +47,7 @@ from explorer_worker.memory import ask
 from explorer_worker.mind import Mind
 from explorer_worker.missions import fast_forward, one_at_a_time
 from explorer_worker.pursue import Pursuit, path_to, pursue
+from explorer_worker.repair import live_state
 from explorer_worker.sense import (
     about_resuming,
     resolve_relative,
@@ -309,10 +310,29 @@ async def plan_tests(run_id: uuid.UUID) -> int:
     approved = sorted(approved_presses(run_id)) if may_save else []
 
     def shots_of(only: list[str]) -> list[bytes] | None:
-        images = [shots[n] for n in only if n in shots]
-        return images if only and len(images) == len(only) else None
+        return scope.shots_of(shots, only)
+
+    # What to test is decided first, from all the evidence (as authoring
+    # does); each part then writes one test per item of its screens.
+    coverage = await scope.coverage_map(
+        journal,
+        "No request from the user: test each screen below as far as the scope checklist "
+        "applies to it.",
+        brief,
+        screen_info,
+        links,
+        missions,
+        may_save=may_save,
+        shots=shots,
+        groups=chunks,
+    )
 
     async def plan_part(index: int, only: list[str]) -> list[dict[str, Any]]:
+        mapped = any(i.get("screen") in only for i in coverage)
+        sign_in = index == 0 and target.requires_login
+        follow = scope.follow_map(coverage, only) + (
+            "\nAlso plan the sign-in tests, as below." if sign_in else ""
+        )
         async with gate:
             return await brain.plan_tests(
                 brief,
@@ -320,12 +340,12 @@ async def plan_tests(run_id: uuid.UUID) -> int:
                 links,
                 missions,
                 bugs,
-                notes,
+                f"{notes or ''}\n{follow}" if mapped else notes,
                 may_save=may_save,
                 approved=approved,
                 only=only,
                 # An app with no login gets no sign-in scenarios.
-                sign_in=index == 0 and target.requires_login,
+                sign_in=sign_in,
                 shots=shots_of(only),
             )
 
@@ -344,7 +364,7 @@ async def plan_tests(run_id: uuid.UUID) -> int:
     except Exception:  # noqa: BLE001 — the review only saves time; never block planning
         logger.warning("run %s: plan review failed, trying every idea", run_id, exc_info=True)
         verdicts = []
-    skipped = left_out(planned, verdicts)
+    skipped = {**left_out(planned, verdicts), **scope.not_needed(planned, screen_info)}
     if skipped:
         journal.event(
             "thought",
@@ -371,13 +391,10 @@ async def plan_tests(run_id: uuid.UUID) -> int:
         )
 
     reviewed = await scope.cover(journal, screen_info, reviewed, write_gaps, shots)
-    # What the pages can't support is kept with its reason, never tried.
-    cant = [
-        (t, f"Can't be tested here — {t['not_possible']}")
-        for t in reviewed
-        if t.get("not_possible")
-    ]
-    reviewed = [t for t in reviewed if not t.get("not_possible")]
+    # What isn't tried (the pages can't support it, the scope check left it
+    # out) is kept with its reason.
+    cant = [(t, why) for t in reviewed if (why := scope.set_aside_reason(t))]
+    reviewed = [t for t in reviewed if not scope.set_aside_reason(t)]
     known = {s["name"] for s in screen_info}
     kept = 0
     with Session(engine) as session:
@@ -413,11 +430,22 @@ async def plan_tests(run_id: uuid.UUID) -> int:
             )
             kept += 1
         cap = test_cap(len(screen_info), limits.of(run_id)["max_scenarios"])
-        tried = [(t, None) for t in balanced(reviewed, cap)]
+        chosen = balanced(reviewed, cap)
+        tried = [(t, None) for t in chosen]
+        over = f"Not tried: over the limit of {cap} scenarios (Settings → Explorer limits)"
+        picked = {id(t) for t in chosen}
+        tried += [(t, over) for t in reviewed if id(t) not in picked]
         for t, reason in tried + [(planned[i], why) for i, why in skipped.items()] + cant:
             kind = str(t.get("kind") or "")
-            if kind not in TEST_KINDS or not t.get("title") or not t.get("expected"):
-                continue
+            if not t.get("title"):
+                continue  # nothing to show or trace it by
+            if not t.get("expected") or kind not in TEST_KINDS:
+                reason = reason or (
+                    "Left out: the plan for it had no expected result"
+                    if not t.get("expected")
+                    else f"Left out: the plan for it had no known kind (“{kind}”)"
+                )
+                kind = kind if kind in TEST_KINDS else TEST_KINDS[0]  # never tried
             start = str(t.get("start_screen") or "")
             if start in skip:
                 continue
@@ -434,7 +462,7 @@ async def plan_tests(run_id: uuid.UUID) -> int:
                     business_thing=_text(t.get("business_thing")),
                     start_screen=start or None,
                     steps=[str(s) for s in (t.get("steps") or [])][:15],
-                    expected=str(t["expected"])[:1000],
+                    expected=str(t.get("expected") or "")[:1000],
                     trust=str(t.get("trust") or "standard")[:20],
                     script=[
                         {
@@ -443,6 +471,8 @@ async def plan_tests(run_id: uuid.UUID) -> int:
                             "coverage": str(t.get("coverage") or "")[:120],
                             "linked_to": str(t.get("linked_to") or "")[:20],
                             "signed_out": bool(t.get("signed_out")),
+                            **({"outcome": scope.REJECTED} if reason else {}),
+                            **scope.trace(t),
                         }
                     ],
                     status="planned" if grounded and not reason else "dropped",
@@ -648,15 +678,28 @@ async def repair(
     if len(earlier) >= limits.of(journal.run_id)["test_retries"]:
         return False, (f"{failure} — still after {len(earlier)} repair(s)")[:400]
     title = str(test_info.get("title") or "")
+    # Values planned without being seen while exploring are checked here, on
+    # the live page (scope.UNSEEN).
+    unseen = [
+        str(e.get("value"))
+        for e in meta.get("evidence") or []
+        if isinstance(e, dict) and e.get("source") == scope.UNSEEN
+    ]
     try:
         reply = await brain.repair_test(
             {**test_info, "how_to_run": meta.get("how_to_run")},
-            failure,
+            failure
+            + (
+                f" (Never seen while exploring: {', '.join(unseen)} — check the live page.)"
+                if unseen
+                else ""
+            ),
             history,
             str(final.inventory.get("aria") or ""),
             final.shot,
             messages,
             earlier,
+            live_state(final.inventory, journal.run_id),
         )
     except Exception:  # noqa: BLE001 — no diagnosis: said plainly
         return False, failure[:400]

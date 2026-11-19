@@ -6,7 +6,9 @@ No real trigger endpoint exists yet (not required until Epic 2/3) — see
 """
 
 import os
+import uuid
 
+from explorer_core import explorer_workflow_id
 from temporalio.api.enums.v1 import TaskQueueType
 from temporalio.api.taskqueue.v1 import TaskQueue
 from temporalio.api.workflowservice.v1 import DescribeTaskQueueRequest
@@ -27,6 +29,7 @@ __all__ = [
     "TEMPORAL_ADDRESS",
     "get_temporal_client",
     "has_pollers",
+    "running_authoring_run_ids",
     "running_live_exploration_application_ids",
 ]
 
@@ -52,6 +55,25 @@ async def running_live_exploration_application_ids(client: Client) -> set[str]:
             start = len(_LIVE_EXPLORATION_WORKFLOW_ID_PREFIX)
             application_ids.add(workflow_id[start : start + 36])
     return application_ids
+
+
+async def running_authoring_run_ids(client: Client) -> set[uuid.UUID]:
+    """Explorer run external ids with an authoring (`AuthoringRunWorkflow`,
+    "Author test cases") running right now. Its workflow id is
+    explorer_workflow_id(run external id) — the application is looked up from
+    the run (api/main.py get_home). A follow-up that adds one answered
+    scenario runs as "<that id>-send-<uuid>": the same run."""
+    prefix = explorer_workflow_id("")
+    run_ids: set[uuid.UUID] = set()
+    async for execution in client.list_workflows(
+        "WorkflowType='AuthoringRunWorkflow' AND ExecutionStatus='Running'"
+    ):
+        if execution.id.startswith(prefix):
+            try:
+                run_ids.add(uuid.UUID(execution.id[len(prefix) : len(prefix) + 36]))
+            except ValueError:
+                continue  # not one of ours
+    return run_ids
 
 
 async def has_pollers(

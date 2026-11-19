@@ -542,8 +542,11 @@ hidden screens, and the possible bugs already noticed. Their 'coverage' is "X-" 
 short name (e.g. "X-Urgent injury guidance").
 Other screens (dashboards, details, wizard steps): the page loads with its main content \
 (coverage "P-01 Page loads"), Back and Refresh keep the user in place.
-EVERY screen, whatever its kind — its elements (one test each, only for what the screen \
-really has; images, labels and script errors are checked separately, skip them):
+EVERY screen, whatever its kind — its OWN elements (one test each, only for what the \
+screen really has; images, labels and script errors are checked separately, skip them). \
+The app's shared parts on every screen — the main menu, the header (global search, \
+notifications, the account menu) and the footer links, listed in 'app_wide' — are not \
+any screen's scope: never a test for them; use them only to move between screens:
 E-01 Button: a button that is not risky does what its label says (opens a screen, a \
 dialog or a panel, shows a message, or makes its data call).
 E-02 Link: a link inside the app leads to the screen it names.
@@ -579,6 +582,7 @@ Reply with ONLY:
   "tests": [
     {
       "kind": "navigation | validation | error_state | data_load | form_submission",
+      "category": "happy | negative | edge",
       "title": "short and specific, e.g. 'Email is required on New lead'",
       "coverage": "checklist ID and name, e.g. 'F-05 Required fields', or 'X-<short name>' for Explorer's own",
       "linked_to": "for an X- test: the closest checklist ID, e.g. 'F-12'; else null",
@@ -592,7 +596,7 @@ Reply with ONLY:
       "expected": "what SHOULD happen, from the confirmed summary, the user's answers or common sense",
       "trust": "confirmed | standard | seen",
       "rule": "the rule being tested in plain words",
-      "path": [{"screen": "EXACT screen name this step happens on", "element": "the element it uses or checks, copied EXACTLY from THAT screen's 'elements', e.g. 'button \\"Save Account\\"', 'combobox \\"Status\\"'"}],
+      "path": [{"screen": "EXACT screen name this step happens on", "element": "the element it uses or checks, copied EXACTLY from THAT screen's 'elements', e.g. 'button \\"Save Account\\"', 'combobox \\"Status\\"'", "near": "only when that element's name appears more than once on the screen (several 'button \\"Icon\\"'): the section heading or label it sits under, copied from 'elements'"}],
       "data": {"finds": ["every value the test relies on already being there, copied from 'elements': a record name from the rows, a dropdown option"], "types": ["values the test types itself; a record it creates ends with {{unique}}"]}
     }
   ]
@@ -625,6 +629,19 @@ nothing saved). Typing the value and moving to another field is never enough.
 screen's 'fields', 'elements', 'messages' or screenshot, or in the user's answers. An \
 'expected' quotes a message only when the page showed it; otherwise it states the rule \
 in plain words (e.g. "the app refuses it and says the value is not valid").
+- 'category': happy = the task done the normal way with valid data; negative = wrong, \
+missing or refused input, or a failure the app must handle; edge = a boundary or unusual \
+but valid case (the longest allowed value, the last page, an empty list, a limit exactly \
+met).
+- Values a test relies on ('data.finds') come from the pages ('elements', screenshots) \
+or from the test data the app showed while exploring (in what the user told us: "Test \
+data the app showed: ..."), copied exactly. Never a record, name or option seen nowhere.
+- A control whose name repeats on a page (several 'button "Icon"') is identified by \
+'near', the section it sits under. A section without that control has no test for it: \
+a section heading followed only by text has no button to press.
+- A text that is on a page whose fields and controls are all shown (an alert \
+"Loading", "Please wait") is part of that page, not a page still loading: never plan a \
+step that waits for it to go, a check on it, or a test about it.
 - 'trust': confirmed = backed by the user's answers/notes; standard = common sense or \
 industry norm; seen = only because the app did it (avoid these where possible).
 - One purpose per test: ONE action (or one short sequence to reach it) and ONE visible \
@@ -634,14 +651,20 @@ must be useful on its own: it would fail if that part of the app broke. No dupli
 no tests that only re-check what another test already proves.
 - Everything the user asked for or confirmed (their notes, answers and documents) gets \
 at least one test, marked trust "confirmed" — write these first.
+- When the user's request is given, every test serves it: what its flow's screens have \
+and do, from the checklist above. Nothing about other parts of the app.
+- Never a "<field> is required" test (F-05): those are written separately, one per \
+required field.
 - Every screen you are given gets its tests; business-critical screens first. Skip a \
 test that would only repeat what another proves.
 - A test proves its outcome by text it shows, its address, or a data call the page \
 makes (checklist items about the server). Leave out layout, speed, console and \
 accessibility checks (Explorer reports those separately).
 - Use the user's test data (e.g. account or reference numbers) where needed.
-- File uploads: the computer's own file picker is outside the page and can't be \
-seen, so never test that a picker opens; test what attaching does (the file shows as \
+- File uploads: Explorer attaches its own sample files (a PDF, an image, a text or CSV \
+file; copies of them for a count or a size): say the kind of file ("attach a PDF"), \
+never a file name of your own. The computer's own file picker is outside the page and \
+can't be seen, so never test that a picker opens; test what attaching does (the file shows as \
 attached, or is refused). A limit the screen states on how many files or how big is \
 tested by attaching one more file than allowed, or one just over the size, in ONE \
 upload (say "attach 6 files at once" or "attach a file of 11 MB").
@@ -705,6 +728,76 @@ async def plan_tests(
     return [t for t in tests if isinstance(t, dict)] if isinstance(tests, list) else []
 
 
+_COVERAGE_MAP_SYSTEM = (
+    STANCE
+    + """
+
+Before any test is written, decide WHAT to test — once, from all the evidence. You get \
+the user's request, the screens of its flow (each with its fields and their limits and \
+messages, its 'elements' — every control, option, column and row the page has — where \
+its actions lead, its 'app_wide' controls, and its screenshot), the ways between \
+screens, what the walk did, and the scope checklist. First work out what the user is \
+aiming at. Then go through the checklist for each screen and decide, from the evidence \
+only, every check that applies.
+Reply with ONLY:
+{"aim": "what the user wants tested, one sentence",
+ "items": [{"screen": "EXACT screen name", "id": "checklist ID, e.g. F-03", \
+"what": "the one thing to check, naming its field, button, option or column", \
+"evidence": "the element line copied EXACTLY from that screen's 'elements' that this \
+check uses, e.g. combobox \\"Status\\""}],
+ "not_applicable": [{"screen": "EXACT screen name", "id": "checklist ID", \
+"why": "what the screen lacks, one short line"}]}
+Rules:
+- An item applies only when the screen really has what it needs, and 'evidence' names \
+it. No evidence on the page, no item.
+- One item per thing to check: per dropdown (F-03), per field and rule (F-06 to F-09), \
+per button (E-01), per link (E-02), per sortable column, per filter. Its name in 'what'.
+- F-01 and F-02 are one item per form (all its fields; all its default values).
+- Never two items for the same check: a button another item already presses for its \
+outcome (Save in F-13, Cancel in F-17) gets no E-01 of its own.
+- Never an item for the 'app_wide' controls (the shared menu, header, footer): they are \
+not any screen's scope. Never F-05 (required fields): written separately per field.
+- Every item serves the user's request: the screens of its flow and what they have.
+- Lists: the first row only. Saving, deleting and other final presses only where the \
+request and the screen allow it (a test environment may save).
+- A server-error item (F-20) applies to a form with a save button on a test \
+environment: Explorer makes the next save fail itself."""
+)
+
+
+async def coverage_map(
+    request: str,
+    brief: dict[str, Any],
+    screens: list[dict[str, Any]],
+    links: list[str],
+    walked: list[dict[str, Any]],
+    checklist: dict[str, str],
+    *,
+    may_save: bool,
+    shots: list[bytes] | None = None,
+) -> dict[str, Any]:
+    """What to test, decided once from all the evidence before any test is
+    written: the user's aim, each check that applies (screen, checklist ID,
+    what, the element it uses), and what doesn't apply with why."""
+    reply = await ask_json(
+        _COVERAGE_MAP_SYSTEM,
+        f"{request[:3000]}\n"
+        + scope(brief)
+        + ("This is a test environment.\n" if may_save else "This is NOT a test environment.\n")
+        + f"Scope checklist: {json.dumps(checklist, ensure_ascii=False)}\n"
+        f"Screens of the flow: {json.dumps(screens, ensure_ascii=False)[:80000]}\n"
+        f"Ways between screens: {json.dumps(links, ensure_ascii=False)[:8000]}\n"
+        f"What the walk did: {json.dumps(walked, ensure_ascii=False)[:6000]}",
+        images=shots or None,
+        model=THINKING_MODEL,
+    )
+    for key in ("items", "not_applicable"):
+        listed = reply.get(key)
+        reply[key] = [x for x in listed if isinstance(x, dict)] if isinstance(listed, list) else []
+    reply["aim"] = str(reply.get("aim") or "")
+    return reply
+
+
 _REVIEW_PLAN_SYSTEM = (
     STANCE
     + """
@@ -724,7 +817,9 @@ ways between them and the missions never showed (e.g. it expects a form to open 
 step where the map shows a different screen). An expected RESULT that may differ from what \
 the app does is NOT a reason — finding that difference is the point of testing. Sign-in \
 tests ("signed_out") run in a signed-out browser that starts on the sign-in page: a \
-sign-in form or Sign out button missing from the screens is NOT a reason either.
+sign-in form or Sign out button missing from the screens is NOT a reason either. Nor is \
+a failed save: Explorer makes the next save fail itself ("make the next save fail"), so a \
+server-error test (F-20) is never "never_seen".
 When in doubt, keep it. Most plans have few or none to leave out."""
 )
 
@@ -841,7 +936,10 @@ states, values, options), the screenshot, and what was already tried (never repe
 Usual causes: the field wants its own format (a date, phone, amount); the value must be \
 picked from a list, calendar or suggestions the field opens; a keystroke confirms it \
 (Enter, Tab); the control has a different name, sits in a menu, a collapsed section or \
-behind a dialog or overlay that must be closed first; the page is still loading.
+behind a dialog or overlay that must be closed first; the page is still loading — 
+only when the 'Live check' line says so: it is measured in the browser now, trust it 
+over any "Loading" text in 'Elements' (text that stays on loaded pages is part of the 
+page, never the cause).
 Rules:
 - 'type' replaces the field's text at once; 'keys' types one character at a time (for \
 fields that react to each key: masks, suggestion lists); 'clear' empties it.
@@ -869,8 +967,10 @@ async def repair_step(
     messages: list[str],
     lessons: list[str],
     numbered: str = "",
+    live: str = "",
 ) -> dict[str, Any]:
-    """How to make a step that didn't take effect work (repair.fix)."""
+    """How to make a step that didn't take effect work (repair.fix). `live`:
+    what the live page says about loading (repair.live_state)."""
     user = (
         f"Goal of this walk: {goal[:1500]}\n"
         f"Step that did not take effect: {intent[:500]}\n"
@@ -879,6 +979,7 @@ async def repair_step(
         f"Messages the app showed: {json.dumps(messages[-6:], ensure_ascii=False)[:1500]}\n"
         f"Learned on this app so far: {json.dumps(lessons[-12:], ensure_ascii=False)[:1500]}\n"
         + (f"Numbered controls (the numbers drawn on the screenshot):\n{numbered[:6000]}\n" if numbered else "")
+        + (f"{live}\n" if live else "")
         + f"Elements:\n{elements[:14000]}"
     )
     reply = await ask_json(_REPAIR_SYSTEM, user, images=[shot], model=THINKING_MODEL)
@@ -910,6 +1011,13 @@ the outcome shows (open the saved record, search the list for it, keep the form 
 what it must refuse) — that is a finding, not something to work around;
 - needs_user: only the user knows (a record, a code, an account that must exist);
 - impossible: this app has nothing that can carry out this test.
+The 'Live check' line is measured in the browser on the live page now: trust it over \
+any "Loading" text in 'Elements'. Text that was on the app's pages after they had loaded \
+is part of the page — never the cause, and never something to wait for. When nothing \
+is loading, find the real cause on the live page.
+A value the test needs that was never seen while exploring (said in 'What went wrong'): \
+look for it on the live page; if it isn't there and no other value fits the purpose, \
+the cause is needs_user (ask which existing one to use).
 Never change the test's purpose or its expected outcome. Every control you name is \
 copied from 'Elements'. Reply with ONLY:
 {"cause": "setup | route | step | proof | app_bug | needs_user | impossible",
@@ -928,10 +1036,12 @@ async def repair_test(
     shot: bytes,
     messages: list[str],
     earlier: list[str],
+    live: str = "",
 ) -> dict[str, Any]:
     """Why a carried-out test didn't reach its outcome, and the test fixed so
     the next try does (tests_stage.repair). The expected outcome is never
-    rewritten: a repair must not explain a bug away."""
+    rewritten: a repair must not explain a bug away. `live`: what the live
+    page says about loading (repair.live_state)."""
     return await ask_json(
         _REPAIR_TEST_SYSTEM,
         f"Test: {json.dumps(test, ensure_ascii=False)[:3000]}\n"
@@ -939,7 +1049,8 @@ async def repair_test(
         f"What was done: {json.dumps(history[-25:], ensure_ascii=False)[:4000]}\n"
         f"Messages the app showed: {json.dumps(messages[-10:], ensure_ascii=False)[:1500]}\n"
         f"Earlier repairs (did not work): {json.dumps(earlier, ensure_ascii=False)[:1500]}\n"
-        f"Elements:\n{elements[:14000]}",
+        + (f"{live}\n" if live else "")
+        + f"Elements:\n{elements[:14000]}",
         images=[shot],
         model=THINKING_MODEL,
     )

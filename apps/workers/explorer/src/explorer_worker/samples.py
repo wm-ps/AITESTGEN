@@ -62,6 +62,11 @@ def sample_file(kind: str) -> Path:
     return path
 
 
+# Every file sample_file hands out: a test can only attach these (copies of
+# them for a count or a size, e.g. repair-estimate-11mb.pdf).
+FILES = ("claim-photo.jpg", "damage-photo.png", "repair-estimate.pdf", "notes.txt", "items.csv")
+
+
 # An upload test may ask for several files (a "no more than N" limit) or a
 # big one (a size limit): at most this many, and this many MB each.
 MAX_FILES = 10

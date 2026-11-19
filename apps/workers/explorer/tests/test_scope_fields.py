@@ -3,6 +3,7 @@ field, dropdown and number/date field of a form needs its own test, a field
 rule is never left out as a "duplicate", and what is missing is written by
 name. Modelled on a real authoring run that lost 13 of a form's checks."""
 
+import uuid
 from typing import Any
 
 import pytest
@@ -131,7 +132,11 @@ async def test_missing_fields_are_written_by_name_and_reported_field_by_field(
 
     monkeypatch.setattr(scope, "check_scope", check)
     events: list[tuple[str, str]] = []
-    journal = type("J", (), {"event": lambda self, k, t, d=None: events.append((t, d or ""))})()
+    journal = type(
+        "J",
+        (),
+        {"run_id": uuid.uuid4(), "event": lambda self, k, t, d=None: events.append((t, d or ""))},
+    )()
     planned = field_checks([FORM]) + [
         t("Type offers all territory types", "F-03 Dropdown options"),
         t("Region offers all supported regions", "F-03 Dropdown options"),

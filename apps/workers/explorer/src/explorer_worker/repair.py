@@ -11,11 +11,16 @@ exported test do the same) and kept as a one-line lesson for the rest of the
 run on this app, so the next walk gets it right first time."""
 
 import re
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from explorer_core import ExplorerScreen
+from sqlmodel import Session, select
+
 from explorer_worker import brain
 from explorer_worker.browser import Eyes
+from explorer_worker.db import engine
 from explorer_worker.journal import Journal
 
 # A numbered control on the marked screenshot: "#7".
@@ -43,6 +48,48 @@ _LESSONS: dict[str, list[str]] = {}
 
 # (the steps the repair carried out) -> (worked, what the page shows now)
 Check = Callable[[list[dict[str, Any]]], Awaitable[tuple[bool, str]]]
+
+
+_LOADING_WORDS = re.compile(r"\b(loading|please wait|processing|busy)\b", re.I)
+
+
+def live_state(inventory: dict[str, Any], run_id: uuid.UUID) -> str:
+    """For a repair, what the live page says about loading: whether anything
+    is loading right now (measured in the browser, Eyes.loading_now), and the
+    "Loading"-like texts that were also on the pages Explorer saved after
+    they had loaded — part of the page, never why a step failed."""
+    texts = {
+        line.strip().removeprefix("- ").rstrip(":")
+        for line in str(inventory.get("aria") or "").splitlines()
+        if _LOADING_WORDS.search(line)
+    }
+    if inventory.get("loading"):
+        return (
+            "Live check: the page IS still loading right now (a busy indicator or spinner "
+            "is showing) — waiting for it to finish is a real fix."
+        )
+    note = (
+        "Live check: nothing on the page is loading right now (no busy indicator or "
+        "spinner)."
+        if "loading" in inventory
+        else ""
+    )
+    if texts:
+        with Session(engine) as session:
+            saved = [
+                a or ""
+                for a in session.exec(
+                    select(ExplorerScreen.aria).where(ExplorerScreen.run_id == run_id)
+                ).all()
+            ]
+        steady = sorted(t for t in texts if any(t in a for a in saved))
+        if steady:
+            note += (
+                f" {', '.join(steady)[:300]} was also on the pages Explorer saved after they "
+                "had loaded: it is part of the page, not a page still loading — never give it "
+                "as the cause and never wait for it to go."
+            )
+    return note.strip()
 
 
 def lessons(origin: str) -> list[str]:
@@ -82,6 +129,7 @@ async def fix(
                 eyes.messages,
                 lessons(eyes.origin),
                 numbered(marks),
+                live_state(visit.inventory, journal.run_id),
             )
         except Exception:  # noqa: BLE001 — no repair: the walk goes on as before
             return False, done

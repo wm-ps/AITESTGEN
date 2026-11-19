@@ -134,3 +134,52 @@ async def test_repairs_stop_at_the_limit(monkeypatch: pytest.MonkeyPatch) -> Non
     ok, why = await _repair(run_id, test_id)
     assert not ok and why == "Refused for Stage — still after 3 repair(s)"
     assert calls == []  # no model call once the limit is reached
+
+
+def test_a_loading_text_that_stays_on_loaded_pages_is_never_blamed() -> None:
+    from explorer_core import ExplorerScreen
+    from explorer_worker.repair import live_state
+
+    run_id, _ = _test()
+    with Session(engine) as session:
+        session.add(
+            ExplorerScreen(
+                run_id=run_id,
+                signature="form",
+                name="Form",
+                url="https://x/form",
+                url_pattern="/form",
+                aria='- textbox "Stage"\n- alert "Loading"',
+            )
+        )
+        session.commit()
+    page = '- textbox "Stage"\n- alert "Loading"'
+    quiet = live_state({"aria": page, "loading": False}, run_id)
+    assert quiet.startswith("Live check: nothing on the page is loading right now")
+    assert 'alert "Loading" was also on the pages Explorer saved' in quiet
+    busy = live_state({"aria": page, "loading": True}, run_id)
+    assert busy.startswith("Live check: the page IS still loading")
+    assert live_state({"aria": '- textbox "Stage"'}, run_id) == ""  # nothing measured, nothing said
+
+
+async def test_the_repair_gets_the_live_page_and_the_values_never_seen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from explorer_worker import scope
+
+    got: list[tuple[Any, ...]] = []
+
+    async def repair_test(*a: Any) -> dict[str, Any]:
+        got.append(a)
+        return {"cause": "impossible", "diagnosis": "x"}
+
+    monkeypatch.setattr(tests_stage.brain, "repair_test", repair_test)
+    run_id, test_id = _test()
+    meta = {"how_to_run": "h", "evidence": [{"value": "Acme 9", "source": scope.UNSEEN}]}
+    final = SimpleNamespace(inventory={"aria": '- textbox "Stage"', "loading": False}, shot=b"png")
+    await tests_stage.repair(
+        Journal(run_id), test_id, meta, INFO, final, "Refused", [], [], lambda: None
+    )
+    failure, live = got[0][1], got[0][-1]
+    assert "Never seen while exploring: Acme 9" in failure
+    assert live.startswith("Live check: nothing on the page is loading")

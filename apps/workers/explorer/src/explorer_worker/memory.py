@@ -79,6 +79,25 @@ def _application_of(run_id: uuid.UUID) -> uuid.UUID | None:
         return run.application_id if run else None
 
 
+def records(run_id: uuid.UUID) -> list[str]:
+    """The test data the app showed while exploring this app (remember_record:
+    records it created, values it found), newest first."""
+    application_id = _application_of(run_id)
+    if application_id is None:
+        return []
+    with Session(engine) as session:
+        return list(
+            session.exec(
+                select(ExplorerKnowledge.text)
+                .where(
+                    ExplorerKnowledge.application_id == application_id,
+                    ExplorerKnowledge.kind == "record",
+                )
+                .order_by(col(ExplorerKnowledge.created_at).desc())
+            ).all()
+        )
+
+
 def remember_record(run_id: uuid.UUID, what: str, value: str, context: str) -> str | None:
     """A record the app itself created (a claim reference, an order
     number) becomes test data for every later mission and test. Returns the

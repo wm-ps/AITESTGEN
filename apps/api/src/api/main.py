@@ -187,6 +187,7 @@ from api.schedule_spec import (
 from api.temporal_client import (
     get_temporal_client,
     has_pollers,
+    running_authoring_run_ids,
     running_live_exploration_application_ids,
 )
 from api.test_suite_export import (
@@ -1259,12 +1260,23 @@ async def get_home(
     # Best-effort: a Temporal hiccup should degrade this one badge, not take
     # down the whole dashboard poll the way it would if this raised.
     try:
-        live_exploration_generating_ids = await running_live_exploration_application_ids(
-            await get_temporal_client()
-        )
+        client = await get_temporal_client()
+        live_exploration_generating_ids = await running_live_exploration_application_ids(client)
+        authoring_run_ids = await running_authoring_run_ids(client)
     except (RPCError, RuntimeError):
         logger.warning("could not query Temporal for running live-exploration workflows")
-        live_exploration_generating_ids = set()
+        live_exploration_generating_ids, authoring_run_ids = set(), set()
+    # An authoring run ("Author test cases", Explorer's AuthoringRunWorkflow)
+    # shows as in progress the same way: its application, from its run.
+    if authoring_run_ids:
+        live_exploration_generating_ids |= {
+            str(external_id)
+            for external_id in session.exec(
+                select(Application.external_id)
+                .join(ExplorerRun, ExplorerRun.application_id == Application.id)  # type: ignore[arg-type]
+                .where(col(ExplorerRun.external_id).in_(authoring_run_ids))
+            ).all()
+        }
 
     applications = session.exec(
         select(Application)

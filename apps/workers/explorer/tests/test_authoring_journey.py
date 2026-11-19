@@ -205,3 +205,119 @@ async def test_tests_that_couldnt_be_carried_out_are_replaced_up_to_the_number_a
             )
         ).one()
     assert said.title == "2 of the 3 test cases you asked for"
+
+
+def test_every_planned_scenario_has_an_outcome_and_they_add_up() -> None:
+    from domain import TestAsset, TestSuite
+    from explorer_worker import scope
+    from explorer_worker.authoring import plan
+    from explorer_worker.promote import scenario_type
+
+    app_id, journey_id, _ = _app_with_journey()
+    with Session(engine) as session:
+        run = ExplorerRun(application_id=app_id, prompt="write test cases for the form")
+        session.add(run)
+        session.commit()
+        run_id = run.id
+    path = [{"screen": "Form", "element": 'button "Save"'}]
+    planned = [
+        {
+            "kind": "validation",
+            "title": "Name is required",
+            "expected": "Refused",
+            "start_screen": "Form",
+            "category": "edge",
+            "path": path,
+            "data": {"finds": ["Acme"]},
+            "evidence": [{"value": "Acme", "source": "page"}],
+        },
+        {
+            "kind": "data_load",
+            "title": "Export from the form",
+            "expected": "Shown",
+            "start_screen": "Form",
+            "not_possible": '“Form” has no button "Export"',
+            "outcome": scope.REJECTED,
+        },
+        scope.left(
+            {"kind": "navigation", "title": "Save twice", "expected": "x", "start_screen": "Form"},
+            "Left out before trying: the same check as “Save”",
+        ),
+        {"kind": "data_load", "title": "No expected result", "start_screen": "Form"},
+        {"kind": "bogus", "title": "Odd kind", "expected": "x", "start_screen": "Form"},
+        {"kind": "data_load", "expected": "no title: nothing to show it by"},
+    ]
+    assert plan._save(run_id, planned, {"Form"}, "Form", "Form") == 1
+    with Session(engine) as session:
+        rows = {
+            t.title: t
+            for t in session.exec(
+                select(ExplorerTestCase).where(ExplorerTestCase.run_id == run_id)
+            ).all()
+        }
+        assert {k: v.status for k, v in rows.items()} == {
+            "Name is required": "planned",
+            "Export from the form": "dropped",
+            "Save twice": "dropped",
+            "No expected result": "dropped",
+            "Odd kind": "dropped",
+        }
+        tried = rows["Name is required"]
+        meta = tried.script[0]
+        assert meta["path"] == path and meta["evidence"][0]["source"] == "page"
+        assert scenario_type(tried) == "edge"
+        assert rows["Export from the form"].script[0]["outcome"] == scope.REJECTED
+        assert rows["No expected result"].drop_reason == (
+            "Left out: the plan for it had no expected result"
+        )
+        # Its try worked and its test case was written; another worked but has
+        # none; one is a possible bug; one couldn't be carried out.
+        tried.status = "proven"
+        scenario = Scenario(
+            journey_id=journey_id,
+            type="edge",
+            name=tried.title,
+            steps=[],
+            generation_run_id=1,
+            grounding={"authored_test": str(tried.external_id)},
+        )
+        suite = TestSuite(journey_id=journey_id, name="s", generation_run_id=1)
+        session.add_all([tried, scenario, suite])
+        session.flush()
+        session.add(TestAsset(scenario_id=scenario.id, test_suite_id=suite.id, code="x"))
+        for title, status, reason in [
+            ("Worked, no code", "proven", None),
+            ("Looks like a bug", "known_bug", None),
+            ("Couldn't save", "dropped", "Couldn't carry it out far enough — still after 3"),
+        ]:
+            session.add(
+                ExplorerTestCase(
+                    run_id=run_id,
+                    kind="validation",
+                    title=title,
+                    purpose="",
+                    steps=[],
+                    expected="x",
+                    trust="confirmed",
+                    # Tried with a value never seen while exploring.
+                    script=[
+                        {"how_to_run": "", "evidence": [{"value": "Z", "source": scope.UNSEEN}]}
+                    ],
+                    status=status,
+                    drop_reason=reason,
+                )
+            )
+        session.commit()
+    counts = plan.reconcile(run_id)
+    assert counts == {
+        "planned": 7,  # "Save twice" was an idea set aside, not a planned scenario
+        "set_aside": 1,
+        "generated": 1,
+        "rejected": 3,
+        "needs_evidence": 1,
+        "pending": 1,
+        "failed": 2,  # couldn't be carried out + worked but no test case written
+    }
+    assert counts["planned"] == sum(
+        counts[k] for k in ("generated", "rejected", "pending", "failed")
+    )

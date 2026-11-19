@@ -4,6 +4,7 @@ does what the page needs, checks it worked, records it as ordinary steps
 (replayed and exported the same way) and remembers the lesson for the app.
 The model is a stub here; the page and the browser are real."""
 
+import uuid
 from typing import Any
 
 import pytest
@@ -29,6 +30,7 @@ PAGE = """
 class _Journal:
     def __init__(self) -> None:
         self.events: list[tuple[str, str]] = []
+        self.run_id = uuid.uuid4()  # no saved pages: the live check alone
 
     def event(self, kind: str, title: str, detail: Any = None, *_: Any) -> None:
         self.events.append((title, str(detail or "")))

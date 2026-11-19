@@ -1,6 +1,7 @@
 """The scope check Explore and authoring share: a whole app is checked a few
 screens at a time, each screen with only its own tests and screenshot."""
 
+import uuid
 from typing import Any
 
 import pytest
@@ -72,8 +73,8 @@ def test_a_page_is_planned_from_its_own_elements_with_its_first_rows() -> None:
     assert 'row "Account Name Status"' in elements  # the header row is no data row to cut
 
 
-def step(screen: str, element: str) -> dict[str, str]:
-    return {"screen": screen, "element": element}
+def step(screen: str, element: str, **more: str) -> dict[str, str]:
+    return {"screen": screen, "element": element, **more}
 
 
 FORM = '- heading "New Account"\n- textbox "Account Name"\n- button "Save Account"'
@@ -137,6 +138,7 @@ def test_a_flow_is_planned_only_when_every_step_is_there() -> None:
     assert [t["title"] for t in ok] == [
         "Search finds Account 3",
         "Create an account",
+        "Search Harborview",  # seen nowhere: checked in the app when tried
         "Name is required",
     ]
     why = {t["title"]: t["not_possible"] for t in off}
@@ -147,7 +149,6 @@ def test_a_flow_is_planned_only_when_every_step_is_there() -> None:
     assert why["Save from the list"] == '“Account list” has no button "Save Account"'
     assert why["Open details"] == "no way was seen from “Account list” to “Account details”"
     assert why["Confirm delete"] == "goes to a screen Explorer never saw: “Delete dialog”"
-    assert why["Search Harborview"] == "the value “Harborview” isn't on its pages"
     assert why["Sort by name"].startswith("doesn't say which page")
 
 
@@ -192,12 +193,16 @@ async def test_a_scenario_the_page_cant_support_is_rewritten_once_then_kept_asid
 
     monkeypatch.setattr(scope, "check_scope", check)
     events: list[tuple[str, str]] = []
-    journal = type("J", (), {"event": lambda self, k, t, d=None: events.append((t, d or ""))})()
+    journal = type(
+        "J",
+        (),
+        {"run_id": uuid.uuid4(), "event": lambda self, k, t, d=None: events.append((t, d or ""))},
+    )()
     tests = await scope.cover(journal, facts, [invented], rewrite)  # type: ignore[arg-type]
     assert [t["title"] for t in tests] == ["Filter to Inactive"]
     assert tests[0]["not_possible"] == '“Account list” has no combobox "Status"'
     assert told == [["Filter to Inactive"]]  # the check counts its item as not on the page
-    assert "Can't be tested on these pages:" in events[-1][1]
+    assert "Not tried:" in events[-1][1]
 
 
 def test_a_screen_keeps_its_fullest_element_structure() -> None:
@@ -229,3 +234,181 @@ def test_a_screen_keeps_its_fullest_element_structure() -> None:
     journal.upsert_screen("s", {**seen, "aria": None})  # a visit that read nothing
     with Session(engine) as session:
         assert session.get(ExplorerScreen, screen_id).aria == ACCOUNTS  # type: ignore[union-attr]
+
+
+# A form whose sections each have an unnamed toggle — except Files, which has
+# only text where the toggle would be.
+SECTIONS = """- paragraph: Details
+- button "Icon"
+- textbox "Name"
+- paragraph: Notes
+- button "Icon"
+- textbox "Description"
+- paragraph: Files
+- text: Icon
+- button "Choose Files"
+- group "Owner":
+  - button "Icon"
+  - combobox "Owner\""""
+
+
+def _one(title: str, path: list[dict[str, str]], **more: object) -> dict[str, object]:
+    return {"title": title, "start_screen": "Form", "path": path, **more}
+
+
+def test_a_value_the_app_showed_while_exploring_counts_and_where_it_was_seen_is_kept() -> None:
+    facts = [
+        {"name": "Form", "elements": '- combobox "Account"'},
+        {"name": "Account list", "elements": '- cell "Harborview Supply"'},
+    ]
+    records = ["Test data the app showed: Account name Northstar 7f3 (created by: New account)."]
+    shown = _one(
+        "Pick Northstar", [step("Form", 'combobox "Account"')], data={"finds": ["Northstar 7f3"]}
+    )
+    listed = _one(
+        "Pick Harborview",
+        [step("Form", 'combobox "Account"')],
+        data={"finds": ["Harborview Supply"]},
+    )
+    nowhere = _one("Pick Acme", [step("Form", 'combobox "Account"')], data={"finds": ["Acme 123"]})
+    ok, off = scope.ground([shown, listed, nowhere], facts, records)
+    assert off == []  # a value seen nowhere is checked in the app, not set aside
+    assert ok[0]["evidence"][0]["source"] == f"record: {records[0]}"
+    assert ok[1]["evidence"] == [{"value": "Harborview Supply", "source": "page: Account list"}]
+    assert ok[2]["evidence"] == [{"value": "Acme 123", "source": scope.UNSEEN}]
+
+
+def test_a_repeated_control_must_be_in_the_section_it_names() -> None:
+    facts = [{"name": "Form", "elements": SECTIONS}]
+    notes = _one("Notes collapses", [step("Form", 'button "Icon"', near="Notes")])
+    files = _one("Files collapses", [step("Form", 'button "Icon"', near="Files")])
+    owner = _one("Owner collapses", [step("Form", 'button "Icon"', near="Owner")])
+    unnamed = _one("Some section collapses", [step("Form", 'button "Icon"')])  # can't tell: kept
+    unknown = _one("Other collapses", [step("Form", 'button "Icon"', near="Billing")])  # ditto
+    once = _one("Choose a file", [step("Form", 'button "Choose Files"', near="Details")])  # unique
+    ok, off = scope.ground([notes, files, owner, unnamed, unknown, once], facts)
+    assert [t["title"] for t in ok] == [
+        "Notes collapses",
+        "Owner collapses",
+        "Some section collapses",
+        "Other collapses",
+        "Choose a file",
+    ]
+    assert off[0]["not_possible"] == '“Files” on “Form” has no button "Icon"'
+    assert off[0]["outcome"] == scope.REJECTED
+
+
+def test_a_test_may_only_use_files_explorer_can_attach() -> None:
+    facts = [{"name": "Form", "elements": '- button "Choose Files"\n- text: invoice-2024.pdf'}]
+    path = [step("Form", 'button "Choose Files"')]
+    own = _one("Attach a note", path, how_to_run="Attach contact-note-{{unique}}.pdf")
+    sample = _one("Attach a PDF", path, how_to_run="Attach repair-estimate-11mb.pdf")
+    shown = _one("Open the invoice", path, steps=["Open invoice-2024.pdf"])
+    kinds = _one("Types listed", path, expected="Allowed: .pdf, .docx")
+    ok, off = scope.ground([own, sample, shown, kinds], facts)
+    assert [t["title"] for t in ok] == ["Attach a PDF", "Open the invoice", "Types listed"]
+    assert "contact-note-{{unique}}.pdf" in off[0]["not_possible"]
+
+
+def test_the_same_check_written_twice_is_left_out_by_code() -> None:
+    def planned(title: str, element: str, coverage: str = "E-01 Button") -> dict[str, object]:
+        return {**_one(title, [step("Form", element)]), "coverage": coverage}
+
+    tests = [
+        planned("Save works", 'button "Save"'),
+        planned("Pressing Save saves", 'button "Save"'),  # same check, other words
+        planned("Save twice", 'button "Save"', "F-19 Double submit"),  # another item
+        planned("Cancel works", 'button "Cancel"'),  # another element
+        {"title": "Name is required", "coverage": "F-05 Field rules"},  # field rules: never
+        {"title": "Name is required", "coverage": "F-05 Field rules"},
+    ]
+    assert scope.duplicates(tests) == {1: "Left out before trying: the same check as “Save works”"}
+
+
+async def test_over_the_limit_and_left_out_scenarios_are_kept_with_why(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    facts = [{"name": "Form", "elements": '- button "Save"'}]
+    tests = [_one(f"t{i}", [step("Form", 'button "Save"')], coverage=f"X-{i}") for i in range(4)]
+
+    async def check(*_a: Any) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        return [], {"t1": "repeats t0"}
+
+    async def write(*_a: Any) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(scope, "check_scope", check)
+    journal = type("J", (), {"run_id": uuid.uuid4(), "event": lambda *a: None})()
+    out = await scope.cover(journal, facts, tests, write, ceiling=3)  # type: ignore[arg-type]
+    why = {t["title"]: scope.set_aside_reason(t) for t in out}
+    assert why == {
+        "t0": None,
+        "t2": None,
+        "t1": "Left out before trying: repeats t0",
+        "t3": "Not tried: over the limit of 3 scenarios per run",
+    }
+
+
+def test_what_a_scenario_was_planned_from_is_kept_with_it() -> None:
+    t = {
+        "title": "x",
+        "path": [step("Form", 'button "Save"')],
+        "data": {"finds": ["A"]},
+        "evidence": [{"value": "A", "source": "page"}],
+        "category": "edge",
+        "steps": ["s"],
+    }
+    assert scope.trace(t) == {k: t[k] for k in ("path", "data", "evidence", "category")}
+    assert scope.trace(scope.left(t, "why"))["outcome"] == scope.REJECTED
+
+
+def test_the_sample_files_listed_are_the_ones_handed_out() -> None:
+    from explorer_worker import samples
+
+    assert {samples.sample_file(k).name for k in samples.KINDS} <= set(samples.FILES)
+
+
+def _screen(name: str, aria: str) -> Any:
+    from explorer_core import ExplorerScreen
+
+    return ExplorerScreen(
+        run_id=uuid.uuid4(), signature=name, name=name, url="u", url_pattern="u", aria=aria
+    )
+
+
+MENU = '- link "Dashboard":\n  - /url: x\n- link "Territories"\n- button "Icon"\n- link "Terms"\n'
+
+
+def test_the_apps_shared_menu_is_found_from_the_pages_themselves() -> None:
+    screens = [
+        _screen("Dashboard", MENU + '- heading "Sales"\n- button "Icon"'),
+        _screen("Territory list", MENU + '- button "New Territory"'),
+        _screen("New territory", MENU + '- textbox "Name"\n- button "Save"'),
+    ]
+    # Once on every page: shared. "Icon" repeats on a page: can't be told apart.
+    assert scope.app_wide_controls(screens) == {
+        'link "dashboard"',
+        'link "territories"',
+        'link "terms"',
+    }
+    assert scope.app_wide_controls(screens[:2]) == set()  # too few pages to tell
+    assert scope.screen_facts(screens)[2]["app_wide"] == sorted(scope.app_wide_controls(screens))
+
+
+def test_ideas_that_are_not_scenarios_are_set_aside_with_why() -> None:
+    facts = [{"name": "Form", "app_wide": ['link "territories"', 'link "terms"']}]
+
+    def idea(title: str, coverage: str, *elements: str) -> dict[str, Any]:
+        path = [step("Form", e) for e in elements]
+        return {"title": title, "start_screen": "Form", "coverage": coverage, "path": path}
+
+    tests = [
+        idea("Territories link opens Territories", "E-02 Link", 'link "Territories"'),
+        idea("Terms opens Terms", "E-02 Link", 'link "Terms":'),
+        idea("Open the form from the menu", "F-13 Create", 'link "Territories"', 'button "Save"'),
+        idea("Name is required", "F-05 Required fields", 'textbox "Name"'),
+        {"title": "Name is required on Form", "coverage": "F-05 Field rules"},  # the field rule
+    ]
+    why = scope.not_needed(tests, facts)
+    assert sorted(why) == [0, 1, 3]  # using the menu to get somewhere is fine
+    assert "shared menu" in why[0] and "once per field" in why[3]

@@ -338,7 +338,7 @@ async def test_the_number_asked_is_planned_from_what_the_page_has() -> None:
         assert only == ["Account list"]
         return replies.pop(0)
 
-    journal = type("J", (), {"event": lambda self, *a: None})()
+    journal = type("J", (), {"run_id": uuid.uuid4(), "event": lambda self, *a: None})()
     found, cant = await plan.requested_scenarios(
         journal,
         write,
@@ -378,7 +378,7 @@ async def test_full_scope_writes_every_field_rule_plus_the_checklist(monkeypatch
             {"label": "Email", "type": "email"},
         ],
     }
-    tests = await plan._scope_scenarios({}, [form], [], [], None, may_save=True, approved=[])
+    tests, _ = await plan._scope_scenarios({}, [form], [], [], None, may_save=True, approved=[])
     titles = [t["title"] for t in tests]
     assert "Empty New Contact can't be saved" in titles
     assert "First Name is required on New Contact" in titles
@@ -389,8 +389,9 @@ async def test_full_scope_writes_every_field_rule_plus_the_checklist(monkeypatch
 async def test_a_missing_scope_item_is_written_then_the_report_says_what_was_left_out(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def scope(*_a: Any, **_k: Any) -> list[dict[str, Any]]:
-        return [{"kind": "validation", "title": "Email refuses a wrong format", "expected": "x"}]
+    async def scope(*_a: Any, **_k: Any) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        email = {"kind": "validation", "title": "Email refuses a wrong format", "expected": "x"}
+        return [email], []
 
     checks = [
         [
@@ -409,6 +410,9 @@ async def test_a_missing_scope_item_is_written_then_the_report_says_what_was_lef
         # The second check also spots a duplicate written in the gap round.
         return checks.pop(0), ({} if checks else {"Cancel twice": "duplicate of Cancel"})
 
+    async def no_map(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {"aim": "", "items": [], "not_applicable": []}
+
     async def gaps(*a: Any, **k: Any) -> list[dict[str, Any]]:
         assert "F-17" in a[5] and k["only"] == ["New Contact"]  # the gap, on its screen
         return [
@@ -417,8 +421,13 @@ async def test_a_missing_scope_item_is_written_then_the_report_says_what_was_lef
         ]
 
     events: list[tuple[str, str]] = []
-    journal = type("J", (), {"event": lambda self, k, t, d=None: events.append((t, d or ""))})()
+    journal = type(
+        "J",
+        (),
+        {"run_id": uuid.uuid4(), "event": lambda self, k, t, d=None: events.append((t, d or ""))},
+    )()
     monkeypatch.setattr(plan, "_scope_scenarios", scope)
+    monkeypatch.setattr(plan.brain, "coverage_map", no_map)
     monkeypatch.setattr(plan.scope, "check_scope", check)
     monkeypatch.setattr(plan.brain, "plan_tests", gaps)
     tests = await plan.cover_scope(
@@ -432,9 +441,14 @@ async def test_a_missing_scope_item_is_written_then_the_report_says_what_was_lef
         may_save=True,
         approved=[],
     )
-    assert [t["title"] for t in tests] == ["Email refuses a wrong format", "Cancel saves nothing"]
-    assert events[0][0].startswith("Scope not met yet: 1 item(s) missing")
-    assert events[1] == (
+    assert [t["title"] for t in tests] == [
+        "Email refuses a wrong format",
+        "Cancel saves nothing",
+        "Cancel twice",  # left out, kept with why: never silently gone
+    ]
+    assert tests[2]["left_out"] == "Left out before trying: duplicate of Cancel"
+    assert events[1][0].startswith("Scope not met yet: 1 item(s) missing")
+    assert events[2] == (
         "Left out 1 scenario(s) before trying them",
         "Cancel twice: duplicate of Cancel",
     )
@@ -528,3 +542,86 @@ async def test_not_a_bug_on_an_authoring_run_adds_only_that_scenario() -> None:
                 task_queue="test-authoring-send",
             )
     assert result == "sent" and sent == [("run-1", "test-7")]
+
+
+FORM_FACTS = [
+    {"name": "Dashboard", "elements": '- heading "Sales"'},
+    {
+        "name": "New Territory",
+        "kind": "form",
+        "elements": '- combobox "Status"\n- button "Save Territory"\n- link "Terms"',
+        "app_wide": ['link "terms"'],
+    },
+]
+
+
+async def test_what_to_test_is_decided_first_from_the_evidence_then_followed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def decide(*_a: Any, **_k: Any) -> dict[str, Any]:
+        return {
+            "aim": "Create a territory",
+            "items": [
+                {
+                    "screen": "New Territory",
+                    "id": "F-03",
+                    "what": "Status options",
+                    "evidence": 'combobox "Status"',
+                },
+                {
+                    "screen": "New Territory",
+                    "id": "F-13",
+                    "what": "Save works",
+                    "evidence": 'button "Save Territory"',
+                },
+                {
+                    "screen": "New Territory",
+                    "id": "E-02",
+                    "what": "Terms opens",
+                    "evidence": 'link "Terms"',
+                },  # the shared footer
+                {
+                    "screen": "New Territory",
+                    "id": "F-11",
+                    "what": "Region updates Country",
+                    "evidence": 'combobox "Region"',
+                },  # not on the page
+                {
+                    "screen": "New Territory",
+                    "id": "F-05",
+                    "what": "Name is required",
+                    "evidence": 'combobox "Status"',
+                },  # written per field
+            ],
+            "not_applicable": [{"screen": "New Territory", "id": "F-17", "why": "no Cancel"}],
+        }
+
+    written: list[tuple[list[str], str]] = []
+
+    async def write(*a: Any, only: list[str], **_k: Any) -> list[dict[str, Any]]:
+        written.append((only, a[5]))
+        return []
+
+    async def no_review(*_a: Any, **_k: Any) -> list[Any]:
+        return []
+
+    events: list[tuple[str, str]] = []
+    journal = type(
+        "J",
+        (),
+        {"run_id": uuid.uuid4(), "event": lambda self, k, t, d=None: events.append((t, d or ""))},
+    )()
+    monkeypatch.setattr(plan.brain, "coverage_map", decide)
+    monkeypatch.setattr(plan.brain, "plan_tests", write)
+    monkeypatch.setattr(plan.brain, "review_plan", no_review)
+    items = await plan.coverage_map(journal, "the request", {}, FORM_FACTS, [], [], may_save=True)  # type: ignore[arg-type]
+    assert [i["id"] for i in items] == ["F-03", "F-13"]  # only what the page proves
+    assert events[0][0] == "Coverage map: 2 check(s) to test on 1 screen(s)"
+    assert "F-17 doesn't apply — no Cancel" in events[0][1]
+    assert "F-11 doesn't apply — “combobox \"Region\"” isn't on that screen" in events[0][1]
+    await plan._scope_scenarios(
+        {}, FORM_FACTS, [], [], "notes", may_save=True, approved=[], coverage=items
+    )
+    [(only, notes)] = written  # the Dashboard has nothing to test: no call for it
+    assert only == ["New Territory"] and "Write exactly one test for each item" in notes
+    assert '"F-13"' in notes and '"F-11"' not in notes
