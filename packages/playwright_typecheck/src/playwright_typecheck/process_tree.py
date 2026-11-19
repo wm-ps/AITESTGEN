@@ -32,6 +32,30 @@ _IS_WINDOWS = sys.platform == "win32"
 _TERM_GRACE_SECONDS = 3.0
 
 
+# Child processes run AI-written code that untrusted page text can steer, so
+# they never inherit the worker's own environment (Vault token, DB URL, cloud
+# and LLM keys...) — only what node/npm/Playwright need to start.
+_ENV_ALLOWED = frozenset(
+    {
+        "PATH", "HOME", "USERPROFILE", "TMPDIR", "TEMP", "TMP", "TZ", "LANG", "LANGUAGE", "CI",
+        # Windows (local dev) needs these for node/npm/Chromium to start.
+        "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "APPDATA", "LOCALAPPDATA",
+        "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMDATA",
+    }
+)  # fmt: skip
+_ENV_ALLOWED_PREFIXES = ("LC_", "NODE_", "NPM_CONFIG_", "PLAYWRIGHT_")
+
+
+def safe_env() -> dict[str, str]:
+    """The worker's environment filtered down to what a child process needs.
+    What every process here gets unless the caller passes its own."""
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key.upper() in _ENV_ALLOWED or key.upper().startswith(_ENV_ALLOWED_PREFIXES)
+    }
+
+
 class RunCancelled(Exception):
     """The kill scope was cancelled — a process was refused or killed."""
 
@@ -124,7 +148,7 @@ async def run_process(
     proc = await asyncio.create_subprocess_exec(
         *args,
         cwd=cwd,
-        env=env,
+        env=safe_env() if env is None else env,
         stdin=asyncio.subprocess.PIPE if input is not None else None,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -164,7 +188,7 @@ def run_process_sync(
     proc = subprocess.Popen(
         args,
         cwd=cwd,
-        env=env,
+        env=safe_env() if env is None else env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         **_new_group_kwargs(),

@@ -140,3 +140,13 @@ def test_timeout_kills_the_tree(tmp_path: Path) -> None:
         asyncio.run(_main())
 
     assert _wait_until_dead(_wait_for_pid_file(pid_file))
+
+
+async def test_a_child_never_sees_the_workers_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VAULT_TOKEN", "s3cret")
+    monkeypatch.setenv("NODE_OPTIONS", "--no-warnings")
+    show = "import os; print(os.environ.get('VAULT_TOKEN'), os.environ.get('NODE_OPTIONS'))"
+    _, out, _ = await run_process(sys.executable, "-c", show, cwd=".")
+    assert out.decode().split() == ["None", "--no-warnings"]
+    done = run_process_sync([sys.executable, "-c", show], cwd=".")
+    assert done.stdout.decode().split() == ["None", "--no-warnings"]

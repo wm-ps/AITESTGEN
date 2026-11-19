@@ -41,7 +41,7 @@ def test_fallback_prefers_login_url() -> None:
 def test_fallback_setup_script_uses_the_slow_app_goto_budget() -> None:
     evidence = find_login_page_evidence(None, _app())  # type: ignore[arg-type]
     script = assembler._build_auth_setup_script("standard_login", evidence)
-    assert ".goto(loginUrl, { timeout: 30000, waitUntil: 'domcontentloaded' })" in script
+    assert ".goto(loginUrl, { timeout: 30000, waitUntil: \"domcontentloaded\" })" in script
 
 
 def test_captured_evidence_setup_script_goto_is_unchanged() -> None:

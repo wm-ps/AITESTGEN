@@ -940,6 +940,8 @@ async def create_application(
     user: CurrentUserDep,
 ) -> ApplicationRead:
     require_approved_domain(session, organization_id, payload.url)
+    if payload.login_url:
+        require_approved_domain(session, organization_id, payload.login_url)
 
     # FR-31 (CR-3): fail fast before any write if the Base URL isn't reachable.
     async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
@@ -1100,6 +1102,8 @@ async def start_credential_check(
     organization_id: CurrentOrgIdDep,
 ) -> CredentialCheckStarted:
     require_approved_domain(session, organization_id, payload.url)
+    if payload.login_url:
+        require_approved_domain(session, organization_id, payload.login_url)
     client = await get_temporal_client()
     queue = discovery_task_queue()
     if not await has_pollers(client, queue):

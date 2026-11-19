@@ -75,7 +75,7 @@ from generation_worker.activities import (
 from generation_worker.typecheck import assertion_changes, typecheck_playwright_code
 from mailer import FRONTEND_BASE_URL, send_email, smtp_configured
 from object_store import ObjectStore
-from playwright_typecheck import RunCancelled, kill_scope, run_process, run_process_sync
+from playwright_typecheck import RunCancelled, kill_scope, run_process, run_process_sync, safe_env
 from secrets_client.vault_client import SecretRef, VaultSecretsClient
 from sqlalchemy import or_, update
 from sqlmodel import Session, select
@@ -1059,29 +1059,10 @@ def _load_execution_context_sync(input: ExecuteTestActivityInput) -> _ExecutionC
         )
 
 
-# Generated specs are AI-written and can be steered by untrusted page text, so
-# the Node/Playwright/npm child processes never inherit the worker's own
-# environment (Vault token, DB URL, cloud keys, LLM keys...) — only these.
-_SUBPROCESS_ENV_ALLOWED = frozenset(
-    {
-        "PATH", "HOME", "USERPROFILE", "TMPDIR", "TEMP", "TMP", "TZ", "LANG", "LANGUAGE", "CI",
-        # Windows (local dev) needs these for node/npm/Chromium to start.
-        "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "APPDATA", "LOCALAPPDATA",
-        "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMDATA",
-    }
-)  # fmt: skip
-_SUBPROCESS_ENV_ALLOWED_PREFIXES = ("LC_", "NODE_", "NPM_CONFIG_", "PLAYWRIGHT_")
-
-
 def _scrubbed_env() -> dict:
     """The worker's environment filtered down to what node/npm/Playwright need
-    to run. Replaces `dict(os.environ)` for every child process."""
-    return {
-        key: value
-        for key, value in os.environ.items()
-        if key.upper() in _SUBPROCESS_ENV_ALLOWED
-        or key.upper().startswith(_SUBPROCESS_ENV_ALLOWED_PREFIXES)
-    }
+    to run (playwright_typecheck.safe_env): never the worker's own secrets."""
+    return safe_env()
 
 
 def _needs_login_credentials(code: str | None) -> bool:

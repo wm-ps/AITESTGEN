@@ -5,6 +5,7 @@ from playwright_typecheck.process_tree import (
     kill_tree,
     run_process,
     run_process_sync,
+    safe_env,
 )
 from playwright_typecheck.typecheck import TypecheckUnavailable, typecheck_playwright_code
 
@@ -16,5 +17,6 @@ __all__ = [
     "kill_tree",
     "run_process",
     "run_process_sync",
+    "safe_env",
     "typecheck_playwright_code",
 ]

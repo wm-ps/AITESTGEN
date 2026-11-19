@@ -125,3 +125,13 @@ def test_the_effective_application_is_a_detached_copy() -> None:
     assert effective.id == default.id
     assert default.url == DEFAULT_URL and default.environment == "production"
     assert effective_application(default, None) is default
+
+
+def test_an_environment_url_can_never_break_out_of_the_spec() -> None:
+    code = "await page.goto('https://prod.example.com/cart');"
+    evil = "https://uat.example.com/'+process.exit()+'`${x}`"
+    out = retarget_code(code, DEFAULT_URL, evil)
+    # Still one string literal: the quotes, backticks and ${ are percent-encoded.
+    assert out == (
+        "await page.goto('https://uat.example.com/%27+process.exit()+%27%60%24%7Bx%7D%60/cart');"
+    )

@@ -141,6 +141,38 @@ def test_unapproved_domain_is_blocked_then_allowed_once_added() -> None:
 
 
 @needs_db
+def test_login_and_base_urls_must_be_safe_and_on_an_approved_domain() -> None:
+    """The login URL is checked like the base URL: the workers open it and
+    the test suite writes it into its code."""
+    admin = _client("Org Domains Login URL")
+    admin.post("/domains", json={"host": "example.com"})
+    for url, login_url, status in [
+        ("https://app.example.com", "https://evil.attacker.net/login", 403),
+        ("https://app.example.com", "javascript://app.example.com/%0aalert(1)", 422),
+        ("https://app.example.com", "file://app.example.com/etc/passwd", 422),
+        ("https://app.example.com", "https://app.example.com/login'+require('fs')+'", 422),
+        ("https://app.example.com/'+require('fs')+'", None, 422),
+    ]:
+        create = admin.post(
+            "/applications",
+            json={
+                "name": f"Login URL {status}",
+                "url": url,
+                "login_url": login_url,
+                "environment": "staging",
+                "username": "u",
+                "password": "p",
+            },
+        )
+        assert create.status_code == status, (url, login_url)
+        check = admin.post(
+            "/applications/verify-credentials",
+            json={"url": url, "login_url": login_url, "username": "u", "password": "p"},
+        )
+        assert check.status_code == status, (url, login_url)
+
+
+@needs_db
 def test_domain_in_use_cannot_be_deleted_until_its_applications_are_gone() -> None:
     admin = _client("Org Domains In Use")
     domain_id = admin.post("/domains", json={"host": "example.com"}).json()["id"]

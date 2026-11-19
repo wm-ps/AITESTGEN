@@ -41,7 +41,7 @@ import io
 import json
 import re
 import zipfile
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -158,14 +158,14 @@ def _playwright_locator_call(strategy: str, value: str) -> str:
     `page.locator()` selector string; every other strategy's value already
     is one."""
     if strategy == "label":
-        return f"page.getByLabel({value!r})"
+        return f"page.getByLabel({json.dumps(value)})"
     # `.first()`: a selector-based locator (css/xpath/etc, unlike getByLabel)
     # can resolve to more than one element — e.g. a custom element that
     # mirrors its `name`/`id` onto an inner native input renders both under
     # the same attribute. The `captured_selector` fallback below already
     # appends `.first()` for this reason; this makes the preferred
     # `ComponentLocator` path match it instead of trusting DOM uniqueness.
-    return f"page.locator({value!r}).first()"
+    return f"page.locator({json.dumps(value)}).first()"
 
 
 def _field_locator_call(session: Session, field: FormField | None) -> str | None:
@@ -185,7 +185,7 @@ def _field_locator_call(session: Session, field: FormField | None) -> str | None
         if chosen is not None:
             return _playwright_locator_call(chosen.strategy, chosen.value)
     if field.captured_selector:
-        return f"page.locator({field.captured_selector!r}).first()"
+        return f"page.locator({json.dumps(field.captured_selector)}).first()"
     return None
 
 
@@ -451,7 +451,7 @@ def _build_playwright_config(
             "  fullyParallel: true,\n"
             f"{_ALLURE_REPORTER_LINES}"
             "  use: {\n"
-            f"    baseURL: '{base_url}',\n"
+            f"    baseURL: {json.dumps(base_url)},\n"
             "    trace: 'retain-on-failure',\n"
             "    // AITESTGEN_SCREENSHOT is set by the execution worker from the Screenshot\n"
             "    // capture setting; unset (e.g. an exported suite) keeps only-on-failure.\n"
@@ -469,7 +469,7 @@ def _build_playwright_config(
         "  fullyParallel: true,\n"
         f"{_ALLURE_REPORTER_LINES}"
         "  use: {\n"
-        f"    baseURL: '{base_url}',\n"
+        f"    baseURL: {json.dumps(base_url)},\n"
         "    trace: 'retain-on-failure',\n"
         "    // AITESTGEN_SCREENSHOT is set by the execution worker from the Screenshot\n"
         "    // capture setting; unset (e.g. an exported suite) keeps only-on-failure.\n"
@@ -528,7 +528,9 @@ def retarget_code(code: str, from_url: str, to_url: str) -> str:
     fuller version would parse the spec's string literals, or have generation
     emit `baseURL`-relative paths only."""
     source = from_url.rstrip("/")
-    target = to_url.rstrip("/")
+    # Pasted into the spec's string literals: a quote, backtick, backslash,
+    # space or `${` in the URL must never end the string and become code.
+    target = quote(to_url.rstrip("/"), safe=":/?#[]@!&()*+,;=%~-._")
     if not source or source == target:
         return code
     return re.sub(re.escape(source) + r"(?=[/?#'\"`\s)]|$)", lambda _m: target, code)
@@ -643,7 +645,7 @@ def _build_auth_setup_script(auth_method: str, login_evidence: LoginPageEvidence
     )
     goto_options = (
         f"{{ timeout: {login_evidence.goto_timeout_ms}, "
-        f"waitUntil: '{login_evidence.goto_wait_until}' }}"
+        f"waitUntil: {json.dumps(login_evidence.goto_wait_until)} }}"
         if login_evidence and login_evidence.goto_wait_until != "load"
         else "{ timeout: 10000 }"
     )
@@ -654,7 +656,7 @@ def _build_auth_setup_script(auth_method: str, login_evidence: LoginPageEvidence
         "// Logs in once (via the shared fillCredentials helper — see support/auth.ts) and\n"
         "// saves the resulting session for every other test to reuse.\n"
         "setup('authenticate', async ({ page }) => {\n"
-        f"  const loginUrl = {login_url!r}\n"
+        f"  const loginUrl = {json.dumps(login_url)}\n"
         f"  const passwordField = {password_field}\n"
         "\n"
         "  // `[FIXED]` Wait for the actual discovered login signal (same locator\n"

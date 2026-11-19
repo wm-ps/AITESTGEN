@@ -70,7 +70,20 @@ def url_is_approved(url: str, domains: list[str]) -> bool:
     return host is not None and any(_matches(host, d) for d in domains)
 
 
+# No target URL needs these, and each could end a string in the generated
+# test code (playwright.config.ts, auth.setup.ts, retargeted specs).
+_UNSAFE_URL_CHARS = frozenset("'\"`\\<>{} \t\r\n")
+INVALID_URL = "Enter a valid URL starting with https://"
+
+
 def require_approved_domain(session: Session, organization_id: uuid.UUID, url: str) -> None:
+    """Every URL Explorer, the workers or a test suite will open (base URL,
+    environment URL, login URL): http(s), nothing that can break out of a
+    string, and on one of the organization's approved domains."""
+    url = url.strip()
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname or _UNSAFE_URL_CHARS & set(url):
+        raise HTTPException(status_code=422, detail=INVALID_URL)
     if not url_is_approved(url, approved_hosts(session, organization_id)):
         raise HTTPException(status_code=403, detail=DOMAIN_NOT_APPROVED)
 

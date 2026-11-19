@@ -234,7 +234,7 @@ async def create_environment(
     url = _main()._normalize_application_url(payload.url)
     _valid_http_url(url, "deployed URL")
     if payload.login_url:
-        _valid_http_url(payload.login_url, "login URL")
+        require_approved_domain(session, organization_id, payload.login_url)
     _check_name(session, application, payload.name)
     _require_login_rules(
         application,
@@ -316,8 +316,8 @@ async def update_environment(
         url = _main()._normalize_application_url(payload.url)
         _valid_http_url(url, "deployed URL")
     login_url = payload.login_url if "login_url" in sent else environment.login_url
-    if login_url:
-        _valid_http_url(login_url, "login URL")
+    if "login_url" in sent and login_url:
+        require_approved_domain(session, organization_id, login_url)
     if name != environment.name:
         _check_name(session, application, name, except_id=environment.id)
 

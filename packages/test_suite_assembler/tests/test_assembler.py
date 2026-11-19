@@ -120,9 +120,18 @@ def test_playwright_locator_call_scopes_selector_locators_to_first_match() -> No
     # `.fill()` outright instead of picking one. `getByLabel` locates by
     # visible text, not a shared attribute, so it isn't exposed to that.
     assert _playwright_locator_call("css", '[name="j_username"]') == (
-        "page.locator('[name=\"j_username\"]').first()"
+        'page.locator("[name=\\"j_username\\"]").first()'
     )
-    assert _playwright_locator_call("label", "Username") == "page.getByLabel('Username')"
+    assert _playwright_locator_call("label", "Username") == 'page.getByLabel("Username")'
+
+
+def test_a_url_or_selector_can_never_break_out_of_the_generated_code() -> None:
+    from test_suite_assembler.assembler import _build_playwright_config
+
+    url = "https://a.example.com/'+require('child_process').execSync('id')+'"
+    config = _build_playwright_config(url, has_login=False)
+    assert f"baseURL: {json.dumps(url)}," in config  # one string literal, not code
+    assert _playwright_locator_call("label", "x');evil('") == 'page.getByLabel("x\');evil(\'")'
 
 
 def test_package_json_adds_allure_dev_dependencies() -> None:
