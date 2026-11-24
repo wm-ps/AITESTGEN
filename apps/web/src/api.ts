@@ -580,8 +580,12 @@ class ApiError extends Error {
 // typed or scrolled within the last minute, so background polling of a
 // running job never keeps an unattended tab signed in.
 let lastInteractionAt = Date.now()
-for (const event of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
-  window.addEventListener(event, () => (lastInteractionAt = Date.now()), { capture: true, passive: true })
+// No `window` when the build prerenders the public pages in Node
+// (src/prerender.tsx imports the contact form, which imports this module).
+if (typeof window !== 'undefined') {
+  for (const event of ['pointerdown', 'keydown', 'wheel', 'touchstart']) {
+    window.addEventListener(event, () => (lastInteractionAt = Date.now()), { capture: true, passive: true })
+  }
 }
 
 export function userActivityHeaders(): Record<string, string> {
