@@ -20,6 +20,17 @@ export type TeamMemberRead = {
 }
 export type AcceptInviteRequest = { token: string; name: string; password: string }
 export type ForgotPasswordRequest = { email: string }
+// Public "Connect with our team" enquiry (POST /contact, api/contact.py).
+// `website` is the hidden honeypot — always empty from a real visitor.
+export type ContactEnquiry = {
+  name: string
+  email: string
+  company: string
+  role: string
+  interest: string
+  message: string
+  website: string
+}
 export type ResetPasswordTarget = { name: string; email: string }
 export type ResetPasswordRequest = { token: string; password: string }
 export type ApplicationCreate = components['schemas']['ApplicationCreate'] & {
@@ -612,6 +623,8 @@ export const api = {
     request<UserRead>('/invites/accept', { method: 'POST', body: JSON.stringify(payload) }),
   forgotPassword: (payload: ForgotPasswordRequest) =>
     request<{ status: string }>('/auth/forgot-password', { method: 'POST', body: JSON.stringify(payload) }),
+  sendContactEnquiry: (payload: ContactEnquiry) =>
+    request<{ status: string }>('/contact', { method: 'POST', body: JSON.stringify(payload) }),
   getResetPasswordTarget: (token: string) =>
     request<ResetPasswordTarget>(`/auth/reset-password?token=${encodeURIComponent(token)}`),
   resetPassword: (payload: ResetPasswordRequest) =>

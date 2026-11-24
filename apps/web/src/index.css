@@ -891,10 +891,30 @@ textarea::placeholder {
   }
 }
 
+/* Contact thank-you card: a thin bar that empties until the card closes itself. */
+.marketing-sent-timer {
+  height: 3px;
+  background: #0f766e;
+  transform-origin: left;
+  animation: marketing-sent-timer linear forwards;
+}
+
+@keyframes marketing-sent-timer {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .landing-up,
   .landing-modal {
     animation: none;
+  }
+  .marketing-sent-timer {
+    display: none;
   }
 }
 

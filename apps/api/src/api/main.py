@@ -169,6 +169,7 @@ from api.test_collections import (
 from api.test_collections import router as test_collections_router
 from api.explorer import router as explorer_router
 from api.authoring import router as authoring_router
+from api.contact import router as contact_router
 from api.invites import InviteAcceptError, accept_invite, create_invite, send_invite_email
 from api.password_reset import (
     PasswordResetError,
@@ -251,6 +252,8 @@ app.include_router(test_collections_router)
 app.include_router(explorer_router)
 # Authoring: test cases from a user's request, run by Explorer (authoring.py).
 app.include_router(authoring_router)
+# Public "Connect with our team" enquiry form (contact.py).
+app.include_router(contact_router)
 
 
 @app.get("/health")

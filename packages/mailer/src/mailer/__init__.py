@@ -39,13 +39,18 @@ def smtp_configured() -> bool:
     return bool(SMTP_HOST)
 
 
-def send_email(to_email: str, subject: str, text: str, html: str) -> None:
+def send_email(
+    to_email: str, subject: str, text: str, html: str, reply_to: str | None = None
+) -> None:
     """Sends one multipart (plain text + HTML) email with the logo attached
-    for EMAIL_HEADER's `cid:` image. Raises on any SMTP/connection error."""
+    for EMAIL_HEADER's `cid:` image. `to_email` may be a comma-separated list.
+    Raises on any SMTP/connection error."""
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = formataddr((SMTP_FROM_NAME, SMTP_FROM))
     message["To"] = to_email
+    if reply_to:
+        message["Reply-To"] = reply_to
     message.set_content(text)
     message.add_alternative(html, subtype="html")
     # Hang the logo off the html subpart so `cid:{LOGO_CID}` resolves.

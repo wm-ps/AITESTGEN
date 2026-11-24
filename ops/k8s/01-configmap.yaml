@@ -34,6 +34,8 @@ data:
   SMTP_PORT: "587"
   SMTP_USER: "ps-tools@wavemaker.com"
   SMTP_FROM: "ps-tools@wavemaker.com"
+  # "Connect with our team" enquiries go to these addresses (comma-separated).
+  CONTACT_TEAM_EMAIL: "harsha.gelli@wavemaker.com,pavan.kumar@wavemaker.com,sailaja.poranki@wavemaker.com"
   SCHEDULE_DEFAULT_TIME_ZONE: "Asia/Kolkata"
   # Record and Play — the `api` Deployment picks this up automatically via
   # its existing `envFrom: configMapRef` (no separate env entry needed
