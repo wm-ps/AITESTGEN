@@ -131,7 +131,6 @@ function ApplicationRow({
 }) {
   const [editing, setEditing] = useState(false)
   const [sharing, setSharing] = useState(false)
-  const workspace = useWorkspace()
   const [nameDraft, setNameDraft] = useState(application.name)
   const [menuOpen, setMenuOpen] = useState(false)
   // Portaled to document.body and positioned from this rect — the table's
@@ -379,7 +378,7 @@ function ApplicationRow({
           <div onClick={(e) => e.stopPropagation()}>
             <ManageAccessDialog
               applicationId={application.id}
-              applicationName={application.name}
+              applicationName={application.name}
               onClose={() => setSharing(false)}
               onChanged={onChanged}
             />
