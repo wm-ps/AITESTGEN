@@ -1,8 +1,10 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Home } from './Home'
+import { WorkspaceProvider } from '../WorkspaceContext'
+import { setActiveWorkspace, type MyWorkspacesRead } from '../api'
 
-const USER = { name: 'Ada Lovelace', email: 'ada@example.com', role: 'admin' as const }
+const USER = { name: 'Ada Lovelace', email: 'ada@example.com', role: 'super_admin' as const }
 
 const BASE_APP = {
   url: 'https://example.com',
@@ -142,5 +144,136 @@ describe('Home applications table', () => {
     )
 
     vi.useRealTimers()
+  })
+})
+
+describe('Home access: roles, sharing and filters', () => {
+  const ADDED = { ...HEALTHY_APP, id: 'a1', name: 'Added App', my_role: 'app_admin', added_by_me: true, shared_with_me: false, shared_with_count: 0 }
+  const SHARED = { ...HEALTHY_APP, id: 'a2', name: 'Shared App', my_role: 'contributor', added_by_me: false, shared_with_me: true, shared_with_count: 2 }
+  const GIVEN = { ...HEALTHY_APP, id: 'a3', name: 'Given App', my_role: 'app_admin', added_by_me: true, shared_with_me: false, shared_with_count: 1 }
+
+  it('has no Your role column', async () => {
+    stubFetch([ADDED, SHARED])
+    render(<Home user={USER} onConnectApp={() => {}} onResumeApplication={() => {}} />)
+
+    await screen.findByText('Added App')
+    expect(screen.queryByRole('columnheader', { name: 'Your role' })).toBeNull()
+    const sharedRow = screen.getByText('Shared App').closest('tr')!
+    expect(within(sharedRow).queryByText('Contributor')).toBeNull()
+  })
+
+  it('offers Manage access in the row menu to application admins only', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => ({
+        ok: true,
+        status: 200,
+        json: async () => (String(input).includes('/access') ? [] : [ADDED, SHARED]),
+      })),
+    )
+    render(<Home user={USER} onConnectApp={() => {}} onResumeApplication={() => {}} />)
+    await screen.findByText('Added App')
+
+    const sharedRow = screen.getByText('Shared App').closest('tr')!
+    expect(within(sharedRow).queryByTitle('More options')).toBeNull() // a Contributor has no menu, so no Manage access
+    expect(screen.queryByLabelText(/Manage access to/)).toBeNull() // no share icon any more
+
+    fireEvent.click(within(screen.getByText('Added App').closest('tr')!).getByTitle('More options'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage access' }))
+    expect(await screen.findByRole('dialog', { name: 'Manage access' })).toBeInTheDocument()
+  })
+
+  it('does not open the application when Manage access or its dialog is clicked', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => ({
+        ok: true,
+        status: 200,
+        json: async () => (String(input).includes('/access') ? [] : [ADDED]),
+      })),
+    )
+    const onResume = vi.fn()
+    render(<Home user={USER} onConnectApp={() => {}} onResumeApplication={onResume} />)
+    await screen.findByText('Added App')
+
+    fireEvent.click(screen.getByTitle('More options'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage access' }))
+    fireEvent.click(await screen.findByRole('dialog', { name: 'Manage access' }))
+    expect(onResume).not.toHaveBeenCalled()
+  })
+
+  it('filters by All, Shared with me, Added by me and Private, with a count on each', async () => {
+    stubFetch([ADDED, SHARED, GIVEN])
+    render(<Home user={USER} onConnectApp={() => {}} onResumeApplication={() => {}} />)
+    await screen.findByText('Added App')
+
+    const group = screen.getByRole('group', { name: 'Filter applications' })
+    expect(within(group).getByRole('button', { name: 'All 3' })).toBeInTheDocument()
+    expect(within(group).getByRole('button', { name: 'Shared with me 1' })).toBeInTheDocument()
+    expect(within(group).getByRole('button', { name: 'Added by me 2' })).toBeInTheDocument()
+    expect(within(group).getByRole('button', { name: 'Private 1' })).toBeInTheDocument()
+
+    fireEvent.click(within(group).getByRole('button', { name: 'Shared with me 1' }))
+    expect(screen.getByText('Shared App')).toBeInTheDocument()
+    expect(screen.queryByText('Added App')).toBeNull()
+    fireEvent.click(within(group).getByRole('button', { name: 'Private 1' }))
+    expect(screen.getByText('Added App')).toBeInTheDocument()
+    expect(screen.queryByText('Given App')).toBeNull()
+  })
+})
+
+describe('Home in a workspace', () => {
+  const DATA = (role: 'team_admin' | 'team_member', isDefault = true, personal = false): MyWorkspacesRead => ({
+    personal: { id: 'personal', name: 'My workspace', kind: 'personal', role: null, is_default: false, application_count: 0 },
+    teams: [{ id: 't1', name: 'Payments', kind: 'team', role, is_default: isDefault, application_count: 0 }],
+    last_workspace: personal ? 'personal' : 't1',
+  })
+
+  function renderIn(data: MyWorkspacesRead, apps: unknown[] = []) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input)
+        return { ok: true, status: 200, json: async () => (url.endsWith('/me/workspaces') ? data : apps) }
+      }),
+    )
+    render(
+      <WorkspaceProvider notify={() => {}} onSwitched={() => {}}>
+        <Home user={USER} onConnectApp={() => {}} onResumeApplication={() => {}} />
+      </WorkspaceProvider>,
+    )
+  }
+
+  afterEach(() => setActiveWorkspace(null))
+
+  it('tells people where the existing applications went, once, in the Default team', async () => {
+    renderIn(DATA('team_member'), [HEALTHY_APP])
+    expect(await screen.findByText(/now live in the/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+    expect(screen.queryByText(/now live in the/)).toBeNull()
+    expect(localStorage.getItem('vantage.defaultTeamBanner')).toBe('dismissed')
+  })
+
+  it('has no banner outside the Default team', async () => {
+    renderIn(DATA('team_member', false), [HEALTHY_APP])
+    await screen.findByText('Checkout App')
+    expect(screen.queryByText(/now live in the/)).toBeNull()
+  })
+
+  it.each([
+    ['team_member', 'No applications shared with you yet', 'Ask a Team Admin or the person who added the app.'],
+    ['team_admin', 'No applications added to this team yet', null],
+  ] as const)('explains an empty team to a %s', async (role, title, body) => {
+    renderIn(DATA(role, false))
+    expect(await screen.findByText(title)).toBeInTheDocument()
+    if (body) expect(screen.getByText(body)).toBeInTheDocument()
+  })
+
+  it('explains an empty personal workspace', async () => {
+    renderIn(DATA('team_member', false, true))
+    expect(await screen.findByText('No applications yet')).toBeInTheDocument()
+    expect(screen.getByText('Add your own, or ask someone to share one with your account.')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: /Add application/ })).toBeInTheDocument())
   })
 })

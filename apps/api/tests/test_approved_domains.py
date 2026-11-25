@@ -38,7 +38,7 @@ def _domains_approved_by_default() -> None:
     """Shadows conftest's no-op stub so the real check runs here."""
 
 
-def _client(org_name: str, role: str = "admin") -> TestClient:
+def _client(org_name: str, role: str = "super_admin") -> TestClient:
     init_db()
     email = f"user-{uuid.uuid4()}@example.com"
     seed(email=email, password="pw", org_name=org_name, name="Tester", role=role)
@@ -109,7 +109,7 @@ def _soft_delete(application_id: str) -> None:
 
 @needs_db
 def test_member_can_read_and_check_but_not_write() -> None:
-    member = _client("Org Domains Member", role="member")
+    member = _client("Org Domains Member", role="standard_user")
 
     assert member.get("/domains").status_code == 200
     assert member.post("/domains/check", json={"url": "https://a.example.com"}).json() == {

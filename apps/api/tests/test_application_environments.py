@@ -13,6 +13,7 @@ import uuid
 import zipfile
 
 import pytest
+from api.access import join_default_team
 from api.auth import hash_password
 from api.db import engine, init_db
 from api.main import app
@@ -66,19 +67,28 @@ def _admin(org_name: str) -> tuple[TestClient, uuid.UUID]:
     return client, user.organization_id
 
 
-def _user_in_org(organization_id: uuid.UUID, role: str) -> TestClient:
-    email = f"{role}-{uuid.uuid4()}@example.com"
+def _shared_user(
+    admin: TestClient, organization_id: uuid.UUID, application: dict, app_role: str
+) -> TestClient:
+    """A signed-in user of the organisation (in its Default team) who has been
+    given `app_role` on the application by its admin."""
+    email = f"{app_role}-{uuid.uuid4()}@example.com"
     with Session(engine) as session:
-        session.add(
-            PlatformUser(
-                organization_id=organization_id,
-                email=email,
-                name=role.title(),
-                hashed_password=hash_password("pw"),
-                role=role,
-            )
+        user = PlatformUser(
+            organization_id=organization_id,
+            email=email,
+            name=app_role.title(),
+            hashed_password=hash_password("pw"),
+            role="standard_user",
         )
+        session.add(user)
+        session.flush()
+        join_default_team(session, user)
         session.commit()
+    shared = admin.post(
+        f"/applications/{application['id']}/access", json={"email": email, "role": app_role}
+    )
+    assert shared.status_code == 201, shared.text
     client = TestClient(app)
     assert client.post("/auth/login", json={"email": email, "password": "pw"}).status_code == 200
     return client
@@ -400,54 +410,60 @@ def test_a_schedule_rejects_an_environment_of_another_application() -> None:
     assert response.status_code == 404
 
 
-def test_members_can_manage_environments_and_viewers_can_only_read() -> None:
+def test_only_application_admins_manage_environments() -> None:
     admin, organization_id = _admin("Org Env Roles")
     application = _create_application(admin)
-    member = _user_in_org(organization_id, "member")
-    viewer = _user_in_org(organization_id, "viewer")
+    contributor = _shared_user(admin, organization_id, application, "contributor")
+    viewer = _shared_user(admin, organization_id, application, "viewer")
 
-    created = _add_env(member, application)
+    created = _add_env(admin, application)
     env_url = f"/applications/{application['id']}/environments/{created['id']}"
-    assert member.patch(env_url, json={"name": "UAT-M"}).status_code == 200
+    for reader in (contributor, viewer):
+        assert reader.post(
+            f"/applications/{application['id']}/environments", json=_env_body(name="Nope")
+        ).status_code == 403
+        assert reader.patch(env_url, json={"name": "Nope"}).status_code == 403
+        assert reader.delete(env_url).status_code == 403
+    assert admin.patch(env_url, json={"name": "UAT-M"}).status_code == 200
 
-    assert viewer.post(
-        f"/applications/{application['id']}/environments", json=_env_body(name="Nope")
-    ).status_code == 403
-    assert viewer.patch(env_url, json={"name": "Nope"}).status_code == 403
-    assert viewer.delete(env_url).status_code == 403
-
+    # Everyone with access can read them; a viewer doesn't see who signs in.
+    seen = contributor.get(f"/applications/{application['id']}/environments").json()
+    assert [e["name"] for e in seen] == ["production", "UAT-M"]
+    assert all(e["username"] for e in seen)
     seen = viewer.get(f"/applications/{application['id']}/environments").json()
     assert [e["name"] for e in seen] == ["production", "UAT-M"]
     assert all(e["username"] is None for e in seen)  # credentials stay hidden from viewers
 
-    assert member.delete(env_url).status_code == 204
+    assert admin.delete(env_url).status_code == 204
 
 
-def test_members_can_edit_the_default_credentials_but_viewers_cannot() -> None:
+def test_only_application_admins_edit_the_default_credentials() -> None:
     admin, organization_id = _admin("Org Env Default Creds")
     application = _create_application(admin)
-    member = _user_in_org(organization_id, "member")
-    viewer = _user_in_org(organization_id, "viewer")
+    contributor = _shared_user(admin, organization_id, application, "contributor")
+    viewer = _shared_user(admin, organization_id, application, "viewer")
     url = f"/applications/{application['id']}/credentials"
 
-    assert member.patch(url, json={"username": "m", "password": "p"}).status_code == 200
+    assert admin.patch(url, json={"username": "m", "password": "p"}).status_code == 200
+    assert contributor.patch(url, json={"username": "c", "password": "p"}).status_code == 403
     assert viewer.patch(url, json={"username": "v", "password": "p"}).status_code == 403
 
 
-def test_reveal_returns_the_password_to_members_and_not_to_viewers() -> None:
+def test_reveal_returns_the_password_to_application_admins_only() -> None:
     admin, organization_id = _admin("Org Env Reveal")
     application = _create_application(admin)
     _add_env(admin, application)
     env_id = _row(application, "UAT").external_id
-    member = _user_in_org(organization_id, "member")
-    viewer = _user_in_org(organization_id, "viewer")
+    contributor = _shared_user(admin, organization_id, application, "contributor")
+    viewer = _shared_user(admin, organization_id, application, "viewer")
 
     default_url = f"/applications/{application['id']}/credentials/reveal"
     env_url = f"/applications/{application['id']}/environments/{env_id}/reveal"
-    assert member.post(default_url).json() == {"password": "prod-secret"}
-    assert member.post(env_url).json() == {"password": "uat-secret"}
-    assert viewer.post(default_url).status_code == 403
-    assert viewer.post(env_url).status_code == 403
+    assert admin.post(default_url).json() == {"password": "prod-secret"}
+    assert admin.post(env_url).json() == {"password": "uat-secret"}
+    for reader in (contributor, viewer):
+        assert reader.post(default_url).status_code == 403
+        assert reader.post(env_url).status_code == 403
 
 
 def test_environments_are_scoped_to_their_application_and_organization() -> None:

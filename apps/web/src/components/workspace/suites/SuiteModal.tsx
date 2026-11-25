@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import type { ReactNode } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faXmark } from '@fortawesome/free-solid-svg-icons'
@@ -28,7 +29,9 @@ export function SuiteModal({
   children: ReactNode
 }) {
   useEscapeToClose(onClose)
-  return (
+  // Portaled to <body>: a card with `backdrop-filter` becomes the containing
+  // block of `position: fixed`, which would trap the overlay inside it.
+  return createPortal(
     <div style={modalOverlay}>
       <div role="dialog" aria-modal="true" aria-label={ariaLabel ?? title} style={{ ...modalPanel, maxWidth }}>
         <div style={{ ...modalHeader, borderBottom: subtitle || !bodyScrolls ? '1px solid var(--line)' : undefined }}>
@@ -55,7 +58,8 @@ export function SuiteModal({
           <div style={{ ...modalFooter, justifyContent: 'space-between' }}>{footer}</div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

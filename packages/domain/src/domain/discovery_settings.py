@@ -71,7 +71,25 @@ def generation_settings_for(
     saved back."""
     from domain.application import Application
 
+    from domain.organization_limits import capped, limits_for
+    from domain.workspace_settings import settings_for_application
+
     settings = session.exec(select(DiscoverySettings)).one()
     application = session.get(Application, application_id) if application_id else None
     own = (application.generation_settings if application else None) or {}
-    return settings.model_copy(update={k: own[k] for k in GENERATION_KEYS if k in own})
+    # Organisation default < the workspace's own values < the application's own.
+    workspace = settings_for_application(session, application) if application else None
+    workspace_values = {
+        k: v
+        for k, v in ((workspace.discovery if workspace else None) or {}).items()
+        if k in DiscoverySettings.model_fields and k != "id"
+    }
+    effective = settings.model_copy(update={**workspace_values, **{k: own[k] for k in GENERATION_KEYS if k in own}})
+    if application is None:
+        return effective
+    # Held to the organisation's ceilings (and retention floor) at read time, so
+    # lowering a limit applies to existing settings without rewriting them.
+    limits = limits_for(session, application.organization_id)
+    if limits is None:
+        return effective
+    return effective.model_copy(update=capped(effective.model_dump(), limits))

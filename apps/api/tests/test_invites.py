@@ -53,7 +53,7 @@ def test_admin_can_send_and_invitee_can_accept(monkeypatch: pytest.MonkeyPatch) 
     admin = _admin_client("Org Invite Accept")
     email = f"invitee-{uuid.uuid4()}@example.com"
 
-    response = admin.post("/invites", json={"email": email, "role": "member"})
+    response = admin.post("/invites", json={"email": email, "role": "standard_user"})
     assert response.status_code == 201
     assert captured, "invite email should have been sent"
     token = captured[0]
@@ -64,7 +64,7 @@ def test_admin_can_send_and_invitee_can_accept(monkeypatch: pytest.MonkeyPatch) 
     )
     assert accept_response.status_code == 200
     body = accept_response.json()
-    assert body == {"name": "New Person", "email": email, "role": "member"}
+    assert body == {"name": "New Person", "email": email, "role": "standard_user"}
     assert "session" in accept_response.cookies
 
 
@@ -72,7 +72,7 @@ def test_accepting_twice_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _invite_link_token(monkeypatch)
     admin = _admin_client("Org Invite Reuse")
     email = f"invitee-{uuid.uuid4()}@example.com"
-    admin.post("/invites", json={"email": email, "role": "member"})
+    admin.post("/invites", json={"email": email, "role": "standard_user"})
     token = captured[0]
 
     client = TestClient(app)
@@ -94,7 +94,7 @@ def test_non_admin_cannot_send_invite(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _invite_link_token(monkeypatch)
     admin = _admin_client("Org Invite Member Role")
     member_email = f"member-{uuid.uuid4()}@example.com"
-    admin.post("/invites", json={"email": member_email, "role": "member"})
+    admin.post("/invites", json={"email": member_email, "role": "standard_user"})
     token = captured[0]
 
     member_client = TestClient(app)
@@ -110,7 +110,7 @@ def test_revoke_invite_prevents_acceptance(monkeypatch: pytest.MonkeyPatch) -> N
     captured = _invite_link_token(monkeypatch)
     admin = _admin_client("Org Invite Revoke")
     email = f"invitee-{uuid.uuid4()}@example.com"
-    admin.post("/invites", json={"email": email, "role": "member"})
+    admin.post("/invites", json={"email": email, "role": "standard_user"})
     token = captured[0]
 
     pending = admin.get("/invites").json()

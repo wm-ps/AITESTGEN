@@ -5,7 +5,7 @@ import { ApiError, COLLECTION_EMPTY, api, type EnvironmentRead, type TestRunRead
 import { AppIdentityLine } from '../AppIdentityLine'
 import { ServiceErrorNote } from '../ServiceError'
 import { Toast } from '../Toast'
-import { useCanEdit } from '../../PermissionsContext'
+import { useCanEdit, useIsAdmin } from '../../PermissionsContext'
 import { DEFAULT_TARGET, targetRequest, type RunTarget } from '../../runTarget'
 import { AddEnvironmentDialog } from '../environments/AddEnvironmentDialog'
 import { EnvironmentsProvider, useEnvironmentList } from '../environments/EnvironmentsContext'
@@ -126,6 +126,8 @@ export function Workspace({
   // hasRunEver above.
   const [hasTestsGenerated, setHasTestsGenerated] = useState(false)
   const canEdit = useCanEdit()
+  // Environments and sign-in details are changed by application admins only.
+  const isAppAdmin = useIsAdmin()
   // The application's environments (the first is its own, default one) — shared
   // with every picker below and Application settings through the provider.
   const { environments, refresh: refreshEnvironments } = useEnvironmentList(applicationId)
@@ -294,8 +296,8 @@ export function Workspace({
         environments,
         refresh: refreshEnvironments,
         requestAdd: (onAdded) => setAddEnvironment({ onAdded }),
-        // Not for a viewer, and not for an SSO-session app (see environments.py).
-        canAdd: canEdit && !!defaultEnvironment && defaultEnvironment.auth_method !== 'sso_session_reuse',
+        // Application admins only, and not for an SSO-session app (see environments.py).
+        canAdd: isAppAdmin && !!defaultEnvironment && defaultEnvironment.auth_method !== 'sso_session_reuse',
       }}
     >
     <main style={{ display: 'flex', flex: 1, minHeight: 0 }}>
@@ -378,7 +380,12 @@ export function Workspace({
         )}
         {activeTab === 'schedules' && <SchedulesTab applicationId={applicationId} />}
         {activeTab === 'export' && <DownloadTab applicationId={applicationId} applicationName={applicationName} />}
-        {activeTab === 'settings' && <AppSettingsTab applicationId={applicationId} />}
+        {activeTab === 'settings' &&
+          (isAppAdmin ? (
+            <AppSettingsTab applicationId={applicationId} />
+          ) : (
+            <p style={{ padding: 24, color: 'var(--fg-3)', fontSize: 13 }}>Application settings are for Application Admins.</p>
+          ))}
         {activeTab === 'runs' && (
           <RunsTab
             applicationId={applicationId}

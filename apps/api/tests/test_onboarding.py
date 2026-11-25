@@ -62,7 +62,7 @@ PLAINTEXT_PASSWORD = "s3cr3t-credential-value"
 PLAINTEXT_SESSION_TOKEN = "s3cr3t-session-token-value"
 
 
-def _signed_in_client(org_name: str, role: str = "admin") -> TestClient:
+def _signed_in_client(org_name: str, role: str = "super_admin") -> TestClient:
     email = f"user-{uuid.uuid4()}@example.com"
     seed(email=email, password="pw", org_name=org_name, name="Tester", role=role)
     client = TestClient(app)
@@ -845,7 +845,7 @@ def test_update_application_credentials_is_org_scoped() -> None:
     created = _post_application(admin_client, "Non Admin Rotate App")
     application_id = created.json()["id"]
 
-    member_client = _signed_in_client("Org Rotate Creds Non Admin", role="member")
+    member_client = _signed_in_client("Org Rotate Creds Non Admin", role="standard_user")
     response = member_client.patch(
         f"/applications/{application_id}/credentials",
         json={"username": "attempt", "password": "attempt"},
@@ -916,15 +916,18 @@ def test_list_credentials_omits_sso_session_reuse_apps() -> None:
     assert response.json() == []
 
 
-def test_list_credentials_requires_admin() -> None:
+def test_list_credentials_only_lists_applications_you_administer() -> None:
     init_db()
     admin_client = _signed_in_client("Org List Credentials Non Admin")
     _post_application(admin_client, "Non Admin List App")
 
-    member_client = _signed_in_client("Org List Credentials Non Admin", role="member")
+    # Someone with no admin rights over any application sees none of its credentials.
+    member_client = _signed_in_client("Org List Credentials Non Admin", role="standard_user")
     response = member_client.get("/credentials")
 
-    assert response.status_code == 403
+    assert response.status_code == 200
+    assert response.json() == []
+    assert [c["application_name"] for c in admin_client.get("/credentials").json()] == ["Non Admin List App"]
 
 
 def test_reveal_credential_returns_password() -> None:
@@ -939,16 +942,17 @@ def test_reveal_credential_returns_password() -> None:
     assert response.json() == {"password": "irrelevant"}
 
 
-def test_reveal_credential_requires_admin() -> None:
+def test_reveal_credential_needs_application_admin() -> None:
     init_db()
     admin_client = _signed_in_client("Org Reveal Credential Non Admin")
     created = _post_application(admin_client, "Non Admin Reveal App")
     application_id = created.json()["id"]
 
-    member_client = _signed_in_client("Org Reveal Credential Non Admin", role="member")
+    # No access to the application at all: it doesn't exist for them.
+    member_client = _signed_in_client("Org Reveal Credential Non Admin", role="standard_user")
     response = member_client.post(f"/credentials/{application_id}/reveal")
 
-    assert response.status_code == 403
+    assert response.status_code == 404
 
 
 def test_verify_credential_reports_reachable(monkeypatch: pytest.MonkeyPatch) -> None:

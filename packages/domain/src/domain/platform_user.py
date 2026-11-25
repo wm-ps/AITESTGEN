@@ -11,13 +11,10 @@ if a future story needs to expose it, apply the UUIDv7-internal /
 UUIDv4-external split established by `Application` (Story 1.3) rather than
 leaking this table's PK.
 
-`role` is "admin", "member" or "viewer" (`api.auth.ROLES`), never a
-free-form string beyond those. Admins manage the team, invites and settings;
-a viewer can read everything in the Organization but change nothing
-(`api.auth.block_viewer_writes`).
-
-ponytail: roles are Organization-wide — no per-Application permissions. A
-fuller version would add an Application-scoped membership table.
+`role` is "super_admin" or "standard_user" (`api.auth.ROLES`), never a
+free-form string beyond those. Super admins manage the team, invites and settings.
+It is the organisation role only: what a person may do with an Application is
+their role on it (`ApplicationMember`, enforced in `api.access`).
 """
 
 import uuid
@@ -26,6 +23,10 @@ from datetime import UTC, datetime
 from sqlalchemy import Column, DateTime, ForeignKey, Integer, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
+
+
+SUPER_ADMIN_ROLE = "super_admin"
+STANDARD_USER_ROLE = "standard_user"
 
 
 class PlatformUser(SQLModel, table=True):
@@ -50,7 +51,7 @@ class PlatformUser(SQLModel, table=True):
     email: str = Field(unique=True, index=True, nullable=False)
     name: str
     hashed_password: str
-    role: str = Field(default="member", nullable=False)
+    role: str = Field(default="standard_user", nullable=False)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC),
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -59,6 +60,9 @@ class PlatformUser(SQLModel, table=True):
     # the one choke point every route already depends on to slide the
     # session's idle window) — never set anywhere else, so it always
     # reflects real session activity, not just login time.
+    # The workspace the user last switched to: a team's external id or
+    # "personal" — where they land at sign-in.
+    last_workspace: str | None = Field(default=None)
     last_active_at: datetime | None = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),

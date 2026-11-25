@@ -12,8 +12,8 @@ keep it. A member whose Scenario is no longer such a test case (Explorer
 re-promote retires it) is "unavailable": skipped on run, shown struck through,
 and removed only when the user says so.
 
-Writes are blocked for viewers by the app-wide `block_viewer_writes`
-dependency; every route is scoped to the caller's organization.
+Every route reaches its application through `api.access` (a viewer reads,
+a contributor writes) and is scoped to the caller's organization.
 """
 
 import logging
@@ -42,6 +42,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
+from api.access import require_application
 from api.activity import record_activity
 from api.auth import CurrentOrgIdDep, CurrentUserDep, SessionDep
 
@@ -172,8 +173,8 @@ def _get_collection(
             col(Application.deleted_at).is_(None),
         )
     ).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="test suite not found")
+    require_application(session, row[1] if row else None, organization_id, "test suite not found")
+    assert row is not None
     return row
 
 

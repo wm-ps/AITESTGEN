@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faChartPie, faChevronRight, faClockRotateLeft, faEye, faGear, faLayerGroup, faPlus, faRightLeft, faUsers } from '@fortawesome/free-solid-svg-icons'
+import { faChartPie, faChevronRight, faClockRotateLeft, faEye, faGear, faLayerGroup, faPeopleGroup, faPlus, faRightLeft, faUsers } from '@fortawesome/free-solid-svg-icons'
 // Bell import dropped alongside the commented-out notifications icon below —
 // restore both together once there's a real notification source.
-import { api, type UserRead } from '../../api'
+import { APP_ROLE_LABEL, api, type AppRole, type UserRead } from '../../api'
 import { useIsViewer } from '../../PermissionsContext'
+import { useWorkspace } from '../../WorkspaceContext'
+import { AccountMenu } from '../AccountMenu'
 import { VantageBrand } from '../Brand'
 
 // Vantage V2 redesign — left sidebar + top bar chrome, replacing the old
 // TopBar-only nav (see _bmad-output/.../mockups/Vantage v2.html, sidebar
 // section ~line 244-303).
-export type ShellRoute = 'overview' | 'apps' | 'wizard' | 'settings' | 'team' | 'activity' | 'app'
+export type ShellRoute = 'overview' | 'apps' | 'wizard' | 'settings' | 'team' | 'teams' | 'myteam' | 'activity' | 'app'
 
 // `icon` matches Workspace.tsx's existing nav-icon convention (a fixed-size,
 // zero-prop render function) rather than accepting a `size` prop — every
@@ -30,15 +32,8 @@ export type AppShellAppContext = {
   activeTab: string
   onSelectTab: (key: string) => void
   onExit: () => void
-}
-
-function initials(name: string): string {
-  return name
-    .trim()
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((p) => p[0]?.toUpperCase() ?? '')
-    .join('')
+  /** The signed-in user's role on this application. */
+  myRole?: AppRole | null
 }
 
 export function AppShell({
@@ -50,6 +45,8 @@ export function AppShell({
   onAddApplication,
   onOpenSettings,
   onGoTeam,
+  onGoTeams,
+  onGoMyTeam,
   onGoActivity,
   onLogout,
   app,
@@ -63,16 +60,25 @@ export function AppShell({
   onGoApps: () => void
   onAddApplication: () => void
   onOpenSettings?: () => void
+  /** Users page (super admin). */
   onGoTeam?: () => void
-  /** Admin-only Activity page — only rendered for an admin. */
+  /** Teams page (super admin). */
+  onGoTeams?: () => void
+  /** Read-only page of the active team, for its team admin. */
+  onGoMyTeam?: () => void
+  /** Activity — everyone sees the part that concerns their applications. */
   onGoActivity?: () => void
   onLogout: () => void
   /** When set (route === 'app'), renders the sidebar's per-application tab section. */
   app?: AppShellAppContext
   children: React.ReactNode
 }) {
-  const [menuOpen, setMenuOpen] = useState(false)
   const isViewer = useIsViewer()
+  const workspace = useWorkspace()
+  const isTeamAdmin = workspace?.active.role === 'team_admin'
+  // Settings belong to the workspace: its team admins, super admins, or the owner of a personal one.
+  const canOpenSettings =
+    !workspace || workspace.active.kind === 'personal' || user.role === 'super_admin' || isTeamAdmin
   // Sidebar "Applications" badge count — matches the prototype's nav badge
   // (navMonitor). A light one-shot fetch rather than threading the
   // Home/Overview screens' own application lists through every render of
@@ -230,19 +236,31 @@ export function AppShell({
           {!app && !isViewer && (
             <>
               <div style={{ ...sectionLabelStyle, padding: '16px 10px 5px' }}>Configuration</div>
-              {user.role === 'admin' && onGoTeam && (
-                <div style={navItemStyle(route === 'team')} onClick={onGoTeam}>
-                  <FontAwesomeIcon icon={faUsers} style={{ width: 16, fontSize: 13, textAlign: 'center' }} />
-                  <span style={{ flex: 1 }}>Team members</span>
+              {user.role === 'super_admin' && onGoTeams && (
+                <div style={navItemStyle(route === 'teams')} onClick={onGoTeams}>
+                  <FontAwesomeIcon icon={faPeopleGroup} style={{ width: 16, fontSize: 13, textAlign: 'center' }} />
+                  <span style={{ flex: 1 }}>Teams</span>
                 </div>
               )}
-              {user.role === 'admin' && onGoActivity && (
+              {user.role === 'super_admin' && onGoTeam && (
+                <div style={navItemStyle(route === 'team')} onClick={onGoTeam}>
+                  <FontAwesomeIcon icon={faUsers} style={{ width: 16, fontSize: 13, textAlign: 'center' }} />
+                  <span style={{ flex: 1 }}>Users</span>
+                </div>
+              )}
+              {user.role !== 'super_admin' && isTeamAdmin && onGoMyTeam && (
+                <div style={navItemStyle(route === 'myteam')} onClick={onGoMyTeam}>
+                  <FontAwesomeIcon icon={faPeopleGroup} style={{ width: 16, fontSize: 13, textAlign: 'center' }} />
+                  <span style={{ flex: 1 }}>My team</span>
+                </div>
+              )}
+              {user.role === 'super_admin' && onGoActivity && (
                 <div style={navItemStyle(route === 'activity')} onClick={onGoActivity}>
                   <FontAwesomeIcon icon={faClockRotateLeft} style={{ width: 16, fontSize: 13, textAlign: 'center' }} />
                   <span style={{ flex: 1 }}>Activity</span>
                 </div>
               )}
-              {onOpenSettings && (
+              {onOpenSettings && canOpenSettings && (
                 <div style={navItemStyle(route === 'settings')} onClick={onOpenSettings}>
                   <FontAwesomeIcon icon={faGear} style={{ width: 16, fontSize: 13, textAlign: 'center' }} />
                   <span style={{ flex: 1 }}>Settings</span>
@@ -277,6 +295,14 @@ export function AppShell({
             )}
             <span style={{ color: 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{crumb}</span>
           </div>
+          {app?.myRole && app.myRole !== 'app_admin' ? (
+            <span
+              title="Only Application Admins and Team Admins can manage access."
+              style={{ display: 'inline-flex', alignItems: 'center', height: 26, padding: '0 10px', borderRadius: 1000, background: 'var(--chip)', color: 'var(--fg-3)', fontSize: 12, fontWeight: 600, flex: 'none', whiteSpace: 'nowrap' }}
+            >
+              Your role: {APP_ROLE_LABEL[app.myRole]}
+            </span>
+          ) : null}
           {isViewer ? (
             <span
               title="You can view everything in this workspace but not change it."
@@ -330,61 +356,7 @@ export function AppShell({
               shown as dead chrome on every page. Re-enable once there's a real
               notification source to point it at. */}
           {/* <Bell size={15} style={{ color: 'var(--fg-3)', flex: 'none' }} /> */}
-          <div style={{ position: 'relative' }}>
-            <button
-              type="button"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={() => setMenuOpen((open) => !open)}
-              style={{
-                width: 30,
-                height: 30,
-                flex: 'none',
-                borderRadius: 1000,
-                background: 'var(--chip)',
-                border: '1px solid var(--border-2)',
-                color: 'var(--accent-2)',
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              {initials(user.name)}
-            </button>
-            {menuOpen && (
-              <>
-                <div onClick={() => setMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} aria-hidden="true" />
-                <div
-                  role="menu"
-                  style={{
-                    position: 'absolute',
-                    right: 0,
-                    top: 38,
-                    minWidth: 180,
-                    borderRadius: 10,
-                    background: 'var(--panel)',
-                    border: '1px solid var(--border-2)',
-                    boxShadow: 'var(--panel-shadow)',
-                    overflow: 'hidden',
-                    zIndex: 41,
-                  }}
-                >
-                  <div style={{ padding: '12px 14px', borderBottom: '1px solid var(--line)' }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg)' }}>{user.name}</div>
-                    <div style={{ fontSize: 12, marginTop: 1, color: 'var(--fg-4)' }}>{user.email}</div>
-                  </div>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={onLogout}
-                    style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 14px', background: 'none', border: 'none', fontSize: 13, color: 'var(--bad)', cursor: 'pointer', fontFamily: 'inherit' }}
-                  >
-                    Log out
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+          <AccountMenu user={user} onLogout={onLogout} />
         </div>
 
         <div
@@ -401,6 +373,14 @@ export function AppShell({
             flexDirection: 'column',
           }}
         >
+          {isViewer && app && (
+            <div
+              role="status"
+              style={{ marginBottom: 16, padding: '10px 16px', borderRadius: 10, border: '1px solid var(--border-2)', background: 'var(--panel)', color: 'var(--fg-2)', fontSize: 13 }}
+            >
+              <b>View only.</b> You're a Viewer on this application. You can browse everything, but can't run, discover, schedule or change anything.
+            </div>
+          )}
           {children}
         </div>
       </div>

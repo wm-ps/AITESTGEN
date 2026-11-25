@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 
-def _client(role: str = "admin") -> tuple[TestClient, str]:
+def _client(role: str = "super_admin") -> tuple[TestClient, str]:
     init_db()
     email = f"user-{uuid.uuid4()}@example.com"
     seed(email=email, password="pw", org_name=f"Org Limits {uuid.uuid4()}", name="T", role=role)

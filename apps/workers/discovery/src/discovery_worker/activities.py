@@ -33,7 +33,6 @@ from domain import (
     Component,
     DiscoveryError,
     DiscoveryRun,
-    DiscoverySettings,
     ExplorationStep,
     Form,
     FormField,
@@ -44,6 +43,7 @@ from domain import (
     SyntheticDataEntry,
     TestDataEntry,
     ValidationRule,
+    generation_settings_for,
 )
 from object_store import ObjectStore
 from playwright.async_api import async_playwright
@@ -53,11 +53,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from temporalio import activity
 from workflows import (
+    VERIFY_CREDENTIALS_ACTIVITY_NAME,
     ApplicationModelBuilderActivityInput,
     ApplicationModelBuilderActivityOutput,
     DiscoveryActivityInput,
     DiscoveryActivityOutput,
-    VERIFY_CREDENTIALS_ACTIVITY_NAME,
     InferenceActivityInput,
     MarkDiscoveryRunFailedActivityInput,
     VerifyCredentialsActivityInput,
@@ -367,7 +367,7 @@ async def discovery_activity(input: DiscoveryActivityInput) -> DiscoveryActivity
                 DiscoveryRun.external_id == uuid.UUID(input.discovery_run_id)
             )
         ).one()
-        discovery_settings = session.exec(select(DiscoverySettings)).one()
+        discovery_settings = generation_settings_for(session, application.id)
 
         logger.info(
             "DiscoveryActivity: discovery_run_id=%s starting for application_id=%s (resume=%s)",
@@ -1279,7 +1279,7 @@ async def inference_activity(input: InferenceActivityInput) -> list[str]:
 
         # Settings.max_journeys is the operator-facing cap (Settings page);
         # the env var stays as the deploy-time default when it's unset.
-        discovery_settings = session.exec(select(DiscoverySettings)).one()
+        discovery_settings = generation_settings_for(session, application.id)
         max_journeys = (
             discovery_settings.max_journeys
             if discovery_settings.max_journeys is not None

@@ -11,7 +11,7 @@ from api.activity import _collect
 from api.db import engine, init_db
 from api.main import app
 from api.scripts.seed_dev_data import seed
-from domain import ActivityEvent, Application, PlatformUser, TestRun
+from domain import ActivityEvent, Application, PlatformUser, Team, TestRun
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -59,8 +59,11 @@ def _add_member(admin: TestClient, monkeypatch: pytest.MonkeyPatch, role: str) -
 
 def _application_with_run(organization_id: uuid.UUID, **counts: int) -> str:
     with Session(engine) as session:
+        # In a team: an application outside every team is personal, so not even a super admin sees it.
+        team = session.exec(select(Team).where(Team.organization_id == organization_id)).first()
         application = Application(
             organization_id=organization_id,
+            team_id=team.id if team else None,
             name=f"Activity App {uuid.uuid4().hex[:6]}",
             url="https://example.com/",
             environment="staging",
@@ -84,14 +87,15 @@ def _application_with_run(organization_id: uuid.UUID, **counts: int) -> str:
         return application.name
 
 
-def test_activity_is_admin_only(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_activity_org_level_events_are_for_super_admins_only(monkeypatch: pytest.MonkeyPatch) -> None:
     admin, _ = _admin_client("Org Activity Admin Only")
-    member = _add_member(admin, monkeypatch, "member")
-    viewer = _add_member(admin, monkeypatch, "viewer")
+    member = _add_member(admin, monkeypatch, "standard_user")
 
-    assert admin.get("/activity").status_code == 200
+    admin_items = admin.get("/activity").json()["items"]
+    assert any(i["application_id"] is None for i in admin_items)  # sign-ins, invites, ...
+    # Nobody else may open it — not even a count or a filter list.
     assert member.get("/activity").status_code == 403
-    assert viewer.get("/activity").status_code == 403
+    assert TestClient(app).get("/activity").status_code == 401
 
 
 def test_settings_change_shows_before_and_after() -> None:
@@ -114,28 +118,30 @@ def test_settings_change_shows_before_and_after() -> None:
 
 def test_team_changes_are_recorded_and_scoped_to_the_org(monkeypatch: pytest.MonkeyPatch) -> None:
     admin, _ = _admin_client("Org Activity Team")
-    _add_member(admin, monkeypatch, "viewer")
+    _add_member(admin, monkeypatch, "standard_user")
     other_admin, _ = _admin_client("Org Activity Other")
 
     summaries = [i["summary"] for i in admin.get("/activity").json()["items"]]
-    assert any(s.startswith("Invited ") and s.endswith(" as viewer") for s in summaries)
-    assert any("joined as viewer" in s for s in summaries)
-    assert other_admin.get("/activity").json()["items"] == []
+    assert any(s.startswith("Invited ") and s.endswith(" as user") for s in summaries)
+    assert any("joined as user" in s for s in summaries)
+    # Sign-ins are org-level events too; what must not leak is this org's team changes.
+    other = [i["summary"] for i in other_admin.get("/activity").json()["items"]]
+    assert not any(s.startswith("Invited ") or "joined as user" in s for s in other)
 
 
 def test_failed_test_run_appears_with_its_counts_and_the_failures_filter() -> None:
     admin, organization_id = _admin_client("Org Activity Runs")
     app_name = _application_with_run(organization_id, total_count=5, passed_count=3, failed_count=2)
 
-    page = admin.get("/activity", params={"outcome": "failed"}).json()
+    page = admin.get("/activity", params={"outcome": "failed", "category": "test_runs"}).json()
     [row] = page["items"]
     assert row["summary"] == f"Test run #1 on {app_name} — 3 passed, 2 failed"
     assert row["reason"] == "2 of 5 tests failed"
     assert row["actor"] == "Ravi"
     assert row["target_tab"] == "runs"
-    assert page["facets"]["outcome"] == {"failed": 1}
-    assert page["facets"]["category"] == {"test_runs": 1}
-    assert admin.get("/activity", params={"outcome": "done"}).json()["items"] == []
+    assert page["facets"]["outcome"]["failed"] == 1  # facets also count the admin's own sign-in
+    assert page["facets"]["category"]["test_runs"] == 1
+    assert admin.get("/activity", params={"outcome": "done", "category": "test_runs"}).json()["items"] == []
 
 
 def test_paging_never_skips_rows_in_either_direction() -> None:
@@ -166,6 +172,7 @@ def test_paging_never_skips_rows_in_either_direction() -> None:
                     cursor=cursor,
                     limit=2,
                     oldest_first=oldest_first,
+                    category="settings",  # not the admin's own sign-in event
                 )
                 seen += [i.summary for i in items]
                 if cursor is None:

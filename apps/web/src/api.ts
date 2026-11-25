@@ -6,7 +6,17 @@ import type { Browser, Viewport } from './runTarget'
 // — added by hand for now rather than blocking this on a live server.
 // Mirrors `api.auth.ROLES`. A viewer can read everything but change nothing
 // (the server refuses every write) — see PermissionsContext.
-export type Role = 'admin' | 'member' | 'viewer'
+// Organisation role. What a person may do with an application is their role on
+// that application (`AppRole`, `ApplicationRead.my_role`).
+export type Role = 'super_admin' | 'standard_user'
+// What the UI calls each stored role.
+export const ROLE_LABEL: Record<Role, string> = { super_admin: 'Super Admin', standard_user: 'User' }
+export type AppRole = 'app_admin' | 'contributor' | 'viewer'
+export const APP_ROLE_LABEL: Record<AppRole, string> = {
+  app_admin: 'Application Admin',
+  contributor: 'Contributor',
+  viewer: 'Viewer',
+}
 export type UserRead = components['schemas']['UserRead'] & { role: Role }
 export type LoginRequest = components['schemas']['LoginRequest']
 export type InviteCreate = { email: string; role: Role }
@@ -17,6 +27,59 @@ export type TeamMemberRead = {
   role: Role
   created_at: string
   last_active_at: string | null
+  // The teams this person is in (a super admin can enter every team).
+  teams?: string[]
+}
+// Team workspaces. A workspace is a team or the caller's personal one ("personal").
+export type TeamRole = 'team_admin' | 'team_member'
+export const TEAM_ROLE_LABEL: Record<TeamRole, string> = { team_admin: 'Team Admin', team_member: 'Team Member' }
+export type WorkspaceRole = 'super_admin' | TeamRole
+export const PERSONAL_WORKSPACE = 'personal'
+export type WorkspaceRead = {
+  id: string
+  name: string
+  kind: 'personal' | 'team'
+  role: WorkspaceRole | null
+  is_default: boolean
+  application_count: number
+}
+export type MyWorkspacesRead = { personal: WorkspaceRead; teams: WorkspaceRead[]; last_workspace: string | null }
+export type TeamRead = {
+  id: string
+  name: string
+  is_default: boolean
+  team_admins: string[]
+  member_count: number
+  application_count: number
+}
+export type TeamPersonRead = { name: string; email: string; role: TeamRole }
+export type TeamApplicationRead = {
+  id: string
+  name: string
+  url: string
+  added_by_name: string | null
+  people: string[]
+  people_count: number
+  my_role: AppRole | null
+}
+// Who has access to an application. `locked`: the adder and the team admins — full access, not editable.
+export type AccessEntryRead = { name: string; email: string; role: AppRole; locked: boolean; reason: string | null }
+export type CandidateRead = { name: string; email: string }
+// The ceilings a super admin sets on resource settings (and the retention floor).
+export type OrgLimitsRead = {
+  maximums: Record<string, number>
+  min_delete_project_after: string | null
+  // Settings saved earlier that are above a ceiling: held to it wherever they are used.
+  above: { scope: string; setting: string; value: number | null; limit: number }[]
+}
+// What removing a person takes with it (shown before the delete).
+export type RemovalImpactRead = {
+  name: string
+  personal_applications: number
+  people_losing_access: number
+  team_applications_added: number
+  teams: number
+  schedules_without_recipient: number
 }
 export type AcceptInviteRequest = { token: string; name: string; password: string }
 export type ForgotPasswordRequest = { email: string }
@@ -51,6 +114,13 @@ export type ApplicationRead = Omit<
   discovery_status: string | null
   // Only the list/home responses set it; absent counts as approved.
   domain_approved?: boolean
+  // The caller's role on this application, and who added it.
+  my_role?: AppRole | null
+  added_by_name?: string | null
+  added_by_me?: boolean
+  // Shared with the caller (not just their own adder row), and with how many others.
+  shared_with_me?: boolean
+  shared_with_count?: number
 }
 // Admin-managed whitelist (Settings → Approved domains). `applications` are the
 // non-deleted apps whose URL falls under the domain — the in-use warning.
@@ -592,10 +662,24 @@ export function userActivityHeaders(): Record<string, string> {
   return Date.now() - lastInteractionAt < 60_000 ? { 'X-User-Activity': '1' } : {}
 }
 
+// The workspace lists and new applications are about: a team's id or "personal".
+// Routes addressed by an id ignore it (they find their own application), so it is
+// safe to send on every request. Set by WorkspaceContext.
+let activeWorkspace: string | null = null
+// What the API says when the X-Team-Id team isn't one the caller is in (api.access).
+const WORKSPACE_LOST_DETAIL = 'you are not in this team'
+export function setActiveWorkspace(id: string | null): void {
+  activeWorkspace = id
+}
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...userActivityHeaders() },
+    headers: {
+      'Content-Type': 'application/json',
+      ...userActivityHeaders(),
+      ...(activeWorkspace ? { 'X-Team-Id': activeWorkspace } : {}),
+    },
     ...init,
   })
   if (!response.ok) {
@@ -606,6 +690,11 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // is a wrong-password rejection, not a session expiry, so it's excluded.
     if (response.status === 401 && path !== '/auth/login') {
       window.dispatchEvent(new CustomEvent('auth:expired'))
+    }
+    // The active team is one the user was just removed from: the workspace
+    // provider falls back to their personal workspace.
+    if (response.status === 403 && body?.detail === WORKSPACE_LOST_DETAIL) {
+      window.dispatchEvent(new CustomEvent('workspace:lost'))
     }
     throw new ApiError(body?.detail ?? response.statusText, response.status)
   }
@@ -714,6 +803,54 @@ export const api = {
       body: JSON.stringify({ url }),
     }),
   listTeam: () => request<TeamMemberRead[]>('/team'),
+  getOrganizationLimits: () => request<OrgLimitsRead>('/organization/limits'),
+  setOrganizationLimits: (maximums: Record<string, number>, minDeleteProjectAfter: string | null) =>
+    request<OrgLimitsRead>('/organization/limits', {
+      method: 'PUT',
+      body: JSON.stringify({ maximums, min_delete_project_after: minDeleteProjectAfter }),
+    }),
+  // Removing a person: ask what it takes with it, show that, then delete.
+  getRemovalImpact: (email: string) =>
+    request<RemovalImpactRead>(`/team/${encodeURIComponent(email)}/removal-impact`),
+  // The only super admin hands over: the successor is promoted and the caller becomes a user.
+  stepDown: (successorEmail: string) =>
+    request<undefined>('/team/step-down', { method: 'POST', body: JSON.stringify({ successor_email: successorEmail }) }),
+  // Team workspaces.
+  getMyWorkspaces: () => request<MyWorkspacesRead>('/me/workspaces'),
+  rememberWorkspace: (workspace: string) =>
+    request<undefined>('/me/workspace', { method: 'PATCH', body: JSON.stringify({ workspace }) }),
+  listTeams: () => request<TeamRead[]>('/teams'),
+  createTeam: (name: string, teamAdminEmails: string[]) =>
+    request<TeamRead>('/teams', { method: 'POST', body: JSON.stringify({ name, team_admin_emails: teamAdminEmails }) }),
+  getTeam: (id: string) => request<TeamRead>(`/teams/${id}`),
+  listTeamPeople: (id: string) => request<TeamPersonRead[]>(`/teams/${id}/members`),
+  addTeamPerson: (id: string, email: string, role: TeamRole) =>
+    request<TeamPersonRead>(`/teams/${id}/members`, { method: 'POST', body: JSON.stringify({ email, role }) }),
+  changeTeamPersonRole: (id: string, email: string, role: TeamRole) =>
+    request<TeamPersonRead>(`/teams/${id}/members/${encodeURIComponent(email)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    }),
+  removeTeamPerson: (id: string, email: string) =>
+    request<undefined>(`/teams/${id}/members/${encodeURIComponent(email)}`, { method: 'DELETE' }),
+  deleteTeam: (id: string) => request<undefined>(`/teams/${id}`, { method: 'DELETE' }),
+  listTeamApplications: (id: string) => request<TeamApplicationRead[]>(`/teams/${id}/applications`),
+  // Manage access (application admins only).
+  listAccess: (applicationId: string) => request<AccessEntryRead[]>(`/applications/${applicationId}/access`),
+  shareApplication: (applicationId: string, email: string, role: AppRole) =>
+    request<AccessEntryRead>(`/applications/${applicationId}/access`, {
+      method: 'POST',
+      body: JSON.stringify({ email, role }),
+    }),
+  changeAccessRole: (applicationId: string, email: string, role: AppRole) =>
+    request<AccessEntryRead>(`/applications/${applicationId}/access/${encodeURIComponent(email)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ role }),
+    }),
+  removeAccess: (applicationId: string, email: string) =>
+    request<undefined>(`/applications/${applicationId}/access/${encodeURIComponent(email)}`, { method: 'DELETE' }),
+  accessCandidates: (applicationId: string, q: string) =>
+    request<CandidateRead[]>(`/applications/${applicationId}/access/candidates?q=${encodeURIComponent(q)}`),
   removeTeamMember: (email: string) =>
     request<undefined>(`/team/${encodeURIComponent(email)}`, { method: 'DELETE' }),
   // Admin-only. 409 when it would leave the organization without an admin.

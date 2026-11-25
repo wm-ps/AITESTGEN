@@ -22,7 +22,9 @@ class PasswordReset(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("uuidv7()")),
     )
     user_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("platform_user.id"), nullable=False, index=True),
+        sa_column=Column(
+            PGUUID(as_uuid=True), ForeignKey("platform_user.id", ondelete="CASCADE"), nullable=False, index=True
+        ),
     )
     token_hash: str = Field(unique=True, index=True, nullable=False)
     expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))

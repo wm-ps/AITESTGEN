@@ -1,11 +1,12 @@
 import { createContext, useContext } from 'react'
-import type { Role } from './api'
+import type { AppRole } from './api'
 
-// The signed-in user's role, provided once by App so any component can ask
-// "may this user change things?" without `user` being threaded through every
-// prop chain. Hiding controls is for clarity only — the API refuses a
-// viewer's writes on its own (`api.auth.block_viewer_writes`).
-const PermissionsContext = createContext<Role>('member')
+// The signed-in user's role on the application that is open (null outside one),
+// provided once by App so any component can ask "may this user change things?"
+// without the role being threaded through every prop chain. Hiding controls is
+// for clarity only — the API refuses what a role may not do on its own
+// (`api.access`).
+const PermissionsContext = createContext<AppRole | null>(null)
 
 export const PermissionsProvider = PermissionsContext.Provider
 
@@ -19,8 +20,8 @@ export function useIsViewer(): boolean {
   return useContext(PermissionsContext) === 'viewer'
 }
 
-// True for an organization admin: the only role that changes an
-// application's test case generation settings.
+// True for an application admin: the only role that changes an application's
+// settings (environments, credentials, test case generation) and its access.
 export function useIsAdmin(): boolean {
-  return useContext(PermissionsContext) === 'admin'
+  return useContext(PermissionsContext) === 'app_admin'
 }

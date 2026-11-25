@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faEllipsisVertical, faEye, faEyeSlash, faPlus, faStar } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type EnvironmentRead, type GenerationSettings } from '../../api'
-import { useCanEdit, useIsAdmin } from '../../PermissionsContext'
+import { useIsAdmin } from '../../PermissionsContext'
 import {
   CredentialsForm,
   GenerationSection,
@@ -170,7 +170,7 @@ const CARDS: SettingsCard<SectionKey>[] = [
   },
 ]
 
-const READ_ONLY_NOTE = 'Only organization admins can change these settings.'
+const READ_ONLY_NOTE = 'Only application admins can change these settings.'
 
 // An application's Settings tab: the same card hub as the Settings page, for
 // what belongs to this application — its environments, its sign-in and its
@@ -179,7 +179,6 @@ const READ_ONLY_NOTE = 'Only organization admins can change these settings.'
 // application is added, before anything could be set here.
 export function AppSettingsTab({ applicationId }: { applicationId: string }) {
   const isAdmin = useIsAdmin()
-  const canEdit = useCanEdit()
   const environments = useEnvironments()
   const defaultEnvironment = environments?.environments.find((environment) => environment.is_default)
   const [section, setSection] = useState<SectionKey | null>(null)
@@ -241,9 +240,9 @@ export function AppSettingsTab({ applicationId }: { applicationId: string }) {
       readOnly={!isAdmin}
       note={
         section === 'credentials'
-          ? canEdit
+          ? isAdmin
             ? undefined
-            : 'Viewers can’t change credentials.'
+            : 'Only application admins can change credentials.'
           : section !== 'environments' && !isAdmin
             ? READ_ONLY_NOTE
             : undefined
@@ -258,7 +257,7 @@ export function AppSettingsTab({ applicationId }: { applicationId: string }) {
         <CredentialsForm
           applicationId={applicationId}
           environment={defaultEnvironment?.name ?? ''}
-          readOnly={!canEdit}
+          readOnly={!isAdmin}
           onSaved={() => environments?.refresh()}
         />
       )}
@@ -269,10 +268,10 @@ export function AppSettingsTab({ applicationId }: { applicationId: string }) {
 }
 
 // Environment Settings: the application's own (default) environment and every
-// extra one, with their URLs and sign-in details. Admins and members add, edit
-// and remove (and can reveal a password); a viewer sees the cards read-only.
+// extra one, with their URLs and sign-in details. Application admins add, edit
+// and remove (and can reveal a password); everyone else sees the cards read-only.
 function EnvironmentSettings({ applicationId }: { applicationId: string }) {
-  const canEdit = useCanEdit()
+  const canEdit = useIsAdmin()
   const context = useEnvironments()
   const [editing, setEditing] = useState<EnvironmentRead | null>(null)
   const [removing, setRemoving] = useState<EnvironmentRead | null>(null)

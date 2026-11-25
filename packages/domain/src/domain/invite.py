@@ -40,11 +40,13 @@ class Invite(SQLModel, table=True):
             index=True,
         ),
     )
-    invited_by_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("platform_user.id"), nullable=False),
+    # SET NULL: a user who invited people can still be removed.
+    invited_by_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("platform_user.id", ondelete="SET NULL"), nullable=True),
     )
     email: str = Field(nullable=False, index=True)
-    role: str = Field(default="member", nullable=False)
+    role: str = Field(default="standard_user", nullable=False)
     token_hash: str = Field(unique=True, index=True, nullable=False)
     expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     used_at: datetime | None = Field(

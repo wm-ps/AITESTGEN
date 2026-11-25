@@ -38,7 +38,18 @@ def current_settings(session: Session) -> ExplorerSettings:
     return settings
 
 
-def snapshot(session: Session) -> dict[str, Any]:
-    """The limits a run starting now uses (Settings → Explorer limits)."""
+def snapshot(
+    session: Session,
+    maximums: dict[str, Any] | None = None,
+    overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """The limits a run starting now uses (Settings → Explorer limits): the
+    organisation default, the workspace's own values (`overrides`) on top, held
+    to the organisation's ceilings (`maximums`) if it has set any."""
     settings = current_settings(session)
-    return {key: getattr(settings, key) for key in LIMIT_KEYS}
+    values = {key: getattr(settings, key) for key in LIMIT_KEYS}
+    values.update({key: value for key, value in (overrides or {}).items() if key in values})
+    for key, maximum in (maximums or {}).items():
+        if key in values and (values[key] is None or values[key] > maximum):
+            values[key] = maximum
+    return values

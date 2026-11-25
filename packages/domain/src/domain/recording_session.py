@@ -55,8 +55,10 @@ class RecordingSession(SQLModel, table=True):
             PGUUID(as_uuid=True), ForeignKey("application.id"), nullable=False, index=True
         ),
     )
-    created_by_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("platform_user.id"), nullable=False),
+    # SET NULL: a user who recorded flows can still be removed.
+    created_by_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("platform_user.id", ondelete="SET NULL"), nullable=True),
     )
     token_hash: str = Field(unique=True, index=True, nullable=False)
     # Human-provided at mint time (Record and Play's idle screen) — becomes

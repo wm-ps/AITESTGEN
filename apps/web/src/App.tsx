@@ -23,6 +23,7 @@ import { Settings } from './components/Settings'
 import { ServiceError } from './components/ServiceError'
 import { SignIn } from './components/SignIn'
 import { TeamMembers } from './components/TeamMembers'
+import { MyTeam, Teams } from './components/Teams'
 import { TestSuiteResults } from './components/TestSuiteResults'
 import { Toast } from './components/Toast'
 import { Workspace, type WorkspaceTab, WORKSPACE_TABS } from './components/workspace/Workspace'
@@ -31,6 +32,7 @@ import { AppShell, type AppShellTab, type ShellRoute } from './components/shell/
 import { hasSignedInHint, setSignedInHint } from './signedInHint'
 import { PAGE_META, SITE_NAME } from './site'
 import { PermissionsProvider } from './PermissionsContext'
+import { WorkspaceProvider } from './WorkspaceContext'
 
 // Vantage V2 redesign: AppShell (left sidebar + topbar) wraps every
 // signed-in view. Views that used to be separate Stepper-gated wizard
@@ -49,6 +51,8 @@ const SHELL_ROUTE_FOR_VIEW: Partial<Record<View, ShellRoute>> = {
   app: 'app',
   settings: 'settings',
   team: 'team',
+  teams: 'teams',
+  myteam: 'myteam',
   activity: 'activity',
 }
 const SHELL_CRUMB_FOR_VIEW: Partial<Record<View, string>> = {
@@ -56,7 +60,9 @@ const SHELL_CRUMB_FOR_VIEW: Partial<Record<View, string>> = {
   home: 'Applications',
   'connect-app': 'Add application',
   settings: 'Settings',
-  team: 'Team members',
+  team: 'Users',
+  teams: 'Teams',
+  myteam: 'My team',
   activity: 'Activity',
 }
 
@@ -117,7 +123,7 @@ function signedOutPageFromUrl(): SignedOutPage {
 
 type AppTab = 'journeys' | 'explorer' | 'scenarios' | 'record' | 'suites' | WorkspaceTab
 
-type View = 'overview' | 'home' | 'connect-app' | 'app' | 'settings' | 'team' | 'activity'
+type View = 'overview' | 'home' | 'connect-app' | 'app' | 'settings' | 'team' | 'teams' | 'myteam' | 'activity'
 
 function App() {
   const [user, setUser] = useState<UserRead | null | undefined>(undefined)
@@ -160,6 +166,8 @@ function App() {
   const [globalLoading, setGlobalLoading] = useState<string | null>(null)
   const [errorToast, setErrorToast] = useState<string | null>(null)
   const [successToast, setSuccessToast] = useState<string | null>(null)
+  // Switching workspace, a role that changed, being removed from a team.
+  const [workspaceToast, setWorkspaceToast] = useState<string | null>(null)
 
   // Which per-application tab is active — freely clickable via AppShell's
   // sidebar, no more furthestCount/Stepper gating (the tabs each handle
@@ -183,6 +191,10 @@ function App() {
   useEffect(() => {
     setHighlightScenarioId(null)
   }, [application?.id])
+  // Activity is for super admins only: a role that changed mid-session leaves it.
+  useEffect(() => {
+    if (view === 'activity' && user && user.role !== 'super_admin') setView('overview')
+  }, [view, user])
   // An application added without discovery has no Journeys/Scenarios tabs —
   // any path that still points at one (stale tab state, a fallback) lands on
   // Test cases instead of a screen that no longer exists for it.
@@ -471,7 +483,9 @@ function App() {
   // whole time a user sits on Journeys/Scenarios.
   // A viewer has no Record and play (it creates test cases) and no Download
   // project (the API refuses them the export).
-  const isViewer = user.role === 'viewer'
+  const isViewer = application?.my_role === 'viewer'
+  // Application settings (environments, sign-in, generation) are for application admins.
+  const isAppAdmin = application?.my_role === 'app_admin'
   // Explorer's output *is* the scenarios (its own Scenarios tab), so an
   // Explorer app has no separate Journeys / Scenarios pages. Their rows
   // still exist underneath: test generation reads them.
@@ -479,13 +493,15 @@ function App() {
   const mergedAppTabs: AppShellTab[] = application
     ? [
         ...WORKSPACE_TABS,
-        // Explorer *is* discovery: an app added without discovery has neither.
-        ...(discoveryTabsVisible
-          ? [...(byExplorer ? [] : [JOURNEYS_TAB]), EXPLORER_TAB, ...(byExplorer ? [] : [SCENARIOS_TAB])]
-          : []),
+        // Explorer stays reachable with discovery off: "Author a test case" runs
+        // on it and asks its questions there. Journeys/Scenarios need discovery.
+        ...(discoveryTabsVisible && !byExplorer ? [JOURNEYS_TAB] : []),
+        EXPLORER_TAB,
+        ...(discoveryTabsVisible && !byExplorer ? [SCENARIOS_TAB] : []),
         SUITES_TAB,
         RECORD_TAB,
       ].filter((t) => !isViewer || (t.key !== 'record' && t.key !== 'export'))
+        .filter((t) => isAppAdmin || t.key !== 'settings')
         .sort((a, b) => TAB_ORDER.indexOf(a.key) - TAB_ORDER.indexOf(b.key))
         .map((t) => ({ key: t.key, label: t.label, icon: t.icon, badge: (t as { badge?: string }).badge }))
     : []
@@ -599,12 +615,22 @@ function App() {
       )}
       {view === 'settings' && user && <Settings user={user} onCancel={() => setView(previousView)} />}
       {view === 'team' && user && <TeamMembers user={user} />}
-      {view === 'activity' && user && <Activity user={user} onOpen={openActivityItem} onBack={() => setView('overview')} />}
+      {view === 'teams' && user?.role === 'super_admin' && <Teams />}
+      {view === 'myteam' && user && <MyTeam />}
+      {view === 'activity' && user?.role === 'super_admin' && <Activity user={user} onOpen={openActivityItem} onBack={() => setView('overview')} />}
     </>
   )
 
   return (
-    <PermissionsProvider value={user.role}>
+    <PermissionsProvider value={application && view === 'app' ? (application.my_role ?? null) : null}>
+      <WorkspaceProvider
+        notify={setWorkspaceToast}
+        onSwitched={() => {
+          // The open application and page belong to the workspace just left.
+          setApplication(null)
+          setView('home')
+        }}
+      >
       <AppShell
         user={user}
         route={shellRoute ?? 'apps'}
@@ -621,6 +647,8 @@ function App() {
           setView('settings')
         }}
         onGoTeam={() => setView('team')}
+        onGoTeams={() => setView('teams')}
+        onGoMyTeam={() => setView('myteam')}
         onGoActivity={() => setView('activity')}
         onLogout={handleLogout}
         app={
@@ -631,6 +659,7 @@ function App() {
                 activeTab: appTab,
                 onSelectTab: selectAppTab,
                 onExit: () => setView('home'),
+                myRole: application.my_role ?? null,
               }
             : undefined
         }
@@ -645,7 +674,10 @@ function App() {
         <Toast message={successToast} kind="success" onDismiss={() => setSuccessToast(null)} />
       )}
 
+      {workspaceToast && <Toast message={workspaceToast} kind="info" onDismiss={() => setWorkspaceToast(null)} />}
+
       {globalLoading && <GlobalLoadingOverlay message={globalLoading} />}
+      </WorkspaceProvider>
     </PermissionsProvider>
   )
 }

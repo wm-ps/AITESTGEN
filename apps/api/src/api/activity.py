@@ -35,10 +35,11 @@ from domain import (
 from explorer_core import ExplorerQuestion, ExplorerRun
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
-from sqlalchemy import func, or_
+from sqlalchemy import and_, func, or_
 from sqlmodel import Session, select
 
-from api.auth import CurrentAdminDep, SessionDep
+from api.access import ActiveWorkspaceDep, Workspace, visibility_clause, workspace_clause
+from api.auth import SUPER_ADMIN_ROLE, CurrentAdminDep, SessionDep
 
 router = APIRouter()
 
@@ -507,8 +508,13 @@ def _collect(
     category: str | None = None,
     outcome: str | None = None,
     q: str | None = None,
+    viewer: PlatformUser | None = None,
+    workspace: Workspace | None = None,
 ) -> tuple[list[ActivityItemRead], datetime | None]:
-    """Newest-first merge of every source, `limit` rows each.
+    """Newest-first merge of every source, `limit` rows each. With a `viewer`,
+    only events about applications they can see (a personal application stays
+    private even from a super admin), narrowed to the active `workspace`. Events
+    about no application at all (sign-ins, team changes) are for super admins only.
 
     Paging stays correct even though `outcome`/`q` filter after fetching:
     a source that returned a full `limit` rows may have more older rows we
@@ -518,9 +524,9 @@ def _collect(
     ponytail: `q` is matched in Python on the fetched rows, so a search can
     return short (even empty) pages while Next still has more. Move it into
     each source's SQL if searching long histories gets slow or confusing."""
-    app_filter = []
+    app_filter = [visibility_clause(viewer), workspace_clause(workspace)] if viewer is not None else []
     if application_id is not None:
-        app_filter = [Application.external_id == application_id]
+        app_filter.append(Application.external_id == application_id)
 
     def order(column: Any) -> Any:
         return column.asc() if oldest_first else column.desc()
@@ -610,7 +616,13 @@ def _collect(
         .where(ActivityEvent.organization_id == organization_id, *window(ActivityEvent.created_at))
     )
     if application_id is not None:
-        stmt = stmt.where(*app_filter)
+        stmt = stmt.where(Application.external_id == application_id)
+    if viewer is not None:
+        about_visible_application = and_(visibility_clause(viewer), workspace_clause(workspace))
+        if viewer.role == SUPER_ADMIN_ROLE:
+            stmt = stmt.where(or_(ActivityEvent.application_id.is_(None), about_visible_application))  # type: ignore[union-attr]
+        else:
+            stmt = stmt.where(ActivityEvent.application_id.is_not(None), about_visible_application)  # type: ignore[union-attr]
     if category is not None:
         stmt = stmt.where(ActivityEvent.category == category)
     if outcome is not None:
@@ -641,10 +653,18 @@ def _collect(
     return merged, boundary
 
 
-def facet_counts(session: Session, organization_id: uuid.UUID, since: datetime) -> dict[str, dict[str, int]]:
+def facet_counts(
+    session: Session,
+    organization_id: uuid.UUID,
+    since: datetime,
+    viewer: PlatformUser | None = None,
+    workspace: Workspace | None = None,
+) -> dict[str, dict[str, int]]:
     """ponytail: counts at most 500 rows per source — a busier time range
     under-counts. Swap for per-source GROUP BY queries if that's ever hit."""
-    items, _ = _collect(session, organization_id, since=since, cursor=None, limit=500)
+    items, _ = _collect(
+        session, organization_id, since=since, cursor=None, limit=500, viewer=viewer, workspace=workspace
+    )
     facets: dict[str, dict[str, int]] = {"category": {}, "outcome": {}, "application": {}, "total": {"all": len(items)}}
     for item in items:
         facets["category"][item.category] = facets["category"].get(item.category, 0) + 1
@@ -658,7 +678,8 @@ def facet_counts(session: Session, organization_id: uuid.UUID, since: datetime) 
 @router.get("/activity", response_model=ActivityPageRead)
 def list_activity(
     session: SessionDep,
-    admin: CurrentAdminDep,
+    user: CurrentAdminDep,
+    workspace: ActiveWorkspaceDep,
     application_id: uuid.UUID | None = None,
     category: str | None = None,
     outcome: str | None = None,
@@ -671,7 +692,7 @@ def list_activity(
     now = datetime.now(UTC)
     items, next_cursor = _collect(
         session,
-        admin.organization_id,
+        user.organization_id,
         since=now - timedelta(hours=since_hours),
         cursor=cursor,
         oldest_first=sort == "oldest",
@@ -680,9 +701,11 @@ def list_activity(
         category=category,
         outcome=outcome,
         q=q.strip() if q else None,
+        viewer=user,
+        workspace=workspace,
     )
     return ActivityPageRead(
         items=items,
         next_cursor=next_cursor,
-        facets=facet_counts(session, admin.organization_id, now - timedelta(hours=since_hours)),
+        facets=facet_counts(session, user.organization_id, now - timedelta(hours=since_hours), user, workspace),
     )

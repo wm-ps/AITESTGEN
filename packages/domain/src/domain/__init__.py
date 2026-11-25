@@ -26,10 +26,18 @@ from domain.action import Action
 from domain.activity_event import ActivityCategory, ActivityEvent, ActivityOutcome
 from domain.api_endpoint import ApiEndpoint
 from domain.application import Application, AuthMethod
+from domain.application_access import application_role
 from domain.application_environment import (
     ApplicationEnvironment,
     effective_application,
     find_environment,
+)
+from domain.application_member import (
+    APP_ADMIN_ROLE,
+    APP_ROLES,
+    CONTRIBUTOR_ROLE,
+    VIEWER_APP_ROLE,
+    ApplicationMember,
 )
 from domain.approved_domain import ApprovedDomain
 from domain.assertion import Assertion
@@ -58,10 +66,19 @@ from domain.journey import Journey, JourneyStatus
 from domain.journey_step import JourneyStep
 from domain.key_normalization import aggregation_key
 from domain.organization import Organization
+from domain.organization_limits import (
+    LIMITABLE_KEYS,
+    RETENTION_ORDER,
+    OrganizationLimits,
+    capped,
+    exceeded,
+    limits_for,
+    retention_too_short,
+)
 from domain.page import Page
 from domain.page_transition import PageTransition
 from domain.password_reset import PasswordReset
-from domain.platform_user import PlatformUser
+from domain.platform_user import STANDARD_USER_ROLE, SUPER_ADMIN_ROLE, PlatformUser
 from domain.recording_session import RecordingAuthMode, RecordingSession, RecordingSessionStatus
 from domain.run_target import (
     BROWSER_LABELS,
@@ -77,6 +94,14 @@ from domain.run_target import (
 from domain.scenario import Scenario, ScenarioSource, ScenarioType
 from domain.schedule import Schedule, ScheduleCadenceType
 from domain.synthetic_data_entry import SyntheticDataEntry
+from domain.team import (
+    DEFAULT_TEAM_NAME,
+    TEAM_ADMIN_ROLE,
+    TEAM_MEMBER_ROLE,
+    TEAM_ROLES,
+    Team,
+    TeamMember,
+)
 from domain.test_asset import TestAsset
 from domain.test_collection import TestCollection, TestCollectionMember
 from domain.test_collection_resolver import runnable_asset_external_ids, runnable_by_scenario
@@ -94,8 +119,39 @@ from domain.test_run_cancel import (
 )
 from domain.test_suite import TestSuite
 from domain.validation_rule import ValidationRule
+from domain.workspace_settings import (
+    WorkspaceSettings,
+    settings_for_application,
+    settings_for_person,
+    settings_for_team,
+)
 
 __all__ = [
+    "WorkspaceSettings",
+    "settings_for_application",
+    "settings_for_person",
+    "settings_for_team",
+    "LIMITABLE_KEYS",
+    "RETENTION_ORDER",
+    "OrganizationLimits",
+    "capped",
+    "exceeded",
+    "limits_for",
+    "retention_too_short",
+    "STANDARD_USER_ROLE",
+    "SUPER_ADMIN_ROLE",
+    "application_role",
+    "APP_ADMIN_ROLE",
+    "APP_ROLES",
+    "CONTRIBUTOR_ROLE",
+    "VIEWER_APP_ROLE",
+    "ApplicationMember",
+    "DEFAULT_TEAM_NAME",
+    "TEAM_ADMIN_ROLE",
+    "TEAM_MEMBER_ROLE",
+    "TEAM_ROLES",
+    "Team",
+    "TeamMember",
     "Action",
     "ActivityCategory",
     "ActivityEvent",

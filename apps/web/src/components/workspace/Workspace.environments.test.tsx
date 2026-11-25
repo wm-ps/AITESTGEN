@@ -58,7 +58,7 @@ function stubApi({ environments, onPost }: { environments: EnvironmentRead[]; on
   return calls
 }
 
-function renderWorkspace(activeTab: WorkspaceTab, role: 'member' | 'viewer' = 'member') {
+function renderWorkspace(activeTab: WorkspaceTab, role: 'app_admin' | 'contributor' | 'viewer' = 'app_admin') {
   return render(
     <PermissionsProvider value={role}>
       <Workspace applicationId="app-1" applicationName="Acme" applicationUrl="https://prod.example.com" activeTab={activeTab} onActiveTabChange={() => {}} />
@@ -155,12 +155,13 @@ describe('Workspace environments', () => {
     expect(options).toEqual(['Production', '+ Add new environment'])
   })
 
-  it('does not offer to add environments to a viewer', async () => {
+  it('keeps application settings, and so environments, for application admins', async () => {
     stubApi({ environments: [DEFAULT_ENV, UAT] })
     renderWorkspace('settings', 'viewer')
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Configure Environment Settings' }))
-    expect(await screen.findByTestId('environment-row-UAT')).toBeInTheDocument()
+    expect(await screen.findByText('Application settings are for Application Admins.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Configure Environment Settings' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Add environment' })).toBeNull()
   })
+
 })

@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
@@ -131,7 +132,9 @@ export function QuestionsDialog({
   onClose: () => void
 }) {
   useEscapeToClose(onClose)
-  return (
+  // Portaled to <body>: a card with `backdrop-filter` becomes the containing
+  // block of `position: fixed`, which would trap the overlay inside it.
+  return createPortal(
     <div style={{ ...modalOverlay, zIndex: 90, padding: 24 }}>
       <div
         role="dialog"
@@ -149,7 +152,8 @@ export function QuestionsDialog({
           <QuestionsView questions={questions} onAnswered={onAnswered} onOpenShot={onOpenShot} />
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

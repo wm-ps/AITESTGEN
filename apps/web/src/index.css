@@ -73,8 +73,32 @@ textarea:focus-visible,
   box-shadow: 0 0 0 3px var(--accent-wash) !important;
 }
 
-/* Borderless input living inside a bordered shell (data-bare): the shell
-   shows the ring, the input just drops its own outline. */
+/* A bordered shell around a bare (borderless) input: the shell is the field
+   (border, fill, radius, padding); callers set height/radius/width inline. */
+.field-shell {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0 12px;
+  border: 1px solid var(--border-2);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+input[data-bare] {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: var(--fg);
+}
+
+/* The shell shows the ring, the input just drops its own outline. */
 input[data-bare]:focus-visible {
   outline: none;
 }
@@ -1281,4 +1305,28 @@ textarea::placeholder {
 .marketing-close:hover {
   background: #e5e6e9;
   color: #16161a;
+}
+
+/* Rows and menu items on the Teams / sharing screens: the design's hover tint. */
+.table-row-hover:hover {
+  background: var(--row-hover) !important;
+}
+.menu-row-hover:hover,
+.icon-button-hover:hover {
+  background: var(--hover) !important;
+}
+.link-back {
+  color: var(--fg-3);
+}
+.link-back:hover {
+  color: var(--accent-2);
+}
+/* Type-ahead fields use a blue focus ring, as in the design. */
+.person-picker .field-shell:focus-within {
+  border-color: #1e96f0 !important;
+  box-shadow: 0 0 0 2px rgba(30, 150, 240, 0.18) !important;
+}
+.icon-button-danger:hover {
+  background: var(--hover) !important;
+  color: var(--bad) !important;
 }

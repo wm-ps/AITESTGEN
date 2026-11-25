@@ -19,7 +19,7 @@ import uuid
 from urllib.parse import urlsplit
 
 import httpx
-from domain import Application, ApplicationEnvironment, Schedule, TestRun
+from domain import APP_ADMIN_ROLE, Application, ApplicationEnvironment, Schedule, TestRun
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, field_validator
 from secrets_client import SecretRef, VaultSecretsClient
@@ -27,9 +27,10 @@ from sqlalchemy import func, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
+from api.access import application_role
 from api.activity import record_activity
 from api.approved_domains import require_approved_domain
-from api.auth import CurrentOrgIdDep, CurrentUserDep, NotViewerDep, SessionDep
+from api.auth import CurrentOrgIdDep, CurrentUserDep, SessionDep
 
 router = APIRouter(tags=["environments"])
 
@@ -98,9 +99,9 @@ def _main():
 
 
 def _org_application(
-    session: Session, organization_id: uuid.UUID, external_id: uuid.UUID
+    session: Session, organization_id: uuid.UUID, external_id: uuid.UUID, min_role: str | None = None
 ) -> Application:
-    return _main()._get_org_application(session, organization_id, external_id)
+    return _main()._get_org_application(session, organization_id, external_id, min_role)
 
 
 def _get_environment(
@@ -209,7 +210,8 @@ def list_environments(
     organization_id: CurrentOrgIdDep,
 ) -> list[EnvironmentRead]:
     application = _org_application(session, organization_id, external_id)
-    show_username = user.role != "viewer"
+    # A viewer sees the environments but not who signs in to them.
+    show_username = application_role(session, user, application) != "viewer"
     extras = session.exec(
         select(ApplicationEnvironment)
         .where(ApplicationEnvironment.application_id == application.id)
@@ -227,10 +229,10 @@ async def create_environment(
     external_id: uuid.UUID,
     payload: EnvironmentCreate,
     session: SessionDep,
-    user: NotViewerDep,
+    user: CurrentUserDep,
     organization_id: CurrentOrgIdDep,
 ) -> EnvironmentRead:
-    application = _org_application(session, organization_id, external_id)
+    application = _org_application(session, organization_id, external_id, APP_ADMIN_ROLE)
     url = _main()._normalize_application_url(payload.url)
     _valid_http_url(url, "deployed URL")
     if payload.login_url:
@@ -299,10 +301,10 @@ async def update_environment(
     environment_id: uuid.UUID,
     payload: EnvironmentUpdate,
     session: SessionDep,
-    user: NotViewerDep,
+    user: CurrentUserDep,
     organization_id: CurrentOrgIdDep,
 ) -> EnvironmentRead:
-    application = _org_application(session, organization_id, external_id)
+    application = _org_application(session, organization_id, external_id, APP_ADMIN_ROLE)
     environment = _get_environment(session, application, environment_id)
     sent = payload.model_fields_set
     # A run that already started keeps the URL/credentials it began with only
@@ -380,12 +382,12 @@ def delete_environment(
     external_id: uuid.UUID,
     environment_id: uuid.UUID,
     session: SessionDep,
-    user: NotViewerDep,
+    user: CurrentUserDep,
     organization_id: CurrentOrgIdDep,
 ) -> None:
     """Refused (409) while any run, or any live schedule, uses it — history is
     never left pointing at a deleted environment."""
-    application = _org_application(session, organization_id, external_id)
+    application = _org_application(session, organization_id, external_id, APP_ADMIN_ROLE)
     environment = _get_environment(session, application, environment_id)
     has_runs = (
         session.exec(select(TestRun.id).where(TestRun.environment_id == environment.id)).first()
@@ -436,16 +438,16 @@ def _reveal(session: Session, user, application: Application, source, label: str
 
 
 # Application Settings shows the password behind an eye icon to anyone who can
-# edit it (admins and members, never viewers — POST, so `block_viewer_writes`
-# covers it too). The older admin-only `/credentials/{id}/reveal` is untouched.
+# edit it: application admins only (see `api.access`). The older
+# `/credentials/{id}/reveal` is the same rule.
 @router.post("/applications/{external_id}/credentials/reveal", response_model=EnvironmentReveal)
 def reveal_default_credentials(
     external_id: uuid.UUID,
     session: SessionDep,
-    user: NotViewerDep,
+    user: CurrentUserDep,
     organization_id: CurrentOrgIdDep,
 ) -> EnvironmentReveal:
-    application = _org_application(session, organization_id, external_id)
+    application = _org_application(session, organization_id, external_id, APP_ADMIN_ROLE)
     return _reveal(session, user, application, application, application.name)
 
 
@@ -457,10 +459,10 @@ def reveal_environment_credentials(
     external_id: uuid.UUID,
     environment_id: uuid.UUID,
     session: SessionDep,
-    user: NotViewerDep,
+    user: CurrentUserDep,
     organization_id: CurrentOrgIdDep,
 ) -> EnvironmentReveal:
-    application = _org_application(session, organization_id, external_id)
+    application = _org_application(session, organization_id, external_id, APP_ADMIN_ROLE)
     environment = _get_environment(session, application, environment_id)
     return _reveal(
         session, user, application, environment, f"{application.name} ({environment.name})"

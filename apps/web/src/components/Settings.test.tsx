@@ -2,8 +2,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Settings } from './Settings'
 
-const ADMIN = { name: 'Ada Lovelace', email: 'ada@example.com', role: 'admin' as const }
-const MEMBER = { name: 'Bob Member', email: 'bob@example.com', role: 'member' as const }
+const ADMIN = { name: 'Ada Lovelace', email: 'ada@example.com', role: 'super_admin' as const }
+const MEMBER = { name: 'Bob Member', email: 'bob@example.com', role: 'standard_user' as const }
 
 const SETTINGS_BODY = {
   max_pages: 60,

@@ -20,6 +20,7 @@ from sqlmodel import col, func, select
 
 from api.auth import CurrentOrgIdDep, CurrentUserDep
 from api.explorer import RunRead, SessionDep, _owned_application, _to_read
+from api.organization_limits import explorer_overrides, org_maximums
 from api.temporal_client import get_temporal_client, has_pollers
 
 router = APIRouter(prefix="/explorer", tags=["authoring"])
@@ -90,7 +91,12 @@ async def start_authoring(
         # cases the user gets). A scenario that went wrong IS retried, as in
         # Explore: once with what went wrong, then rewritten from the page it
         # reached — dropping it at the first stumble lost planned test cases.
-        limits={**limits_snapshot(session), "proof_replays": 0},
+        limits={
+            **limits_snapshot(
+                session, org_maximums(session, application.organization_id), explorer_overrides(session, application)
+            ),
+            "proof_replays": 0,
+        },
         insights=(
             {"journey": {"id": str(payload.journey_id)}}
             if payload.journey_id

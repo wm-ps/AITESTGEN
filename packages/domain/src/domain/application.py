@@ -51,6 +51,19 @@ class Application(SQLModel, table=True):
             index=True,
         ),
     )
+    # The team (workspace) this application belongs to; NULL = a personal
+    # application, visible only to its adder and whoever it is shared with.
+    team_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("team.id"), nullable=True, index=True),
+    )
+    # Who added it ("Added by"). SET NULL if the user is later deleted; the
+    # name snapshot keeps the label (same pattern as `TestRun.triggered_by_name`).
+    created_by_id: uuid.UUID | None = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("platform_user.id", ondelete="SET NULL"), nullable=True),
+    )
+    created_by_name: str | None = Field(default=None)
     name: str
     url: str
     # Story: onboarding's Application URL is a home page, not necessarily the

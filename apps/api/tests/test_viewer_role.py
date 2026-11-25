@@ -1,19 +1,21 @@
-"""Read-only "viewer" role — enforced server-side.
+"""Read-only "viewer" role on an application — enforced server-side.
 
-- `block_viewer_writes` (one app-wide dependency): a viewer gets 403 on every
-  POST/PUT/PATCH/DELETE except logout — including actions that start
+- A viewer (an application role, granted when the application is shared) gets
+  403 on every write to that application — including actions that start
   background work and the recording-session token the recording WebSocket
   needs — while every read still works.
 - The Allure report and the test-suite download are reads a viewer may not
-  have (`NotViewerDep`).
-- Members and admins are unaffected.
-- Change role: admin-only, own Organization, shared role list, never leaves an
-  Organization without an admin (row-locked), effective on the next request.
+  have (they need a contributor).
+- Contributors and admins are unaffected.
+- Change org role: super-admin-only, own Organization, shared role list, never
+  leaves an Organization without a super admin (row-locked), effective on the
+  next request. Changing someone's application role is also immediate.
 
 Requires PostgreSQL + Vault + Temporal (creating an Application stores its
 credentials and starts discovery), same as test_test_runs.py.
 """
 
+import re
 import threading
 import uuid
 
@@ -86,8 +88,13 @@ def _application(admin: TestClient) -> dict:
 @pytest.fixture
 def org(monkeypatch: pytest.MonkeyPatch) -> dict:
     admin, admin_email = _admin(f"Org Viewer {uuid.uuid4().hex[:6]}")
-    viewer, viewer_email = _invite(admin, monkeypatch, "viewer")
-    member, member_email = _invite(admin, monkeypatch, "member")
+    viewer, viewer_email = _invite(admin, monkeypatch, "standard_user")
+    member, member_email = _invite(admin, monkeypatch, "standard_user")
+    application = _application(admin)
+    # Roles are per application: share it with one reader and one contributor.
+    for email, role in ((viewer_email, "viewer"), (member_email, "contributor")):
+        shared = admin.post(f"/applications/{application['id']}/access", json={"email": email, "role": role})
+        assert shared.status_code == 201, shared.text
     return {
         "admin": admin,
         "admin_email": admin_email,
@@ -95,8 +102,11 @@ def org(monkeypatch: pytest.MonkeyPatch) -> dict:
         "viewer_email": viewer_email,
         "member": member,
         "member_email": member_email,
-        "application": _application(admin),
+        "application": application,
     }
+
+
+_CHILD_ID = re.compile(r"^/(test-results|schedules|journeys|scenarios|test-collections)/|/test-runs/[0-9a-f-]{36}/")
 
 
 def _writes(app_id: str) -> list[tuple[str, str, dict | None]]:
@@ -104,14 +114,16 @@ def _writes(app_id: str) -> list[tuple[str, str, dict | None]]:
     background work if allowed."""
     some = str(uuid.uuid4())
     return [
-        ("POST", "/applications", {"name": "x", "url": "https://x.example.com"}),
-        ("POST", "/applications/test-connection", {"url": "https://x.example.com"}),
         ("POST", f"/applications/{app_id}/pause-discovery", None),
         ("POST", f"/applications/{app_id}/generate-suite", None),
         ("POST", f"/applications/{app_id}/test-runs", None),
         ("POST", f"/applications/{app_id}/test-runs/{some}/cancel", None),
         ("POST", f"/test-results/{some}/heal", None),
-        ("POST", f"/applications/{app_id}/schedules", {"name": "x"}),
+        (
+            "POST",
+            f"/applications/{app_id}/schedules",
+            {"name": "x", "cadence_type": "daily", "hour": 3, "minute": 0},
+        ),
         ("POST", f"/schedules/{some}/run-now", None),
         ("PATCH", f"/journeys/{some}", {"name": "x"}),
         ("DELETE", f"/scenarios/{some}", None),
@@ -120,7 +132,7 @@ def _writes(app_id: str) -> list[tuple[str, str, dict | None]]:
         (
             "POST",
             f"/applications/{app_id}/recordings/sessions",
-            {"auth_mode": "fresh", "name": "x"},
+            {"auth_mode": "logged_out", "name": "x"},
         ),
         # Test suites: every write is refused for a viewer (the id need not exist).
         ("POST", f"/applications/{app_id}/test-collections", {"name": "Smoke"}),
@@ -134,6 +146,12 @@ def test_viewer_cannot_write_anything(org: dict) -> None:
     app_id = org["application"]["id"]
     for method, path, body in _writes(app_id):
         response = org["viewer"].request(method, path, json=body)
+        if _CHILD_ID.search(path) or "{" in path:
+            # Addressed by the id of a row that doesn't exist: it can't be traced
+            # to an application, so it is a 404 — never a success. (The real-row
+            # 403s are in test_access_roles.py.)
+            assert response.status_code in (403, 404), (method, path, response.status_code, response.text)
+            continue
         assert response.status_code == 403, (method, path, response.status_code, response.text)
         assert response.json()["detail"] == "view-only access"
 
@@ -204,48 +222,61 @@ def test_signed_out_writes_still_reach_their_own_auth() -> None:
 # --- Change role ---------------------------------------------------------------
 
 
-def test_admin_changes_a_member_to_viewer_and_back(org: dict) -> None:
+def test_admin_promotes_a_user_to_super_admin_and_back(org: dict) -> None:
     path = f"/team/{org['member_email']}/role"
 
-    to_viewer = org["admin"].patch(path, json={"role": "viewer"})
-    assert to_viewer.status_code == 200, to_viewer.text
-    assert to_viewer.json()["role"] == "viewer"
-    to_member = org["admin"].patch(path, json={"role": "member"})
-    assert to_member.json()["role"] == "member"
+    promoted = org["admin"].patch(path, json={"role": "super_admin"})
+    assert promoted.status_code == 200, promoted.text
+    assert promoted.json()["role"] == "super_admin"
+    demoted = org["admin"].patch(path, json={"role": "standard_user"})
+    assert demoted.json()["role"] == "standard_user"
 
 
-def test_change_role_takes_effect_on_the_next_request(org: dict) -> None:
+def test_viewer_role_is_gone_at_the_organisation_level(org: dict) -> None:
+    assert org["admin"].patch(f"/team/{org['member_email']}/role", json={"role": "viewer"}).status_code == 422
+    assert org["admin"].post("/invites", json={"email": "x@example.com", "role": "viewer"}).status_code == 422
+
+
+def test_change_access_role_takes_effect_on_the_next_request(org: dict) -> None:
     app_id = org["application"]["id"]
     cancel = f"/applications/{app_id}/test-runs/{uuid.uuid4()}/cancel"
     assert org["viewer"].post(cancel).status_code == 403
 
-    org["admin"].patch(f"/team/{org['viewer_email']}/role", json={"role": "member"})
+    changed = org["admin"].patch(
+        f"/applications/{app_id}/access/{org['viewer_email']}", json={"role": "contributor"}
+    )
+    assert changed.status_code == 200, changed.text
 
     # Same session, no re-login: now reaches the route.
     assert org["viewer"].post(cancel).status_code == 404
+
+    # And taking the access away hides the application altogether.
+    org["admin"].delete(f"/applications/{app_id}/access/{org['viewer_email']}")
+    assert org["viewer"].post(cancel).status_code == 404
+    assert org["viewer"].get(f"/applications/{app_id}").status_code == 404
 
 
 def test_change_role_rejections(org: dict) -> None:
     admin = org["admin"]
     assert (
-        org["member"].patch(f"/team/{org['viewer_email']}/role", json={"role": "admin"}).status_code
+        org["member"].patch(f"/team/{org['viewer_email']}/role", json={"role": "super_admin"}).status_code
         == 403
     )
     assert (
         org["viewer"]
-        .patch(f"/team/{org['member_email']}/role", json={"role": "viewer"})
+        .patch(f"/team/{org['member_email']}/role", json={"role": "super_admin"})
         .status_code
         == 403
     )
     assert (
-        admin.patch(f"/team/{org['admin_email']}/role", json={"role": "member"}).status_code == 422
+        admin.patch(f"/team/{org['admin_email']}/role", json={"role": "standard_user"}).status_code == 422
     )
     assert (
         admin.patch(f"/team/{org['member_email']}/role", json={"role": "owner"}).status_code == 422
     )
     assert (
         admin.patch(
-            f"/team/nobody-{uuid.uuid4()}@example.com/role", json={"role": "viewer"}
+            f"/team/nobody-{uuid.uuid4()}@example.com/role", json={"role": "standard_user"}
         ).status_code
         == 404
     )
@@ -256,14 +287,14 @@ def test_change_role_is_scoped_to_the_callers_organization(
 ) -> None:
     other_admin, _ = _admin(f"Org Viewer Other {uuid.uuid4().hex[:6]}")
 
-    response = other_admin.patch(f"/team/{org['member_email']}/role", json={"role": "viewer"})
+    response = other_admin.patch(f"/team/{org['member_email']}/role", json={"role": "super_admin"})
 
     assert response.status_code == 404
     with Session(engine) as session:
         member = session.exec(
             select(PlatformUser).where(PlatformUser.email == org["member_email"])
         ).one()
-    assert member.role == "member"
+    assert member.role == "standard_user"
 
 
 def _admin_count(admin_email: str) -> int:
@@ -274,7 +305,7 @@ def _admin_count(admin_email: str) -> int:
         return len(
             session.exec(
                 select(PlatformUser).where(
-                    PlatformUser.organization_id == org_id, PlatformUser.role == "admin"
+                    PlatformUser.organization_id == org_id, PlatformUser.role == "super_admin"
                 )
             ).all()
         )
@@ -283,7 +314,7 @@ def _admin_count(admin_email: str) -> int:
 def test_two_admins_demoting_each_other_never_leave_the_org_without_an_admin(
     org: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    second_admin, second_email = _invite(org["admin"], monkeypatch, "admin")
+    second_admin, second_email = _invite(org["admin"], monkeypatch, "super_admin")
     first_admin, first_email = org["admin"], org["admin_email"]
 
     # Hold the Organization's admin rows locked, so both requests are
@@ -294,13 +325,13 @@ def test_two_admins_demoting_each_other_never_leave_the_org_without_an_admin(
         ).one()
         blocker.exec(
             select(PlatformUser)
-            .where(PlatformUser.organization_id == org_id, PlatformUser.role == "admin")
+            .where(PlatformUser.organization_id == org_id, PlatformUser.role == "super_admin")
             .with_for_update()
         ).all()
         results: dict[str, int] = {}
 
         def demote(client: TestClient, target: str, key: str) -> None:
-            results[key] = client.patch(f"/team/{target}/role", json={"role": "member"}).status_code
+            results[key] = client.patch(f"/team/{target}/role", json={"role": "standard_user"}).status_code
 
         threads = [
             threading.Thread(target=demote, args=(first_admin, second_email, "first")),

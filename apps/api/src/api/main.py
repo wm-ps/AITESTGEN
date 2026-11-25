@@ -13,13 +13,16 @@ import re
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Annotated, Literal
+from types import SimpleNamespace
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from ai_provider.hosted import HostedAIProvider
 from domain import (
+    APP_ADMIN_ROLE,
     CANCELLABLE_TEST_RUN_STATUSES,
+    CONTRIBUTOR_ROLE,
     DEFAULT_BROWSER,
     DEFAULT_VIEWPORT_HEIGHT,
     DEFAULT_VIEWPORT_WIDTH,
@@ -28,6 +31,7 @@ from domain import (
     ApiEndpoint,
     Application,
     ApplicationEnvironment,
+    ApplicationMember,
     AuthMethod,
     Component,
     ComponentLocator,
@@ -43,12 +47,16 @@ from domain import (
     JourneyStep,
     Page,
     PlatformUser,
+    RecordingSession,
     RetentionPeriod,
     Scenario,
     Schedule,
     ScreenshotCapture,
+    Team,
+    TeamMember,
     TestAsset,
     TestDataEntry,
+    WorkspaceSettings,
     TestResult,
     TestResultArtifact,
     TestCollection,
@@ -73,7 +81,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from object_store import ObjectStore
 from pydantic import BaseModel, Field, field_validator, model_validator
 from secrets_client import SecretRef, VaultSecretsClient
-from sqlalchemy import func, or_, update
+from sqlalchemy import delete, func, or_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
@@ -135,21 +143,40 @@ from api.activity import (
     record_activity,
 )
 from api.activity import router as activity_router
+from api.organization_limits import enforce_changed
+from api.workspace_settings import require_settings_editor, settings_row
+from api.organization_limits import router as organization_limits_router
+from api.teams import router as teams_router
+from api.application_access import router as application_access_router
 from api.approved_domains import approved_hosts, require_approved_domain, url_is_approved
 from api.approved_domains import router as approved_domains_router
+from api.access import (
+    ActiveWorkspaceDep,
+    Workspace,
+    access_summary,
+    actor,
+    add_application_admin,
+    admin_clause,
+    application_role,
+    default_team_id,
+    require_application,
+    visibility_clause,
+    workspace_clause,
+)
 from api.auth import (
     COOKIE_NAME,
     DUMMY_PASSWORD_HASH,
     ROLES,
+    STANDARD_USER_ROLE,
+    SUPER_ADMIN_ROLE,
     CurrentAdminDep,
     CurrentOrgIdDep,
     CurrentUserDep,
-    NotViewerDep,
-    block_viewer_writes,
     check_new_password,
     clear_session_cookie,
     end_session,
     issue_session_cookie,
+    role_name,
     verify_password,
 )
 from api.coverage_report import build_coverage_report
@@ -200,13 +227,10 @@ from api.test_suite_export import (
 
 logger = logging.getLogger(__name__)
 
-# `block_viewer_writes` runs before every route: a "viewer" can make no
-# POST/PUT/PATCH/DELETE (logout aside), so any endpoint — present or future —
-# is read-only for them without opting in.
-app = FastAPI(
-    title="Application Intelligence Platform API",
-    dependencies=[Depends(block_viewer_writes)],
-)
+# Who may do what with an application is decided where the application is looked
+# up (`_get_org_application` and the child-row helpers -> `api.access`), not by an
+# app-wide dependency.
+app = FastAPI(title="Application Intelligence Platform API")
 
 # Allowed browser origins for the SPA. Overridable via CORS_ALLOWED_ORIGINS
 # (comma-separated) so each environment (dev/staging/prod) can set its own
@@ -244,6 +268,9 @@ app.add_middleware(
 SessionDep = Annotated[Session, Depends(get_session)]
 
 app.include_router(activity_router)
+app.include_router(organization_limits_router)
+app.include_router(teams_router)
+app.include_router(application_access_router)
 app.include_router(approved_domains_router)
 # Application Settings → Environments (environments.py).
 app.include_router(environments_router)
@@ -350,7 +377,7 @@ def me(user: CurrentUserDep) -> UserRead:
 
 class InviteCreate(BaseModel):
     email: str
-    role: str = "member"
+    role: str = STANDARD_USER_ROLE
 
     @model_validator(mode="after")
     def _valid_role(self) -> InviteCreate:
@@ -380,7 +407,7 @@ def send_invite(
         raise HTTPException(status_code=409, detail="a user with this email already exists")
 
     invite, token = create_invite(session, organization_id, admin.id, payload.email, payload.role)
-    record_activity(session, admin, "settings", f"Invited {payload.email} as {payload.role}")
+    record_activity(session, admin, "settings", f"Invited {payload.email} as {role_name(payload.role)}")
     session.commit()
     send_invite_email(payload.email, token)
     return InviteRead(
@@ -440,7 +467,7 @@ def accept_invite_route(
         user = accept_invite(session, payload.token, payload.name, payload.password)
     except InviteAcceptError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    record_activity(session, user, "account", f"{user.name} ({user.email}) joined as {user.role}")
+    record_activity(session, user, "account", f"{user.name} ({user.email}) joined as {role_name(user.role)}")
     session.commit()
     issue_session_cookie(response, user)
     return _to_user_read(user)
@@ -463,6 +490,8 @@ class TeamMemberRead(BaseModel):
     # last_active_at column shipped (see `api.auth.current_user`) — an
     # invited-but-never-signed-in member has no session activity yet.
     last_active_at: datetime | None = None
+    # The teams this person is in (a super admin can enter every team).
+    teams: list[str] = []
 
 
 @app.get("/team", response_model=list[TeamMemberRead])
@@ -476,6 +505,14 @@ def list_team(
         .where(PlatformUser.organization_id == organization_id)
         .order_by(PlatformUser.created_at)  # type: ignore[arg-type]
     ).all()
+    teams_of: dict[uuid.UUID, list[str]] = {}
+    for user_id, team_name in session.exec(
+        select(TeamMember.user_id, Team.name)
+        .join(Team, col(Team.id) == col(TeamMember.team_id))
+        .where(Team.organization_id == organization_id)
+        .order_by(Team.name)
+    ).all():
+        teams_of.setdefault(user_id, []).append(team_name)
     return [
         TeamMemberRead(
             name=m.name,
@@ -483,9 +520,88 @@ def list_team(
             role=m.role,
             created_at=m.created_at,
             last_active_at=m.last_active_at,
+            teams=teams_of.get(m.id, []),
         )
         for m in members
     ]
+
+
+class RemovalImpactRead(BaseModel):
+    """What removing a person takes with it — shown in the confirmation."""
+
+    name: str
+    # Their personal applications are deleted with them (the retention job purges them).
+    personal_applications: int
+    # People who lose access to those personal applications.
+    people_losing_access: int
+    # Applications they added in teams stay with the team, under its team admins.
+    team_applications_added: int
+    teams: int
+    # Schedules they created keep running but have no one to email the report to.
+    schedules_without_recipient: int
+
+
+def _removal_impact(session: Session, member: PlatformUser) -> RemovalImpactRead:
+    personal = select(Application.id).where(
+        col(Application.team_id).is_(None),
+        Application.created_by_id == member.id,
+        col(Application.deleted_at).is_(None),
+    )
+    return RemovalImpactRead(
+        name=member.name,
+        personal_applications=session.exec(select(func.count()).select_from(personal.subquery())).one(),
+        people_losing_access=session.exec(
+            select(func.count(func.distinct(ApplicationMember.user_id))).where(
+                col(ApplicationMember.application_id).in_(personal), ApplicationMember.user_id != member.id
+            )
+        ).one(),
+        team_applications_added=session.exec(
+            select(func.count(Application.id)).where(  # type: ignore[arg-type]
+                col(Application.team_id).is_not(None),
+                Application.created_by_id == member.id,
+                col(Application.deleted_at).is_(None),
+            )
+        ).one(),
+        teams=session.exec(select(func.count(TeamMember.id)).where(TeamMember.user_id == member.id)).one(),  # type: ignore[arg-type]
+        schedules_without_recipient=session.exec(
+            select(func.count(Schedule.id)).where(  # type: ignore[arg-type]
+                Schedule.created_by_user_id == member.id, col(Schedule.deleted_at).is_(None)
+            )
+        ).one(),
+    )
+
+
+def _member_in_org(session: Session, organization_id: uuid.UUID, email: str) -> PlatformUser:
+    member = session.exec(
+        select(PlatformUser).where(PlatformUser.email == email, PlatformUser.organization_id == organization_id)
+    ).first()
+    if member is None:
+        raise HTTPException(status_code=404, detail="member not found")
+    return member
+
+
+@app.get("/team/{email}/removal-impact", response_model=RemovalImpactRead)
+def get_removal_impact(
+    email: str,
+    session: SessionDep,
+    _admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> RemovalImpactRead:
+    return _removal_impact(session, _member_in_org(session, organization_id, email))
+
+
+def _lock_super_admins(session: Session, organization_id: uuid.UUID) -> list[PlatformUser]:
+    """Locks every super admin row of the organisation (in id order, the same
+    for every caller, so they can't deadlock) before anyone counts them."""
+    return list(
+        session.exec(
+            select(PlatformUser)
+            .where(PlatformUser.organization_id == organization_id, PlatformUser.role == SUPER_ADMIN_ROLE)
+            .order_by(PlatformUser.id)  # type: ignore[arg-type]
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        ).all()
+    )
 
 
 @app.delete("/team/{email}", status_code=204)
@@ -495,21 +611,91 @@ def remove_team_member(
     admin: CurrentAdminDep,
     organization_id: CurrentOrgIdDep,
 ) -> None:
-    # No separate "last admin" guard: this endpoint already requires an
-    # admin caller, and self-removal is blocked outright below — so the only
-    # way to reach the delete is a *different* admin acting on someone else,
-    # which means at least one admin (the caller) always remains after it.
+    """Removes a person from Vantage for good. The confirmation dialog (fed by
+    `removal-impact`) is the user's consent; this does what it warned about:
+    their personal applications are soft-deleted, their team and application
+    access goes, and the account is deleted. Applications they added in teams
+    stay with the team, and a signed-in session or unused recording link they
+    held stops working."""
     if email == admin.email:
         raise HTTPException(status_code=422, detail="you cannot remove yourself")
-    member = session.exec(
-        select(PlatformUser).where(
-            PlatformUser.email == email, PlatformUser.organization_id == organization_id
+    # Locked first: two super admins removing each other can't empty the organisation.
+    super_admins = _lock_super_admins(session, organization_id)
+    if admin.id not in {a.id for a in super_admins}:
+        raise HTTPException(status_code=403, detail="admin role required")
+    member = _member_in_org(session, organization_id, email)
+    if member.role == SUPER_ADMIN_ROLE and len(super_admins) <= 1:
+        raise HTTPException(status_code=409, detail="an organization needs at least one admin")
+    impact = _removal_impact(session, member)
+    now = datetime.now(UTC)
+    for application in session.exec(
+        select(Application).where(
+            col(Application.team_id).is_(None),
+            Application.created_by_id == member.id,
+            col(Application.deleted_at).is_(None),
         )
-    ).first()
-    if member is None:
-        raise HTTPException(status_code=404, detail="member not found")
+    ).all():
+        application.deleted_at = now
+        session.add(application)
+    session.exec(  # type: ignore[call-overload]
+        update(RecordingSession)
+        .where(RecordingSession.created_by_id == member.id, RecordingSession.status == "pending")
+        .values(status="cancelled")
+    )
+    # An invite they sent must not outlive them: it could still create an account (even a super admin's).
+    session.exec(  # type: ignore[call-overload]
+        delete(Invite).where(Invite.invited_by_id == member.id, col(Invite.used_at).is_(None))
+    )
+    record_activity(
+        session,
+        admin,
+        "settings",
+        f"Removed {member.name} ({member.email}) from Vantage",
+        details={
+            "info": [
+                {"label": "Personal applications deleted", "value": str(impact.personal_applications)},
+                {"label": "Team applications kept with their team", "value": str(impact.team_applications_added)},
+                {"label": "Teams left", "value": str(impact.teams)},
+            ]
+        },
+    )
     session.delete(member)
-    record_activity(session, admin, "settings", f"Removed {member.name} ({member.email}) from the team")
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=409, detail="This person can't be removed yet — something still refers to them."
+        ) from None
+
+
+class StepDownPayload(BaseModel):
+    successor_email: str
+
+
+@app.post("/team/step-down", status_code=204)
+def step_down_as_super_admin(
+    payload: StepDownPayload,
+    session: SessionDep,
+    admin: CurrentAdminDep,
+    organization_id: CurrentOrgIdDep,
+) -> None:
+    """"Make Super Admin and step down": the successor becomes a super admin and
+    the caller a user, in one transaction, so the organisation is never left
+    without one — and the only super admin can hand over without the 409."""
+    if payload.successor_email == admin.email:
+        raise HTTPException(status_code=422, detail="choose someone else as the new super admin")
+    super_admins = _lock_super_admins(session, organization_id)
+    if admin.id not in {a.id for a in super_admins}:
+        raise HTTPException(status_code=403, detail="admin role required")
+    successor = _member_in_org(session, organization_id, payload.successor_email)
+    if successor.role != SUPER_ADMIN_ROLE:
+        record_activity(session, admin, "settings", f"Made {successor.name} a super admin")
+        successor.role = SUPER_ADMIN_ROLE
+        session.add(successor)
+    record_activity(session, admin, "settings", f"{admin.name} stepped down as a super admin")
+    admin.role = STANDARD_USER_ROLE
+    session.add(admin)
     session.commit()
 
 
@@ -545,7 +731,7 @@ def change_team_member_role(
         select(PlatformUser)
         .where(
             PlatformUser.organization_id == organization_id,
-            PlatformUser.role == "admin",
+            PlatformUser.role == SUPER_ADMIN_ROLE,
         )
         .order_by(PlatformUser.id)  # type: ignore[arg-type]
         .with_for_update()
@@ -562,11 +748,11 @@ def change_team_member_role(
     ).first()
     if member is None:
         raise HTTPException(status_code=404, detail="member not found")
-    if member.role == "admin" and payload.role != "admin" and len(admins) <= 1:
+    if member.role == SUPER_ADMIN_ROLE and payload.role != SUPER_ADMIN_ROLE and len(admins) <= 1:
         raise HTTPException(status_code=409, detail="an organization needs at least one admin")
     if member.role != payload.role:
         record_activity(
-            session, admin, "settings", f"Changed {member.name}'s role from {member.role} to {payload.role}"
+            session, admin, "settings", f"Changed {member.name}'s role from {role_name(member.role)} to {role_name(payload.role)}"
         )
     member.role = payload.role
     session.add(member)
@@ -750,6 +936,17 @@ class ApplicationRead(BaseModel):
     # the Applications list then won't open it. Only the list/home responses
     # compute it; every other response leaves the default.
     domain_approved: bool = True
+    # The caller's role on this application: app_admin | contributor | viewer
+    # (api.access). The UI hides what that role may not do; the API enforces it.
+    my_role: str | None = None
+    # "Added by" — the person who onboarded it (None for applications that
+    # predate teams).
+    added_by_name: str | None = None
+    added_by_me: bool = False
+    # Shared with the caller (a grant that isn't their own adder row), and with how
+    # many people besides its adder — "Shared with me" / "Private" in the list.
+    shared_with_me: bool = False
+    shared_with_count: int = 0
 
 
 class HealthRead(BaseModel):
@@ -852,6 +1049,7 @@ def _coverage_counts(session: Session, discovery_run: DiscoveryRun) -> dict[str,
 def _to_application_read(
     session: Session, application: Application, discovery_run: DiscoveryRun | None
 ) -> ApplicationRead:
+    added_by_me, shared_with_me, shared_with_count = access_summary(session, actor(session), application)
     return ApplicationRead(
         id=application.external_id,
         name=application.name,
@@ -884,6 +1082,11 @@ def _to_application_read(
             if discovery_run and discovery_run.status == "complete"
             else None
         ),
+        my_role=application_role(session, actor(session), application),
+        added_by_name=application.created_by_name,
+        added_by_me=added_by_me,
+        shared_with_me=shared_with_me,
+        shared_with_count=shared_with_count,
     )
 
 
@@ -941,6 +1144,7 @@ async def create_application(
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
     user: CurrentUserDep,
+    workspace: ActiveWorkspaceDep,
 ) -> ApplicationRead:
     require_approved_domain(session, organization_id, payload.url)
     if payload.login_url:
@@ -974,6 +1178,14 @@ async def create_application(
 
     application = Application(
         organization_id=organization_id,
+        # The active workspace decides: a team, or personal. Without one (an older
+        # client) it lands in the Default team, or is personal for someone outside
+        # it. The adder is its admin; nobody else sees it until it is shared.
+        team_id=(
+            default_team_id(session, user)
+            if workspace is None
+            else (None if workspace.team is None else workspace.team.id)
+        ),
         name=payload.name,
         url=payload.url,
         login_url=payload.login_url,
@@ -986,6 +1198,7 @@ async def create_application(
     )
     session.add(application)
     session.flush()
+    add_application_admin(session, application, user)
     # What was entered while onboarding — never the credentials themselves.
     record_activity(
         session,
@@ -1186,8 +1399,15 @@ def _latest_discovery_run(session: Session, application_id: uuid.UUID) -> Discov
 
 
 def _get_org_application(
-    session: Session, organization_id: uuid.UUID, external_id: uuid.UUID
+    session: Session,
+    organization_id: uuid.UUID,
+    external_id: uuid.UUID,
+    min_role: str | None = None,
 ) -> Application:
+    """The one lookup every application route goes through: the application
+    in the caller's organisation, only if they may see it (api.access). 404 for
+    a missing or hidden application alike; 403 when their role is below
+    `min_role` (default: read -> viewer, write -> contributor)."""
     application = session.exec(
         select(Application).where(
             Application.external_id == external_id,
@@ -1195,9 +1415,7 @@ def _get_org_application(
             Application.deleted_at.is_(None),  # type: ignore[attr-defined]
         )
     ).first()
-    if application is None:
-        raise HTTPException(status_code=404, detail="application not found")
-    return application
+    return require_application(session, application, organization_id, "application not found", min_role)
 
 
 def _get_environment_or_404(
@@ -1236,12 +1454,16 @@ def get_application(
 def list_applications(
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
+    workspace: ActiveWorkspaceDep,
 ) -> list[ApplicationRead]:
     applications = session.exec(
         select(Application)
         .where(
             Application.organization_id == organization_id,
             Application.deleted_at.is_(None),  # type: ignore[attr-defined]
+            visibility_clause(user),
+            workspace_clause(workspace),
         )
         .order_by(Application.created_at.desc())  # type: ignore[arg-type]
     ).all()
@@ -1260,6 +1482,8 @@ def list_applications(
 async def get_home(
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
+    workspace: ActiveWorkspaceDep,
 ) -> list[HomeApplicationRead]:
     """Home screen used to poll `/applications` plus journeys/scenarios/
     test-suites per application (1+3N calls every tick). One aggregate
@@ -1290,6 +1514,8 @@ async def get_home(
         .where(
             Application.organization_id == organization_id,
             Application.deleted_at.is_(None),  # type: ignore[attr-defined]
+            visibility_clause(user),
+            workspace_clause(workspace),
         )
         .order_by(Application.created_at.desc())  # type: ignore[arg-type]
     ).all()
@@ -1502,12 +1728,16 @@ class GlobalStatsRead(BaseModel):
 def get_overview_stats(
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
+    user: CurrentUserDep,
+    workspace: ActiveWorkspaceDep,
 ) -> GlobalStatsRead:
     since = datetime.now(UTC) - timedelta(days=7)
     app_ids = session.exec(
         select(Application.id).where(
             Application.organization_id == organization_id,
             Application.deleted_at.is_(None),  # type: ignore[attr-defined]
+            visibility_clause(user),
+            workspace_clause(workspace),
         )
     ).all()
     if not app_ids:
@@ -1622,10 +1852,10 @@ def rename_application(
     external_id: uuid.UUID,
     payload: ApplicationRenamePayload,
     session: SessionDep,
-    admin: CurrentAdminDep,
+    admin: CurrentUserDep,
     organization_id: CurrentOrgIdDep,
 ) -> ApplicationRead:
-    application = _get_org_application(session, organization_id, external_id)
+    application = _get_org_application(session, organization_id, external_id, APP_ADMIN_ROLE)
     if application.name != payload.name:
         record_activity(
             session,
@@ -1647,7 +1877,7 @@ def update_application_credentials(
     external_id: uuid.UUID,
     payload: ApplicationCredentialsUpdatePayload,
     session: SessionDep,
-    user: NotViewerDep,
+    user: CurrentUserDep,
     organization_id: CurrentOrgIdDep,
 ) -> ApplicationRead:
     """Rotates a standard_login Application's stored credential in place —
@@ -1655,7 +1885,7 @@ def update_application_credentials(
     minting a new one, no login validation before saving. sso_session_reuse
     apps aren't supported here (a session_state blob, not a username/
     password, isn't what this form collects)."""
-    application = _get_org_application(session, organization_id, external_id)
+    application = _get_org_application(session, organization_id, external_id, APP_ADMIN_ROLE)
     if application.auth_method not in ("standard_login", "none"):
         raise HTTPException(
             status_code=422, detail="credential update is only supported for standard_login"
@@ -1697,7 +1927,7 @@ def update_requires_login(
     external_id: uuid.UUID,
     payload: RequiresLoginPayload,
     session: SessionDep,
-    admin: CurrentAdminDep,
+    admin: CurrentUserDep,
     organization_id: CurrentOrgIdDep,
 ) -> ApplicationRead:
     """Settings' "Requires sign-in" switch, the same choice as the Add
@@ -1705,7 +1935,7 @@ def update_requires_login(
     Explorer and test runs open it directly; its saved login is replaced by
     the empty session every "none" app holds). On needs a username and
     password, saved with "Add credentials", which turns sign-in on itself."""
-    application = _get_org_application(session, organization_id, external_id)
+    application = _get_org_application(session, organization_id, external_id, APP_ADMIN_ROLE)
     if application.auth_method not in ("standard_login", "none"):
         raise HTTPException(status_code=422, detail="Only username-and-password apps have this switch")
     if payload.requires_login and application.auth_method == "none":
@@ -1742,15 +1972,20 @@ def update_requires_login(
 @app.get("/credentials", response_model=list[CredentialListEntry])
 def list_credentials(
     session: SessionDep,
-    _admin: CurrentAdminDep,
+    user: CurrentUserDep,
     organization_id: CurrentOrgIdDep,
+    workspace: ActiveWorkspaceDep,
 ) -> list[CredentialListEntry]:
+    # Only the applications this user administers (an app admin, a team admin of
+    # its team, or a super admin) — the same people who may reveal the password.
     applications = session.exec(
         select(Application)
         .where(
             Application.organization_id == organization_id,
             Application.deleted_at.is_(None),  # type: ignore[attr-defined]
             col(Application.auth_method).in_(("standard_login", "none")),
+            admin_clause(user),
+            workspace_clause(workspace),
         )
         .order_by(Application.created_at.desc())  # type: ignore[arg-type]
     ).all()
@@ -1785,10 +2020,10 @@ class CredentialReveal(BaseModel):
 def reveal_credential(
     external_id: uuid.UUID,
     session: SessionDep,
-    admin: CurrentAdminDep,
+    admin: CurrentUserDep,
     organization_id: CurrentOrgIdDep,
 ) -> CredentialReveal:
-    application = _get_org_application(session, organization_id, external_id)
+    application = _get_org_application(session, organization_id, external_id, APP_ADMIN_ROLE)
     if application.auth_method != "standard_login":
         raise HTTPException(status_code=422, detail="credential reveal is only supported for standard_login")
     creds = json.loads(VaultSecretsClient().resolve(SecretRef(path=application.secret_ref)))
@@ -1812,10 +2047,10 @@ class CredentialVerifyResult(BaseModel):
 async def verify_credential(
     external_id: uuid.UUID,
     session: SessionDep,
-    _admin: CurrentAdminDep,
+    _admin: CurrentUserDep,
     organization_id: CurrentOrgIdDep,
 ) -> CredentialVerifyResult:
-    application = _get_org_application(session, organization_id, external_id)
+    application = _get_org_application(session, organization_id, external_id, APP_ADMIN_ROLE)
     async with httpx.AsyncClient(follow_redirects=True, timeout=5.0) as client:
         try:
             await _check_reachable(client, application.url)
@@ -1828,7 +2063,7 @@ async def verify_credential(
 async def delete_application(
     external_id: uuid.UUID,
     session: SessionDep,
-    admin: CurrentAdminDep,
+    admin: CurrentUserDep,
     organization_id: CurrentOrgIdDep,
 ) -> None:
     """Soft delete only (AD-15 disclosed scope) — child rows (discovery_run,
@@ -1844,7 +2079,7 @@ async def delete_application(
     Application-active check is the backstop that makes a missed pause
     harmless (see that activity's docstring). In-progress executions this
     schedule already fired are deliberately NOT cancelled."""
-    application = _get_org_application(session, organization_id, external_id)
+    application = _get_org_application(session, organization_id, external_id, APP_ADMIN_ROLE)
     discovery_run = _latest_discovery_run(session, application.id)
     if discovery_run is not None and discovery_run.status == "running":
         raise HTTPException(status_code=409, detail="explore run is still in progress")
@@ -1922,12 +2157,7 @@ def list_captures(
         select(DiscoveryRun).where(DiscoveryRun.external_id == external_id)
     ).first()
     application = session.get(Application, discovery_run.application_id) if discovery_run else None
-    if (
-        discovery_run is None
-        or application is None
-        or application.organization_id != organization_id
-    ):
-        raise HTTPException(status_code=404, detail="explore run not found")
+    require_application(session, application, organization_id, "explore run not found")
 
     # There is no single "capture" table (Story 2.2 rework, no generic
     # Evidence) — the live feed is a union across the typed capture tables,
@@ -1992,12 +2222,7 @@ def get_discovery_report(
         select(DiscoveryRun).where(DiscoveryRun.external_id == external_id)
     ).first()
     application = session.get(Application, discovery_run.application_id) if discovery_run else None
-    if (
-        discovery_run is None
-        or application is None
-        or application.organization_id != organization_id
-    ):
-        raise HTTPException(status_code=404, detail="explore run not found")
+    require_application(session, application, organization_id, "explore run not found")
     return build_coverage_report(session, discovery_run)
 
 
@@ -2036,8 +2261,7 @@ def _get_org_journey(
 ) -> Journey:
     journey = session.exec(select(Journey).where(Journey.external_id == external_id)).first()
     application = session.get(Application, journey.application_id) if journey else None
-    if journey is None or application is None or application.organization_id != organization_id:
-        raise HTTPException(status_code=404, detail="journey not found")
+    require_application(session, application, organization_id, "journey not found")
     return journey
 
 
@@ -2413,8 +2637,7 @@ def _get_org_test_data_entry(
         select(TestDataEntry).where(TestDataEntry.external_id == external_id)
     ).first()
     application = session.get(Application, entry.application_id) if entry else None
-    if entry is None or application is None or application.organization_id != organization_id:
-        raise HTTPException(status_code=404, detail="test data entry not found")
+    require_application(session, application, organization_id, "test data entry not found")
     return entry
 
 
@@ -2599,13 +2822,7 @@ def _get_org_scenario(
     scenario = session.exec(select(Scenario).where(Scenario.external_id == external_id)).first()
     journey = session.get(Journey, scenario.journey_id) if scenario else None
     application = session.get(Application, journey.application_id) if journey else None
-    if (
-        scenario is None
-        or journey is None
-        or application is None
-        or application.organization_id != organization_id
-    ):
-        raise HTTPException(status_code=404, detail="scenario not found")
+    require_application(session, application, organization_id, "scenario not found")
     return scenario, journey
 
 
@@ -3682,7 +3899,7 @@ def download_test_suite_project(
     external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
-    _not_viewer: NotViewerDep,
+    _not_viewer: CurrentUserDep,
     user: CurrentUserDep,
     environment_id: uuid.UUID | None = None,
     test_collection_id: uuid.UUID | None = None,
@@ -3690,7 +3907,7 @@ def download_test_suite_project(
     # Same org-scoped lookup as every other Application endpoint (AD-12) —
     # never by external_id alone, or one Organization could download
     # another's generated tests (AC 6).
-    application = _get_org_application(session, organization_id, external_id)
+    application = _get_org_application(session, organization_id, external_id, CONTRIBUTOR_ROLE)
     # No `environment_id` = the application's own (default) environment,
     # exactly as before. Otherwise the project is built for that environment:
     # its URL, login URL and auth, and the test code's default-host URLs
@@ -3875,7 +4092,7 @@ def update_execution_policy(
     external_id: uuid.UUID,
     payload: ExecutionPolicyUpdate,
     session: SessionDep,
-    admin: CurrentAdminDep,
+    admin: CurrentUserDep,
     organization_id: CurrentOrgIdDep,
 ) -> ExecutionPolicyRead:
     """Upsert — without this, "Run All Tests" has nothing to validate a run
@@ -3883,7 +4100,7 @@ def update_execution_policy(
     review). `version` is bumped on every field change, never on a no-op
     PUT, so a `TestRun`'s `execution_policy_version` snapshot stays a
     meaningful "was this the policy in effect" marker."""
-    application = _get_org_application(session, organization_id, external_id)
+    application = _get_org_application(session, organization_id, external_id, APP_ADMIN_ROLE)
     policy = session.exec(
         select(ExecutionPolicy).where(ExecutionPolicy.application_id == application.id)
     ).first()
@@ -4485,13 +4702,9 @@ def _get_org_schedule(
         )
     ).first()
     application = session.get(Application, schedule.application_id) if schedule else None
-    if (
-        schedule is None
-        or application is None
-        or application.organization_id != organization_id
-        or application.deleted_at is not None
-    ):
-        raise HTTPException(status_code=404, detail="schedule not found")
+    if application is not None and application.deleted_at is not None:
+        application = None
+    require_application(session, application, organization_id, "schedule not found")
     return schedule
 
 
@@ -5289,13 +5502,13 @@ def get_test_run_allure_report(
     test_run_external_id: uuid.UUID,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
-    _not_viewer: NotViewerDep,
+    _not_viewer: CurrentUserDep,
 ) -> AllureReportUrlRead:
     """A short-lived presigned URL for the run's single-file Allure report.
     Callers link to the app's own `/applications/:id/test-runs/:id/report`
     route (which signs in first, then calls this), never to the presigned
     URL directly — so a shared/emailed link never expires."""
-    application = _get_org_application(session, organization_id, external_id)
+    application = _get_org_application(session, organization_id, external_id, CONTRIBUTOR_ROLE)
     test_run = session.exec(
         select(TestRun).where(
             TestRun.external_id == test_run_external_id,
@@ -5707,13 +5920,7 @@ def list_test_result_artifacts(
     application = (
         session.get(Application, test_run.application_id) if test_run is not None else None
     )
-    if (
-        test_result is None
-        or test_run is None
-        or application is None
-        or application.organization_id != organization_id
-    ):
-        raise HTTPException(status_code=404, detail="test result not found")
+    require_application(session, application, organization_id, "test result not found")
 
     artifacts = session.exec(
         select(TestResultArtifact).where(TestResultArtifact.test_result_id == test_result.id)
@@ -5763,13 +5970,7 @@ async def heal_test_result(
     application = (
         session.get(Application, test_run.application_id) if test_run is not None else None
     )
-    if (
-        test_result is None
-        or test_run is None
-        or application is None
-        or application.organization_id != organization_id
-    ):
-        raise HTTPException(status_code=404, detail="test result not found")
+    require_application(session, application, organization_id, "test result not found")
 
     discovery_settings = generation_settings_for(session, application.id)
     # Same rule as `heal_test_activity`: a heal rewrites the one test every
@@ -5975,14 +6176,7 @@ def _get_org_test_asset(
     test_suite = session.get(TestSuite, test_asset.test_suite_id) if test_asset else None
     journey = session.get(Journey, test_suite.journey_id) if test_suite else None
     application = session.get(Application, journey.application_id) if journey else None
-    if (
-        test_asset is None
-        or test_suite is None
-        or journey is None
-        or application is None
-        or application.organization_id != organization_id
-    ):
-        raise HTTPException(status_code=404, detail="test asset not found")
+    require_application(session, application, organization_id, "test asset not found")
     return test_asset
 
 
@@ -6332,9 +6526,25 @@ def _to_settings_read(settings: DiscoverySettings) -> SettingsRead:
     )
 
 
+def _settings_in_force(
+    session: Session, user: PlatformUser, workspace: Workspace | None
+) -> tuple[Any, WorkspaceSettings | None]:
+    """The organisation default row, or — in a workspace — a plain object holding
+    its values with that workspace's own on top (never a database row, so
+    changing it can't touch the default)."""
+    default = session.exec(select(DiscoverySettings)).one()
+    row = settings_row(session, user, workspace, create=False)
+    if workspace is None:
+        return default, None
+    values = {k: getattr(default, k) for k in SettingsRead.model_fields}
+    values.update({k: v for k, v in (row.discovery if row else {}).items() if k in values})
+    return SimpleNamespace(**values), row
+
+
 @app.get("/settings", response_model=SettingsRead)
-def get_settings(session: SessionDep, _admin: CurrentAdminDep) -> SettingsRead:
-    settings = session.exec(select(DiscoverySettings)).one()
+def get_settings(session: SessionDep, user: CurrentUserDep, workspace: ActiveWorkspaceDep) -> SettingsRead:
+    require_settings_editor(session, user, workspace)
+    settings, _ = _settings_in_force(session, user, workspace)
     return _to_settings_read(settings)
 
 
@@ -6342,9 +6552,14 @@ def get_settings(session: SessionDep, _admin: CurrentAdminDep) -> SettingsRead:
 def update_settings(
     payload: SettingsUpdate,
     session: SessionDep,
-    admin: CurrentAdminDep,
+    admin: CurrentUserDep,
+    workspace: ActiveWorkspaceDep,
 ) -> SettingsRead:
-    settings = session.exec(select(DiscoverySettings)).one()
+    """Changes the active workspace's own settings (a team's, for its team admins
+    and super admins; a personal workspace's, for its owner). Without a workspace
+    it changes the organisation default, for super admins."""
+    require_settings_editor(session, admin, workspace)
+    settings, _ = _settings_in_force(session, admin, workspace)
     before = _to_settings_read(settings).model_dump()
     if payload.max_pages is not None:
         settings.max_pages = payload.max_pages
@@ -6366,15 +6581,23 @@ def update_settings(
         settings.max_heal_attempts = payload.max_heal_attempts
     if payload.screenshot_capture is not None:
         settings.screenshot_capture = payload.screenshot_capture
-    changes = field_changes(before, _to_settings_read(settings).model_dump())
+    after = _to_settings_read(settings).model_dump()
+    enforce_changed(session, admin.organization_id, before, after)
+    changes = field_changes(before, after)
     if changes:
         record_activity(
             session, admin, "settings", changes_summary("", changes), details={"changes": changes}
         )
-    session.add(settings)
+    if workspace is None:
+        session.add(settings)
+    else:
+        # Store only what this workspace changed; the rest keeps following the default.
+        row = settings_row(session, admin, workspace, create=True)
+        assert row is not None
+        row.discovery = {**row.discovery, **{key: after[key] for key in after if before[key] != after[key]}}
+        session.add(row)
     session.commit()
-    session.refresh(settings)
-    return _to_settings_read(settings)
+    return SettingsRead(**after)
 
 
 class GenerationSettings(BaseModel):
@@ -6403,12 +6626,13 @@ def update_generation_settings(
     payload: GenerationSettings,
     session: SessionDep,
     organization_id: CurrentOrgIdDep,
-    admin: CurrentAdminDep,
+    admin: CurrentUserDep,
 ) -> GenerationSettings:
-    application = _get_org_application(session, organization_id, application_id)
+    application = _get_org_application(session, organization_id, application_id, APP_ADMIN_ROLE)
     before = GenerationSettings.model_validate(
         generation_settings_for(session, application.id), from_attributes=True
     ).model_dump()
+    enforce_changed(session, organization_id, before, payload.model_dump())
     application.generation_settings = payload.model_dump()
     session.add(application)
     changes = field_changes(before, payload.model_dump())

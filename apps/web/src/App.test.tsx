@@ -50,7 +50,7 @@ describe('App', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ name: 'Ada Lovelace', email: 'ada@example.com', role: 'admin' }),
+          json: async () => ({ name: 'Ada Lovelace', email: 'ada@example.com', role: 'super_admin' }),
         }
       }),
     )
@@ -84,7 +84,7 @@ describe('App', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ name: 'Ada Lovelace', email: 'ada@example.com', role: 'admin' }),
+          json: async () => ({ name: 'Ada Lovelace', email: 'ada@example.com', role: 'super_admin' }),
         }
       }
       if (path.endsWith('/home')) return { ok: true, status: 200, json: async () => [] }
@@ -169,7 +169,7 @@ describe('App', () => {
         return {
           ok: true,
           status: 200,
-          json: async () => ({ name: 'Ada Lovelace', email: 'ada@example.com', role: 'admin' }),
+          json: async () => ({ name: 'Ada Lovelace', email: 'ada@example.com', role: 'super_admin' }),
         }
       }
       if (path.endsWith('/home')) return { ok: true, status: 200, json: async () => [] }
@@ -265,7 +265,7 @@ describe('App', () => {
         return Promise.resolve({
           ok: true,
           status: 200,
-          json: async () => ({ name: 'Ada Lovelace', email: 'ada@example.com', role: 'admin' }),
+          json: async () => ({ name: 'Ada Lovelace', email: 'ada@example.com', role: 'super_admin' }),
         })
       }
       if (path.endsWith('/home')) {

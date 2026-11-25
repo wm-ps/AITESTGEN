@@ -72,6 +72,7 @@ from domain import (
     TestRun,
     TestSuite,
     ValidationRule,
+    generation_settings_for,
 )
 from explorer_core.models import ExplorerKnowledge, ExplorerRole, ExplorerRun
 from object_store import ObjectStore
@@ -128,21 +129,25 @@ def _cutoff(settings: DiscoverySettings) -> datetime:
     return datetime.now(UTC) - timedelta(days=days)
 
 
+def _past_retention(session: Session, application: Application) -> bool:
+    """Each application is kept for the retention of its own workspace (the
+    organisation default unless the team or person set one), never shorter than
+    the organisation's floor."""
+    if application.deleted_at is None:
+        return False
+    return application.deleted_at <= _cutoff(generation_settings_for(session, application.id))
+
+
 @activity.defn(name="FindPurgeCandidatesActivity")
 def find_purge_candidates_activity() -> list[str]:
     with Session(engine) as session:
-        settings = session.exec(select(DiscoverySettings)).one()
-        cutoff = _cutoff(settings)
-        # Read before commit() expires `settings` — touching it after the
-        # session closes raises DetachedInstanceError.
-        retention = settings.delete_project_after
-        applications = session.exec(
-            select(Application).where(
-                Application.deleted_at.is_not(None),  # type: ignore[union-attr]
-                Application.deleted_at <= cutoff,  # type: ignore[operator]
-            )
+        # The shortest retention any workspace can have bounds which soft-deleted
+        # applications are worth a look; each is then checked against its own.
+        deleted = session.exec(
+            select(Application).where(Application.deleted_at.is_not(None))  # type: ignore[union-attr]
         ).all()
-        candidate_ids = [str(a.external_id) for a in applications]
+        candidate_ids = [str(a.external_id) for a in deleted if _past_retention(session, a)]
+        retention = "per workspace"
         # Rides on this daily run rather than its own Activity/Schedule.
         session.exec(  # type: ignore[call-overload]
             delete(ActivityEvent).where(
@@ -321,13 +326,11 @@ def _delete_dependent_rows(session: Session, application_id: uuid.UUID, ids: _Pu
 @activity.defn(name="PurgeApplicationActivity")
 def purge_application_activity(input: PurgeApplicationInput) -> PurgeApplicationResult:
     with Session(engine) as session:
-        settings = session.exec(select(DiscoverySettings)).one()
-        cutoff = _cutoff(settings)
         application = session.exec(
             select(Application).where(_eq(Application.external_id, uuid.UUID(input.application_id)))
         ).first()
 
-        if application is None or application.deleted_at is None or application.deleted_at > cutoff:
+        if application is None or not _past_retention(session, application):
             logger.info(
                 "cleanup: skipping %s — no longer eligible for purge", input.application_id
             )

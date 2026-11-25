@@ -55,6 +55,7 @@ from domain import (
     TestRun,
     TestSuite,
     apply_test_run_cancel,
+    application_role,
     count_tests,
     effective_application,
     find_environment,
@@ -2638,6 +2639,10 @@ def _resolve_report_recipient(
         return None, "the recipient's account no longer exists"
     if user.organization_id != application.organization_id:
         return None, "the recipient isn't in the application's organization"
+    # Someone who has since lost access (removed from the team, access taken away)
+    # must not keep receiving what the run found.
+    if application_role(session, user, application) is None:
+        return None, "the recipient no longer has access to the application"
     return user, "ok"
 
 

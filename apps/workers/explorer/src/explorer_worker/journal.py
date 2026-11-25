@@ -8,7 +8,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from domain import Application, DiscoveryRun, PlatformUser
+from domain import Application, DiscoveryRun, PlatformUser, application_role
 from explorer_core import (
     ExplorerEvent,
     ExplorerHealthIssue,
@@ -145,6 +145,9 @@ class Journal:
             user = session.get(PlatformUser, run.started_by_id)
             app = session.get(Application, run.application_id)
             if user is None or app is None:
+                return
+            # Someone who has lost access to the application is not told about it.
+            if application_role(session, user, app) is None:
                 return
             to_email, app_name = user.email, app.name
         send_pause_email(to_email, app_name, heading, body)

@@ -48,7 +48,7 @@ def _invite_link_token(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return captured
 
 
-def _add_member(admin: TestClient, monkeypatch: pytest.MonkeyPatch, *, role: str = "member") -> str:
+def _add_member(admin: TestClient, monkeypatch: pytest.MonkeyPatch, *, role: str = "standard_user") -> str:
     captured = _invite_link_token(monkeypatch)
     email = f"member-{uuid.uuid4()}@example.com"
     admin.post("/invites", json={"email": email, "role": role})
@@ -103,7 +103,7 @@ def test_admin_cannot_remove_themselves(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_admin_can_remove_another_admin(monkeypatch: pytest.MonkeyPatch) -> None:
     admin, _ = _admin_client("Org Team Remove Other Admin")
-    second_admin_email = _add_member(admin, monkeypatch, role="admin")
+    second_admin_email = _add_member(admin, monkeypatch, role="super_admin")
 
     response = admin.delete(f"/team/{second_admin_email}")
 

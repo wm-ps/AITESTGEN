@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import type { IconDefinition } from '@fortawesome/fontawesome-svg-core'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faXmark } from '@fortawesome/free-solid-svg-icons'
@@ -39,7 +40,9 @@ export function EnvironmentModal({
   useEscapeToClose(onClose)
   const Shell = onSubmit ? 'form' : 'div'
 
-  return (
+  // Portaled to <body>: a card with `backdrop-filter` becomes the containing
+  // block of `position: fixed`, which would trap the overlay inside it.
+  return createPortal(
     <div style={{ ...modalOverlay, zIndex: 90 }}>
       <Shell
         role="dialog"
@@ -63,7 +66,8 @@ export function EnvironmentModal({
         </div>
         <div style={modalFooter}>{footer}</div>
       </Shell>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

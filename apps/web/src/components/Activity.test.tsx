@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ActivityItemRead } from '../api'
 import { Activity } from './Activity'
 
-const ADMIN = { name: 'Ada Lovelace', email: 'ada@example.com', role: 'admin' as const }
+const ADMIN = { name: 'Ada Lovelace', email: 'ada@example.com', role: 'super_admin' as const }
 
 const FAILED_RUN: ActivityItemRead = {
   id: 'test_run:run-1',
@@ -86,13 +86,13 @@ afterEach(() => {
 })
 
 describe('Activity', () => {
-  it('blocks anyone who is not an admin, without fetching activity', () => {
+  it('is open to every role: the API returns only what concerns their applications', async () => {
     const fetchMock = stubFetch()
-    render(<Activity user={{ ...ADMIN, role: 'member' }} onOpen={() => {}} onBack={() => {}} />)
+    render(<Activity user={{ ...ADMIN, role: 'standard_user' }} onOpen={() => {}} onBack={() => {}} />)
 
-    expect(screen.getByText('No access')).toBeTruthy()
-    expect(screen.getByText(/signed in as a member/)).toBeTruthy()
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/activity'))).toBe(false)
+    expect(await screen.findByText('Changed max heal attempts from 3 to 5')).toBeTruthy()
+    expect(screen.queryByText('No access')).toBeNull()
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/activity'))).toBe(true)
   })
 
   it('filters from a dropdown that shows a count per option', async () => {

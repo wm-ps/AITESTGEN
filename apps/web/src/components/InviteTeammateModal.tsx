@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { faXmark } from '@fortawesome/free-solid-svg-icons'
@@ -9,26 +10,21 @@ import { useEscapeToClose } from '../hooks/useEscapeToClose'
 // Shared by this invite modal and Team members' "Change role" picker.
 export const ROLE_OPTIONS: { key: Role; label: string; hint: string }[] = [
   {
-    key: 'member',
-    label: 'Member',
+    key: 'standard_user',
+    label: 'User',
     hint: 'Can onboard applications, review scenarios and trigger runs.',
   },
   {
-    key: 'admin',
-    label: 'Admin',
-    hint: 'Everything a member can do, plus saved credentials and Explorer limits.',
-  },
-  {
-    key: 'viewer',
-    label: 'Viewer',
-    hint: 'Can view applications, test cases and run results — no changes.',
+    key: 'super_admin',
+    label: 'Super Admin',
+    hint: 'Everything a user can do, plus saved credentials and Explorer limits.',
   },
 ]
 
 export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
   useEscapeToClose(onClose)
   const [email, setEmail] = useState('')
-  const [role, setRole] = useState<Role>('member')
+  const [role, setRole] = useState<Role>('standard_user')
   const [error, setError] = useState<string | null>(null)
   const [sent, setSent] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -47,7 +43,9 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
     }
   }
 
-  return (
+  // Portaled to <body>: a card with `backdrop-filter` becomes the containing
+  // block of `position: fixed`, which would trap the overlay inside it.
+  return createPortal(
     <div style={{ ...modalOverlay, zIndex: 90 }}>
       <form onSubmit={handleSubmit} style={{ ...modalPanel, maxWidth: 520 }}>
         <div style={modalHeader}>
@@ -194,6 +192,7 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
           </>
         )}
       </form>
-    </div>
+    </div>,
+    document.body,
   )
 }

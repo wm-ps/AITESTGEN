@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 from api import main
-from api.auth import block_viewer_writes, current_org_id
+from api.auth import current_org_id
 from explorer_core import EXPLORER_TASK_QUEUE
 from fastapi.testclient import TestClient
 from temporalio.client import WorkflowExecutionStatus
@@ -77,7 +77,6 @@ def client(monkeypatch):
     FakeVault.stored, FakeVault.deleted = [], []
     monkeypatch.setattr(main, "VaultSecretsClient", FakeVault)
     main.app.dependency_overrides[current_org_id] = lambda: ORG_ID
-    main.app.dependency_overrides[block_viewer_writes] = lambda: None
     yield TestClient(main.app)
     main.app.dependency_overrides.clear()
 
@@ -130,7 +129,6 @@ def test_start_deletes_the_temporary_secret_when_the_workflow_fails_to_start(mon
     FakeVault.stored, FakeVault.deleted = [], []
     monkeypatch.setattr(main, "VaultSecretsClient", FakeVault)
     main.app.dependency_overrides[current_org_id] = lambda: ORG_ID
-    main.app.dependency_overrides[block_viewer_writes] = lambda: None
     try:
         _use_temporal(monkeypatch, FakeTemporal(start_error=RuntimeError("temporal down")))
         # raise_server_exceptions=False: assert on the 500, not a re-raised error.

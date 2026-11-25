@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowRight, faChevronDown, faImage, faLock, faMagnifyingGlass, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faArrowRight, faChevronDown, faImage, faMagnifyingGlass, faXmark } from '@fortawesome/free-solid-svg-icons'
 import {
   ApiError,
   api,
@@ -17,7 +17,7 @@ import {
 import { Pagination } from './Pagination'
 import { SkeletonRows } from './Skeleton'
 
-// Admin-only cross-application timeline (`GET /activity`, apps/api/src/api/activity.py),
+// Cross-application timeline (`GET /activity`, apps/api/src/api/activity.py),
 // laid out per the Vantage v2 prototype's Activity screen: a filter bar of
 // dropdowns with counts, a Time / Event / By / Result list grouped by day,
 // and a side panel carrying the exact error.
@@ -150,39 +150,14 @@ function ResultLabel({ outcome }: { outcome: ActivityOutcome }) {
 }
 
 export function Activity({
-  user,
   onOpen,
-  onBack,
 }: {
-  user: UserRead
+  // Everyone may open Activity: the API returns only what concerns the applications
+  // they can see (a super admin also gets the organisation-level events).
+  user?: UserRead
   onOpen: (item: ActivityItemRead) => void
-  onBack: () => void
+  onBack?: () => void
 }) {
-  if (user.role !== 'admin') {
-    return (
-      <div style={{ maxWidth: 1560, margin: '0 auto', width: '100%' }}>
-        <div style={{ ...cardStyle, borderRadius: 14, display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '64px 32px 56px' }}>
-          <div style={{ width: 60, height: 60, borderRadius: 1000, background: 'var(--chip)', border: '1px solid var(--border-2)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 22 }}>
-            <FontAwesomeIcon icon={faLock} style={{ fontSize: 20, color: 'var(--fg-3)' }} />
-          </div>
-          <div style={{ fontSize: 19, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.015em' }}>No access</div>
-          <div style={{ fontSize: 13.5, color: 'var(--fg-3)', marginTop: 9, maxWidth: 460, lineHeight: '21px' }}>
-            Activity is only available to workspace admins. You're signed in as a {user.role}. Ask an admin if you need to see this page.
-          </div>
-          <button
-            type="button"
-            onClick={onBack}
-            style={{ marginTop: 24, display: 'inline-flex', alignItems: 'center', height: 38, padding: '0 20px', borderRadius: 8, border: 'none', background: 'var(--accent)', color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', boxShadow: 'var(--accent-glow)', fontFamily: 'inherit' }}
-          >
-            Back to Overview
-          </button>
-          <div style={{ marginTop: 26, fontFamily: MONO, fontSize: 11, color: 'var(--fg-4)', padding: '4px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--panel-2)' }}>
-            403 Forbidden · GET /activity
-          </div>
-        </div>
-      </div>
-    )
-  }
   return <ActivityFeed onOpen={onOpen} />
 }
 

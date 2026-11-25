@@ -5,6 +5,7 @@ import {
   ApiError,
   api,
   type GenerationSettings,
+  type OrgLimitsRead,
   type RetentionPeriod,
   type ScreenshotCapture,
   type SettingsRead,
@@ -16,6 +17,7 @@ import { explorerApi, type ExplorerSettings } from '../explorer/explorerApi'
 import { PasswordInput } from './PasswordInput'
 import { SkeletonRows } from './Skeleton'
 import { AccessDeniedIllustration } from './EmptyState'
+import { useWorkspace } from '../WorkspaceContext'
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
@@ -747,7 +749,7 @@ export function SettingsDetail({
 
 // Platform-level settings; an application's own (environments, sign-in, test
 // case generation) are on its Settings tab.
-type SectionKey = 'credentials' | 'explorer' | 'retention'
+type SectionKey = 'credentials' | 'explorer' | 'retention' | 'limits'
 
 // The hub's cards, in the order shown. `form`: has fields saved by the footer
 // (Saved credentials saves each row itself).
@@ -770,14 +772,143 @@ const SECTIONS: (SettingsCard<SectionKey> & { form: boolean })[] = [
     description: 'Choose when data for removed projects is cleaned up.',
     form: true,
   },
+  {
+    key: 'limits',
+    title: 'Organisation limits',
+    description: 'Set the most any team or application may use, for every workspace. Super Admins only.',
+    form: false,
+  },
 ]
 
-function SettingsHeading() {
+function SettingsHeading({ scope }: { scope?: { chip: string; note: string } }) {
   return (
-    <h1 style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>
-      <FontAwesomeIcon icon={faGear} style={{ fontSize: 17, color: 'var(--fg-2)' }} />
-      Settings
-    </h1>
+    <div>
+      <h1 style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>
+        <FontAwesomeIcon icon={faGear} style={{ fontSize: 17, color: 'var(--fg-2)' }} />
+        Settings
+        {scope && (
+          <span style={{ padding: '2px 10px', borderRadius: 1000, background: 'var(--chip)', color: 'var(--fg-2)', fontSize: 11.5, fontWeight: 600, letterSpacing: 0 }}>
+            {scope.chip}
+          </span>
+        )}
+      </h1>
+      {scope && <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--fg-3)' }}>{scope.note}</p>}
+    </div>
+  )
+}
+
+// The ceilings a super admin sets for every team and application. A blank box is
+// "no limit". Saving does not rewrite anything already saved: settings above a
+// new ceiling are listed and held to it wherever they are used.
+const LIMIT_FIELDS: { key: string; label: string; unit: string }[] = [
+  { key: 'ai_budget_usd', label: 'Explorer AI budget per run', unit: 'USD' },
+  { key: 'run_time_limit_minutes', label: 'Explorer run time', unit: 'minutes' },
+  { key: 'max_screens', label: 'Screens Explorer maps', unit: 'screens' },
+  { key: 'max_missions', label: 'Missions per run', unit: 'missions' },
+  { key: 'max_pages', label: 'Pages a crawl visits', unit: 'pages' },
+  { key: 'max_heal_attempts', label: 'Self-heal attempts per test', unit: 'attempts' },
+  { key: 'max_scenarios_per_journey', label: 'Scenarios per journey', unit: 'scenarios' },
+  { key: 'max_test_cases_per_application', label: 'Test cases per application', unit: 'test cases' },
+]
+
+function OrganisationLimitsSection() {
+  const [saved, setSaved] = useState<OrgLimitsRead | null>(null)
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [floor, setFloor] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(false)
+
+  function load(read: OrgLimitsRead) {
+    setSaved(read)
+    setValues(Object.fromEntries(Object.entries(read.maximums).map(([k, v]) => [k, String(v)])))
+    setFloor(read.min_delete_project_after ?? '')
+  }
+  useEffect(() => {
+    api
+      .getOrganizationLimits()
+      .then(load)
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load the limits.'))
+  }, [])
+
+  async function save() {
+    setBusy(true)
+    setError(null)
+    setDone(false)
+    try {
+      const maximums: Record<string, number> = {}
+      for (const [key, text] of Object.entries(values)) {
+        if (text.trim() === '') continue
+        const number = Number(text)
+        if (!Number.isFinite(number) || number <= 0) throw new Error('Limits must be numbers above zero, or blank for no limit.')
+        maximums[key] = number
+      }
+      load(await api.setOrganizationLimits(maximums, floor || null))
+      setDone(true)
+    } catch (err) {
+      setError(err instanceof ApiError || err instanceof Error ? err.message : 'Saving the limits failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!saved && !error) return <SkeletonRows count={5} height={38} gap={14} />
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <p style={{ margin: 0, fontSize: 13, color: 'var(--fg-3)' }}>
+        These apply to every team, every personal workspace and every application. Anyone saving a higher value is refused, and a higher value saved earlier is held to the limit when it is used.
+      </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 14 }}>
+        {LIMIT_FIELDS.map((field) => (
+          <label key={field.key} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-1)' }}>{field.label}</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                aria-label={field.label}
+                inputMode="decimal"
+                value={values[field.key] ?? ''}
+                placeholder="No limit"
+                onChange={(e) => setValues({ ...values, [field.key]: e.target.value })}
+                style={fieldInputStyle}
+              />
+              <span style={{ fontSize: 12, color: 'var(--fg-4)', whiteSpace: 'nowrap' }}>{field.unit}</span>
+            </span>
+          </label>
+        ))}
+        <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-1)' }}>Keep removed projects for at least</span>
+          <select aria-label="Shortest retention" value={floor} onChange={(e) => setFloor(e.target.value)} style={fieldInputStyle}>
+            <option value="">No minimum</option>
+            <option value="1_day">1 day</option>
+            <option value="1_week">1 week</option>
+            <option value="1_month">1 month</option>
+          </select>
+        </label>
+      </div>
+      {error && (
+        <div role="alert" style={{ color: 'var(--bad)', fontSize: 13 }}>
+          {error}
+        </div>
+      )}
+      {done && <div role="status" style={{ color: 'var(--ok)', fontSize: 13 }}>Limits saved.</div>}
+      {saved && saved.above.length > 0 && (
+        <div role="status" style={{ border: '1px solid var(--border-2)', borderRadius: 10, padding: '12px 14px', fontSize: 13, color: 'var(--fg-2)' }}>
+          <b>{saved.above.length === 1 ? '1 saved setting is' : `${saved.above.length} saved settings are`} above these limits</b> and will be held to them when used:
+          <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+            {saved.above.map((a) => (
+              <li key={`${a.scope}-${a.setting}`}>
+                {a.scope}: {a.setting.replace(/_/g, ' ')} is {a.value ?? 'unlimited'} (limit {a.limit})
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <div>
+        <button type="button" className="button-primary" onClick={save} disabled={busy} style={{ padding: '10px 22px', fontSize: 14 }}>
+          {busy ? <LoadingDots label="Saving" /> : 'Save limits'}
+        </button>
+      </div>
+    </div>
   )
 }
 
@@ -792,13 +923,23 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
-  const isAdmin = user.role === 'admin'
+  // Settings belong to the workspace you are in: a team's (its team admins and
+  // super admins edit them) or your own personal workspace's. Without a
+  // workspace (older client) they are the organisation's, for super admins.
+  const workspace = useWorkspace()
+  const active = workspace?.active
+  const isAdmin = !active
+    ? user.role === 'super_admin'
+    : active.kind === 'personal' || user.role === 'super_admin' || active.role === 'team_admin'
+  const scope = active
+    ? active.kind === 'personal'
+      ? { chip: 'Personal workspace', note: 'These settings apply only to your personal workspace.' }
+      : { chip: `${active.name} team`, note: `These settings apply only to the ${active.name} team. Only Team Admins can change them.` }
+    : undefined
 
   useEffect(() => {
-    // The account menu already hides Settings from non-admins — this guard
-    // is only for a member landing here some other way (e.g. restored view
-    // state). The API rejects non-admins anyway (CurrentAdminDep); skipping
-    // the call here just avoids a guaranteed-403 request.
+    // Only someone who may edit these opens them. The API refuses anyone else
+    // (403); skipping the call just avoids a guaranteed-403 request.
     if (!isAdmin) {
       setLoading(false)
       return
@@ -844,16 +985,20 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
           >
             <AccessDeniedIllustration size={96} />
           </div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--fg)' }}>Access denied</div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--fg)' }}>
+            {active ? 'Settings are managed by Team Admins' : 'Access denied'}
+          </div>
           <p style={{ fontSize: 13.5, margin: '8px auto 0', maxWidth: 360, lineHeight: 1.5, color: 'var(--fg-3)' }}>
-            Settings are limited to organization admins. Ask an admin on your team for access.
+            {active
+              ? 'Ask a Team Admin of this team if something needs changing.'
+              : 'Settings are limited to organization admins. Ask an admin on your team for access.'}
           </p>
           <button
             type="button"
             onClick={onCancel}
             style={{ marginTop: 20, padding: '10px 20px', borderRadius: 8, border: '1px solid var(--border-2)', background: 'var(--panel)', color: 'var(--fg-2)', fontWeight: 600, cursor: 'pointer' }}
           >
-            Back
+            {active ? 'Back to applications' : 'Back'}
           </button>
         </div>
       </div>
@@ -902,18 +1047,21 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
     }
   }
 
+  // Approved domains and the organisation's limits are the super admin's, for everyone.
+  const cards = SECTIONS.filter((s) => s.key !== 'limits' || user.role === 'super_admin')
+
   if (section === null) {
-    return <SettingsHub heading={<SettingsHeading />} cards={SECTIONS} onOpen={open} />
+    return <SettingsHub heading={<SettingsHeading scope={scope} />} cards={cards} onOpen={open} />
   }
 
   const current = SECTIONS.find((s) => s.key === section)!
   return (
     <SettingsDetail
-      heading={<SettingsHeading />}
+      heading={<SettingsHeading scope={scope} />}
       card={current}
       backLabel="Back to Settings"
       onBack={() => open(null)}
-      form={current.form}
+      form={current.form && section !== 'limits'}
       submitting={submitting}
       error={error}
       onSubmit={handleSubmit}
@@ -922,9 +1070,11 @@ export function Settings({ user, onCancel }: { user: UserRead; onCancel: () => v
       {section === 'credentials' && (
         <>
           <CredentialsPanel />
-          <ApprovedDomainsPanel />
+          {user.role === 'super_admin' && <ApprovedDomainsPanel />}
         </>
       )}
+
+      {section === 'limits' && <OrganisationLimitsSection />}
 
       {section === 'explorer' && (limits ? <ExplorerLimitsSection limits={limits} onChange={setLimits} /> : !error && <SkeletonRows count={5} height={38} gap={14} />)}
 

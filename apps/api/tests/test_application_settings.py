@@ -9,12 +9,12 @@ import uuid
 from api.db import engine, init_db
 from api.main import app
 from api.scripts.seed_dev_data import seed
-from domain import Application, PlatformUser, generation_settings_for
+from domain import Application, ApplicationMember, PlatformUser, generation_settings_for
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
 
-def _client(role: str = "admin") -> TestClient:
+def _client(role: str = "super_admin") -> TestClient:
     init_db()
     email = f"user-{uuid.uuid4()}@example.com"
     seed(
@@ -88,12 +88,15 @@ def test_members_read_the_settings_but_only_admins_change_them() -> None:
     client = _client()
     app_id = _new_app(client, "Settings Members")
     limits = client.get("/explorer/settings").json()  # read while still an admin
-    with Session(engine) as session:  # the same user, now a member of the org
+    with Session(engine) as session:  # the same user, now a plain user who only contributes
         user = session.exec(
             select(PlatformUser).where(PlatformUser.organization_id == _row(app_id).organization_id)
         ).one()
-        user.role = "member"
+        user.role = "standard_user"
         session.add(user)
+        grant = session.exec(select(ApplicationMember).where(ApplicationMember.user_id == user.id)).one()
+        grant.role = "contributor"
+        session.add(grant)
         session.commit()
 
     generation = client.get(f"/applications/{app_id}/generation-settings")

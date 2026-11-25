@@ -12,6 +12,7 @@ import sys
 from domain import Organization, PlatformUser
 from sqlmodel import Session, select
 
+from api.access import join_default_team
 from api.auth import hash_password
 from api.db import engine, init_db
 
@@ -26,7 +27,7 @@ def seed(
     password: str = DEFAULT_PASSWORD,
     org_name: str = DEFAULT_ORG_NAME,
     name: str = DEFAULT_NAME,
-    role: str = "admin",
+    role: str = "super_admin",
 ) -> PlatformUser:
     init_db()
     with Session(engine) as session:
@@ -47,6 +48,8 @@ def seed(
             role=role,
         )
         session.add(user)
+        session.flush()
+        join_default_team(session, user)
         session.commit()
         session.refresh(user)
         print(f"seeded organization {org.name!r} and user {user.email!r}")

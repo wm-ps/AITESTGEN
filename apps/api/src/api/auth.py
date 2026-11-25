@@ -19,7 +19,7 @@ from typing import Annotated
 
 import bcrypt
 import httpx
-from domain import PlatformUser
+from domain import STANDARD_USER_ROLE, SUPER_ADMIN_ROLE, PlatformUser
 from fastapi import Cookie, Depends, HTTPException, Request, Response
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 from mailer import FRONTEND_BASE_URL
@@ -27,11 +27,19 @@ from sqlmodel import Session
 
 from api.db import get_session
 
-# Every role a PlatformUser/Invite may hold — the invite validator and the
-# change-role endpoint both check against this one list. A "viewer" can read
-# everything in its Organization but change nothing (`block_viewer_writes`).
-ROLES = ("admin", "member", "viewer")
-VIEWER_ROLE = "viewer"
+# Every organisation role a PlatformUser/Invite may hold — the invite validator
+# and the change-role endpoint both check against this one list. What a person
+# may do with an Application comes from their application role (`api.access`),
+# not from this. Stored values are unique per level (team and application roles
+# use their own names), so a search for one never matches another level.
+ROLES = (SUPER_ADMIN_ROLE, STANDARD_USER_ROLE)
+# What the UI and the activity log call each stored role.
+ROLE_LABELS = {SUPER_ADMIN_ROLE: "Super Admin", STANDARD_USER_ROLE: "User"}
+
+
+def role_name(role: str) -> str:
+    """Lower-case label used inside activity-log sentences ("joined as viewer")."""
+    return ROLE_LABELS.get(role, role).lower()
 
 _DEV_SECRET_KEY = "dev-only-insecure-secret-key"
 # Local dev = the web app is on localhost; anything else is a real deployment.
@@ -52,6 +60,10 @@ IDLE_TIMEOUT = 15 * 60
 # Even a constantly-active session ends this long after sign-in.
 ABSOLUTE_TIMEOUT = 12 * 60 * 60
 ACTIVITY_HEADER = "X-User-Activity"
+# `session.info` keys `current_user` fills in so application lookups can tell
+# who is asking and with which HTTP method (see `api.access`).
+ACTOR_KEY = "actor"
+METHOD_KEY = "request_method"
 
 _serializer = URLSafeTimedSerializer(SESSION_SECRET_KEY, salt="platform-session")
 
@@ -174,6 +186,8 @@ def current_user(
         session.add(user)
         session.commit()
         session.refresh(user)
+    session.info[ACTOR_KEY] = user
+    session.info[METHOD_KEY] = request.method
     return user
 
 
@@ -193,41 +207,9 @@ def require_admin(user: CurrentUserDep) -> PlatformUser:
     """Gate for admin-only actions (issuing/revoking Invites) — every seeded
     or invite-accepted PlatformUser has a `role`, checked here once rather
     than in each admin-only route."""
-    if user.role != "admin":
+    if user.role != SUPER_ADMIN_ROLE:
         raise HTTPException(status_code=403, detail="admin role required")
     return user
 
 
 CurrentAdminDep = Annotated[PlatformUser, Depends(require_admin)]
-
-
-_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-# The only writes a viewer may make.
-VIEWER_WRITE_ALLOWLIST = frozenset({"/auth/logout"})
-
-
-def block_viewer_writes(request: Request, session: SessionDep) -> None:
-    """Registered once on the whole app (`FastAPI(dependencies=...)`), so
-    every route — including ones added later — is read-only for a viewer
-    unless explicitly allowed: deny by default, not per-endpoint opt-in.
-
-    Only identifies the caller; it never authenticates. No or an invalid
-    session passes through to the route's own auth (public routes like
-    login/accept-invite have none to pass), and it doesn't slide the session
-    or touch `last_active_at` — `current_user` still does that once."""
-    if request.method in _SAFE_METHODS or request.url.path in VIEWER_WRITE_ALLOWLIST:
-        return
-    owner = _session_owner(session, request.cookies.get(COOKIE_NAME))
-    if owner is not None and owner[0].role == VIEWER_ROLE:
-        raise HTTPException(status_code=403, detail="view-only access")
-
-
-def require_not_viewer(user: CurrentUserDep) -> PlatformUser:
-    """For the few *reads* a viewer may not have — the Allure report and the
-    test-suite download (writes are already covered by `block_viewer_writes`)."""
-    if user.role == VIEWER_ROLE:
-        raise HTTPException(status_code=403, detail="view-only access")
-    return user
-
-
-NotViewerDep = Annotated[PlatformUser, Depends(require_not_viewer)]

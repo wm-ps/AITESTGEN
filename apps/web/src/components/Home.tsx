@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faEllipsisVertical, faLayerGroup, faPlus, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faCircleInfo, faEllipsisVertical, faLayerGroup, faPlus, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { api, hasDiscovery, type ApplicationRead, type HomeApplicationRead, type UserRead } from '../api'
+import { ManageAccessDialog } from './ManageAccessDialog'
 import { StatusPill } from './StatusPill'
 import { Pagination } from './Pagination'
 import { SkeletonRows } from './Skeleton'
@@ -11,6 +12,7 @@ import { AnchoredMenu } from './AnchoredMenu'
 import { modalButton, modalCloseButton, modalFooter, modalHeader, modalOverlay, modalPanel, modalTitle } from './modalStyles'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { useCanEdit } from '../PermissionsContext'
+import { useWorkspace } from '../WorkspaceContext'
 
 const POLL_INTERVAL_MS = 15000
 const APPS_PER_PAGE = 8
@@ -128,6 +130,8 @@ function ApplicationRow({
   onError: (message: string) => void
 }) {
   const [editing, setEditing] = useState(false)
+  const [sharing, setSharing] = useState(false)
+  const workspace = useWorkspace()
   const [nameDraft, setNameDraft] = useState(application.name)
   const [menuOpen, setMenuOpen] = useState(false)
   // Portaled to document.body and positioned from this rect — the table's
@@ -279,7 +283,7 @@ function ApplicationRow({
       <td style={cellStyle}>
         <StatusPill status={displayStatus} pulsing={isActive} dot={isActive} />
       </td>
-      <td style={{ ...cellStyle, padding: '13px 16px', textAlign: 'right' }}>
+      <td style={{ ...cellStyle, padding: '13px 16px', textAlign: 'right', whiteSpace: 'nowrap' }}>
         {isAdmin && !editing && (
           <div style={{ position: 'relative', display: 'inline-block' }}>
             <button
@@ -317,6 +321,16 @@ function ApplicationRow({
                       boxShadow: 'var(--panel-shadow)',
                     }}
                   >
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false)
+                        setSharing(true)
+                      }}
+                      style={{ display: 'block', width: '100%', textAlign: 'left', padding: '9px 12px', fontSize: 13, border: 'none', background: 'none', color: 'var(--fg-1)', cursor: 'pointer', borderRadius: 6 }}
+                    >
+                      Manage access
+                    </button>
                     <button
                       type="button"
                       onClick={() => {
@@ -359,6 +373,19 @@ function ApplicationRow({
           </div>
         )}
       </td>
+      {sharing &&
+        createPortal(
+          // Stops the dialog's clicks from reaching this row (a portal still bubbles through React).
+          <div onClick={(e) => e.stopPropagation()}>
+            <ManageAccessDialog
+              applicationId={application.id}
+              applicationName={application.name}
+              onClose={() => setSharing(false)}
+              onChanged={onChanged}
+            />
+          </div>,
+          document.body,
+        )}
       {confirmingDelete &&
         createPortal(
           <div
@@ -430,17 +457,29 @@ function ApplicationRow({
 
 const COLUMN_HEADERS = ['Application', 'Journeys', 'Tests', 'Pass rate', 'Last activity', 'Status', '']
 
+type Filter = 'all' | 'shared' | 'mine' | 'private'
+
+const DEFAULT_TEAM_BANNER_KEY = 'vantage.defaultTeamBanner'
+
 export function Home({
-  user,
   onConnectApp,
   onResumeApplication,
 }: {
-  user: UserRead
+  // Not read yet: per-application rights come from each row's `my_role`.
+  user?: UserRead
   onConnectApp: () => void
   onResumeApplication: (application: ApplicationRead) => void
 }) {
-  const isAdmin = user.role === 'admin'
   const canEdit = useCanEdit()
+  const workspace = useWorkspace()
+  const [filter, setFilter] = useState<Filter>('all')
+  const [bannerDismissed, setBannerDismissed] = useState(() => {
+    try {
+      return window.localStorage.getItem(DEFAULT_TEAM_BANNER_KEY) === 'dismissed'
+    } catch {
+      return false
+    }
+  })
   const [applications, setApplications] = useState<HomeApplicationRead[] | null>(null)
   const [snackbar, setSnackbar] = useState<{ message: string; kind: 'error' | 'info' } | null>(null)
   const [page, setPage] = useState(0)
@@ -503,9 +542,33 @@ export function Home({
     return activityTime(b) - activityTime(a)
   })
   const totalTestCases = allApplications.reduce((sum, a) => sum + a.test_case_count, 0)
-  const totalPages = Math.max(1, Math.ceil(allApplications.length / APPS_PER_PAGE))
+  // "Shared with me": a grant that isn't my own adder row. "Private": nobody else has been
+  // given access (team admins always see it too).
+  const matchesFilter = (a: HomeApplicationRead, f: Filter) =>
+    f === 'all' ||
+    (f === 'shared' && !!a.shared_with_me) ||
+    (f === 'mine' && !!a.added_by_me) ||
+    (f === 'private' && (a.shared_with_count ?? 0) === 0)
+  const personalWorkspace = workspace?.active.kind === 'personal'
+  const filterChips: [Filter, string][] = personalWorkspace
+    ? [['all', 'All'], ['mine', 'Added by me'], ['shared', 'Shared with me']]
+    : [['all', 'All'], ['shared', 'Shared with me'], ['mine', 'Added by me'], ['private', 'Private']]
+  const filteredApplications = allApplications.filter((a) => matchesFilter(a, filter))
+  const totalPages = Math.max(1, Math.ceil(filteredApplications.length / APPS_PER_PAGE))
   const pageClamped = Math.min(page, totalPages - 1)
-  const pagedApplications = allApplications.slice(pageClamped * APPS_PER_PAGE, pageClamped * APPS_PER_PAGE + APPS_PER_PAGE)
+  const pagedApplications = filteredApplications.slice(pageClamped * APPS_PER_PAGE, pageClamped * APPS_PER_PAGE + APPS_PER_PAGE)
+  const showDefaultTeamBanner = !bannerDismissed && workspace?.active.is_default === true
+  // Why the list is empty depends on where you are and what you are.
+  const emptyTitle = personalWorkspace
+    ? 'No applications yet'
+    : workspace?.active.role === 'team_member'
+      ? 'No applications shared with you yet'
+      : 'No applications added to this team yet'
+  const emptyBody = personalWorkspace
+    ? 'Add your own, or ask someone to share one with your account.'
+    : workspace?.active.role === 'team_member'
+      ? 'Ask a Team Admin or the person who added the app.'
+      : null
 
   return (
     <div style={{ maxWidth: 1560, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: 20 }}>
@@ -518,6 +581,33 @@ export function Home({
         </div>
         <div style={{ flex: 1 }} />
       </div>
+
+      {showDefaultTeamBanner && (
+        <div
+          role="status"
+          style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 16px', borderRadius: 10, border: '1px solid rgba(30,150,138,0.3)', background: 'rgba(30,150,138,0.08)', color: 'var(--fg-2)', fontSize: 12.5 }}
+        >
+          <FontAwesomeIcon icon={faCircleInfo} style={{ color: 'var(--accent-2)' }} />
+          <span style={{ flex: 1 }}>
+            Your existing users and applications now live in the <b>{workspace?.active.name}</b> team. Super Admins can organise them into new teams.
+          </span>
+          <button
+            type="button"
+            aria-label="Dismiss"
+            onClick={() => {
+              setBannerDismissed(true)
+              try {
+                window.localStorage.setItem(DEFAULT_TEAM_BANNER_KEY, 'dismissed')
+              } catch {
+                // the banner just comes back next time
+              }
+            }}
+            style={{ border: 'none', background: 'transparent', color: 'var(--accent-2)', cursor: 'pointer', font: 'inherit', fontWeight: 600 }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {applications === null ? (
         <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, overflow: 'hidden', padding: 20 }}>
@@ -543,6 +633,26 @@ export function Home({
             </button>
           </div>
         )}
+        <div role="group" aria-label="Filter applications" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {filterChips.map(([key, label]) => {
+            const count = allApplications.filter((a) => matchesFilter(a, key)).length
+            const active = filter === key
+            return (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={active}
+                onClick={() => {
+                  setFilter(key)
+                  setPage(0)
+                }}
+                style={{ display: 'inline-flex', alignItems: 'center', height: 30, padding: '0 12px', borderRadius: 8, border: `1px solid ${active ? 'rgba(30,150,138,0.3)' : 'var(--border)'}`, background: active ? 'rgba(30,150,138,0.12)' : 'var(--panel)', color: active ? 'var(--accent-2)' : 'var(--fg-3)', fontSize: 12, fontWeight: active ? 600 : 500, cursor: 'pointer' }}
+              >
+                {label} {count}
+              </button>
+            )
+          })}
+        </div>
         <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border-1)', borderRadius: 12, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
@@ -567,11 +677,18 @@ export function Home({
               </tr>
             </thead>
             <tbody>
+              {pagedApplications.length === 0 && (
+                <tr>
+                  <td colSpan={COLUMN_HEADERS.length} style={{ padding: '28px 20px', textAlign: 'center', fontSize: 13, color: 'var(--fg-3)' }}>
+                    No applications
+                  </td>
+                </tr>
+              )}
               {pagedApplications.map((application) => (
                 <ApplicationRow
                   key={application.id}
                   application={application}
-                  isAdmin={isAdmin}
+                  isAdmin={application.my_role === 'app_admin'}
                   onResume={() => {
                     if (application.domain_approved === false) {
                       setBlockedApplication(application.name)
@@ -590,7 +707,7 @@ export function Home({
             <Pagination
               page={pageClamped}
               totalPages={totalPages}
-              totalItems={allApplications.length}
+              totalItems={filteredApplications.length}
               pageSize={APPS_PER_PAGE}
               onPrev={() => setPage(pageClamped - 1)}
               onNext={() => setPage(pageClamped + 1)}
@@ -629,9 +746,13 @@ export function Home({
             </div>
             <div style={{ position: 'absolute', left: 4, bottom: 14, width: 14, height: 14, borderRadius: 5, background: 'var(--chip)', border: '1px solid var(--border-2)', transform: 'rotate(-16deg)' }} />
           </div>
-          <div style={{ fontSize: 19, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.015em' }}>Add your first application</div>
+          <div style={{ fontSize: 19, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.015em' }}>
+            {workspace ? emptyTitle : 'Add your first application'}
+          </div>
           <div style={{ fontSize: 13, color: 'var(--fg-3)', marginTop: 9, maxWidth: 460, lineHeight: '21px' }}>
-            Point Vantage at a deployed URL and optional login. Explorer maps the pages, models journeys and generates Playwright test cases for each one — usually inside 40 minutes.
+            {workspace && emptyBody
+              ? emptyBody
+              : 'Point Vantage at a deployed URL and optional login. Explorer maps the pages, models journeys and generates Playwright test cases for each one — usually inside 40 minutes.'}
           </div>
           {canEdit && (
           <button

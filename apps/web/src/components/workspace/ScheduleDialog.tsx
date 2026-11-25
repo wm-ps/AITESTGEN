@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useState } from 'react'
 import { faXmark } from '@fortawesome/free-solid-svg-icons'
 import { ApiError, api, type ScheduleCadenceType, type ScheduleCreate, type ScheduleRead } from '../../api'
@@ -165,7 +166,9 @@ export function ScheduleDialog({
     }
   }
 
-  return (
+  // Portaled to <body>: a card with `backdrop-filter` becomes the containing
+  // block of `position: fixed`, which would trap the overlay inside it.
+  return createPortal(
     <div style={{ ...modalOverlay, zIndex: 90 }}>
       <form onSubmit={handleSubmit} style={{ ...modalPanel, maxWidth: 760 }}>
         <div style={modalHeader}>
@@ -339,6 +342,7 @@ export function ScheduleDialog({
           </div>
         </fieldset>
       </form>
-    </div>
+    </div>,
+    document.body,
   )
 }

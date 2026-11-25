@@ -21,6 +21,223 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/organization/limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Organization Limits */
+        get: operations["get_organization_limits_organization_limits_get"];
+        /**
+         * Set Organization Limits
+         * @description Replaces the organisation's limits. Settings saved earlier that are now
+         *     above a ceiling are not rewritten; the response lists them (`above`) and
+         *     they are held to the ceiling wherever they are used.
+         */
+        put: operations["set_organization_limits_organization_limits_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/workspaces": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My Workspaces
+         * @description What the switcher lists: the personal workspace plus the teams the caller
+         *     is in — every team for a super admin, who can enter any of them.
+         */
+        get: operations["my_workspaces_me_workspaces_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/me/workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Remember Workspace
+         * @description Where the user lands next time. A team they can't enter is refused.
+         */
+        patch: operations["remember_workspace_me_workspace_patch"];
+        trace?: never;
+    };
+    "/teams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Teams */
+        get: operations["list_teams_teams_get"];
+        put?: never;
+        /** Create Team */
+        post: operations["create_team_teams_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/teams/{external_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Team */
+        get: operations["get_team_teams__external_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/teams/{external_id}/members": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Team Members */
+        get: operations["list_team_members_teams__external_id__members_get"];
+        put?: never;
+        /** Add Team Member */
+        post: operations["add_team_member_teams__external_id__members_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/teams/{external_id}/members/{email}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Member From Team
+         * @description Takes the person out of the team and out of every application of the team
+         *     that was shared with them. Applications they added stay with the team, under
+         *     its team admins.
+         */
+        delete: operations["remove_member_from_team_teams__external_id__members__email__delete"];
+        options?: never;
+        head?: never;
+        /** Change Member Role In Team */
+        patch: operations["change_member_role_in_team_teams__external_id__members__email__patch"];
+        trace?: never;
+    };
+    "/teams/{external_id}/applications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Team Applications
+         * @description Read-only: the team's applications and who is working on each.
+         */
+        get: operations["list_team_applications_teams__external_id__applications_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Access */
+        get: operations["list_access_applications__external_id__access_get"];
+        put?: never;
+        /** Share Application */
+        post: operations["share_application_applications__external_id__access_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/access/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Access Candidates
+         * @description Type-ahead for the share box: people who could be given access and don't
+         *     have it yet. Name and email only.
+         */
+        get: operations["list_access_candidates_applications__external_id__access_candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/applications/{external_id}/access/{email}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove Access */
+        delete: operations["remove_access_applications__external_id__access__email__delete"];
+        options?: never;
+        head?: never;
+        /** Change Access Role */
+        patch: operations["change_access_role_applications__external_id__access__email__patch"];
+        trace?: never;
+    };
     "/domains": {
         parameters: {
             query?: never;
@@ -500,7 +717,9 @@ export interface paths {
         /**
          * Update Explorer Settings
          * @description New runs use these; a run going now keeps the limits it started with
-         *     (Resume picks up the new ones).
+         *     (Resume picks up the new ones). In a workspace they are that workspace's own
+         *     (a team's, for its team admins and super admins; a person's, for their personal
+         *     workspace); without one they are the organisation default, for super admins.
          */
         put: operations["update_explorer_settings_explorer_settings_put"];
         post?: never;
@@ -1025,6 +1244,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/team/{email}/removal-impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Removal Impact */
+        get: operations["get_removal_impact_team__email__removal_impact_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/team/{email}": {
         parameters: {
             query?: never;
@@ -1035,8 +1271,38 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Remove Team Member */
+        /**
+         * Remove Team Member
+         * @description Removes a person from Vantage for good. The confirmation dialog (fed by
+         *     `removal-impact`) is the user's consent; this does what it warned about:
+         *     their personal applications are soft-deleted, their team and application
+         *     access goes, and the account is deleted. Applications they added in teams
+         *     stay with the team, and a signed-in session or unused recording link they
+         *     held stops working.
+         */
         delete: operations["remove_team_member_team__email__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/team/step-down": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Step Down As Super Admin
+         * @description "Make Super Admin and step down": the successor becomes a super admin and
+         *     the caller a user, in one transaction, so the organisation is never left
+         *     without one — and the only super admin can hand over without the 409.
+         */
+        post: operations["step_down_as_super_admin_team_step_down_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -2264,7 +2530,12 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        /** Update Settings */
+        /**
+         * Update Settings
+         * @description Changes the active workspace's own settings (a team's, for its team admins
+         *     and super admins; a personal workspace's, for its owner). Without a workspace
+         *     it changes the organisation default, for super admins.
+         */
         patch: operations["update_settings_settings_patch"];
         trace?: never;
     };
@@ -2294,6 +2565,20 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * AboveRead
+         * @description A saved setting that is above a ceiling (it is held to it when used).
+         */
+        AboveRead: {
+            /** Scope */
+            scope: string;
+            /** Setting */
+            setting: string;
+            /** Value */
+            value: number | null;
+            /** Limit */
+            limit: number;
+        };
         /** AcceptInviteRequest */
         AcceptInviteRequest: {
             /** Token */
@@ -2316,6 +2601,34 @@ export interface components {
             allowed: boolean;
             /** Note */
             note: string | null;
+        };
+        /** AccessEntryRead */
+        AccessEntryRead: {
+            /** Name */
+            name: string;
+            /** Email */
+            email: string;
+            /** Role */
+            role: string;
+            /** Locked */
+            locked: boolean;
+            /** Reason */
+            reason?: string | null;
+        };
+        /** AccessGrantPayload */
+        AccessGrantPayload: {
+            /** Email */
+            email: string;
+            /**
+             * Role
+             * @default viewer
+             */
+            role: string;
+        };
+        /** AccessRolePayload */
+        AccessRolePayload: {
+            /** Role */
+            role: string;
         };
         /** ActivityItemRead */
         ActivityItemRead: {
@@ -2517,6 +2830,25 @@ export interface components {
              * @default true
              */
             domain_approved: boolean;
+            /** My Role */
+            my_role?: string | null;
+            /** Added By Name */
+            added_by_name?: string | null;
+            /**
+             * Added By Me
+             * @default false
+             */
+            added_by_me: boolean;
+            /**
+             * Shared With Me
+             * @default false
+             */
+            shared_with_me: boolean;
+            /**
+             * Shared With Count
+             * @default 0
+             */
+            shared_with_count: number;
         };
         /** ApplicationRenamePayload */
         ApplicationRenamePayload: {
@@ -2544,6 +2876,13 @@ export interface components {
         Body_upload_document_explorer_applications__application_id__knowledge_documents_post: {
             /** File */
             file: string;
+        };
+        /** CandidateRead */
+        CandidateRead: {
+            /** Name */
+            name: string;
+            /** Email */
+            email: string;
         };
         /** CaptureRead */
         CaptureRead: {
@@ -3087,6 +3426,25 @@ export interface components {
              * @default true
              */
             domain_approved: boolean;
+            /** My Role */
+            my_role?: string | null;
+            /** Added By Name */
+            added_by_name?: string | null;
+            /**
+             * Added By Me
+             * @default false
+             */
+            added_by_me: boolean;
+            /**
+             * Shared With Me
+             * @default false
+             */
+            shared_with_me: boolean;
+            /**
+             * Shared With Count
+             * @default 0
+             */
+            shared_with_count: number;
             /** Journey Count */
             journey_count: number;
             /** Scenario Count */
@@ -3134,7 +3492,7 @@ export interface components {
             email: string;
             /**
              * Role
-             * @default member
+             * @default standard_user
              */
             role: string;
         };
@@ -3239,6 +3597,35 @@ export interface components {
              * @default 0
              */
             flaky_count: number;
+        };
+        /** LimitsBody */
+        LimitsBody: {
+            /**
+             * Maximums
+             * @default {}
+             */
+            maximums: {
+                [key: string]: number;
+            };
+            /** Min Delete Project After */
+            min_delete_project_after?: string | null;
+        };
+        /** LimitsRead */
+        LimitsRead: {
+            /**
+             * Maximums
+             * @default {}
+             */
+            maximums: {
+                [key: string]: number;
+            };
+            /** Min Delete Project After */
+            min_delete_project_after?: string | null;
+            /**
+             * Above
+             * @default []
+             */
+            above: components["schemas"]["AboveRead"][];
         };
         /** LiveTestCaseComponentRead */
         LiveTestCaseComponentRead: {
@@ -3386,6 +3773,14 @@ export interface components {
             finished_at: string | null;
             recording: components["schemas"]["RecordingInfo"] | null;
         };
+        /** MyWorkspacesRead */
+        MyWorkspacesRead: {
+            personal: components["schemas"]["WorkspaceRead"];
+            /** Teams */
+            teams: components["schemas"]["WorkspaceRead"][];
+            /** Last Workspace */
+            last_workspace?: string | null;
+        };
         /** OverviewRead */
         OverviewRead: {
             health: components["schemas"]["HealthRead"];
@@ -3478,6 +3873,24 @@ export interface components {
             test_asset_id?: string | null;
             /** Error Message */
             error_message?: string | null;
+        };
+        /**
+         * RemovalImpactRead
+         * @description What removing a person takes with it — shown in the confirmation.
+         */
+        RemovalImpactRead: {
+            /** Name */
+            name: string;
+            /** Personal Applications */
+            personal_applications: number;
+            /** People Losing Access */
+            people_losing_access: number;
+            /** Team Applications Added */
+            team_applications_added: number;
+            /** Teams */
+            teams: number;
+            /** Schedules Without Recipient */
+            schedules_without_recipient: number;
         };
         /** ReportRead */
         ReportRead: {
@@ -3979,6 +4392,48 @@ export interface components {
             /** Notes */
             notes?: string | null;
         };
+        /** StepDownPayload */
+        StepDownPayload: {
+            /** Successor Email */
+            successor_email: string;
+        };
+        /** TeamApplicationRead */
+        TeamApplicationRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Url */
+            url: string;
+            /** Added By Name */
+            added_by_name: string | null;
+            /** People */
+            people: string[];
+            /** People Count */
+            people_count: number;
+            /** My Role */
+            my_role: string | null;
+        };
+        /** TeamCreate */
+        TeamCreate: {
+            /** Name */
+            name: string;
+            /** Team Admin Emails */
+            team_admin_emails: string[];
+        };
+        /** TeamMemberAdd */
+        TeamMemberAdd: {
+            /** Email */
+            email: string;
+            /**
+             * Role
+             * @default team_member
+             */
+            role: string;
+        };
         /** TeamMemberRead */
         TeamMemberRead: {
             /** Name */
@@ -3994,6 +4449,43 @@ export interface components {
             created_at: string;
             /** Last Active At */
             last_active_at?: string | null;
+            /**
+             * Teams
+             * @default []
+             */
+            teams: string[];
+        };
+        /** TeamMemberRole */
+        TeamMemberRole: {
+            /** Role */
+            role: string;
+        };
+        /** TeamPersonRead */
+        TeamPersonRead: {
+            /** Name */
+            name: string;
+            /** Email */
+            email: string;
+            /** Role */
+            role: string;
+        };
+        /** TeamRead */
+        TeamRead: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Is Default */
+            is_default: boolean;
+            /** Team Admins */
+            team_admins: string[];
+            /** Member Count */
+            member_count: number;
+            /** Application Count */
+            application_count: number;
         };
         /** TeamRoleUpdate */
         TeamRoleUpdate: {
@@ -4324,6 +4816,29 @@ export interface components {
             /** Height */
             height: number;
         };
+        /** WorkspacePayload */
+        WorkspacePayload: {
+            /** Workspace */
+            workspace: string;
+        };
+        /** WorkspaceRead */
+        WorkspaceRead: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Kind */
+            kind: string;
+            /** Role */
+            role?: string | null;
+            /**
+             * Is Default
+             * @default false
+             */
+            is_default: boolean;
+            /** Application Count */
+            application_count: number;
+        };
         /** TestCaseRead */
         api__explorer__TestCaseRead: {
             /**
@@ -4434,6 +4949,583 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ActivityPageRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_organization_limits_organization_limits_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_organization_limits_organization_limits_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LimitsBody"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    my_workspaces_me_workspaces_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyWorkspacesRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remember_workspace_me_workspace_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspacePayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_teams_teams_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_team_teams_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_team_teams__external_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_team_members_teams__external_id__members_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamPersonRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_team_member_teams__external_id__members_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamMemberAdd"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamPersonRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_member_from_team_teams__external_id__members__email__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+                email: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_member_role_in_team_teams__external_id__members__email__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+                email: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TeamMemberRole"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamPersonRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_team_applications_teams__external_id__applications_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamApplicationRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_access_applications__external_id__access_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessEntryRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    share_application_applications__external_id__access_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccessGrantPayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessEntryRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_access_candidates_applications__external_id__access_candidates_get: {
+        parameters: {
+            query: {
+                q: string;
+            };
+            header?: never;
+            path: {
+                external_id: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CandidateRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_access_applications__external_id__access__email__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+                email: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_access_role_applications__external_id__access__email__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                external_id: string;
+                email: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccessRolePayload"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccessEntryRead"];
                 };
             };
             /** @description Validation Error */
@@ -6653,6 +7745,39 @@ export interface operations {
             };
         };
     };
+    get_removal_impact_team__email__removal_impact_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                email: string;
+            };
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RemovalImpactRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     remove_team_member_team__email__delete: {
         parameters: {
             query?: never;
@@ -6665,6 +7790,39 @@ export interface operations {
             };
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    step_down_as_super_admin_team_step_down_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                session?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StepDownPayload"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             204: {

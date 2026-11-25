@@ -1,9 +1,10 @@
-// Read-only "viewer" role in the UI: write actions are hidden (the API refuses
-// them anyway — this is about not offering what can't be done), reads stay.
-// Each component renders inside PermissionsProvider as App does.
+// Read-only "viewer" role on an application in the UI: write actions are hidden
+// (the API refuses them anyway — this is about not offering what can't be done),
+// reads stay. Each component renders inside PermissionsProvider as App does,
+// with the role on the application that is open.
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { Role } from './api'
+import type { AppRole } from './api'
 import { PermissionsProvider } from './PermissionsContext'
 import { AppShell } from './components/shell/AppShell'
 import { InviteTeammateModal } from './components/InviteTeammateModal'
@@ -16,7 +17,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-function as(role: Role, ui: React.ReactElement) {
+function as(role: AppRole, ui: React.ReactElement) {
   return render(<PermissionsProvider value={role}>{ui}</PermissionsProvider>)
 }
 
@@ -96,7 +97,7 @@ describe('viewer role', () => {
   it('still offers Retry and View report to a member', async () => {
     stubRuns('completed')
 
-    as('member', <RunsTab applicationId="app-1" initialRunId="run-1" />)
+    as('contributor', <RunsTab applicationId="app-1" initialRunId="run-1" />)
 
     expect(await screen.findByTitle('Retry this test with self-healing')).toBeInTheDocument()
     expect(screen.getByText('View report')).toBeInTheDocument()
@@ -151,13 +152,37 @@ describe('viewer role', () => {
     expect(screen.queryByTitle('More options')).toBeNull()
   })
 
+  it('shows Activity in the sidebar to a super admin only', () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => [] })))
+    const shell = (role: 'super_admin' | 'standard_user') =>
+      as(
+        'app_admin',
+        <AppShell
+          user={{ name: 'Sam', email: 'sam@example.com', role }}
+          route="apps"
+          crumb="Applications"
+          onGoOverview={() => {}}
+          onGoApps={() => {}}
+          onGoActivity={() => {}}
+          onLogout={() => {}}
+        >
+          <div />
+        </AppShell>,
+      )
+    const admin = shell('super_admin')
+    expect(screen.getByText('Activity')).toBeInTheDocument()
+    admin.unmount()
+    shell('standard_user')
+    expect(screen.queryByText('Activity')).toBeNull()
+  })
+
   it('shows a View only badge and hides Add application and Settings in the shell', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => [] })))
-    const shell = (role: Role) =>
+    const shell = (role: AppRole) =>
       as(
         role,
         <AppShell
-          user={{ name: 'Vera Viewer', email: 'vera@example.com', role }}
+          user={{ name: 'Vera Viewer', email: 'vera@example.com', role: 'standard_user' }}
           route="apps"
           crumb="Applications"
           onGoOverview={() => {}}
@@ -165,6 +190,7 @@ describe('viewer role', () => {
           onAddApplication={() => {}}
           onOpenSettings={() => {}}
           onGoTeam={() => {}}
+          onGoActivity={() => {}}
           onLogout={() => {}}
         >
           <div />
@@ -172,30 +198,33 @@ describe('viewer role', () => {
       )
 
     const viewer = shell('viewer')
+    expect(screen.queryByText('Activity')).toBeNull() // super admins only
     expect(screen.getByText('View only')).toBeInTheDocument()
     expect(screen.queryByText('Add application')).toBeNull()
     expect(screen.queryByText('Settings')).toBeNull()
     viewer.unmount()
 
-    shell('member')
+    shell('contributor')
     expect(screen.queryByText('View only')).toBeNull()
     expect(screen.getAllByText('Add application').length).toBeGreaterThan(0)
     expect(screen.getByText('Settings')).toBeInTheDocument()
   })
 })
 
-describe('assigning the viewer role', () => {
-  it('offers Viewer when inviting a teammate', () => {
+describe('organisation roles', () => {
+  it('offers only User and Super Admin when inviting a teammate', () => {
     render(<InviteTeammateModal onClose={() => {}} />)
 
-    expect(screen.getByText('Viewer')).toBeInTheDocument()
-    expect(screen.getByText('Can view applications, test cases and run results — no changes.')).toBeInTheDocument()
+    expect(screen.getByText('User')).toBeInTheDocument()
+    expect(screen.getByText('Super Admin')).toBeInTheDocument()
+    // Read-only access is a per-application role, given when an application is shared.
+    expect(screen.queryByText('Viewer')).toBeNull()
   })
 
-  it('changes a member to viewer from the Team members menu', async () => {
+  it('promotes a user to Super Admin from the Team members menu', async () => {
     let members = [
-      { name: 'Ada Lovelace', email: 'ada@example.com', role: 'admin', created_at: '2026-09-01T00:00:00Z', last_active_at: null },
-      { name: 'Bob Builder', email: 'bob@example.com', role: 'member', created_at: '2026-09-01T00:00:00Z', last_active_at: null },
+      { name: 'Ada Lovelace', email: 'ada@example.com', role: 'super_admin', created_at: '2026-09-01T00:00:00Z', last_active_at: null },
+      { name: 'Bob Builder', email: 'bob@example.com', role: 'standard_user', created_at: '2026-09-01T00:00:00Z', last_active_at: null },
     ]
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (init?.method === 'PATCH' && url.endsWith('/team/bob%40example.com/role')) {
@@ -207,25 +236,31 @@ describe('assigning the viewer role', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    render(<TeamMembers user={{ name: 'Ada Lovelace', email: 'ada@example.com', role: 'admin' }} />)
+    render(<TeamMembers user={{ name: 'Ada Lovelace', email: 'ada@example.com', role: 'super_admin' }} />)
 
     await screen.findByText('Bob Builder')
-    fireEvent.click(screen.getByTitle('More options'))
-    const menu = screen.getByRole('menu')
-    expect(within(menu).getByRole('menuitemradio', { name: /Member/ })).toBeDisabled()
-    fireEvent.click(within(menu).getByRole('menuitemradio', { name: /Viewer/ }))
+    fireEvent.click(screen.getAllByTitle('More options')[1])
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit role' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Edit role' })
+    // Nothing to save until the role changes.
+    expect(within(dialog).getByRole('button', { name: 'Update role' })).toBeDisabled()
+    fireEvent.click(within(dialog).getByLabelText(/Super Admin/))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update role' }))
 
-    await waitFor(() => expect(screen.getByText('Viewer', { selector: 'span' })).toBeInTheDocument())
-    expect(fetchMock).toHaveBeenCalledWith(
-      expect.stringContaining('/team/bob%40example.com/role'),
-      expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ role: 'viewer' }) }),
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('/team/bob%40example.com/role'),
+        expect.objectContaining({ method: 'PATCH', body: JSON.stringify({ role: 'super_admin' }) }),
+      ),
     )
+    // Both people now carry the Super Admin pill.
+    await waitFor(() => expect(screen.getAllByText('Super Admin', { selector: 'span' })).toHaveLength(2))
   })
 
   it('shows the last-admin refusal from the server', async () => {
     const members = [
-      { name: 'Ada Lovelace', email: 'ada@example.com', role: 'admin', created_at: '2026-09-01T00:00:00Z', last_active_at: null },
-      { name: 'Ann Admin', email: 'ann@example.com', role: 'admin', created_at: '2026-09-01T00:00:00Z', last_active_at: null },
+      { name: 'Ada Lovelace', email: 'ada@example.com', role: 'super_admin', created_at: '2026-09-01T00:00:00Z', last_active_at: null },
+      { name: 'Ann Admin', email: 'ann@example.com', role: 'super_admin', created_at: '2026-09-01T00:00:00Z', last_active_at: null },
     ]
     vi.stubGlobal(
       'fetch',
@@ -236,11 +271,14 @@ describe('assigning the viewer role', () => {
       ),
     )
 
-    render(<TeamMembers user={{ name: 'Ada Lovelace', email: 'ada@example.com', role: 'admin' }} />)
+    render(<TeamMembers user={{ name: 'Ada Lovelace', email: 'ada@example.com', role: 'super_admin' }} />)
 
     await screen.findByText('Ann Admin')
-    fireEvent.click(screen.getByTitle('More options'))
-    fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitemradio', { name: /Viewer/ }))
+    fireEvent.click(screen.getAllByTitle('More options')[1])
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit role' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Edit role' })
+    fireEvent.click(within(dialog).getByLabelText(/^User/))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update role' }))
 
     expect(await screen.findByText('an organization needs at least one admin')).toBeInTheDocument()
   })

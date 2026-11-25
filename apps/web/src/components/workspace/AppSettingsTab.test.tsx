@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { EnvironmentRead, Role } from '../../api'
+import type { AppRole, EnvironmentRead } from '../../api'
 import { EnvironmentsProvider, type EnvironmentsValue } from '../environments/EnvironmentsContext'
 import { PermissionsProvider } from '../../PermissionsContext'
 import { AppSettingsTab } from './AppSettingsTab'
@@ -32,11 +32,11 @@ const GENERATION = {
 }
 
 function renderTab({
-  role = 'member',
+  role = 'app_admin',
   environments = [DEFAULT_ENV, UAT],
   canAdd = true,
   card = 'Environment Settings',
-}: { role?: Role; environments?: EnvironmentRead[]; canAdd?: boolean; card?: string | null } = {}) {
+}: { role?: AppRole; environments?: EnvironmentRead[]; canAdd?: boolean; card?: string | null } = {}) {
   const value: EnvironmentsValue = {
     environments,
     refresh: vi.fn(async () => {}),
@@ -92,8 +92,8 @@ describe('AppSettingsTab', () => {
     expect(within(rows[1]).getByText('uat-account')).toBeTruthy()
   })
 
-  it('lets a member edit every row but remove only the extra ones', () => {
-    renderTab({ role: 'member' })
+  it('lets an application admin edit every row but remove only the extra ones', () => {
+    renderTab({ role: 'app_admin' })
 
     openMenu('production')
     expect(screen.getByRole('menuitem', { name: 'Edit production environment' })).toBeTruthy()
@@ -113,6 +113,15 @@ describe('AppSettingsTab', () => {
 
   it('is read-only for a viewer — no add, edit, remove, or password reveal', () => {
     renderTab({ role: 'viewer', canAdd: false })
+
+    expect(screen.getAllByTestId(/^environment-row-/)).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: 'Add environment' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^Actions for / })).toBeNull()
+    expect(screen.queryByRole('button', { name: /password for/ })).toBeNull()
+  })
+
+  it('is read-only for a contributor too — only application admins change environments', () => {
+    renderTab({ role: 'contributor', canAdd: false })
 
     expect(screen.getAllByTestId(/^environment-row-/)).toHaveLength(2)
     expect(screen.queryByRole('button', { name: 'Add environment' })).toBeNull()
@@ -218,7 +227,7 @@ describe('AppSettingsTab', () => {
 
   it('saves this application’s test case generation settings', async () => {
     const calls = stubFetch(() => ({ body: GENERATION }))
-    renderTab({ role: 'admin', card: 'Test case generation' })
+    renderTab({ role: 'app_admin', card: 'Test case generation' })
     fireEvent.change(await screen.findByLabelText('Maximum self-heal attempts'), { target: { value: '5' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save Configuration' }))
     await waitFor(() =>
@@ -226,10 +235,10 @@ describe('AppSettingsTab', () => {
     )
   })
 
-  it('shows the generation settings read-only to anyone but an admin', async () => {
+  it('shows the generation settings read-only to anyone but an application admin', async () => {
     const calls = stubFetch(() => ({ body: GENERATION }))
-    renderTab({ role: 'member', card: 'Test case generation' })
-    expect(await screen.findByText('Only organization admins can change these settings.')).toBeTruthy()
+    renderTab({ role: 'contributor', card: 'Test case generation' })
+    expect(await screen.findByText('Only application admins can change these settings.')).toBeTruthy()
     expect((await screen.findByLabelText('Maximum self-heal attempts')).matches(':disabled')).toBe(true)  // the whole form
     expect(screen.queryByRole('button', { name: 'Save Configuration' })).toBeNull()
     expect(calls.every((c) => c.method === 'GET')).toBe(true)
@@ -247,9 +256,9 @@ describe('AppSettingsTab', () => {
     expect(value.refresh).toHaveBeenCalled()
   })
 
-  it('does not let a viewer change credentials', () => {
+  it('does not let anyone but an application admin change credentials', () => {
     renderTab({ role: 'viewer', card: 'Sign-in credentials' })
-    expect(screen.getByText('Viewers can’t change credentials.')).toBeTruthy()
+    expect(screen.getByText('Only application admins can change credentials.')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Save credentials/ })).toBeNull()
   })
 })

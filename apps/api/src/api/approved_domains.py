@@ -10,14 +10,15 @@ import ipaddress
 import uuid
 from urllib.parse import urlsplit
 
-from domain import Application, ApprovedDomain
+from domain import Application, ApprovedDomain, PlatformUser
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
+from api.access import visibility_clause
 from api.activity import record_activity
-from api.auth import CurrentAdminDep, CurrentOrgIdDep, SessionDep
+from api.auth import CurrentAdminDep, CurrentOrgIdDep, CurrentUserDep, SessionDep
 
 router = APIRouter()
 
@@ -140,15 +141,20 @@ def _read(domain: ApprovedDomain, all_domains: list[str], applications: list[App
     )
 
 
-def _org_applications(session: Session, organization_id: uuid.UUID) -> list[Application]:
-    return list(
-        session.exec(
-            select(Application).where(
-                Application.organization_id == organization_id,
-                Application.deleted_at.is_(None),  # type: ignore[attr-defined]
-            )
-        ).all()
+def _org_applications(
+    session: Session, organization_id: uuid.UUID, viewer: PlatformUser | None = None
+) -> list[Application]:
+    """Every application of the organisation — or, with a `viewer`, only the ones
+    they may see (what names a domain's list may show). The in-use check on delete
+    passes no viewer: a domain must not be removed from under an application the
+    admin can't see."""
+    stmt = select(Application).where(
+        Application.organization_id == organization_id,
+        Application.deleted_at.is_(None),  # type: ignore[attr-defined]
     )
+    if viewer is not None:
+        stmt = stmt.where(visibility_clause(viewer))
+    return list(session.exec(stmt).all())
 
 
 def _get_domain(session: Session, organization_id: uuid.UUID, external_id: uuid.UUID) -> ApprovedDomain:
@@ -167,11 +173,11 @@ def _duplicate() -> HTTPException:
 
 
 @router.get("/domains", response_model=list[DomainRead])
-def list_domains(session: SessionDep, organization_id: CurrentOrgIdDep) -> list[DomainRead]:
+def list_domains(session: SessionDep, organization_id: CurrentOrgIdDep, user: CurrentUserDep) -> list[DomainRead]:
     domains = session.exec(
         select(ApprovedDomain).where(ApprovedDomain.organization_id == organization_id).order_by(ApprovedDomain.host)
     ).all()
-    applications = _org_applications(session, organization_id)
+    applications = _org_applications(session, organization_id, user)
     hosts = [d.host for d in domains]
     return [_read(d, hosts, applications) for d in domains]
 
@@ -190,7 +196,9 @@ def add_domain(payload: DomainPayload, session: SessionDep, admin: CurrentAdminD
         session.rollback()
         raise _duplicate() from None
     return _read(
-        domain, approved_hosts(session, admin.organization_id), _org_applications(session, admin.organization_id)
+        domain,
+        approved_hosts(session, admin.organization_id),
+        _org_applications(session, admin.organization_id, admin),
     )
 
 

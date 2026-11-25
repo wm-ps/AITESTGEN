@@ -50,8 +50,11 @@ from test_suite_assembler.assembler import (
     write_project_scaffold,
 )
 
+from api.access import ActiveWorkspaceDep, require_application
+from api.workspace_settings import require_settings_editor, settings_row
+from api.organization_limits import enforce_changed, explorer_overrides, org_maximums
 from api.activity import record_activity
-from api.auth import CurrentAdminDep, CurrentOrgIdDep, CurrentUserDep
+from api.auth import CurrentOrgIdDep, CurrentUserDep
 from api.db import get_session
 from api.temporal_client import get_temporal_client, has_pollers
 
@@ -182,7 +185,11 @@ class AppMapRead(BaseModel):
     edges: list[MapEdge]
 
 
-def _owned_application(session: Session, external_id: uuid.UUID, org_id: uuid.UUID) -> Application:
+def _owned_application(
+    session: Session, external_id: uuid.UUID, org_id: uuid.UUID, min_role: str | None = None
+) -> Application:
+    """The application in the caller's organisation, only if they may see it
+    (api.access); the minimum role defaults from the HTTP method."""
     application = session.exec(
         select(Application).where(
             Application.external_id == external_id,
@@ -190,9 +197,7 @@ def _owned_application(session: Session, external_id: uuid.UUID, org_id: uuid.UU
             Application.deleted_at.is_(None),  # type: ignore[union-attr]
         )
     ).first()
-    if application is None:
-        raise HTTPException(status_code=404, detail="application not found")
-    return application
+    return require_application(session, application, org_id, "application not found", min_role)
 
 
 def _owned_run(
@@ -203,8 +208,8 @@ def _owned_run(
         .join(Application, col(Application.id) == col(ExplorerRun.application_id))
         .where(ExplorerRun.external_id == external_id, Application.organization_id == org_id)
     ).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="explorer run not found")
+    require_application(session, row[1] if row else None, org_id, "explorer run not found")
+    assert row is not None
     return row[0], row[1]
 
 
@@ -359,7 +364,9 @@ async def begin_run(
         notes=(notes or "").strip() or None,
         started_by_id=started_by,
         # Settings → Explorer limits, as of now.
-        limits=limits_snapshot(session),
+        limits=limits_snapshot(
+            session, org_maximums(session, application.organization_id), explorer_overrides(session, application)
+        ),
     )
     session.add(run)
     # Notes (test data like a policy number) are remembered for later runs —
@@ -474,14 +481,14 @@ def mark_false_alarm(
     wrong", its open "is this a bug?" question closes, and the app's
     behaviour is remembered as correct for this and future runs."""
     row = session.exec(
-        select(ExplorerHealthIssue, ExplorerRun)
+        select(ExplorerHealthIssue, ExplorerRun, Application)
         .join(ExplorerRun, col(ExplorerRun.id) == col(ExplorerHealthIssue.run_id))
         .join(Application, col(Application.id) == col(ExplorerRun.application_id))
         .where(ExplorerHealthIssue.id == issue_id, Application.organization_id == org_id)
     ).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="finding not found")
-    issue, run = row
+    require_application(session, row[2] if row else None, org_id, "finding not found")
+    assert row is not None
+    issue, run, _ = row
     if issue.kind == "false_alarm":
         return
     issue.kind = "false_alarm"
@@ -518,17 +525,17 @@ def mark_false_alarm(
 
 @router.get("/shots/{shot_id}")
 def get_shot(shot_id: uuid.UUID, session: SessionDep, org_id: CurrentOrgIdDep) -> Response:
-    row = session.exec(
-        select(ExplorerShot.data)
+    found = session.exec(
+        select(ExplorerShot.data, Application)
         .join(ExplorerRun, col(ExplorerRun.id) == col(ExplorerShot.run_id))
         .join(Application, col(Application.id) == col(ExplorerRun.application_id))
         .where(ExplorerShot.id == shot_id, Application.organization_id == org_id)
     ).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="screenshot not found")
+    require_application(session, found[1] if found else None, org_id, "screenshot not found")
+    assert found is not None
     # Immutable once written — let the browser cache it.
     return Response(
-        row, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"}
+        found[0], media_type="image/jpeg", headers={"Cache-Control": "private, max-age=86400"}
     )
 
 
@@ -740,7 +747,9 @@ async def resume_run(
     await _end_leftover_workflow(run, "Resumed by the user")
     # Today's limits from Settings: raising the one that paused it is how a
     # run reaching its budget or time carries on.
-    run.limits = limits_snapshot(session)
+    run.limits = limits_snapshot(
+        session, org_maximums(session, application.organization_id), explorer_overrides(session, application)
+    )
     run.status, run.headline, run.updated_at = "queued", "Resuming", datetime.now(UTC)
     session.add(run)
     if not run.prompt:  # an authoring run is not the app's discovery
@@ -869,28 +878,49 @@ def _check_limits(payload: ExplorerSettingsBody) -> None:
         )
 
 
+def _explorer_settings_in_force(session: Session, user, workspace) -> dict:
+    """The organisation default's Explorer limits with the active workspace's own values on top."""
+    default = current_settings(session)
+    values = ExplorerSettingsBody.model_validate(default, from_attributes=True).model_dump()
+    row = settings_row(session, user, workspace, create=False)
+    values.update({k: v for k, v in (row.explorer if row else {}).items() if k in values})
+    return values
+
+
 @router.get("/settings", response_model=ExplorerSettingsBody)
-def get_explorer_settings(session: SessionDep, _admin: CurrentAdminDep) -> ExplorerSettingsBody:
-    settings = current_settings(session)
+def get_explorer_settings(session: SessionDep, user: CurrentUserDep, workspace: ActiveWorkspaceDep) -> ExplorerSettingsBody:
+    require_settings_editor(session, user, workspace)
+    values = _explorer_settings_in_force(session, user, workspace)
     session.commit()
-    return ExplorerSettingsBody.model_validate(settings, from_attributes=True)
+    return ExplorerSettingsBody(**values)
 
 
 @router.put("/settings", response_model=ExplorerSettingsBody)
 def update_explorer_settings(
-    payload: ExplorerSettingsBody, session: SessionDep, admin: CurrentAdminDep
+    payload: ExplorerSettingsBody, session: SessionDep, admin: CurrentUserDep, workspace: ActiveWorkspaceDep
 ) -> ExplorerSettingsBody:
     """New runs use these; a run going now keeps the limits it started with
-    (Resume picks up the new ones)."""
+    (Resume picks up the new ones). In a workspace they are that workspace's own
+    (a team's, for its team admins and super admins; a person's, for their personal
+    workspace); without one they are the organisation default, for super admins."""
+    require_settings_editor(session, admin, workspace)
     _check_limits(payload)
-    settings = current_settings(session)
-    for key, value in payload.model_dump().items():
-        setattr(settings, key, value)
-    session.add(settings)
+    before = _explorer_settings_in_force(session, admin, workspace)
+    enforce_changed(session, admin.organization_id, before, payload.model_dump())
+    if workspace is None:
+        settings = current_settings(session)
+        for key, value in payload.model_dump().items():
+            setattr(settings, key, value)
+        session.add(settings)
+    else:
+        row = settings_row(session, admin, workspace, create=True)
+        assert row is not None
+        # Store only what this workspace changed; the rest keeps following the default.
+        row.explorer = {**row.explorer, **{k: v for k, v in payload.model_dump().items() if before.get(k) != v}}
+        session.add(row)
     record_activity(session, admin, "settings", "Changed the Explorer limits")
     session.commit()
-    session.refresh(settings)
-    return ExplorerSettingsBody.model_validate(settings, from_attributes=True)
+    return ExplorerSettingsBody(**payload.model_dump())
 
 
 # -- Stage 2: Mission Board, App Map, recordings ---------------------------
@@ -900,13 +930,13 @@ def _owned_mission(
     session: Session, external_id: uuid.UUID, org_id: uuid.UUID
 ) -> tuple[ExplorerMission, ExplorerRun]:
     row = session.exec(
-        select(ExplorerMission, ExplorerRun)
+        select(ExplorerMission, ExplorerRun, Application)
         .join(ExplorerRun, col(ExplorerRun.id) == col(ExplorerMission.run_id))
         .join(Application, col(Application.id) == col(ExplorerRun.application_id))
         .where(ExplorerMission.external_id == external_id, Application.organization_id == org_id)
     ).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="mission not found")
+    require_application(session, row[2] if row else None, org_id, "mission not found")
+    assert row is not None
     return row[0], row[1]
 
 
@@ -1120,14 +1150,14 @@ def list_tests(
 
 def _owned_test(session: Session, external_id: uuid.UUID, org_id: uuid.UUID) -> ExplorerTestCase:
     row = session.exec(
-        select(ExplorerTestCase)
+        select(ExplorerTestCase, Application)
         .join(ExplorerRun, col(ExplorerRun.id) == col(ExplorerTestCase.run_id))
         .join(Application, col(Application.id) == col(ExplorerRun.application_id))
         .where(ExplorerTestCase.external_id == external_id, Application.organization_id == org_id)
     ).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="test case not found")
-    return row
+    require_application(session, row[1] if row else None, org_id, "test case not found")
+    assert row is not None
+    return row[0]
 
 
 @router.get("/tests/{test_id}/proof")
@@ -1246,14 +1276,14 @@ async def judge_possible_bug(
     for that test: either answer approves it as a normal test case, never
     blocked. Test cases never hold bugs."""
     row = session.exec(
-        select(ExplorerTestCase, ExplorerRun)
+        select(ExplorerTestCase, ExplorerRun, Application)
         .join(ExplorerRun, col(ExplorerRun.id) == col(ExplorerTestCase.run_id))
         .join(Application, col(Application.id) == col(ExplorerRun.application_id))
         .where(ExplorerTestCase.external_id == test_id, Application.organization_id == org_id)
     ).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="scenario not found")
-    test, run = row
+    require_application(session, row[2] if row else None, org_id, "scenario not found")
+    assert row is not None
+    test, run, _ = row
     if test.status != "known_bug":
         raise HTTPException(status_code=409, detail="only a possible bug can be answered")
     keep = payload.verdict == "not_a_bug" or (payload.verdict == "ignore" and bool(run.prompt))
@@ -1365,13 +1395,13 @@ def _owned_question(
     session: Session, external_id: uuid.UUID, org_id: uuid.UUID
 ) -> tuple[ExplorerQuestion, ExplorerRun]:
     row = session.exec(
-        select(ExplorerQuestion, ExplorerRun)
+        select(ExplorerQuestion, ExplorerRun, Application)
         .join(ExplorerRun, col(ExplorerRun.id) == col(ExplorerQuestion.run_id))
         .join(Application, col(Application.id) == col(ExplorerRun.application_id))
         .where(ExplorerQuestion.external_id == external_id, Application.organization_id == org_id)
     ).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="question not found")
+    require_application(session, row[2] if row else None, org_id, "question not found")
+    assert row is not None
     return row[0], row[1]
 
 
@@ -1516,8 +1546,8 @@ def delete_knowledge(
         .join(Application, col(Application.id) == col(ExplorerKnowledge.application_id))
         .where(ExplorerKnowledge.external_id == knowledge_id, Application.organization_id == org_id)
     ).first()
-    if found is None:
-        raise HTTPException(status_code=404, detail="not found")
+    require_application(session, found[1] if found else None, org_id, "not found")
+    assert found is not None
     row, application = found
     record_activity(
         session,
@@ -1669,8 +1699,8 @@ def delete_role(
         .join(Application, col(Application.id) == col(ExplorerRole.application_id))
         .where(ExplorerRole.external_id == role_id, Application.organization_id == org_id)
     ).first()
-    if found is None:
-        raise HTTPException(status_code=404, detail="not found")
+    require_application(session, found[1] if found else None, org_id, "not found")
+    assert found is not None
     row, application = found
     record_activity(
         session,
