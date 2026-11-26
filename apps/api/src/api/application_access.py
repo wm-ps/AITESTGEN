@@ -41,9 +41,9 @@ class AccessEntryRead(BaseModel):
     name: str
     email: str
     role: str
-    # True for the adder and the team admins: full access that can't be edited.
+    # True for the adder, team admins and super admins: full access that can't be edited.
     locked: bool
-    # Why a locked row is locked: "Added by" | "Team Admin".
+    # Why a locked row is locked: "Added by" | "Team Admin" | "Super Admin".
     reason: str | None = None
 
 
@@ -98,33 +98,39 @@ def _team_admin_ids(session: Session, application: Application) -> set[uuid.UUID
     )
 
 
+def _super_admin_ids(session: Session, application: Application) -> set[uuid.UUID]:
+    """Super admins administer every team application; personal ones stay private."""
+    if application.team_id is None:
+        return set()
+    return set(
+        session.exec(
+            select(PlatformUser.id).where(
+                PlatformUser.organization_id == application.organization_id,
+                PlatformUser.role == SUPER_ADMIN_ROLE,
+            )
+        ).all()
+    )
+
+
 def _full_access_ids(session: Session, application: Application) -> set[uuid.UUID]:
     """People who already hold admin on this application without a grant."""
-    ids = _team_admin_ids(session, application)
+    ids = _team_admin_ids(session, application) | _super_admin_ids(session, application)
     if application.created_by_id is not None:
         ids.add(application.created_by_id)
-    if application.team_id is not None:
-        ids |= set(
-            session.exec(
-                select(PlatformUser.id).where(
-                    PlatformUser.organization_id == application.organization_id,
-                    PlatformUser.role == SUPER_ADMIN_ROLE,
-                )
-            ).all()
-        )
     return ids
 
 
 def _target(session: Session, application: Application, email: str) -> PlatformUser:
     """The person to share with: in this organisation and, for a team
-    application, in its team. Anything else is a plain 404."""
+    application, in its team (a Super Admin is in every team, with no membership
+    row, and is then refused as already having full access). Anything else is a
+    plain 404."""
     stmt = select(PlatformUser).where(
         PlatformUser.email == email, PlatformUser.organization_id == application.organization_id
     )
     if application.team_id is not None:
-        stmt = stmt.join(
-            TeamMember, (TeamMember.user_id == PlatformUser.id) & (TeamMember.team_id == application.team_id)  # type: ignore[arg-type]
-        )
+        in_team = select(TeamMember.user_id).where(TeamMember.team_id == application.team_id)
+        stmt = stmt.where(or_(PlatformUser.role == SUPER_ADMIN_ROLE, col(PlatformUser.id).in_(in_team)))
     person = session.exec(stmt).first()
     if person is None:
         raise HTTPException(status_code=404, detail="person not found")
@@ -145,6 +151,7 @@ def list_access(
 ) -> list[AccessEntryRead]:
     application = _managed_application(session, organization_id, external_id)
     team_admins = _team_admin_ids(session, application)
+    super_admins = _super_admin_ids(session, application)
     rows = session.exec(
         select(ApplicationMember, PlatformUser)
         .join(PlatformUser, col(PlatformUser.id) == col(ApplicationMember.user_id))
@@ -159,12 +166,19 @@ def list_access(
             locked.append(AccessEntryRead(name=person.name, email=person.email, role=APP_ADMIN_ROLE, locked=True, reason="Added by"))
         elif person.id in team_admins:
             locked.append(AccessEntryRead(name=person.name, email=person.email, role=APP_ADMIN_ROLE, locked=True, reason="Team Admin"))
+        elif person.id in super_admins:
+            locked.append(AccessEntryRead(name=person.name, email=person.email, role=APP_ADMIN_ROLE, locked=True, reason="Super Admin"))
         else:
             shared.append(AccessEntryRead(name=person.name, email=person.email, role=grant.role, locked=False))
-    # Team admins hold admin without a grant row.
+    # Team admins and super admins hold admin without a grant row.
     for person in session.exec(select(PlatformUser).where(col(PlatformUser.id).in_(team_admins - seen))).all():
         locked.append(AccessEntryRead(name=person.name, email=person.email, role=APP_ADMIN_ROLE, locked=True, reason="Team Admin"))
-    locked.sort(key=lambda e: (e.reason != "Added by", e.name.lower()))
+    for person in session.exec(
+        select(PlatformUser).where(col(PlatformUser.id).in_(super_admins - team_admins - seen))
+    ).all():
+        locked.append(AccessEntryRead(name=person.name, email=person.email, role=APP_ADMIN_ROLE, locked=True, reason="Super Admin"))
+    reason_order = {"Added by": 0, "Team Admin": 1, "Super Admin": 2}
+    locked.sort(key=lambda e: (reason_order.get(e.reason or "", 3), e.name.lower()))
     shared.sort(key=lambda e: e.name.lower())
     return locked + shared
 

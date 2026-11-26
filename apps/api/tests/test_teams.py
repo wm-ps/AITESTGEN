@@ -2,8 +2,8 @@
 
 Rows are built straight in the database (no Vault, no Temporal). Needs PostgreSQL.
 
-* Only a super admin creates teams and changes membership; a team admin gets a
-  read-only view of their own team.
+* Only a super admin creates teams; a team admin changes membership of their
+  own team only, a super admin of any team (and is never a member themself).
 * A team always keeps a team admin; an organisation always keeps a super admin
   (also for two admins acting at once).
 * The `X-Team-Id` header scopes lists to a team or to the personal workspace; a
@@ -208,14 +208,164 @@ def test_a_team_admin_only_reads_their_own_team() -> None:
     assert ann.get(f"/teams/{mine}").status_code == 200
     assert [m["email"] for m in ann.get(f"/teams/{mine}/members").json()] == [org.emails["boss"], org.emails["ann"]]
     assert ann.get(f"/teams/{mine}/applications").status_code == 200
-    # Everything that changes a team is for super admins.
-    assert ann.post(f"/teams/{mine}/members", json={"email": org.emails["bob"]}).status_code == 403
-    assert ann.patch(f"/teams/{mine}/members/{org.emails['ann']}", json={"role": "team_member"}).status_code == 403
-    assert ann.delete(f"/teams/{mine}/members/{org.emails['ann']}").status_code == 403
     # Another team doesn't exist for them; nor does any team for a plain member.
     assert ann.get(f"/teams/{other}").status_code == 404
     assert ann.get(f"/teams/{other}/members").status_code == 404
     assert org.clients["bob"].get(f"/teams/{mine}").status_code == 404
+    # Creating or deleting a team stays with super admins.
+    assert ann.post("/teams", json={"name": "Mine2", "team_admin_emails": [org.emails["ann"]]}).status_code == 403
+    assert ann.delete(f"/teams/{mine}").status_code == 403
+
+
+def test_a_team_admin_manages_only_their_own_teams_people() -> None:
+    org = Org("ann", "bob", "cy", "dee")
+    mine, other = org.new_team("Mine", ["ann"]), org.new_team("Other", ["bob"])
+    ann = org.clients["ann"]
+    added = ann.post(f"/teams/{mine}/members", json={"email": org.emails["cy"]})
+    assert added.status_code == 201 and added.json()["role"] == "team_member"
+    promoted = ann.patch(f"/teams/{mine}/members/{org.emails['cy']}", json={"role": "team_admin"})
+    assert promoted.status_code == 200 and promoted.json()["role"] == "team_admin"
+    assert ann.patch(f"/teams/{mine}/members/{org.emails['cy']}", json={"role": "team_member"}).status_code == 200
+    assert ann.delete(f"/teams/{mine}/members/{org.emails['cy']}").status_code == 204
+    # Not another team: it doesn't exist for them.
+    assert ann.post(f"/teams/{other}/members", json={"email": org.emails["dee"]}).status_code == 404
+    assert ann.patch(f"/teams/{other}/members/{org.emails['bob']}", json={"role": "team_member"}).status_code == 404
+    assert ann.delete(f"/teams/{other}/members/{org.emails['bob']}").status_code == 404
+    # A plain member of the team is told they need the role; an outsider sees no team.
+    org.clients["boss"].post(f"/teams/{mine}/members", json={"email": org.emails["dee"]})
+    dee = org.clients["dee"]
+    assert dee.post(f"/teams/{mine}/members", json={"email": org.emails["cy"]}).status_code == 403
+    assert org.clients["cy"].post(f"/teams/{mine}/members", json={"email": org.emails["cy"]}).status_code == 404
+
+
+def test_member_candidates_are_the_orgs_people_not_yet_in_the_team() -> None:
+    org, other = Org("ann", "bob", "eve"), Org("evan")
+    mine, theirs = org.new_team("Mine", ["ann"]), org.new_team("Theirs", ["bob"])
+    org.clients["boss"].post(f"/teams/{mine}/members", json={"email": org.emails["bob"]})
+    path = f"/teams/{mine}/members/candidates"
+    ann = org.clients["ann"]
+    # A Team Admin finds someone outside the team (Eve is in the Migrated team only).
+    assert [c["email"] for c in ann.get(path, params={"q": "eve"}).json()] == [org.emails["eve"]]
+    # Not people already in the team, not Super Admins, nobody from another organisation.
+    assert ann.get(path, params={"q": "bob"}).json() == []
+    assert ann.get(path, params={"q": "boss"}).json() == []
+    assert ann.get(path, params={"q": "evan"}).json() == []
+    # A super admin can search for any team; a team admin only their own; a plain member not at all.
+    assert [c["email"] for c in org.clients["boss"].get(f"/teams/{theirs}/members/candidates", params={"q": "ann"}).json()] == [org.emails["ann"]]
+    assert ann.get(f"/teams/{theirs}/members/candidates", params={"q": "eve"}).status_code == 404
+    assert org.clients["eve"].get(path, params={"q": "ann"}).status_code == 404
+    org.clients["boss"].post(f"/teams/{mine}/members", json={"email": org.emails["eve"]})
+    assert org.clients["eve"].get(path, params={"q": "ann"}).status_code == 403
+
+
+def test_demoting_a_super_admin_keeps_their_personal_work_and_drops_team_application_access() -> None:
+    org = Org("ann", "bob")
+    team = org.new_team("Growth", ["ann"])
+    boss, bob = org.clients["boss"], org.clients["bob"]
+    assert boss.patch(f"/team/{org.emails['bob']}/role", json={"role": "super_admin"}).status_code == 200
+    team_app = org.application("Shop", team_external_id=team, adder="bob")
+    personal_app = org.application("Mine", team_external_id=None, adder="bob")
+    with Session(engine) as session:
+        bob_id = org.user_id("bob")
+        person = session.get(PlatformUser, bob_id)
+        person.last_workspace = team
+        session.add(person)
+        session.commit()
+    assert bob.get(f"/applications/{team_app}").status_code == 200  # a super admin reaches every team app
+
+    assert boss.patch(f"/team/{org.emails['bob']}/role", json={"role": "standard_user"}).status_code == 200
+
+    # Team application: gone for Bob, still there for the team's admin (and still "added by Bob").
+    assert bob.get(f"/applications/{team_app}").status_code == 404
+    assert org.clients["ann"].get(f"/applications/{team_app}").status_code == 200
+    # Personal application and personal workspace: kept; no team.
+    assert bob.get(f"/applications/{personal_app}").status_code == 200
+    workspaces = bob.get("/me/workspaces").json()
+    assert workspaces["teams"] == [] and workspaces["last_workspace"] is None
+    with Session(engine) as session:
+        assert session.exec(select(TeamMember).where(TeamMember.user_id == org.user_id("bob"))).all() == []
+        grants = session.exec(select(ApplicationMember).where(ApplicationMember.user_id == org.user_id("bob"))).all()
+        assert [g.application_id for g in grants] == [
+            session.exec(select(Application.id).where(Application.external_id == uuid.UUID(personal_app))).one()
+        ]
+
+
+def test_a_team_admin_cannot_touch_a_super_admin_and_the_only_admin_steps_down_last() -> None:
+    org = Org("ann", "bob")
+    team = org.new_team("Solo", ["ann"])
+    ann, boss_email = org.clients["ann"], org.emails["boss"]
+    assert ann.patch(f"/teams/{team}/members/{boss_email}", json={"role": "team_member"}).status_code == 409
+    assert ann.delete(f"/teams/{team}/members/{boss_email}").status_code == 409
+    # The only Team Admin can't demote themself — until someone else is promoted.
+    own = f"/teams/{team}/members/{org.emails['ann']}"
+    assert ann.patch(own, json={"role": "team_member"}).status_code == 409
+    assert ann.post(f"/teams/{team}/members", json={"email": org.emails["bob"], "role": "team_admin"}).status_code == 201
+    assert ann.patch(own, json={"role": "team_member"}).status_code == 200
+    # Now a plain member: no longer allowed to manage.
+    assert ann.post(f"/teams/{team}/members", json={"email": org.emails["bob"]}).status_code == 403
+
+
+def test_a_super_admin_cannot_be_made_a_team_admin_when_creating_a_team() -> None:
+    org = Org("ann")
+    response = org.clients["boss"].post(
+        "/teams", json={"name": "Boss Only", "team_admin_emails": [org.emails["boss"]]}
+    )
+    assert response.status_code == 409
+
+
+def test_two_team_admins_cannot_demote_each_other_at_once() -> None:
+    org = Org("ann", "bob")
+    team = org.new_team("Duel", ["ann", "bob"])
+    results: list[int] = []
+    clients = [_login(org.emails["ann"]), _login(org.emails["bob"])]
+
+    def run(client: TestClient, email: str) -> None:
+        results.append(client.patch(f"/teams/{team}/members/{email}", json={"role": "team_member"}).status_code)
+
+    threads = [
+        threading.Thread(target=run, args=(clients[0], org.emails["bob"])),
+        threading.Thread(target=run, args=(clients[1], org.emails["ann"])),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=20)
+    # The first wins; the second was demoted meanwhile and is refused.
+    assert sorted(results) == [200, 403], results
+
+
+def test_making_someone_a_super_admin_drops_their_team_memberships() -> None:
+    org = Org("ann", "bob")
+    team = org.new_team("Growth", ["ann"])
+    boss = org.clients["boss"]
+    boss.post(f"/teams/{team}/members", json={"email": org.emails["bob"]})
+    assert boss.patch(f"/team/{org.emails['bob']}/role", json={"role": "super_admin"}).status_code == 200
+    members = boss.get(f"/teams/{team}/members").json()
+    bob = next(m for m in members if m["email"] == org.emails["bob"])
+    assert bob["is_super_admin"] and bob["role"] == "team_admin"
+    with Session(engine) as session:
+        assert session.exec(select(TeamMember).where(TeamMember.user_id == org.user_id("bob"))).all() == []
+
+
+def test_manage_access_lists_super_admins_on_team_applications_only() -> None:
+    org = Org("ann", "bob")
+    team = org.new_team("Growth", ["ann"])
+    boss_name = "Boss"
+    team_app = org.application("Shop", team_external_id=team, adder="bob")
+    personal_app = org.application("Mine", team_external_id=None, adder="bob")
+    ann = org.clients["ann"]
+    rows = ann.get(f"/applications/{team_app}/access").json()
+    assert [(r["name"], r["reason"]) for r in rows if r["locked"]] == [
+        ("Bob", "Added by"),
+        ("Ann", "Team Admin"),
+        (boss_name, "Super Admin"),
+    ]
+    # Personal application: a super admin has no implicit access to it.
+    assert org.clients["bob"].get(f"/applications/{personal_app}/access").json() == [
+        {"name": "Bob", "email": org.emails["bob"], "role": "app_admin", "locked": True, "reason": "Added by"}
+    ]
+    # Already has full access, so not offered when sharing.
+    assert ann.get(f"/applications/{team_app}/access/candidates", params={"q": "boss"}).json() == []
 
 
 def test_activity_is_for_super_admins_only_not_team_admins() -> None:
@@ -233,7 +383,11 @@ def test_a_team_always_keeps_a_team_admin() -> None:
     demote = boss.patch(f"/teams/{team}/members/{org.emails['ann']}", json={"role": "team_member"})
     assert demote.status_code == 409
     assert "only Team Admin" in demote.json()["detail"] and "Solo" in demote.json()["detail"]
-    assert boss.delete(f"/teams/{team}/members/{org.emails['ann']}").status_code == 409
+    assert "Make another member a Team Admin first" in demote.json()["detail"]
+    removal = boss.delete(f"/teams/{team}/members/{org.emails['ann']}")
+    assert removal.status_code == 409
+    assert "only Team Admin" in removal.json()["detail"] and "Make another member a Team Admin first" in removal.json()["detail"]
+    assert "removed" in removal.json()["detail"]
     # With a second admin the first can go.
     boss.post(f"/teams/{team}/members", json={"email": org.emails["bob"], "role": "team_admin"})
     assert boss.delete(f"/teams/{team}/members/{org.emails['ann']}").status_code == 204

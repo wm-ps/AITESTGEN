@@ -176,6 +176,39 @@ describe('viewer role', () => {
     expect(screen.queryByText('Activity')).toBeNull()
   })
 
+  it('shows the Configuration heading only when something sits under it', () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => [] })))
+    const shell = (role: 'super_admin' | 'standard_user', withSettings: boolean, withTeams: boolean) =>
+      as(
+        'contributor',
+        <AppShell
+          user={{ name: 'Sam', email: 'sam@example.com', role }}
+          route="apps"
+          crumb="Applications"
+          onGoOverview={() => {}}
+          onGoApps={() => {}}
+          onAddApplication={() => {}}
+          onOpenSettings={withSettings ? () => {} : undefined}
+          onGoTeams={withTeams ? () => {} : undefined}
+          onLogout={() => {}}
+        >
+          <div />
+        </AppShell>,
+      )
+    // Someone with no item under it (a plain team member) gets no empty heading.
+    const none = shell('standard_user', false, false)
+    expect(screen.queryByText('Configuration')).toBeNull()
+    none.unmount()
+    // Settings alone, or Teams for a super admin, keep it.
+    const settings = shell('standard_user', true, false)
+    expect(screen.getByText('Configuration')).toBeInTheDocument()
+    expect(screen.getByText('Settings')).toBeInTheDocument()
+    settings.unmount()
+    shell('super_admin', false, true)
+    expect(screen.getByText('Configuration')).toBeInTheDocument()
+    expect(screen.getByText('Teams')).toBeInTheDocument()
+  })
+
   it('shows a View only badge and hides Add application and Settings in the shell', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => [] })))
     const shell = (role: AppRole) =>
@@ -299,7 +332,50 @@ describe('organisation roles', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Edit role' })
     fireEvent.click(within(dialog).getByLabelText(/^User/))
     fireEvent.click(within(dialog).getByRole('button', { name: 'Update role' }))
+    // Demoting a Super Admin is confirmed first.
+    const confirm = await screen.findByRole('dialog', { name: 'Change Ann Admin to User?' })
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Change to User' }))
 
     expect(await screen.findByText('an organization needs at least one admin')).toBeInTheDocument()
+  })
+
+  it('asks before turning a Super Admin into a User and changes nothing until confirmed', async () => {
+    const members = [
+      { name: 'Ada Lovelace', email: 'ada@example.com', role: 'super_admin', created_at: '2026-09-01T00:00:00Z', last_active_at: null },
+      { name: 'Ann Admin', email: 'ann@example.com', role: 'super_admin', created_at: '2026-09-01T00:00:00Z', last_active_at: null },
+    ]
+    const fetchMock = vi.fn(async (_url: string, init?: RequestInit) =>
+      init?.method === 'PATCH'
+        ? { ok: true, status: 200, json: async () => ({ ...members[1], role: 'standard_user' }) }
+        : { ok: true, status: 200, json: async () => members },
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const patches = () => fetchMock.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === 'PATCH')
+
+    render(<TeamMembers user={{ name: 'Ada Lovelace', email: 'ada@example.com', role: 'super_admin' }} />)
+    await screen.findByText('Ann Admin')
+
+    // Cancel: no request.
+    fireEvent.click(screen.getAllByTitle('More options')[1])
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit role' }))
+    let dialog = await screen.findByRole('dialog', { name: 'Edit role' })
+    fireEvent.click(within(dialog).getByLabelText(/^User/))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update role' }))
+    const confirm = await screen.findByRole('dialog', { name: 'Change Ann Admin to User?' })
+    expect(within(confirm).getByText(/lose access to team applications/)).toBeInTheDocument()
+    expect(within(confirm).getByText(/keep their personal workspace/)).toBeInTheDocument()
+    expect(patches()).toHaveLength(0)
+    fireEvent.click(within(confirm).getByRole('button', { name: 'Cancel' }))
+    expect(patches()).toHaveLength(0)
+
+    // Confirm: one request.
+    fireEvent.click(screen.getAllByTitle('More options')[1])
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit role' }))
+    dialog = await screen.findByRole('dialog', { name: 'Edit role' })
+    fireEvent.click(within(dialog).getByLabelText(/^User/))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update role' }))
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Change Ann Admin to User?' })).getByRole('button', { name: 'Change to User' }))
+    await waitFor(() => expect(patches()).toHaveLength(1))
+    expect(patches()[0][1]).toEqual(expect.objectContaining({ body: JSON.stringify({ role: 'standard_user' }) }))
   })
 })

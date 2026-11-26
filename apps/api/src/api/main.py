@@ -151,6 +151,7 @@ from api.application_access import router as application_access_router
 from api.approved_domains import approved_hosts, require_approved_domain, url_is_approved
 from api.approved_domains import router as approved_domains_router
 from api.access import (
+    PERSONAL_WORKSPACE,
     ActiveWorkspaceDep,
     Workspace,
     access_summary,
@@ -616,6 +617,22 @@ def _lock_super_admins(session: Session, organization_id: uuid.UUID) -> list[Pla
     )
 
 
+def _drop_team_access(session: Session, person: PlatformUser) -> None:
+    """A Super Admin turned User keeps their personal workspace and personal
+    applications, but loses every team application they added or were shared on:
+    those stay with their team and its Team Admins. Caller commits."""
+    team_applications = select(Application.id).where(col(Application.team_id).is_not(None))
+    for grant in session.exec(
+        select(ApplicationMember).where(
+            ApplicationMember.user_id == person.id,
+            col(ApplicationMember.application_id).in_(team_applications),
+        )
+    ).all():
+        session.delete(grant)
+    if person.last_workspace not in (None, PERSONAL_WORKSPACE):
+        person.last_workspace = None  # next sign-in opens the personal workspace
+
+
 @app.delete("/team/{email}", status_code=204)
 def remove_team_member(
     email: str,
@@ -705,6 +722,8 @@ def step_down_as_super_admin(
         record_activity(session, admin, "settings", f"Made {successor.name} a super admin")
         successor.role = SUPER_ADMIN_ROLE
         session.add(successor)
+        for row in session.exec(select(TeamMember).where(TeamMember.user_id == successor.id)).all():
+            session.delete(row)
     record_activity(session, admin, "settings", f"{admin.name} stepped down as a super admin")
     admin.role = STANDARD_USER_ROLE
     session.add(admin)
@@ -766,8 +785,14 @@ def change_team_member_role(
         record_activity(
             session, admin, "settings", f"Changed {member.name}'s role from {role_name(member.role)} to {role_name(payload.role)}"
         )
+    if member.role == SUPER_ADMIN_ROLE and payload.role != SUPER_ADMIN_ROLE:
+        _drop_team_access(session, member)
     member.role = payload.role
     session.add(member)
+    if payload.role == SUPER_ADMIN_ROLE:
+        # A Super Admin is a team admin of every team without a membership row.
+        for row in session.exec(select(TeamMember).where(TeamMember.user_id == member.id)).all():
+            session.delete(row)
     session.commit()
     session.refresh(member)
     return TeamMemberRead(

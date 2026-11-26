@@ -824,6 +824,8 @@ export const api = {
     request<TeamRead>('/teams', { method: 'POST', body: JSON.stringify({ name, team_admin_emails: teamAdminEmails }) }),
   getTeam: (id: string) => request<TeamRead>(`/teams/${id}`),
   listTeamPeople: (id: string) => request<TeamPersonRead[]>(`/teams/${id}/members`),
+  teamCandidates: (id: string, q: string) =>
+    request<CandidateRead[]>(`/teams/${id}/members/candidates?q=${encodeURIComponent(q)}`),
   addTeamPerson: (id: string, email: string, role: TeamRole) =>
     request<TeamPersonRead>(`/teams/${id}/members`, { method: 'POST', body: JSON.stringify({ email, role }) }),
   changeTeamPersonRole: (id: string, email: string, role: TeamRole) =>

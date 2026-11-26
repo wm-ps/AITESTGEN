@@ -122,8 +122,8 @@ def test_teams_migration_preserves_access_and_is_repeatable() -> None:
                 for m in conn.execute(text("SELECT * FROM team_member")).all()
                 if m.user_id in ours
             }
+            # The super admin's membership row is dropped: they are in every team by role.
             assert members == {
-                (default[org_a], boss): "team_member",
                 (default[org_a], worker): "team_member",
                 (default[org_a], reader): "team_member",
                 (default[org_b], outsider): "team_member",

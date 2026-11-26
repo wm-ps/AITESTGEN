@@ -338,7 +338,9 @@ def test_the_access_list_puts_the_adder_and_team_admins_first_and_locked(world: 
         (world.emails["adder"], True, "Added by"),
         (world.emails["teamadmin"], True, "Team Admin"),
     ]
-    assert rows[2]["email"] == world.emails["viewer"] and rows[2]["locked"] is False
+    # Super Admins hold admin on team applications: locked rows, after the team admins.
+    assert (rows[2]["email"], rows[2]["locked"], rows[2]["reason"]) == (world.emails["boss"], True, "Super Admin")
+    assert rows[3]["email"] == world.emails["viewer"] and rows[3]["locked"] is False
 
 
 def test_sharing_rules(world: World) -> None:

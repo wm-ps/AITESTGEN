@@ -1,9 +1,10 @@
 """Teams: who is in which team, and the workspace switcher.
 
-A team is a shared workspace. Only a super admin creates teams and changes who
-is in them; a team admin gets a read-only view of their own team. Team
-membership gives access to the workspace, not to every application in it — that
-is `ApplicationMember` (`api.application_access`).
+A team is a shared workspace. Only a super admin creates teams. A super admin
+changes who is in any team; a team admin does the same for their own team only.
+A super admin is an implicit team admin of every team and never has a
+membership row. Team membership gives access to the workspace, not to every
+application in it — that is `ApplicationMember` (`api.application_access`).
 
 Guards, enforced under row locks so two admins acting at once can't break them:
 a team always keeps at least one team admin, and an organisation at least one
@@ -11,6 +12,7 @@ super admin (`api.main`).
 """
 
 import uuid
+from typing import Annotated
 
 from domain import (
     TEAM_ADMIN_ROLE,
@@ -22,14 +24,15 @@ from domain import (
     Team,
     TeamMember,
 )
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from api.access import PERSONAL_WORKSPACE, application_role, visibility_clause
 from api.activity import record_activity
+from api.application_access import CANDIDATE_LIMIT, CandidateRead
 from api.auth import SUPER_ADMIN_ROLE, CurrentAdminDep, CurrentUserDep, SessionDep
 
 router = APIRouter()
@@ -148,6 +151,29 @@ def _viewable_team(session: Session, user: PlatformUser, external_id: uuid.UUID)
     return team
 
 
+def _manageable_team(session: Session, user: PlatformUser, external_id: uuid.UUID) -> Team:
+    """A team the caller may change: any team for a super admin, only their own
+    for a team admin. Outsiders get the same 404 as an unknown team; a plain
+    member of the team is told they need the Team Admin role."""
+    team = _get_team(session, user.organization_id, external_id)
+    if user.role != SUPER_ADMIN_ROLE:
+        role = session.exec(
+            select(TeamMember.role).where(TeamMember.team_id == team.id, TeamMember.user_id == user.id)
+        ).first()
+        if role is None:
+            raise HTTPException(status_code=404, detail="team not found")
+        if role != TEAM_ADMIN_ROLE:
+            raise HTTPException(status_code=403, detail="team admin role required")
+    return team
+
+
+def _still_team_admin(actor: PlatformUser, admins: list[TeamMember]) -> None:
+    """Re-checks the caller under the admin row locks: another admin may have
+    demoted or removed them since `_manageable_team` looked."""
+    if actor.role != SUPER_ADMIN_ROLE and actor.id not in {a.user_id for a in admins}:
+        raise HTTPException(status_code=403, detail="team admin role required")
+
+
 def _org_user(session: Session, organization_id: uuid.UUID, email: str) -> PlatformUser:
     """Unknown, in another organisation: the same 404."""
     person = session.exec(
@@ -198,8 +224,18 @@ def _lock_team_admins(session: Session, team: Team) -> list[TeamMember]:
     )
 
 
-def _only_admin_message(person: PlatformUser, team: Team) -> str:
-    return f"{person.name} is the only Team Admin of {team.name}. Assign another Team Admin first."
+def _only_admin_message(person: PlatformUser, team: Team, action: str) -> str:
+    """Says why it's blocked and what to do first; `action` is "change" or "remove"."""
+    if action == "remove":
+        outcome = "they can't be removed yet"
+        then = "you can remove them"
+    else:
+        outcome = "their role can't be changed to Member yet"
+        then = "you can change this role"
+    return (
+        f"{person.name} is the only Team Admin of {team.name}, so {outcome}. "
+        f"Make another member a Team Admin first, then {then}."
+    )
 
 
 # --- the workspace switcher --------------------------------------------------
@@ -285,7 +321,9 @@ def list_teams(session: SessionDep, admin: CurrentAdminDep) -> list[TeamRead]:
 def create_team(payload: TeamCreate, session: SessionDep, admin: CurrentAdminDep) -> TeamRead:
     people: list[PlatformUser] = []
     for email in dict.fromkeys(payload.team_admin_emails):  # de-duplicated, order kept
-        people.append(_org_user(session, admin.organization_id, email))
+        person = _org_user(session, admin.organization_id, email)
+        _not_super_admin(person)  # already a team admin of every team
+        people.append(person)
     team = Team(organization_id=admin.organization_id, name=payload.name)
     session.add(team)
     try:
@@ -386,13 +424,42 @@ def list_team_members(external_id: uuid.UUID, session: SessionDep, user: Current
     return sorted(result, key=lambda p: (p.role != TEAM_ADMIN_ROLE, not p.is_super_admin, p.name.lower()))
 
 
+@router.get("/teams/{external_id}/members/candidates", response_model=list[CandidateRead])
+def list_member_candidates(
+    external_id: uuid.UUID,
+    session: SessionDep,
+    user: CurrentUserDep,
+    q: Annotated[str, Query(min_length=1, max_length=100)],
+) -> list[CandidateRead]:
+    """Type-ahead for "Add team member": people of the organisation who could be
+    added and aren't in the team yet. Super Admins are left out — they are in
+    every team already. Name and email only, so a Team Admin doesn't need the
+    full people list."""
+    team = _manageable_team(session, user, external_id)
+    pattern = f"%{q.strip()}%"
+    in_team = select(TeamMember.user_id).where(TeamMember.team_id == team.id)
+    people = session.exec(
+        select(PlatformUser)
+        .where(
+            PlatformUser.organization_id == team.organization_id,
+            PlatformUser.role != SUPER_ADMIN_ROLE,
+            col(PlatformUser.id).not_in(in_team),
+            or_(col(PlatformUser.name).ilike(pattern), col(PlatformUser.email).ilike(pattern)),
+        )
+        .order_by(PlatformUser.name)
+        .limit(CANDIDATE_LIMIT)
+    ).all()
+    return [CandidateRead(name=p.name, email=p.email) for p in people]
+
+
 @router.post("/teams/{external_id}/members", response_model=TeamPersonRead, status_code=201)
 def add_team_member(
-    external_id: uuid.UUID, payload: TeamMemberAdd, session: SessionDep, admin: CurrentAdminDep
+    external_id: uuid.UUID, payload: TeamMemberAdd, session: SessionDep, admin: CurrentUserDep
 ) -> TeamPersonRead:
-    team = _get_team(session, admin.organization_id, external_id)
+    team = _manageable_team(session, admin, external_id)
     person = _org_user(session, admin.organization_id, payload.email)
     _not_super_admin(person)
+    _still_team_admin(admin, _lock_team_admins(session, team))
     session.add(TeamMember(team_id=team.id, user_id=person.id, role=payload.role))
     try:
         session.flush()
@@ -425,15 +492,16 @@ def _member(session: Session, team: Team, person: PlatformUser) -> TeamMember:
 
 @router.patch("/teams/{external_id}/members/{email}", response_model=TeamPersonRead)
 def change_member_role_in_team(
-    external_id: uuid.UUID, email: str, payload: TeamMemberRole, session: SessionDep, admin: CurrentAdminDep
+    external_id: uuid.UUID, email: str, payload: TeamMemberRole, session: SessionDep, admin: CurrentUserDep
 ) -> TeamPersonRead:
-    team = _get_team(session, admin.organization_id, external_id)
+    team = _manageable_team(session, admin, external_id)
     person = _org_user(session, admin.organization_id, email)
     _not_super_admin(person)
     admins = _lock_team_admins(session, team)
+    _still_team_admin(admin, admins)
     member = _member(session, team, person)
     if member.role == TEAM_ADMIN_ROLE and payload.role != TEAM_ADMIN_ROLE and len(admins) <= 1:
-        raise HTTPException(status_code=409, detail=_only_admin_message(person, team))
+        raise HTTPException(status_code=409, detail=_only_admin_message(person, team, "change"))
     if member.role != payload.role:
         record_activity(
             session, admin, "settings", f"Changed {person.name}'s role in team {team.name} from {member.role} to {payload.role}"
@@ -445,17 +513,18 @@ def change_member_role_in_team(
 
 
 @router.delete("/teams/{external_id}/members/{email}", status_code=204)
-def remove_member_from_team(external_id: uuid.UUID, email: str, session: SessionDep, admin: CurrentAdminDep) -> None:
+def remove_member_from_team(external_id: uuid.UUID, email: str, session: SessionDep, admin: CurrentUserDep) -> None:
     """Takes the person out of the team and out of every application of the team
     that was shared with them. Applications they added stay with the team, under
     its team admins."""
-    team = _get_team(session, admin.organization_id, external_id)
+    team = _manageable_team(session, admin, external_id)
     person = _org_user(session, admin.organization_id, email)
     _not_super_admin(person)
     admins = _lock_team_admins(session, team)
+    _still_team_admin(admin, admins)
     member = _member(session, team, person)
     if member.role == TEAM_ADMIN_ROLE and len(admins) <= 1:
-        raise HTTPException(status_code=409, detail=_only_admin_message(person, team))
+        raise HTTPException(status_code=409, detail=_only_admin_message(person, team, "remove"))
     team_applications = select(Application.id).where(Application.team_id == team.id)
     for grant in session.exec(
         select(ApplicationMember).where(

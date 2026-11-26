@@ -186,8 +186,11 @@ def ensure_default_team(session: Session, organization_id: uuid.UUID) -> Team:
 
 
 def join_default_team(session: Session, user: PlatformUser) -> None:
-    """New users start in the Default team. Caller commits."""
+    """New users start in the Default team. Caller commits. A Super Admin is in
+    every team without a membership row, so they get none."""
     team = ensure_default_team(session, user.organization_id)
+    if user.role == SUPER_ADMIN_ROLE:
+        return
     session.add(TeamMember(team_id=team.id, user_id=user.id, role=TEAM_MEMBER_ROLE))
 
 

@@ -318,7 +318,10 @@ export function MyTeam() {
   if (!id) return <div style={{ color: 'var(--fg-3)', fontSize: 13 }}>Switch to a team to see it here.</div>
   if (error) return <FieldError>{error}</FieldError>
   if (!team) return <SkeletonRows count={3} height={42} gap={14} />
-  return <TeamDetail team={team} canManage={false} />
+  // A team admin manages their own team's people; the API enforces it too. After
+  // a change (their own role or removal included) the workspace role is re-read,
+  // which drops the controls — or the team — if they no longer hold the role.
+  return <TeamDetail team={team} canManage={workspace?.active.role === 'team_admin'} onChanged={workspace?.refresh} />
 }
 
 // --- one team: members and applications -------------------------------------------
@@ -741,14 +744,39 @@ function AddMemberDialog({
   onClose: () => void
   onAdded: (person: Person) => void
 }) {
-  const people = usePeople()
   const [query, setQuery] = useState('')
+  const [found, setFound] = useState<Person[]>([])
+  const [searching, setSearching] = useState(false)
   const [picked, setPicked] = useState<Person | null>(null)
   const [role, setRole] = useState<TeamRole>('team_member')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const options = (people ?? []).filter((p) => !existing.includes(p.email) && matches(p, query)).slice(0, 8)
+  // Server-side type-ahead: people not in the team yet. (A Team Admin can't read
+  // the organisation's full people list, so the server does the matching.)
+  useEffect(() => {
+    const q = query.trim()
+    if (!q || picked) {
+      setFound([])
+      setSearching(false)
+      return
+    }
+    setSearching(true)
+    let cancelled = false
+    const timer = setTimeout(() => {
+      api
+        .teamCandidates(team.id, q)
+        .then((rows) => !cancelled && setFound(rows))
+        .catch(() => !cancelled && setFound([]))
+        .finally(() => !cancelled && setSearching(false))
+    }, 200)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [team.id, query, picked])
+
+  const options = found.filter((p) => !existing.includes(p.email))
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
@@ -784,6 +812,7 @@ function AddMemberDialog({
             setQuery(value)
           }}
           options={options}
+          loading={searching}
           onPick={(person) => {
             setPicked(person)
             setQuery(person.email)

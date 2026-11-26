@@ -62,6 +62,11 @@ function stub(options: { teams?: TeamRead[]; onMutate?: (call: Call) => { status
       if (method !== 'GET') return { ok: true, status: method === 'DELETE' ? 204 : 200, json: async () => ({ ...MEMBERS[1], role: body?.role ?? 'team_member' }) }
       if (path === '/teams') return { ok: true, status: 200, json: async () => teams }
       if (path === '/team') return { ok: true, status: 200, json: async () => PEOPLE }
+      if (path.endsWith('/members/candidates')) {
+        const q = (url.searchParams.get('q') ?? '').toLowerCase()
+        const rows = PEOPLE.filter((p) => p.name.toLowerCase().includes(q) || p.email.toLowerCase().includes(q))
+        return { ok: true, status: 200, json: async () => rows.map(({ name, email }) => ({ name, email })) }
+      }
       if (path.endsWith('/members')) return { ok: true, status: 200, json: async () => MEMBERS }
       if (path.endsWith('/applications')) return { ok: true, status: 200, json: async () => APPLICATIONS }
       if (path === '/me/workspaces') return { ok: true, status: 200, json: async () => WORKSPACES }
@@ -268,8 +273,8 @@ describe('Teams (super admin)', () => {
 })
 
 describe('My team (a team admin)', () => {
-  it('is a read-only view of the active team: no Add users, no role menus', async () => {
-    stub()
+  it('lets a team admin add users and edit roles in their own team', async () => {
+    const calls = stub()
     render(
       <WorkspaceProvider notify={() => {}} onSwitched={() => {}}>
         <MyTeam />
@@ -279,8 +284,17 @@ describe('My team (a team admin)', () => {
     expect(await screen.findByRole('heading', { name: 'Payments' })).toBeTruthy()
     expect(await screen.findByText('Maya Maker')).toBeTruthy()
     expect(screen.getByText('Access to 0 apps')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: /Add users/ })).toBeNull()
-    expect(screen.queryByTitle('More options')).toBeNull()
+    expect(screen.getByRole('button', { name: /Add users/ })).toBeTruthy()
+    expect(screen.getAllByTitle('More options').length).toBeGreaterThan(0)
     expect(screen.queryByRole('button', { name: /All teams/ })).toBeNull()
+
+    // The people lookup is the team's own (a Team Admin can't read the org-wide list).
+    fireEvent.click(screen.getByRole('button', { name: /Add users/ }))
+    const dialog = await screen.findByRole('dialog', { name: 'Add team member' })
+    fireEvent.change(within(dialog).getByLabelText('Email address'), { target: { value: 'raj' } })
+    const suggestions = await screen.findByRole('listbox', { name: 'Email address suggestions' })
+    expect(await within(suggestions).findAllByRole('option')).toHaveLength(1)
+    expect(calls.some((c) => c.path === '/team')).toBe(false)
+    expect(calls).toContainEqual({ method: 'GET', path: '/teams/t-pay/members/candidates', body: undefined })
   })
 })

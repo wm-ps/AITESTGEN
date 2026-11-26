@@ -187,9 +187,11 @@ function EditRoleDialog({
 }) {
   const [role, setRole] = useState<Role>(member.role)
   const [busy, setBusy] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  // Turning a Super Admin into a User takes team access away, so it is confirmed first.
+  const demoting = member.role === 'super_admin' && role !== 'super_admin'
 
-  async function submit(event: React.FormEvent) {
-    event.preventDefault()
+  async function change() {
     setBusy(true)
     try {
       await api.changeTeamMemberRole(member.email, role)
@@ -199,6 +201,30 @@ function EditRoleDialog({
     } finally {
       setBusy(false)
     }
+  }
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault()
+    if (demoting) setConfirming(true)
+    else void change()
+  }
+
+  if (confirming) {
+    return (
+      <EnvironmentModal
+        title={`Change ${member.name} to User?`}
+        subtitle={member.email}
+        onClose={onClose}
+        maxWidth={480}
+        footer={<ModalActions onCancel={onClose} submitLabel="Change to User" busyLabel="Changing" busy={busy} danger type="button" onSubmit={() => void change()} />}
+      >
+        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13, color: 'var(--fg-2)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <li>{member.name} will no longer be a Super Admin.</li>
+          <li>They lose access to team applications they added or were shared on. Those stay with their team and its Team Admins.</li>
+          <li>They keep their personal workspace and personal applications.</li>
+        </ul>
+      </EnvironmentModal>
+    )
   }
 
   return (

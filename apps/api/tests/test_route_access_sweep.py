@@ -56,6 +56,7 @@ ORG_LEVEL = {
     ("GET", "/teams/{external_id}"),
     ("DELETE", "/teams/{external_id}"),
     ("GET", "/teams/{external_id}/members"),
+    ("GET", "/teams/{external_id}/members/candidates"),
     ("POST", "/teams/{external_id}/members"),
     ("PATCH", "/teams/{external_id}/members/{email}"),
     ("DELETE", "/teams/{external_id}/members/{email}"),

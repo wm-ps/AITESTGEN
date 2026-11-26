@@ -79,6 +79,12 @@ export function AppShell({
   // Settings belong to the workspace: its team admins, super admins, or the owner of a personal one.
   const canOpenSettings =
     !workspace || workspace.active.kind === 'personal' || user.role === 'super_admin' || isTeamAdmin
+  // The Configuration heading is only worth showing when an item sits under it
+  // (a plain team member has none). Mirrors the item conditions below.
+  const hasConfiguration =
+    (user.role === 'super_admin' && !!(onGoTeams || onGoTeam || onGoActivity)) ||
+    (user.role !== 'super_admin' && isTeamAdmin && !!onGoMyTeam) ||
+    (!!onOpenSettings && canOpenSettings)
   // Sidebar "Applications" badge count — matches the prototype's nav badge
   // (navMonitor). A light one-shot fetch rather than threading the
   // Home/Overview screens' own application lists through every render of
@@ -235,7 +241,7 @@ export function AppShell({
           {/* A viewer has neither Team members (admin-only) nor Settings. */}
           {!app && !isViewer && (
             <>
-              <div style={{ ...sectionLabelStyle, padding: '16px 10px 5px' }}>Configuration</div>
+              {hasConfiguration && <div style={{ ...sectionLabelStyle, padding: '16px 10px 5px' }}>Configuration</div>}
               {user.role === 'super_admin' && onGoTeams && (
                 <div style={navItemStyle(route === 'teams')} onClick={onGoTeams}>
                   <FontAwesomeIcon icon={faPeopleGroup} style={{ width: 16, fontSize: 13, textAlign: 'center' }} />
