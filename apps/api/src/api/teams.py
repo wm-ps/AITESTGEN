@@ -67,6 +67,11 @@ class TeamPersonRead(BaseModel):
     name: str
     email: str
     role: str
+    # Super Admins are in every team and can't be changed or removed.
+    is_super_admin: bool = False
+    is_you: bool = False
+    # Applications of the team this person can open (team admins and super admins: all).
+    app_count: int = 0
 
 
 class TeamApplicationRead(BaseModel):
@@ -340,8 +345,45 @@ def list_team_members(external_id: uuid.UUID, session: SessionDep, user: Current
         .join(PlatformUser, col(PlatformUser.id) == col(TeamMember.user_id))
         .where(TeamMember.team_id == team.id)
     ).all()
-    rows = sorted(rows, key=lambda r: (r[0] != TEAM_ADMIN_ROLE, r[1].name.lower()))
-    return [TeamPersonRead(name=person.name, email=person.email, role=role) for role, person in rows]
+    people = {person.id: (role, person) for role, person in rows if person.role != SUPER_ADMIN_ROLE}
+    # Super Admins belong to every team, with or without a membership row.
+    super_admins = session.exec(
+        select(PlatformUser).where(
+            PlatformUser.organization_id == team.organization_id, PlatformUser.role == SUPER_ADMIN_ROLE
+        )
+    ).all()
+    team_applications = select(Application.id).where(
+        Application.team_id == team.id, col(Application.deleted_at).is_(None)
+    )
+    total_apps = session.exec(select(func.count()).select_from(team_applications.subquery())).one()
+    granted = dict(
+        session.exec(
+            select(ApplicationMember.user_id, func.count())
+            .where(col(ApplicationMember.application_id).in_(team_applications))
+            .group_by(ApplicationMember.user_id)
+        ).all()
+    )
+    result = [
+        TeamPersonRead(
+            name=person.name,
+            email=person.email,
+            role=role,
+            is_you=person.id == user.id,
+            app_count=total_apps if role == TEAM_ADMIN_ROLE else granted.get(person.id, 0),
+        )
+        for role, person in people.values()
+    ] + [
+        TeamPersonRead(
+            name=person.name,
+            email=person.email,
+            role=TEAM_ADMIN_ROLE,
+            is_super_admin=True,
+            is_you=person.id == user.id,
+            app_count=total_apps,
+        )
+        for person in super_admins
+    ]
+    return sorted(result, key=lambda p: (p.role != TEAM_ADMIN_ROLE, not p.is_super_admin, p.name.lower()))
 
 
 @router.post("/teams/{external_id}/members", response_model=TeamPersonRead, status_code=201)
@@ -350,6 +392,7 @@ def add_team_member(
 ) -> TeamPersonRead:
     team = _get_team(session, admin.organization_id, external_id)
     person = _org_user(session, admin.organization_id, payload.email)
+    _not_super_admin(person)
     session.add(TeamMember(team_id=team.id, user_id=person.id, role=payload.role))
     try:
         session.flush()
@@ -359,6 +402,13 @@ def add_team_member(
     record_activity(session, admin, "settings", f"Added {person.name} to team {team.name} as {payload.role}")
     session.commit()
     return TeamPersonRead(name=person.name, email=person.email, role=payload.role)
+
+
+def _not_super_admin(person: PlatformUser) -> None:
+    if person.role == SUPER_ADMIN_ROLE:
+        raise HTTPException(
+            status_code=409, detail=f"{person.name} is a Super Admin: part of every team and can't be changed or removed."
+        )
 
 
 def _member(session: Session, team: Team, person: PlatformUser) -> TeamMember:
@@ -379,6 +429,7 @@ def change_member_role_in_team(
 ) -> TeamPersonRead:
     team = _get_team(session, admin.organization_id, external_id)
     person = _org_user(session, admin.organization_id, email)
+    _not_super_admin(person)
     admins = _lock_team_admins(session, team)
     member = _member(session, team, person)
     if member.role == TEAM_ADMIN_ROLE and payload.role != TEAM_ADMIN_ROLE and len(admins) <= 1:
@@ -400,6 +451,7 @@ def remove_member_from_team(external_id: uuid.UUID, email: str, session: Session
     its team admins."""
     team = _get_team(session, admin.organization_id, external_id)
     person = _org_user(session, admin.organization_id, email)
+    _not_super_admin(person)
     admins = _lock_team_admins(session, team)
     member = _member(session, team, person)
     if member.role == TEAM_ADMIN_ROLE and len(admins) <= 1:
@@ -442,7 +494,7 @@ def list_team_applications(
             name=a.name,
             url=a.url,
             added_by_name=a.created_by_name,
-            people=by_application[a.id][:5],
+            people=by_application[a.id],
             people_count=len(by_application[a.id]),
             my_role=application_role(session, user, a),
         )

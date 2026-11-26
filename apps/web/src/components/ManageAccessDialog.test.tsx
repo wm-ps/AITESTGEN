@@ -60,8 +60,7 @@ describe('ManageAccessDialog', () => {
     open()
 
     const dialog = await screen.findByRole('dialog', { name: 'Manage access' })
-    expect(within(dialog).getByText('Checkout')).toBeTruthy()
-    expect(await within(dialog).findByText('3 people have access')).toBeTruthy()
+    expect(await within(dialog).findByTestId('access-row-maya@example.com')).toBeTruthy()
     expect(within(dialog).getByText('Added by')).toBeTruthy()
     expect(within(dialog).getByText('Team Admin')).toBeTruthy()
     // Locked rows can't be edited or removed; the shared one can.
@@ -73,7 +72,7 @@ describe('ManageAccessDialog', () => {
   it('shares with a person picked from the type-ahead, as a Viewer unless chosen otherwise', async () => {
     const calls = stub()
     const { onChanged } = open()
-    await screen.findByText('3 people have access')
+    await screen.findByTestId('access-row-maya@example.com')
 
     const share = screen.getByRole('button', { name: 'Share' })
     expect(share).toBeDisabled() // nobody picked yet
@@ -98,7 +97,7 @@ describe('ManageAccessDialog', () => {
   it('changes a role in place: select, save, and nothing else edits at the same time', async () => {
     const calls = stub()
     open()
-    await screen.findByText('3 people have access')
+    await screen.findByTestId('access-row-maya@example.com')
 
     fireEvent.click(screen.getByLabelText('Change role for Raj Reader'))
     fireEvent.change(screen.getByLabelText('Role for Raj Reader'), { target: { value: 'contributor' } })
@@ -113,19 +112,19 @@ describe('ManageAccessDialog', () => {
   it('removes access', async () => {
     const calls = stub()
     open()
-    await screen.findByText('3 people have access')
+    await screen.findByTestId('access-row-maya@example.com')
 
     fireEvent.click(screen.getByLabelText('Remove access for Raj Reader'))
 
     await waitFor(() => expect(calls).toContainEqual({ method: 'DELETE', path: '/applications/app-1/access/raj@example.com', body: undefined }))
     expect(await screen.findByText('Raj Reader removed')).toBeTruthy()
-    expect(await screen.findByText('2 people have access')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByTestId('access-row-raj@example.com')).toBeNull())
   })
 
   it('Escape cancels a role edit first and only then closes; a click outside never closes it', async () => {
     stub()
     const { onClose } = open()
-    await screen.findByText('3 people have access')
+    await screen.findByTestId('access-row-maya@example.com')
 
     fireEvent.click(screen.getByLabelText('Change role for Raj Reader'))
     expect(screen.getByLabelText('Role for Raj Reader')).toBeTruthy()
@@ -143,7 +142,7 @@ describe('ManageAccessDialog', () => {
   it('closes from the X', async () => {
     stub()
     const { onClose } = open()
-    await screen.findByText('3 people have access')
+    await screen.findByTestId('access-row-maya@example.com')
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     expect(onClose).toHaveBeenCalledTimes(1)
   })

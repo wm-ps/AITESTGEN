@@ -211,6 +211,26 @@ describe('viewer role', () => {
   })
 })
 
+describe('invite email validation', () => {
+  it('blocks an invalid email with an inline error and sends a trimmed valid one', async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 201, json: async () => ({}) }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<InviteTeammateModal onClose={() => {}} />)
+    const input = screen.getByPlaceholderText('Enter their email')
+
+    fireEvent.change(input, { target: { value: 'foo@bar' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send invite' }))
+    expect(await screen.findByText('Enter a valid email address')).toBeInTheDocument()
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    fireEvent.change(input, { target: { value: '  a@b.co  ' } })
+    expect(screen.queryByText('Enter a valid email address')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Send invite' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(JSON.parse(String((fetchMock.mock.calls[0] as unknown[])[1] && ((fetchMock.mock.calls[0] as unknown[])[1] as RequestInit).body)).email).toBe('a@b.co')
+  })
+})
+
 describe('organisation roles', () => {
   it('offers only User and Super Admin when inviting a teammate', () => {
     render(<InviteTeammateModal onClose={() => {}} />)

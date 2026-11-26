@@ -122,3 +122,13 @@ def test_revoke_invite_prevents_acceptance(monkeypatch: pytest.MonkeyPatch) -> N
         "/invites/accept", json={"token": token, "name": "A", "password": "Vantage-test-pw-k7q2x"}
     )
     assert response.status_code == 400
+
+
+def test_invite_email_must_be_valid_and_is_trimmed(monkeypatch: pytest.MonkeyPatch) -> None:
+    _invite_link_token(monkeypatch)
+    admin = _admin_client(f"Org {uuid.uuid4()}")
+    for bad in ("foo", "a@b", "a b@c.com", "", "x@@y.com"):
+        assert admin.post("/invites", json={"email": bad}).status_code == 422, bad
+    email = f"  trim-{uuid.uuid4().hex[:8]}@example.com  "
+    response = admin.post("/invites", json={"email": email})
+    assert response.status_code == 201 and response.json()["email"] == email.strip()

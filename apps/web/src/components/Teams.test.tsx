@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { setActiveWorkspace, type MyWorkspacesRead, type TeamApplicationRead, type TeamPersonRead, type TeamRead } from '../api'
 import { WorkspaceProvider } from '../WorkspaceContext'
-import { MyTeam, Teams } from './Teams'
+import { MembersGrid, MyTeam, Teams } from './Teams'
 
 const PAYMENTS: TeamRead = { id: 't-pay', name: 'Payments', is_default: false, team_admins: ['Tina Lead'], member_count: 2, application_count: 1 }
 const DEFAULT: TeamRead = { id: 't-def', name: 'Migrated', is_default: true, team_admins: ['Boss Person'], member_count: 3, application_count: 4 }
@@ -16,6 +16,25 @@ const MEMBERS: TeamPersonRead[] = [
   { name: 'Tina Lead', email: 'tina@example.com', role: 'team_admin' },
   { name: 'Maya Maker', email: 'maya@example.com', role: 'team_member' },
 ]
+
+describe('Super Admin members', () => {
+  it('has no menu and reads as access to all apps', () => {
+    render(
+      <MembersGrid
+        members={[{ name: 'Sue Root', email: 'sue@example.com', role: 'team_admin', is_super_admin: true, app_count: 3 }, ...MEMBERS]}
+        team={PAYMENTS}
+        canManage
+        query=""
+        onChanged={() => {}}
+        onError={() => {}}
+      />,
+    )
+    expect(screen.getByText('Sue Root')).toBeTruthy()
+    expect(screen.getAllByText('Access to all apps')).toHaveLength(2)
+    expect(screen.queryByLabelText('Actions for Sue Root')).toBeNull()
+    expect(screen.getByLabelText('Actions for Maya Maker')).toBeTruthy()
+  })
+})
 const APPLICATIONS: TeamApplicationRead[] = [
   { id: 'app-1', name: 'Checkout', url: 'https://shop.example.com', added_by_name: 'Maya Maker', people: ['Maya Maker', 'Tina Lead'], people_count: 2, my_role: 'app_admin' },
 ]
@@ -114,8 +133,8 @@ describe('Teams (super admin)', () => {
 
     expect(await screen.findByRole('heading', { name: 'Payments' })).toBeTruthy()
     expect(await screen.findByText('Maya Maker')).toBeTruthy()
-    expect(screen.getByText('Team Admin', { selector: 'span' })).toBeTruthy()
-    expect(screen.getByText('Team Member', { selector: 'span' })).toBeTruthy()
+    expect(screen.getByText('Access to all apps')).toBeTruthy()
+    expect(screen.getByText('Access to 0 apps')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('tab', { name: /Applications/ }))
     expect(await screen.findByText('Checkout')).toBeTruthy()
@@ -259,7 +278,7 @@ describe('My team (a team admin)', () => {
 
     expect(await screen.findByRole('heading', { name: 'Payments' })).toBeTruthy()
     expect(await screen.findByText('Maya Maker')).toBeTruthy()
-    expect(screen.getByText('Team Member', { selector: 'span' })).toBeTruthy()
+    expect(screen.getByText('Access to 0 apps')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /Add users/ })).toBeNull()
     expect(screen.queryByTitle('More options')).toBeNull()
     expect(screen.queryByRole('button', { name: /All teams/ })).toBeNull()

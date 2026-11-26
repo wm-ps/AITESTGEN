@@ -1,12 +1,12 @@
 import { createPortal } from 'react-dom'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faCheck, faLock, faUserGroup, faUserMinus, faUserPen, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faCheck, faLock, faUserMinus, faUserPen, faXmark } from '@fortawesome/free-solid-svg-icons'
 import { APP_ROLE_LABEL, ApiError, api, type AccessEntryRead, type AppRole, type CandidateRead } from '../api'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { FieldError } from './environments/EnvironmentModal'
 import { LoadingDots } from './LoadingDots'
-import { modalCloseButton, modalOverlay, modalPanel } from './modalStyles'
+import { modalCloseButton, modalOverlay, modalPanel, modalTitle } from './modalStyles'
 import { Avatar, PersonPicker } from './PersonPicker'
 import { Toast } from './Toast'
 
@@ -26,7 +26,7 @@ const pillStyle = (role: AppRole): React.CSSProperties => ({
 })
 
 const selectStyle: React.CSSProperties = {
-  height: 38,
+  height: 40,
   minWidth: 150,
   borderRadius: 8,
   border: '1px solid var(--border-2)',
@@ -55,7 +55,6 @@ const iconButton: React.CSSProperties = {
 // shared with members of that team; a personal one with anyone.
 export function ManageAccessDialog({
   applicationId,
-  applicationName,
   onClose,
   onChanged,
 }: {
@@ -170,29 +169,20 @@ export function ManageAccessDialog({
     }
   }
 
-  const cols = 'minmax(0,1fr) 158px 66px'
+  const cols = 'minmax(0,1fr) 170px 72px'
   // Portaled to <body>: a card with `backdrop-filter` becomes the containing
   // block of `position: fixed`, which would trap the overlay inside it.
   return createPortal(
     <div style={{ ...modalOverlay, zIndex: 90, background: 'rgba(10,12,16,0.46)', backdropFilter: 'blur(3px)', padding: 24 }}>
-      <div role="dialog" aria-modal="true" aria-label="Manage access" style={{ ...modalPanel, maxWidth: 560, border: '1px solid var(--border)', boxShadow: '0 30px 80px rgba(10,12,16,0.3)', maxHeight: 'calc(100vh - 48px)' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '20px 22px 14px' }}>
-          <span aria-hidden="true" style={{ width: 40, height: 40, flex: 'none', borderRadius: 11, background: 'rgba(30,150,138,0.12)', color: 'var(--accent-2)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-            <FontAwesomeIcon icon={faUserGroup} />
-          </span>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 600, color: 'var(--fg)', letterSpacing: '-0.015em' }}>Manage access</h2>
-            <p style={{ margin: '4px 0 0', fontSize: 12.5, color: 'var(--fg-3)', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ fontWeight: 500, color: 'var(--fg-2)', whiteSpace: 'nowrap' }}>{applicationName}</span>
-              {entries && <span style={{ fontSize: 12, color: 'var(--fg-4)' }}>{entries.length === 1 ? '1 person has access' : `${entries.length} people have access`}</span>}
-            </p>
-          </div>
+      <div role="dialog" aria-modal="true" aria-label="Manage access" style={{ ...modalPanel, maxWidth: 640, maxHeight: 'calc(100vh - 48px)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '22px 28px 16px' }}>
+          <h2 style={{ ...modalTitle, flex: 1, minWidth: 0 }}>Manage access</h2>
           <button type="button" aria-label="Close" className="icon-button-hover" onClick={onClose} style={{ ...modalCloseButton, width: 28, height: 28, padding: 0, borderRadius: 8, color: 'var(--fg-4)' }}>
             <FontAwesomeIcon icon={faXmark} />
           </button>
         </div>
 
-        <div style={{ padding: '0 22px 16px', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+        <div style={{ padding: '0 28px 20px', display: 'flex', gap: 10, alignItems: 'flex-start' }}>
           <PersonPicker
             label="Person to share with"
             query={picked ? picked.email : query}
@@ -207,33 +197,34 @@ export function ManageAccessDialog({
               setQuery(person.email)
             }}
             placeholder="Type name or email address"
+            height={40}
           />
           <select aria-label="Role" value={role} onChange={(e) => setRole(e.target.value as AppRole)} style={selectStyle}>
             {ROLES.map((value) => (
               <option key={value} value={value}>{APP_ROLE_LABEL[value]}</option>
             ))}
           </select>
-          <button type="button" className="button-primary" disabled={!picked || sharing} onClick={share} style={{ height: 38, padding: '0 16px', whiteSpace: 'nowrap', cursor: !picked || sharing ? 'not-allowed' : 'pointer', opacity: !picked ? 0.6 : 1 }}>
+          <button type="button" className="button-primary" disabled={!picked || sharing} onClick={share} style={{ height: 40, padding: '0 20px', whiteSpace: 'nowrap', cursor: !picked || sharing ? 'not-allowed' : 'pointer', opacity: !picked ? 0.6 : 1 }}>
             {sharing ? <LoadingDots label="Sharing" /> : 'Share'}
           </button>
         </div>
 
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', borderTop: '1px solid var(--border)' }}>
-          {error && <div style={{ padding: '12px 22px' }}><FieldError>{error}</FieldError></div>}
+          {error && <div style={{ padding: '12px 28px' }}><FieldError>{error}</FieldError></div>}
           {entries?.map((entry) => {
             const isEditing = editing !== null && editing.email === entry.email
             return (
-              <div key={entry.email} data-testid={`access-row-${entry.email}`} style={{ display: 'grid', gridTemplateColumns: cols, gap: 10, alignItems: 'center', padding: '10px 22px', borderBottom: '1px solid var(--row-line)' }}>
+              <div key={entry.email} data-testid={`access-row-${entry.email}`} style={{ display: 'grid', gridTemplateColumns: cols, gap: 12, alignItems: 'center', padding: '14px 28px', borderBottom: '1px solid var(--row-line)' }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                   <span style={{ borderRadius: 1000, border: '1px solid var(--border-2)', display: 'inline-flex' }}>
-                    <Avatar name={entry.name} />
+                    <Avatar name={entry.name} size={32} />
                   </span>
                   <span style={{ minWidth: 0 }}>
-                    <span style={{ display: 'block', fontSize: 13, fontWeight: 500, color: 'var(--fg-1)' }}>
+                    <span style={{ display: 'block', fontSize: 13.5, fontWeight: 500, color: 'var(--fg-1)' }}>
                       {entry.name}
                       {entry.reason && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 500, color: 'var(--fg-4)' }}>{entry.reason}</span>}
                     </span>
-                    <span style={{ display: 'block', fontSize: 11.5, color: 'var(--fg-4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <span style={{ display: 'block', fontSize: 12, color: 'var(--fg-4)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {entry.email}
                     </span>
                   </span>
@@ -277,7 +268,7 @@ export function ManageAccessDialog({
               </div>
             )
           })}
-          {entries === null && !error && <p style={{ padding: '14px 22px', margin: 0, fontSize: 13, color: 'var(--fg-3)' }}><LoadingDots label="Loading" /></p>}
+          {entries === null && !error && <p style={{ padding: '14px 28px', margin: 0, fontSize: 13, color: 'var(--fg-3)' }}><LoadingDots label="Loading" /></p>}
         </div>
       </div>
       {toast && <Toast message={toast.message} kind={toast.kind} onDismiss={() => setToast(null)} />}

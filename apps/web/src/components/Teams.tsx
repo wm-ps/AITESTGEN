@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { faArrowLeft, faEllipsisVertical, faEye, faMagnifyingGlass, faPlus, faTrashCan, faUserPlus, faXmark } from '@fortawesome/free-solid-svg-icons'
+import { faArrowLeft, faEllipsisVertical, faEye, faLayerGroup, faMagnifyingGlass, faPlus, faTrashCan, faUserPlus, faXmark } from '@fortawesome/free-solid-svg-icons'
 import {
   ApiError,
   PERSONAL_WORKSPACE,
@@ -120,23 +120,21 @@ export function Teams() {
     return <TeamDetail team={open} canManage onBack={() => setOpenId(null)} onChanged={refresh} />
   }
 
-  const cols = 'minmax(0,1.6fr) minmax(0,1.4fr) 120px 130px 36px'
+  const cols = 'minmax(220px,1.2fr) minmax(220px,1.2fr) minmax(90px,0.5fr) minmax(110px,0.5fr) 44px'
   return (
     <div style={{ maxWidth: 1560, margin: '0 auto', width: '100%', display: 'flex', flexDirection: 'column', gap: 20 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap' }}>
-        <div style={{ minWidth: 0 }}>
-          <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Teams</h1>
+      <h1 style={{ fontSize: 20, lineHeight: '26px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>Teams</h1>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div className="field-shell" style={{ height: 40, maxWidth: 420, width: '100%', borderRadius: 10, padding: '0 12px', gap: 10 }}>
+          <FontAwesomeIcon icon={faMagnifyingGlass} style={{ color: 'var(--fg-4)', fontSize: 12 }} />
+          <input data-bare aria-label="Search teams" placeholder="Search teams or Team Admin" value={query} onChange={(e) => setQuery(e.target.value)} style={{ fontSize: 13.5 }} />
         </div>
         <div style={{ flex: 1 }} />
-        <button type="button" className="button-primary" onClick={() => setCreating(true)} style={primaryButton}>
+        <button type="button" className="button-primary" onClick={() => setCreating(true)} style={{ ...primaryButton, height: 40 }}>
           <FontAwesomeIcon icon={faPlus} style={{ fontSize: 11 }} />
           Create team
         </button>
-      </div>
-
-      <div className="field-shell" style={{ height: 40, maxWidth: 420, width: '100%', borderRadius: 10, padding: '0 12px', gap: 10 }}>
-        <FontAwesomeIcon icon={faMagnifyingGlass} style={{ color: 'var(--fg-4)', fontSize: 12 }} />
-        <input data-bare aria-label="Search teams" placeholder="Search teams or Team Admin" value={query} onChange={(e) => setQuery(e.target.value)} style={{ fontSize: 13.5 }} />
       </div>
 
       {error && <FieldError>{error}</FieldError>}
@@ -144,8 +142,8 @@ export function Teams() {
         <div style={{ ...headRow, gridTemplateColumns: cols }}>
           <div style={labelStyle}>Team</div>
           <div style={labelStyle}>Team Admin</div>
-          <div style={{ ...labelStyle, textAlign: 'center' }}>Members</div>
-          <div style={{ ...labelStyle, textAlign: 'center' }}>Applications</div>
+          <div style={labelStyle}>Members</div>
+          <div style={labelStyle}>Applications</div>
           <div />
         </div>
         {teams === null ? (
@@ -168,15 +166,15 @@ export function Teams() {
                   setOpenId(team.id)
                 }
               }}
-              style={{ display: 'grid', gridTemplateColumns: cols, gap: 12, alignItems: 'center', width: '100%', padding: '13px 20px', borderBottom: '1px solid var(--row-line)', cursor: 'pointer', textAlign: 'left', boxSizing: 'border-box' }}
+              style={{ display: 'grid', gridTemplateColumns: cols, gap: 12, alignItems: 'center', width: '100%', padding: '14px 20px', borderBottom: '1px solid var(--row-line)', cursor: 'pointer', textAlign: 'left', boxSizing: 'border-box' }}
             >
               <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                 <TeamMark name={team.name} />
-                <span style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{team.name}</span>
+                <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{team.name}</span>
               </span>
-              <span style={{ fontSize: 12.5, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{team.team_admins.join(', ') || '—'}</span>
-              <span style={{ ...monoNumber, textAlign: 'center' }}>{team.member_count}</span>
-              <span style={{ ...monoNumber, textAlign: 'center' }}>{team.application_count}</span>
+              <span title={team.team_admins.join(', ')} style={{ fontSize: 13, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{team.team_admins.join(', ') || '—'}</span>
+              <span style={{ fontSize: 13, color: 'var(--fg-2)' }}>{team.member_count}</span>
+              <span style={{ fontSize: 13, color: 'var(--fg-2)' }}>{team.application_count}</span>
               <TeamRowMenu team={team} onView={() => setOpenId(team.id)} onDelete={() => setDeleting(team)} />
             </div>
           ))
@@ -341,6 +339,8 @@ function TeamDetail({
   const [applications, setApplications] = useState<TeamApplicationRead[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  const [query, setQuery] = useState('')
+  const [appQuery, setAppQuery] = useState('')
   const [toast, setToast] = useState<{ message: string; kind: 'success' | 'error' } | null>(null)
 
   function loadMembers() {
@@ -364,17 +364,15 @@ function TeamDetail({
     if (message) setToast({ message, kind: 'success' })
   }
 
-  const admins = members?.filter((m) => m.role === 'team_admin').map((m) => m.name) ?? team.team_admins
-  const tabButton = (key: 'members' | 'applications', label: string, count: number) => (
+  const tabButton = (key: 'members' | 'applications', label: string) => (
     <button
       type="button"
       role="tab"
       aria-selected={tab === key}
       onClick={() => setTab(key)}
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '11px 14px', border: 'none', borderBottom: tab === key ? '2px solid var(--accent)' : '2px solid transparent', marginBottom: -1, background: 'transparent', cursor: 'pointer', font: 'inherit', fontSize: 13, fontWeight: 600, color: tab === key ? 'var(--fg)' : 'var(--fg-3)' }}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 16px', minHeight: 48, border: 'none', borderBottom: tab === key ? '2px solid var(--accent)' : '2px solid transparent', marginBottom: -1, background: 'transparent', cursor: 'pointer', font: 'inherit', fontSize: 13, fontWeight: 600, color: tab === key ? 'var(--fg)' : 'var(--fg-3)' }}
     >
       {label}
-      <span style={{ ...monoNumber, fontSize: 11, padding: '1px 7px', borderRadius: 1000, background: 'var(--chip)', color: 'var(--fg-3)' }}>{count}</span>
     </button>
   )
 
@@ -386,52 +384,44 @@ function TeamDetail({
           All teams
         </button>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-        <TeamMark name={team.name} size={44} />
-        <div style={{ minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <h1 style={{ fontSize: 22, lineHeight: '28px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>{team.name}</h1>
-          </div>
-          <p style={{ fontSize: 12.5, color: 'var(--fg-3)', margin: '3px 0 0' }}>
-            Team Admin: {admins.join(', ') || '—'}
-          </p>
+      <h1 style={{ fontSize: 22, lineHeight: '28px', color: 'var(--fg)', letterSpacing: '-0.02em', fontWeight: 600, margin: 0 }}>{team.name}</h1>
+
+      <div style={{ display: 'flex', alignItems: 'stretch', gap: 12, flexWrap: 'wrap', borderBottom: '1px solid var(--border)', marginBottom: 6 }}>
+        <div role="tablist" style={{ display: 'flex', gap: 4 }}>
+          {tabButton('members', 'Members')}
+          {tabButton('applications', 'Applications')}
         </div>
-      </div>
-
-      <div role="tablist" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)' }}>
-        {tabButton('members', 'Members', members?.length ?? team.member_count)}
-        {tabButton('applications', 'Applications', applications?.length ?? team.application_count)}
-      </div>
-      {error && <FieldError>{error}</FieldError>}
-
-      {tab === 'members' ? (
-        <div style={cardStyle}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '14px 20px', background: 'var(--panel-2)', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ flex: 1 }} />
-            {canManage && (
-              <button type="button" className="button-primary" onClick={() => setAdding(true)} style={primaryButton}>
+        <div style={{ flex: 1 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0' }}>
+            <div className="field-shell" style={{ height: 38, width: 280, borderRadius: 10, padding: '0 12px', gap: 10 }}>
+              <FontAwesomeIcon icon={faMagnifyingGlass} style={{ color: 'var(--fg-4)', fontSize: 12 }} />
+              {tab === 'members' ? (
+                <input data-bare aria-label="Search members" placeholder="Search members" value={query} onChange={(e) => setQuery(e.target.value)} style={{ fontSize: 13.5 }} />
+              ) : (
+                <input data-bare aria-label="Search applications" placeholder="Search applications" value={appQuery} onChange={(e) => setAppQuery(e.target.value)} style={{ fontSize: 13.5 }} />
+              )}
+            </div>
+            {canManage && tab === 'members' && (
+              <button type="button" className="button-primary" onClick={() => setAdding(true)} style={{ ...primaryButton, height: 38 }}>
                 <FontAwesomeIcon icon={faUserPlus} style={{ fontSize: 11 }} />
                 Add users
               </button>
             )}
           </div>
-          {members === null ? (
-            <div style={{ padding: 20 }}><SkeletonRows count={3} height={42} gap={14} /></div>
-          ) : (
-            members.map((member) => (
-              <MemberRow
-                key={member.email}
-                member={member}
-                team={team}
-                canManage={canManage}
-                onChanged={changed}
-                onError={(message) => setToast({ message, kind: 'error' })}
-              />
-            ))
-          )}
-        </div>
+      </div>
+      {error && <FieldError>{error}</FieldError>}
+
+      {tab === 'members' ? (
+        <MembersGrid
+          members={members}
+          team={team}
+          canManage={canManage}
+          query={query}
+          onChanged={changed}
+          onError={(message) => setToast({ message, kind: 'error' })}
+        />
       ) : (
-        <ApplicationsTable applications={applications} />
+        <ApplicationsTable applications={applications} query={appQuery} />
       )}
 
       {adding && (
@@ -450,43 +440,99 @@ function TeamDetail({
   )
 }
 
-function ApplicationsTable({ applications }: { applications: TeamApplicationRead[] | null }) {
-  const cols = 'minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.3fr)'
-  return (
-    <div style={cardStyle}>
-      <div style={{ ...headRow, gridTemplateColumns: cols }}>
-        <div style={labelStyle}>Application</div>
-        <div style={labelStyle}>Added by</div>
-        <div style={labelStyle}>Working on it</div>
+// Card grid: name + host up top, who added it and who works on it below.
+function ApplicationsTable({ applications: all, query }: { applications: TeamApplicationRead[] | null; query: string }) {
+  const q = query.trim().toLowerCase()
+  const applications = all && q ? all.filter((a) => a.name.toLowerCase().includes(q) || a.url.toLowerCase().includes(q) || (a.added_by_name ?? '').toLowerCase().includes(q)) : all
+  const grid = { display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 14 } as const
+  if (applications === null) {
+    return <div style={cardStyle}><div style={{ padding: 20 }}><SkeletonRows count={3} height={42} gap={14} /></div></div>
+  }
+  if (applications.length === 0) {
+    return (
+      <div style={cardStyle}>
+        <p style={{ padding: '40px 20px', margin: 0, textAlign: 'center', color: 'var(--fg-3)', fontSize: 13 }}>{q ? 'No applications match your search.' : 'No applications added to this team yet.'}</p>
       </div>
-      {applications === null ? (
-        <div style={{ padding: 20 }}><SkeletonRows count={3} height={42} gap={14} /></div>
-      ) : applications.length === 0 ? (
-        <p style={{ padding: '40px 20px', margin: 0, textAlign: 'center', color: 'var(--fg-3)', fontSize: 13 }}>No applications added to this team yet.</p>
-      ) : (
-        applications.map((a) => (
-          <div key={a.id} style={{ display: 'grid', gridTemplateColumns: cols, gap: 12, alignItems: 'center', padding: '13px 20px', borderBottom: '1px solid var(--row-line)' }}>
-            <span style={{ minWidth: 0 }}>
-              <span style={{ display: 'block', fontSize: 13.5, fontWeight: 500, color: 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
-              <span style={{ display: 'block', fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, color: 'var(--fg-4)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.url}</span>
-            </span>
-            <span style={{ fontSize: 12.5, color: 'var(--fg-2)' }}>{a.added_by_name ?? '—'}</span>
-            <span style={{ display: 'flex', alignItems: 'center' }}>
-              {a.people.slice(0, 3).map((name) => (
-                <span key={name} title={name} style={{ marginRight: -6, borderRadius: 1000, border: '2px solid var(--panel)', display: 'inline-flex' }}>
-                  <Avatar name={name} size={26} />
+    )
+  }
+  return (
+    <div style={grid}>
+      {applications.map((a) => {
+        const host = a.url.replace(/^https?:\/\//, '').replace(/\/$/, '')
+        return (
+          <div key={a.id} className="table-row-hover" style={{ ...cardStyle, padding: '24px 22px', minHeight: 190, display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+              <span style={{ minWidth: 0, flex: 1 }}>
+                <span title={a.name} style={{ display: 'block', fontSize: 15, fontWeight: 600, color: 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</span>
+                <span title={a.url} style={{ display: 'block', fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, color: 'var(--fg-4)', marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{host}</span>
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: a.added_by_name ? 'space-between' : 'flex-end', gap: 10, marginTop: 'auto', paddingTop: 14, borderTop: '1px solid var(--row-line)' }}>
+              {a.added_by_name && (
+                <span style={{ fontSize: 12, color: 'var(--fg-3)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  Added by <strong style={{ fontWeight: 600, color: 'var(--fg-2)' }}>{a.added_by_name}</strong>
                 </span>
-              ))}
-              <span style={{ marginLeft: 14, fontSize: 11.5, color: 'var(--fg-4)' }}>{a.people_count > 3 ? `+${a.people_count - 3} more` : plural(a.people_count, 'person').replace('persons', 'people')}</span>
-            </span>
+              )}
+              <span title={a.people.join('\n')} style={{ display: 'flex', alignItems: 'center', flexShrink: 0, cursor: 'default' }}>
+                {a.people.slice(0, 3).map((name) => (
+                  <span key={name} style={{ marginRight: -6, borderRadius: 1000, border: '2px solid var(--panel)', display: 'inline-flex' }}>
+                    <Avatar name={name} size={24} />
+                  </span>
+                ))}
+                <span style={{ marginLeft: 12, fontSize: 11.5, color: 'var(--fg-4)' }}>{a.people_count > 3 ? `+${a.people_count - 3} more` : plural(a.people_count, 'person').replace('persons', 'people')}</span>
+              </span>
+            </div>
           </div>
-        ))
-      )}
+        )
+      })}
     </div>
   )
 }
 
-function MemberRow({
+// Team Admins first, then Members, as cards; search and Add users above.
+export function MembersGrid({
+  members,
+  team,
+  canManage,
+  query,
+  onChanged,
+  onError,
+}: {
+  members: TeamPersonRead[] | null
+  team: TeamRead
+  canManage: boolean
+  query: string
+  onChanged: (message?: string) => void
+  onError: (message: string) => void
+}) {
+  if (members === null) return <div style={cardStyle}><div style={{ padding: 20 }}><SkeletonRows count={3} height={42} gap={14} /></div></div>
+  const q = query.trim().toLowerCase()
+  const shown = members.filter((m) => !q || m.name.toLowerCase().includes(q) || m.email.toLowerCase().includes(q))
+  const sections = [
+    { title: 'Team admins', people: shown.filter((m) => m.role === 'team_admin') },
+    { title: 'Members', people: shown.filter((m) => m.role !== 'team_admin') },
+  ]
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 22 }}>
+      {shown.length === 0 && <p style={{ margin: 0, padding: '30px 0', textAlign: 'center', color: 'var(--fg-3)', fontSize: 13 }}>No members match your search.</p>}
+      {sections.filter((section) => section.people.length > 0).map((section) => (
+        <section key={section.title} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={labelStyle}>{section.title}</span>
+            <span style={{ ...monoNumber, fontSize: 11, padding: '1px 7px', borderRadius: 1000, background: 'var(--chip)', color: 'var(--fg-3)' }}>{section.people.length}</span>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 14 }}>
+            {section.people.map((member) => (
+              <MemberCard key={member.email} member={member} team={team} canManage={canManage} onChanged={onChanged} onError={onError} />
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  )
+}
+
+function MemberCard({
   member,
   team,
   canManage,
@@ -503,18 +549,22 @@ function MemberRow({
   const [confirming, setConfirming] = useState(false)
   const [editing, setEditing] = useState(false)
   const anchor = useRef<HTMLButtonElement>(null)
+  const count = member.app_count ?? 0
 
   return (
-    <div className="table-row-hover" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 200px 60px', gap: 12, alignItems: 'center', padding: '11px 20px', borderBottom: '1px solid var(--row-line)' }}>
-      <span style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-        <span style={{ borderRadius: 1000, border: '1px solid var(--border-2)', display: 'inline-flex' }}>
-          <Avatar name={member.name} size={26} />
+    <div style={{ ...cardStyle, padding: '20px 20px 0', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+        <span style={{ borderRadius: 1000, border: '1px solid var(--border-2)', display: 'inline-flex', flexShrink: 0 }}>
+          <Avatar name={member.name} size={52} />
         </span>
-        <span title={member.email} style={{ fontSize: 13, fontWeight: 500, color: 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{member.name}</span>
-      </span>
-      <span><span style={pillStyle(member.role === 'team_admin')}>{TEAM_ROLE_LABEL[member.role]}</span></span>
-      <span style={{ textAlign: 'right' }}>
-        {canManage && (
+        <span style={{ minWidth: 0, flex: 1 }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span title={member.name} style={{ fontSize: 15, fontWeight: 600, color: 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{member.name}</span>
+            {member.is_you && <span style={{ ...pillStyle(true), height: 18, padding: '0 8px', fontSize: 10.5 }}>You</span>}
+          </span>
+          <span title={member.email} style={{ display: 'block', fontSize: 12.5, color: 'var(--fg-3)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{member.email}</span>
+        </span>
+        {canManage && !member.is_super_admin && (
           <>
             <button
               ref={anchor}
@@ -523,7 +573,7 @@ function MemberRow({
               aria-label={`Actions for ${member.name}`}
               onClick={() => setMenuOpen((v) => !v)}
               className="icon-button-hover"
-              style={{ width: 30, height: 30, border: 'none', borderRadius: 8, background: 'transparent', cursor: 'pointer', color: 'var(--fg-3)' }}
+              style={{ alignSelf: 'flex-start', width: 30, height: 30, border: 'none', borderRadius: 8, background: 'transparent', cursor: 'pointer', color: 'var(--fg-3)' }}
             >
               <FontAwesomeIcon icon={faEllipsisVertical} />
             </button>
@@ -539,7 +589,11 @@ function MemberRow({
             </AnchoredMenu>
           </>
         )}
-      </span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '14px 0 16px', borderTop: '1px solid var(--row-line)', fontSize: 13, color: 'var(--fg-2)' }}>
+        <FontAwesomeIcon icon={faLayerGroup} style={{ fontSize: 12, color: 'var(--fg-3)' }} />
+        {member.role === 'team_admin' ? 'Access to all apps' : `Access to ${count} ${count === 1 ? 'app' : 'apps'}`}
+      </div>
       {editing && (
         <EditTeamRoleDialog
           member={member}

@@ -52,7 +52,7 @@ export type TeamRead = {
   member_count: number
   application_count: number
 }
-export type TeamPersonRead = { name: string; email: string; role: TeamRole }
+export type TeamPersonRead = { name: string; email: string; role: TeamRole; is_super_admin?: boolean; is_you?: boolean; app_count?: number }
 export type TeamApplicationRead = {
   id: string
   name: string

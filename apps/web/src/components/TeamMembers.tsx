@@ -57,7 +57,7 @@ const menuItemStyle: React.CSSProperties = {
   fontFamily: 'inherit',
 }
 
-const COLUMNS = 'minmax(0,1.5fr) 110px minmax(0,1fr) 130px 40px'
+const COLUMNS = 'minmax(240px,1.2fr) minmax(130px,0.6fr) minmax(200px,1.2fr) minmax(110px,0.5fr) 44px'
 
 function teamsLabel(member: TeamMember): string {
   // A super admin can enter every team.
@@ -97,10 +97,10 @@ function MemberRow({
           <div style={{ fontSize: 11.5, color: 'var(--fg-4)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{member.email}</div>
         </div>
       </div>
-      <div style={{ fontSize: 12, color: 'var(--fg-3)' }}>
+      <div style={{ fontSize: 13, color: 'var(--fg-2)' }}>
         {member.last_active_at ? relativeTime(member.last_active_at) : 'Never signed in'}
       </div>
-      <div style={{ fontSize: 12, color: 'var(--fg-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={teamsLabel(member)}>
+      <div style={{ fontSize: 13, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={teamsLabel(member)}>
         {teamsLabel(member)}
       </div>
       <div>

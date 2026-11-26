@@ -183,9 +183,22 @@ def test_super_admin_adds_changes_and_removes_team_members() -> None:
     changed = boss.patch(f"/teams/{team}/members/{org.emails['bob']}", json={"role": "team_admin"})
     assert changed.status_code == 200 and changed.json()["role"] == "team_admin"
     members = boss.get(f"/teams/{team}/members").json()
-    assert [m["email"] for m in members][:2] == sorted([org.emails["ann"], org.emails["bob"]], key=lambda e: e)
+    # The Super Admin is in every team (first), then the Team Admins.
+    assert members[0]["email"] == org.emails["boss"] and members[0]["is_super_admin"]
+    assert [m["email"] for m in members][1:3] == sorted([org.emails["ann"], org.emails["bob"]], key=lambda e: e)
     assert boss.delete(f"/teams/{team}/members/{org.emails['bob']}").status_code == 204
     assert boss.delete(f"/teams/{team}/members/{org.emails['bob']}").status_code == 404
+
+
+def test_a_super_admin_cannot_be_added_changed_or_removed_from_a_team() -> None:
+    org = Org("ann", "bob")
+    team = org.new_team("Growth", ["ann"])
+    boss, boss_email = org.clients["boss"], org.emails["boss"]
+    assert boss.post(f"/teams/{team}/members", json={"email": boss_email}).status_code == 409
+    assert boss.patch(f"/teams/{team}/members/{boss_email}", json={"role": "team_member"}).status_code == 409
+    assert boss.delete(f"/teams/{team}/members/{boss_email}").status_code == 409
+    members = boss.get(f"/teams/{team}/members").json()
+    assert [m["email"] for m in members if m["is_super_admin"]] == [boss_email]
 
 
 def test_a_team_admin_only_reads_their_own_team() -> None:
@@ -193,7 +206,7 @@ def test_a_team_admin_only_reads_their_own_team() -> None:
     mine, other = org.new_team("Mine", ["ann"]), org.new_team("Other", ["bob"])
     ann = org.clients["ann"]
     assert ann.get(f"/teams/{mine}").status_code == 200
-    assert [m["email"] for m in ann.get(f"/teams/{mine}/members").json()] == [org.emails["ann"]]
+    assert [m["email"] for m in ann.get(f"/teams/{mine}/members").json()] == [org.emails["boss"], org.emails["ann"]]
     assert ann.get(f"/teams/{mine}/applications").status_code == 200
     # Everything that changes a team is for super admins.
     assert ann.post(f"/teams/{mine}/members", json={"email": org.emails["bob"]}).status_code == 403

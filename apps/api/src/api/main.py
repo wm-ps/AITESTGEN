@@ -375,9 +375,21 @@ def me(user: CurrentUserDep) -> UserRead:
 # schema itself is multi-tenant per AD-12).
 
 
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$")
+
+
 class InviteCreate(BaseModel):
     email: str
     role: str = STANDARD_USER_ROLE
+
+    @field_validator("email")
+    @classmethod
+    def _clean_email(cls, value: str) -> str:
+        # Trimmed, case left as typed: emails are matched exactly everywhere else.
+        value = value.strip()
+        if len(value) > 254 or not _EMAIL_RE.match(value):
+            raise ValueError("enter a valid email address")
+        return value
 
     @model_validator(mode="after")
     def _valid_role(self) -> InviteCreate:
