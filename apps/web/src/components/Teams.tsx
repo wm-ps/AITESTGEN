@@ -407,7 +407,7 @@ function TeamDetail({
             {canManage && tab === 'members' && (
               <button type="button" className="button-primary" onClick={() => setAdding(true)} style={{ ...primaryButton, height: 38 }}>
                 <FontAwesomeIcon icon={faUserPlus} style={{ fontSize: 11 }} />
-                Add users
+                Add team member
               </button>
             )}
           </div>
@@ -492,7 +492,7 @@ function ApplicationsTable({ applications: all, query }: { applications: TeamApp
   )
 }
 
-// Team Admins first, then Members, as cards; search and Add users above.
+// Team Admins first, then Members, as cards; search and Add team member above.
 export function MembersGrid({
   members,
   team,

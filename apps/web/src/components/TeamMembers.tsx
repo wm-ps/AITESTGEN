@@ -402,7 +402,7 @@ export function TeamMembers({ user }: { user: UserRead }) {
     api
       .listTeam()
       .then(setMembers)
-      .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load team members.'))
+      .catch((err) => setError(err instanceof ApiError ? err.message : 'Failed to load users.'))
   }
 
   useEffect(refresh, [])
@@ -420,7 +420,7 @@ export function TeamMembers({ user }: { user: UserRead }) {
           style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 34, padding: '0 16px', borderRadius: 8, background: 'var(--accent)', color: '#fff', fontSize: 13.5, fontWeight: 600, cursor: 'pointer', boxShadow: 'var(--accent-glow)', border: 'none', whiteSpace: 'nowrap' }}
         >
           <FontAwesomeIcon icon={faUserPlus} style={{ fontSize: 13 }} />
-          Invite member
+          Invite user
         </button>
       </div>
 
@@ -432,7 +432,7 @@ export function TeamMembers({ user }: { user: UserRead }) {
 
       <div style={{ background: 'linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.74))', backdropFilter: 'blur(16px) saturate(1.25)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden', boxShadow: 'var(--panel-shadow)' }}>
         <div style={{ display: 'grid', gridTemplateColumns: COLUMNS, gap: 12, padding: '12px 20px', background: 'var(--panel-2)', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>Member</div>
+          <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>User</div>
           <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>Last active</div>
           <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>Teams</div>
           <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--fg-4)' }}>Role</div>

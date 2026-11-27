@@ -61,7 +61,7 @@ export function InviteTeammateModal({ onClose }: { onClose: () => void }) {
     <div style={{ ...modalOverlay, zIndex: 90 }}>
       <form noValidate onSubmit={handleSubmit} style={{ ...modalPanel, maxWidth: 520 }}>
         <div style={modalHeader}>
-          <h2 style={modalTitle}>Invite member</h2>
+          <h2 style={modalTitle}>Invite user</h2>
           {!sent && (
             <button type="button" aria-label="Close" onClick={onClose} style={modalCloseButton}>
               <FontAwesomeIcon icon={faXmark} />

@@ -38,7 +38,7 @@ describe('TeamMembers', () => {
     expect(screen.getByText('(you)')).toBeTruthy()
     expect(screen.getByText('Super Admin')).toBeTruthy()
     // { selector: 'span' } disambiguates the role pill from the table's own
-    // "Member" column header (a <div>), which shares the literal text.
+    // "User" column header (a <div>), which shares the literal text.
     expect(screen.getByText('User', { selector: 'span' })).toBeTruthy()
   })
 

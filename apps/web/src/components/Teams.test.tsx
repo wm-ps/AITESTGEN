@@ -154,7 +154,7 @@ describe('Teams (super admin)', () => {
     fireEvent.click(await screen.findByText('Payments'))
     await screen.findByText('Maya Maker')
 
-    fireEvent.click(screen.getByRole('button', { name: /Add users/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Add team member/ }))
     const dialog = await screen.findByRole('dialog', { name: 'Add team member' })
     expect(within(dialog).getByRole('button', { name: 'Add member' })).toBeDisabled()
     fireEvent.change(within(dialog).getByLabelText('Email address'), { target: { value: 'raj' } })
@@ -284,12 +284,12 @@ describe('My team (a team admin)', () => {
     expect(await screen.findByRole('heading', { name: 'Payments' })).toBeTruthy()
     expect(await screen.findByText('Maya Maker')).toBeTruthy()
     expect(screen.getByText('Access to 0 apps')).toBeTruthy()
-    expect(screen.getByRole('button', { name: /Add users/ })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Add team member/ })).toBeTruthy()
     expect(screen.getAllByTitle('More options').length).toBeGreaterThan(0)
     expect(screen.queryByRole('button', { name: /All teams/ })).toBeNull()
 
     // The people lookup is the team's own (a Team Admin can't read the org-wide list).
-    fireEvent.click(screen.getByRole('button', { name: /Add users/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Add team member/ }))
     const dialog = await screen.findByRole('dialog', { name: 'Add team member' })
     fireEvent.change(within(dialog).getByLabelText('Email address'), { target: { value: 'raj' } })
     const suggestions = await screen.findByRole('listbox', { name: 'Email address suggestions' })
